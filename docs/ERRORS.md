@@ -104,6 +104,14 @@ diff kind. Send one of the names the route documents.
 `400` (also `invalid limit`). A limit is not an integer, is not positive, or is
 above the route's cap. Send a positive integer inside the documented bound.
 
+### invalid-password
+
+`400`. The password a zipped download was asked for is empty or longer than
+`api.ZIP_PASSWORD_MAX_CHARS` (128 characters). The password is a shared
+convention rather than a secret, so the route echoes it back in
+`X-Reportal-Zip-Password`; send 1 to 128 characters, or omit the parameter to
+get the default.
+
 ### invalid-hash
 
 `400`. A SHA-256 query is not hexadecimal or is longer than 64 characters. Send

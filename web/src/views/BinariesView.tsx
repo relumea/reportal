@@ -538,6 +538,7 @@ export function BinariesView(): ReactNode {
                 render: (row) => (
                   <div className="actions-cell">
                     <a href={`/api/binaries/${row.id}/download`}>Download</a>
+                    <a href={`/api/binaries/${row.id}/download-zipped`}>Zipped</a>
                   </div>
                 ),
               },

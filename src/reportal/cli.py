@@ -134,6 +134,7 @@ from reportal import (
     store,
     threat,
     unstrip,
+    zipcrypto,
 )
 from reportal._paths import (
     DB_NAME,
@@ -2016,6 +2017,26 @@ def add_binary(
 # ── download ───────────────────────────────────────────────────────
 
 
+def _write_protected_zip(source: Path, target: Path, member: str, password: str) -> int:
+    """Write *source* as an encrypted zip at *target*, returning the bytes written.
+
+    Like :func:`_copy_stream` the archive lands in a temporary file beside the
+    target and is moved into place with ``os.replace``, so a failure leaves no
+    half-written archive behind.
+    """
+    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".download-zip-")
+    os.close(handle)
+    temp = Path(temp_name)
+    try:
+        with source.open("rb") as reader, temp.open("wb") as writer:
+            written = zipcrypto.write_protected_zip(writer, member, reader, password)
+        os.replace(temp, target)
+        return written
+    finally:
+        with contextlib.suppress(OSError):
+            temp.unlink()
+
+
 def _copy_stream(source: Path, target: Path) -> int:
     """Copy *source* onto *target* in bounded chunks, returning the bytes written.
 
@@ -2053,13 +2074,22 @@ def download(
         help="Target path (default: the stored name in the current directory)",
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing target"),
+    as_zip: bool = typer.Option(
+        False, "--zip", help="Write a zip whose member is password protected instead"
+    ),
+    password: str = typer.Option(
+        zipcrypto.DEFAULT_PASSWORD, "--password", help="Password for --zip"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Write a stored binary's bytes to a path, byte for byte.
 
     The bytes are copied in bounded chunks rather than read whole, since an
     upload may be up to the API's 256 MiB cap; the file name is the stored
-    name, sanitized the same way the download route's header is.
+    name, sanitized the same way the download route's header is.  ``--zip``
+    writes a password-protected archive instead, the form a mail gateway or an
+    upload form accepts; the password is a shared convention rather than a
+    secret (ZipCrypto authenticates nothing).
     """
     from reportal import api
 
@@ -2073,13 +2103,19 @@ def download(
         source = Path(str(binary["path"]))
         if not source.is_file():
             _fail(f"binary {binary_id} has no file at {binary['path']!r}", json_output)
+        stored_name = api.download_filename(binary)
         target = (
-            output if output is not None else Path(api.download_filename(binary))
+            output if output is not None else Path(f"{stored_name}.zip" if as_zip else stored_name)
         ).expanduser()
         if target.exists() and not force:
             _fail(f"refusing to overwrite {target} without --force", json_output)
+        if as_zip and (not password or len(password) > api.ZIP_PASSWORD_MAX_CHARS):
+            _fail(f"the password must be 1 to {api.ZIP_PASSWORD_MAX_CHARS} characters", json_output)
         target.parent.mkdir(parents=True, exist_ok=True)
-        written = _copy_stream(source, target)
+        if as_zip:
+            written = _write_protected_zip(source, target, f"{stored_name}.zip", password)
+        else:
+            written = _copy_stream(source, target)
         payload = {
             "binary_id": binary_id,
             "name": str(binary["name"]),
@@ -2087,10 +2123,21 @@ def download(
             "path": str(target),
             "bytes": written,
         }
+        if as_zip:
+            # The password is a shared convention, so echoing it is not a leak.
+            payload["zip"] = True
+            payload["member"] = f"{stored_name}.zip"
+            payload["password"] = password
     if json_output:
         typer.echo(json.dumps(payload))
         return
-    console.print(f"[green]Wrote[/green] {written} bytes to {target}")
+    if as_zip:
+        console.print(
+            f"[green]Wrote[/green] {written} bytes to {target}"
+            f" (zip member {stored_name}.zip, password {password!r})"
+        )
+    else:
+        console.print(f"[green]Wrote[/green] {written} bytes to {target}")
 
 
 # ── extract ────────────────────────────────────────────────────────

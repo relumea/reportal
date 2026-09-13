@@ -257,6 +257,7 @@ reportal/
     │                       #   render_prototype(s) and export_prototypes (the apply artifact)
     ├── instance.py         # what this install can do: versions, features, limits, counts
     ├── plugins.py          # the one entry-point reader every registry discovers through
+    ├── zipcrypto.py        # the password-protected zip writer (PKWARE ZipCrypto)
     ├── surface.py          # the checks and journal writers the API, CLI and MCP share
     ├── server.py           # shared FastAPI (ASGI) app: JSON helpers, gzip, Host guard,
     │                       #   the error envelope as a response and an exception, the
@@ -288,7 +289,7 @@ reportal/
     │                       #   graph-build, graph, ai-comments
     ├── mcp_tools.py        # MCP tool registry: Tool (name/description/input_schema/
     │                       #   annotations/handler), register_tool/tools/refresh_tools,
-    │                       #   the 137 built-in tools, `reportal.mcp_tools` entry-point group
+    │                       #   the 138 built-in tools, `reportal.mcp_tools` entry-point group
     ├── mcp_server.py       # stdio MCP server: newline-delimited JSON-RPC 2.0 over stdin/stdout
     │                       #   (initialize, notifications/initialized, tools/list, tools/call)
     └── assets/dist/        # generated Vite build (gitignored; served by ui.py)
@@ -318,7 +319,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 172 source files` is the finish line.
+`Success: no issues found in 175 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -328,7 +329,7 @@ errors (a name another module imports without re-exporting it), and
 `engines.py:302` is a return-value error on the engine's decorator.
 
 **Coverage.** `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.64%, 20450 statements with 1506 missed. `[tool.coverage.report] fail_under`
+92.68%, 20628 statements with 1509 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -597,7 +598,7 @@ action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 The registry
-declares 137 built-in tools, 64 read-only and 73 destructive.
+declares 138 built-in tools, 64 read-only and 74 destructive.
 
 ## SPA
 
@@ -702,8 +703,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 137 built-in
-tools (64 read-only, 73 destructive).
+and `run_match` expose the same over MCP, and the counts stay 138 built-in
+tools (64 read-only, 74 destructive).
 
 ### Scaling
 

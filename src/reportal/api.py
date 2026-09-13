@@ -79,6 +79,7 @@ from reportal import (
     surface,
     threat,
     unstrip,
+    zipcrypto,
 )
 from reportal._paths import binaries_dir, db_path, reports_dir
 from reportal.server import db, json_body, json_error, json_response, optional_json_body
@@ -5638,6 +5639,65 @@ def remove_binary_tag(binary_id: int, tag_id: int) -> Response:
                     journal.row_restore_descriptor("binary_tags", link),
                 )
     return json_response(log.attach({"binary_id": binary_id, "tag_id": tag_id, "removed": True}))
+
+
+# The password a zipped download uses when the request names none, and the cap
+# on one the request does name.  The value is a convention, not a secret: it
+# defeats a scanner that opens every archive it sees, which is the only reason
+# the hosted portal offers a protected download too.
+ZIP_PASSWORD_DEFAULT = zipcrypto.DEFAULT_PASSWORD
+ZIP_PASSWORD_MAX_CHARS = zipcrypto.MAX_PASSWORD_CHARS
+
+
+@router.get("/api/binaries/{binary_id}/download-zipped")
+def download_binary_zipped(binary_id: int, password: str = ZIP_PASSWORD_DEFAULT) -> Response:
+    """Stream the stored bytes as a zip whose one member is password protected.
+
+    The archive is assembled as it is streamed (:mod:`reportal.zipcrypto`): the
+    member is deflated into a spooled temporary file so its CRC and compressed
+    size precede it, then the spool is encrypted into the response, so neither
+    the plaintext nor the archive is held whole for a binary up to
+    :data:`MAX_UPLOAD_BYTES`.
+
+    ``password`` is a query parameter with a shared default; it is **not a
+    security measure** (ZipCrypto has no authentication and the password is
+    echoed back in ``X-Reportal-Zip-Password``), it is what makes the archive
+    survive a mail gateway or an upload form that refuses a raw sample.  The
+    answer is not cacheable: the encryption header is drawn per request.
+    """
+    if not password or len(password) > ZIP_PASSWORD_MAX_CHARS:
+        return json_error(
+            400,
+            error="invalid password",
+            detail=f"password must be 1 to {ZIP_PASSWORD_MAX_CHARS} characters",
+        )
+    with contextlib.closing(db()) as conn:
+        binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        return json_error(404, error="binary not found", detail=f"no binary with id {binary_id}")
+    path = Path(str(binary["path"]))
+    if not path.is_file():
+        return json_error(
+            404,
+            error="binary not on disk",
+            detail=f"binary {binary_id} has no file at {binary['path']!r}",
+        )
+    member = download_filename(binary)
+    return StreamingResponse(
+        _stream_protected_zip(path, f"{member}.zip", password),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{member}.zip"',
+            "X-Reportal-Zip-Password": password,
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _stream_protected_zip(path: Path, member: str, password: str) -> Iterator[bytes]:
+    """Yield *path* as an encrypted zip member, closing the file when done."""
+    with path.open("rb") as handle:
+        yield from zipcrypto.stream_protected_zip(member, handle, password)
 
 
 # ── Comments ───────────────────────────────────────────────────────

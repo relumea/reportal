@@ -93,6 +93,7 @@ def limits() -> dict[str, int]:
     return {
         "max_upload_bytes": api.MAX_UPLOAD_BYTES,
         "max_upload_files": api.MAX_UPLOAD_FILES,
+        "max_zip_password_chars": api.ZIP_PASSWORD_MAX_CHARS,
         "max_function_size": api.MAX_FUNCTION_SIZE,
         "max_analysis_limit": store.MAX_ANALYSIS_LIMIT,
         "max_search_limit": store.MAX_SEARCH_LIMIT,

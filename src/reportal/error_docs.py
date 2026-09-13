@@ -79,6 +79,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "invalid data type": "invalid-data-type",
     "invalid kind": "invalid-kind",
     "invalid limit": "invalid-limit",
+    "invalid password": "invalid-password",
     "invalid scope id": "invalid-scope-id",
     "invalid scope kind": "invalid-scope-kind",
     "invalid size range": "invalid-size-range",

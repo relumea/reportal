@@ -321,111 +321,19 @@ report-analysis agent result beside it.
 
 ### N. Binary extras (hosted `Binaries`, 11 operations)
 
-**Status:** Planned. Nothing started.
-
-Missing locally: a password-protected zipped download (`GET
-/v2/binaries/{id}/download-zipped`; the stdlib cannot write ZipCrypto, so the
-local implementation writes the PKWARE scheme directly), Detect-It-Easy style
-information (`GET /v2/binaries/{id}/die-info`, richer than the signature table
-in `filetypes.py`), and additional details with a status read (`GET
-/v3/binaries/{id}/additional-details[/status]`: rich header, PDB path, overlay,
-version resources).
-
-
-## The hosted surface, as measured
-
-Round three of the gap program measured the product surface directly, not from
-memory.  Every claim below carries its source.
-
-| Source | What it gave |
-|--------|--------------|
-| `https://docs.reveng.ai/openapi.json` | the current spec: **v4.34.0**, 158 paths, 190 operations, 588 schemas, 20 tags |
-| `https://api.reveng.ai/openapi.json` | the deployed snapshot: **v4.1.7**, 65 paths, 79 operations, 230 schemas (a subset of the above) |
-| `https://docs.reveng.ai/mcp` | the hosted MCP server over streamable HTTP: **36 tools**, of which 27 mutate state and only **9 carry a destructive marker** |
-| `https://portal.reveng.ai/changelog` | 117 entries across seven weeks (2026-06-22 to 2026-08-03) |
-| portal JS chunks under `/next/static/chunks/` | the undocumented endpoints the portal itself calls, and the feature-flag names |
-| `github.com/RevEngAI` (16 repos) | SDKs (Python, TypeScript, Java, Go), plugins (Ghidra, IDA, Binary Ninja), `reai-r2`, `reai-rz`, `reait`, `ghcc`, `creail`, `jingle`, `mal_unpack`, `fairseq` |
-| `https://reveng.ai/` and `/blog/introducing-wilbert-and-ventris` | the models (WilBERT, Ventris, BinNet, "Mega Bite") and the roadmap statements |
-
-Two facts from that sweep change the shape of this map:
-
-- **Dynamic execution is shipped.** `POST /v2/analyses/{id}/dynamic-execution`
-  with `GET .../report` and `.../status`; `SandboxOptions` takes
-  `command_line_args`, `start_method` (`standard_user_process` or
-  `administrator_process`), `timeout` (120, 180, 300 or 600), an archive entry
-  path and password.  The report is a DRAKVUF-shaped `AnalysisReport`: the
-  process tree, memory dumps, module loads, registry operations, scheduled
-  tasks, services, mutexes, file activity, console output, `NetworkActivity`
-  (connections, DNS queries, HTTP requests, extracted URLs), artifacts with
-  YARA hits, and TTPs scored against ATT&CK and MBC.  A changelog entry
-  (2026-07-13) adds that statically unsupported files (PDFs, C# binaries,
-  PowerShell scripts) can be analysed dynamically, and that supplementary files
-  can be uploaded beside a sample.
-- **Firmware unpacking is shipped and undocumented.**  The changelog carries a
-  fix ("Firmware unpacking no longer gets stuck while extracting files",
-  PRO-3139) and the portal calls `/v3/files/{hash}:extract` and
-  `/v3/files/{hash}/archive-contents`, neither of which is in either spec.
-  The documented `Firmware` tag exists with **zero operations**, and only the
-  TypeScript and Java SDKs still carry a `FirmwareApi`.
-
-The portal also calls these undocumented endpoints, so each is a shipped
-capability with no public contract: `/v2/analyses/{id}/agent/{slug}` with
-`/status` and `/feedback/{slug}` (a generic agent framework),
-`/v2/analyses/{id}/progress/functions`,
-`/v2/analyses/{id}/info/functions/strings`,
-`/v2/analysis/{id}/external/{type}` (the generic form of the VirusTotal call),
-`/v2/analyses/{id}/dynamic-execution/logs/download` and `/pcap`,
-`/v2/analyses/{id}/binary-export` with `/status/{taskId}`,
-`/v2/iam/{organisations,teams,users}` and `/v2/iam/users/{id}/{credits,profile}`,
-`/v2/reports/users/{id}/{agent-workflows,analyses-count}`,
-`/v2/users/me/api-keys`, `/v3/billing/subscription`,
-`/v3/analyses/{id}/functions/matches/batch`, and a websocket at `/v2/ws`.
-
-Feature flags the portal gates on (exact names, from its own bundle):
-`sentinel_access`, `similar_binaries_tab`, `show_decompilation`, `ai_unstrip`,
-`sandbox_access`, `advanced_analysis`, `allow_windows_analysis`,
-`show_new_analyses_beta`, `show_billing`, `enable_chat_agent`,
-`use_context_ai_decomp`, `individual_pricing`, `composition_page`,
-`reverse_agent`, `security_agent`, `crypto_scan_agent`, `crypto_explain`,
-`execution_scan_agent`, `execution_explain`, `networking_scan_agent`,
-`networking_explain`, `filesystem_scan_agent`, `filesystem_analyse`,
-`protocols_agent`, `secrets_agent`.
-
-Analysis parameters the hosted create call accepts, which reportal must be able
-to record for a run to be reproducible: `analysis_config.no_cache`,
-`generate_capabilities`, `advanced_analysis`, `sandbox_config`, and
-`scrape_third_party_config`; `analysis_scope` is `PRIVATE`, `PUBLIC` or `TEAM`;
-`upload_file_type` is `BINARY`, `DEBUG`, `PACKED` or `FIRMWARE`.
-
-Per-cluster evidence added by that sweep:
-
-- **A**: every scan agent has a `run`, a `status` and a result read, and the
-  security scan also has a `:cancel`; `crypto-explain`, `execution-explain`,
-  `filesystem-analyse` and `networking-explain` are per-function variants of
-  the same queue, and the portal drives all of them through one generic
-  `/v2/analyses/{id}/agent/{slug}` endpoint.
-- **C**: see the DRAKVUF report and `SandboxOptions` above.  The local target is
-  that report's shape, produced by a local sandbox runner rather than a hosted
-  DRAKVUF service.
-- **D**: adds `no_cache` and the other analysis parameters, `analysis_scope`,
-  `binary-export`, `progress/functions`, the dynamic-execution log and pcap
-  downloads, and supplementary sandbox files.
-- **F**: teams are shipped (`analyses and collections are now visible to the
-  members of your team`, PRO-3063) while the documented `IAM - Teams`,
-  `IAM - Organisations` and `Identity` tags carry **zero operations** and only
-  schemas; the portal's own `/v2/iam/*` calls are undocumented.  Credits,
-  subscription tiers (`ENTHUSIAST`, `REVERSER`, `MALWARE_ANALYST`,
-  `SECURITY_RESEARCHER`), API keys and a permission set (`canUsePrivateAnalyses`,
-  `canUseMalwareSandbox`, `canUseAIMalwareAnalysis`, `canUseCompositionAnalysis`,
-  `canGeneratePDFReports`, `canExportSymbols`, `canUseStorage`,
-  `canBypassMaintenance`) all exist with no documented contract.
-- **G**: `GET /v2/models` enumerates nine `binnet-0.7` variants
-  (`{x86-64,x86-32,arm-64}` times `{windows,linux,android}`), and an analysis
-  records the model it ran under plus a `model_upgrade_available` flag.
-- **H**: the portal calls a generic `/v2/analysis/{id}/external/{type}` with
-  `vt` and `MalwareBazaar`, and its binary tags carry origins `RevEng`,
-  `RevEng-Malware`, `RevEng-Library`, `RevEng-Benign`, `RevEng-Heuristic`,
-  `RevEng-Unknown`, `MalwareBazaar` and `VirusTotal`.
+**Status:** In progress.  The password-protected download is closed end to end:
+`zipcrypto.py` writes the traditional PKWARE scheme the stdlib reads but cannot
+write (deflate member, 12-byte header with the CRC check byte, the three-key
+stream cipher, verified by reading the archive back with `zipfile` plus the
+password, and refusing a wrong one).  `GET /api/binaries/<id>/download-zipped`,
+`reportal download --zip [--password]`, the `export_zipped_binary` MCP tool
+(138 tools: 64 read-only, 74 destructive) and a Zipped link in the binaries
+table expose it; the archive is deflated into a spooled temporary file so a
+256 MiB binary is never held whole, and the password is documented as a shared
+convention rather than a security measure.  What is left in this cluster is
+`GET /api/binaries/<id>/die-info` (Detect-It-Easy style identity, richer than
+the signature table in `filetypes.py`) and `additional-details` with its status
+read (rich header, PDB path, overlay, version resources).
 
 ### Beyond parity
 

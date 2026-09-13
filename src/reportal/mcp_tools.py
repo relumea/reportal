@@ -68,6 +68,7 @@ from reportal import (
     surface,
     threat,
     unstrip,
+    zipcrypto,
 )
 from reportal._paths import WorkspaceNotFound, reports_dir
 from reportal.plugins import RegistryError as RegistryError
@@ -2812,6 +2813,45 @@ def _tool_untag_binary(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach({"binary_id": binary_id, "tag_id": tag_id, "removed": True})
 
 
+def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Write a stored binary as a password-protected zip at the caller's path."""
+    from reportal import api  # the filename sanitizer the routes use
+
+    binary_id = _arg_int(arguments, "binary_id")
+    path = _arg_str(arguments, "path")
+    password = _arg_optional_str(arguments, "password", zipcrypto.DEFAULT_PASSWORD)
+    if not password or len(password) > zipcrypto.MAX_PASSWORD_CHARS:
+        raise ToolError(
+            "invalid params",
+            f"password must be 1 to {zipcrypto.MAX_PASSWORD_CHARS} characters",
+        )
+    with contextlib.closing(_open()) as conn:
+        binary = _require_binary(conn, binary_id)
+        source = Path(str(binary["path"]))
+        if not source.is_file():
+            raise ToolError(
+                "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+            )
+        target = Path(path).expanduser()
+        member = f"{api.download_filename(binary)}.zip"
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            previous = journal.read_bounded(target) if target.is_file() else None
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source.open("rb") as reader, target.open("wb") as writer:
+                written = zipcrypto.write_protected_zip(writer, member, reader, password)
+            journal.journaled_file(log, target, previous=previous)
+            return log.attach(
+                {
+                    "binary_id": binary_id,
+                    "path": str(target),
+                    "member": member,
+                    "password": password,
+                    "bytes": written,
+                }
+            )
+
+
 def _tool_get_config(_arguments: dict[str, Any]) -> dict[str, Any]:
     return instance.describe()
 
@@ -4740,6 +4780,20 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_untag_binary,
+        ),
+        Tool(
+            "export_zipped_binary",
+            "Write a stored binary as a zip whose member is password protected.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "path": _str("Target path for the archive."),
+                    "password": _str(f"Password; defaults to {zipcrypto.DEFAULT_PASSWORD!r}."),
+                },
+                ("binary_id", "path"),
+            ),
+            _WRITE,
+            _tool_export_zipped_binary,
         ),
         Tool(
             "get_config",

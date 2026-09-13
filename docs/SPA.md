@@ -156,7 +156,9 @@ It also carries the malware-family store: a name input, a reference-binary
 registered families as a table with a per-row Delete behind an inline confirm,
 over the note that reportal bundles no external threat-intelligence feed.  The
 binaries table carries a selection checkbox per row, a comment-count badge and
-a per-row Download action (a plain link to `GET /api/binaries/<id>/download`,
+a per-row Download action and a Zipped action (plain links to
+`GET /api/binaries/<id>/download` and
+`GET /api/binaries/<id>/download-zipped`,
 which streams the stored bytes with a `Content-Disposition` filename), and a
 `Bulk actions` panel below it applies add tag, remove tag or delete
 (behind an inline confirm) to the selection through `POST /api/binaries/bulk`
