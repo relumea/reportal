@@ -805,6 +805,14 @@ def delete_family(conn: sqlite3.Connection, family_id: int) -> bool:
 # an unbounded result.
 DEFAULT_ANALYSIS_ORDER = "newest"
 ANALYSIS_ORDERS: tuple[str, ...] = ("newest", "oldest")
+# The analyses list's workspace filter, which reads the owning binary's scope the
+# way the hosted portal's three controls do: an object no team owns, one a team
+# does, and one the whole workspace may see.
+WORKSPACE_PERSONAL = "personal"
+WORKSPACE_TEAM = "team"
+WORKSPACE_PUBLIC = "public"
+WORKSPACE_FILTERS: tuple[str, ...] = (WORKSPACE_PERSONAL, WORKSPACE_TEAM, WORKSPACE_PUBLIC)
+
 DEFAULT_ANALYSIS_LIMIT = 100
 MAX_ANALYSIS_LIMIT = 1000
 
@@ -1155,20 +1163,30 @@ def list_analyses(
     binary_id: int | None = None,
     status: str | None = None,
     search: str | None = None,
+    workspace: str | None = None,
     order: str = DEFAULT_ANALYSIS_ORDER,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Analyses with their binary name, size, format, arch and tags.
+    """Analyses with their binary name, owner, visibility, size, format and tags.
 
-    ``status`` is one of :data:`ANALYSIS_STATUSES` and ``order`` one of
-    :data:`ANALYSIS_ORDERS`; either being unknown raises :class:`ValueError`.
-    ``search`` matches the binary name or the engine label, case-insensitively.
-    ``limit`` is bounded by :data:`MAX_ANALYSIS_LIMIT` and defaults to
-    :data:`DEFAULT_ANALYSIS_LIMIT`.  Tag names are the owning binary's, ordered
-    by name.
+    ``status`` is one of :data:`ANALYSIS_STATUSES`, ``workspace`` one of
+    :data:`WORKSPACE_FILTERS` and ``order`` one of :data:`ANALYSIS_ORDERS`;
+    either being unknown raises :class:`ValueError`.  ``search`` matches the
+    binary name or the engine label, case-insensitively.  ``limit`` is bounded by
+    :data:`MAX_ANALYSIS_LIMIT` and defaults to :data:`DEFAULT_ANALYSIS_LIMIT`.
+    Tag names are the owning binary's, ordered by name.
+
+    An analysis has no scope of its own: the scope is the owning binary's, which
+    is the object reportal stores a team on, so each row carries that binary's
+    ``visibility``, ``owner_team_id`` and ``owner_team_name``.  ``workspace``
+    reads that scope as the hosted portal's three controls: ``personal`` is an
+    object no team owns, ``team`` one a team does, and ``public`` one the whole
+    workspace may see.
     """
     if status is not None and status not in ANALYSIS_STATUSES:
         raise ValueError(f"unknown analysis status: {status}")
+    if workspace is not None and workspace not in WORKSPACE_FILTERS:
+        raise ValueError(f"unknown workspace filter: {workspace}")
     if order not in ANALYSIS_ORDERS:
         raise ValueError(f"unknown analysis order: {order}")
     bound = DEFAULT_ANALYSIS_LIMIT if limit is None else limit
@@ -1176,8 +1194,10 @@ def list_analyses(
         raise ValueError(f"limit must be between 1 and {MAX_ANALYSIS_LIMIT}")
     sql = (
         "SELECT a.*, b.name AS binary_name, b.size AS binary_size,"
-        " b.format AS binary_format, b.arch AS binary_arch, b.sha256 AS binary_sha256"
-        " FROM analyses a JOIN binaries b ON a.binary_id = b.id"
+        " b.format AS binary_format, b.arch AS binary_arch, b.sha256 AS binary_sha256,"
+        " b.visibility AS visibility, b.owner_team_id AS owner_team_id,"
+        " t.name AS owner_team_name FROM analyses a JOIN binaries b ON a.binary_id = b.id"
+        " LEFT JOIN teams t ON t.id = b.owner_team_id"
     )
     clauses: list[str] = []
     params: list[Any] = []
@@ -1191,6 +1211,13 @@ def list_analyses(
         pattern = _escape_like(search)
         clauses.append("(b.name LIKE ? ESCAPE '\\' OR a.engine LIKE ? ESCAPE '\\')")
         params.extend((pattern, pattern))
+    if workspace == WORKSPACE_PERSONAL:
+        clauses.append("b.owner_team_id IS NULL")
+    elif workspace == WORKSPACE_TEAM:
+        clauses.append("b.owner_team_id IS NOT NULL")
+    elif workspace == WORKSPACE_PUBLIC:
+        clauses.append("b.visibility = ?")
+        params.append("public")
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     direction = "DESC" if order == DEFAULT_ANALYSIS_ORDER else "ASC"

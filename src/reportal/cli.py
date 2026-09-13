@@ -2334,6 +2334,7 @@ def imported_functions(
 @app.command()
 def analyses(
     status: str | None = typer.Option(None, "--status", help="Only analyses in this state"),
+    workspace: str | None = typer.Option(None, "--workspace", help="personal, team or public"),
     search: str | None = typer.Option(
         None, "--search", help="Match the binary name or the engine label"
     ),
@@ -2345,7 +2346,14 @@ def analyses(
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """List analyses with their binary, status, size and tags."""
+    """List analyses with their binary, status, size, tags and scope.
+
+    ``--workspace`` reads the owning binary's scope the way the hosted portal's
+    three controls do: ``personal`` for an object no team owns, ``team`` for one
+    a team does, and ``public`` for one the whole workspace may see.  The scope
+    is written with ``reportal binary-scope``, because the binary is the object
+    reportal stores a team on.
+    """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
@@ -2353,6 +2361,11 @@ def analyses(
         _fail(
             f"unknown analysis status: {status};"
             f" expected one of {', '.join(store.ANALYSIS_STATUSES)}",
+            json_output,
+        )
+    if workspace is not None and workspace not in store.WORKSPACE_FILTERS:
+        _fail(
+            f"unknown workspace: {workspace}; expected one of {', '.join(store.WORKSPACE_FILTERS)}",
             json_output,
         )
     if order not in store.ANALYSIS_ORDERS:
@@ -2363,7 +2376,14 @@ def analyses(
     if limit < 1 or limit > store.MAX_ANALYSIS_LIMIT:
         _fail(f"limit must be between 1 and {store.MAX_ANALYSIS_LIMIT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        rows = store.list_analyses(conn, status=status, search=search, order=order, limit=limit)
+        rows = store.list_analyses(
+            conn,
+            status=status,
+            search=search,
+            workspace=workspace,
+            order=order,
+            limit=limit,
+        )
         total = store.count_analyses(conn)
     if json_output:
         typer.echo(json.dumps({"analyses": rows, "count": len(rows), "total": total}))
@@ -2373,6 +2393,8 @@ def analyses(
     table.add_column("Binary", style="cyan")
     table.add_column("Engine")
     table.add_column("Status")
+    table.add_column("Owner")
+    table.add_column("Seen by")
     table.add_column("Created", style="dim")
     table.add_column("Tags", style="dim")
     for row in rows:
@@ -2381,6 +2403,8 @@ def analyses(
             str(row["binary_name"]),
             str(row["engine"]),
             str(row["status"]),
+            str(row.get("owner_team_name") or "personal"),
+            str(row.get("visibility") or "public"),
             str(row["created_at"]),
             ", ".join(row["tags"]) or "n/a",
         )

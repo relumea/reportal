@@ -544,6 +544,11 @@ reportal user-rm <user-id> [--yes] [--json]
 reportal config [--json]                   # what this instance can do: versions,
                                            #   features, limits and MCP tool counts;
                                            #   needs no workspace
+reportal analyses [--status S] [--workspace W] [--search TEXT] [--order O] [--limit N] [--json]
+                                           # the analyses list with each row's
+                                           #   owner team and visibility; the
+                                           #   workspace filter is personal,
+                                           #   team or public
 reportal analysis <id> [--status|--params|--func-maps|--tags] [--json]
                                            # one analysis: its detail, or its lifecycle,
                                            #   its re-run parameters, its function map or

@@ -412,6 +412,13 @@ artifacts carry a verdict.  The Integrations view ends with the "Connect an MCP
 client" card: the `claude mcp add` one-liner and the `~/.claude.json` snippet,
 each with a copy control, above the tool counts read from `GET /api/config`.
 
+The analyses list carries Owner and Seen by columns and a Workspace filter
+(personal, team or public) beside the status and search filters, all of them in
+the route hash, so a filtered list is a link.  The scope is the owning binary's,
+which is the object reportal stores a team on, so the write stays
+`PATCH /api/binaries/<id>/scope` (`reportal binary-scope`) rather than a second
+control on the row.
+
 The dashboard carries the 30-day activity series: three bar charts (binaries
 processed, agents triggered and journaled actions), one bar per day over a shared
 peak, each chart labelled for a screen reader with its total, plus the

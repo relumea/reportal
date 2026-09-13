@@ -41,6 +41,10 @@ export interface AnalysisRow {
   binary_sha256: string | null;
   /** Tag names of the owning binary, name order. */
   tags: string[];
+  /** The owning binary's scope: the object reportal stores a team on. */
+  visibility: string;
+  owner_team_id: number | null;
+  owner_team_name: string | null;
 }
 
 /** `GET /api/analyses`: the page, its size and the unfiltered total. */

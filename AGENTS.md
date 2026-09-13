@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.10%, 29333 statements with 2316 missed. `[tool.coverage.report] fail_under`
+92.15%, 29366 statements with 2306 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -461,7 +461,9 @@ serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 `get_firmware_scan` reads the stored carve pass and is read-only;
 `run_firmware_scan` carves and stores one and `extract_firmware_regions` carves
-its regions out as binaries, so both are destructive.  `list_artifact_ratings` reads every stored agent artifact of a binary with the
+its regions out as binaries, so both are destructive.  `list_analyses` lists analyses with their binary, status and scope (the owning
+binary's `visibility`, owner team and the `personal`/`team`/`public` workspace
+filter) and is read-only.  `list_artifact_ratings` reads every stored agent artifact of a binary with the
 analyst's verdict on it and is read-only; `rate_artifact` records or clears that
 verdict, journaled, and is destructive.  `get_stats_series` reads the dashboard's 30-day series (analyses, auto runs,
 journaled actions and the derived software types) from stored rows and is read-only.
@@ -516,7 +518,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 225 built-in tools, 105 read-only and 120 destructive.
+declares 226 built-in tools, 106 read-only and 120 destructive.
 
 ## SPA
 
@@ -621,8 +623,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 225 built-in
-tools (105 read-only, 120 destructive).
+and `run_match` expose the same over MCP, and the counts stay 226 built-in
+tools (106 read-only, 120 destructive).
 
 ### Scaling
 

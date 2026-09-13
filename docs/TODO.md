@@ -186,12 +186,27 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   their pages, and the bulk guard skips what the caller cannot reach.  With
   auth off this is labelling (the local operator sees everything); with it on
   it is access control.
-- **Status:** Closed for binaries and collections.  Still open: an owner column
-  and a per-analysis toggle (the scope is the owning binary's, which is the
-  object reportal stores a team on), a workspace filter on the list routes
-  (`Personal`/`Team`/`Public` as distinct controls rather than the rows a
-  caller can see) and the Library/System badge for a seeded analysis, which
-  the example-analyses row above records as not applicable.
+- **Status:** Closed.  `binaries` and `collections` carry `visibility` and
+  `owner_team_id`; the API gate enforces them on every route, the listings and
+  the typed search filter their pages, and the bulk guard skips what the caller
+  cannot reach.  The analyses listing now carries the scope with each row:
+  `store.list_analyses(...)` also joins the owning team and reports
+  `visibility`, `owner_team_id` and `owner_team_name`, and
+  `?workspace=personal|team|public` (`store.WORKSPACE_FILTERS`) is the hosted
+  portal's three controls read against the local model, where the owner team is
+  the only ownership reportal stores: `personal` is an object no team owns,
+  `team` one a team does, and `public` one the whole workspace may see.  The
+  analyses list view draws Owner and Seen by columns and the workspace filter,
+  which lives in the route hash with the other filters, so a filtered list is a
+  link; `reportal analyses --workspace` and the read-only `list_analyses` MCP
+  tool expose the same.  A per-analysis visibility toggle is deliberately not
+  added: an analysis has no scope of its own, and the write already exists as
+  `PATCH /api/binaries/<id>/scope` (`reportal binary-scope`), which is the object
+  a team is stored on, so a second control would write the same row twice.  With
+  auth off this is labelling and filtering, not access control, and
+  `docs/THREAT_MODEL.md` says so.  The Library/System badge for a seeded example
+  analysis stays out of scope: reportal seeds no example analyses, so there is
+  no row to carry it.
 
 ### 6. Agent feedback and the Custom (MCP) onboarding card
 

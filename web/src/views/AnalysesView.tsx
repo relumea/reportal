@@ -31,6 +31,7 @@ import {
 import {
   ANALYSIS_ORDERS,
   ANALYSIS_STATUSES,
+  ANALYSIS_WORKSPACES,
   DEFAULT_ANALYSIS_LIMIT,
   DEFAULT_ANALYSIS_LOG_LIMIT,
 } from "../constants";
@@ -53,6 +54,8 @@ interface AnalysisFilters {
   status: string;
   order: string;
   search: string;
+  /** The workspace control: personal, team or public. */
+  workspace: string;
 }
 
 function filtersFromQuery(query: Record<string, string>): AnalysisFilters {
@@ -62,6 +65,9 @@ function filtersFromQuery(query: Record<string, string>): AnalysisFilters {
     status: (ANALYSIS_STATUSES as readonly string[]).includes(status) ? status : "",
     order: (ANALYSIS_ORDERS as readonly string[]).includes(order) ? order : "",
     search: query.search ?? "",
+    workspace: (ANALYSIS_WORKSPACES as readonly string[]).includes(query.workspace ?? "")
+      ? (query.workspace ?? "")
+      : "",
   };
 }
 
@@ -71,6 +77,7 @@ function listPath(filters: AnalysisFilters): string {
   if (filters.status) params.set("status", filters.status);
   if (filters.order) params.set("order", filters.order);
   if (filters.search) params.set("search", filters.search);
+  if (filters.workspace) params.set("workspace", filters.workspace);
   params.set("limit", String(DEFAULT_ANALYSIS_LIMIT));
   return `/analyses?${params.toString()}`;
 }
@@ -360,7 +367,10 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
   };
 
   const filtered =
-    filters.status !== "" || filters.search !== "" || filters.order !== "";
+    filters.status !== "" ||
+    filters.search !== "" ||
+    filters.order !== "" ||
+    filters.workspace !== "";
 
   return (
     <>
@@ -374,6 +384,19 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
         }
       >
         <Toolbar>
+          <Field label="Workspace">
+            <select
+              value={filters.workspace}
+              onChange={(event) => apply({ workspace: event.target.value })}
+            >
+              <option value="">any scope</option>
+              {ANALYSIS_WORKSPACES.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field label="Status">
             <select
               value={filters.status}
@@ -476,6 +499,19 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 { label: "Engine", key: "engine" },
                 { label: "Created", key: "created_at", mono: true },
                 { label: "Status", render: (row) => <StatusCell status={row.status} /> },
+                {
+                  label: "Owner",
+                  render: (row) =>
+                    row.owner_team_name ? (
+                      <Badge>{row.owner_team_name}</Badge>
+                    ) : (
+                      <span className="muted">personal</span>
+                    ),
+                },
+                {
+                  label: "Seen by",
+                  render: (row) => <Badge mono>{row.visibility}</Badge>,
+                },
                 {
                   label: "Tags",
                   render: (row) =>

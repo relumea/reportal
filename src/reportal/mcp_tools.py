@@ -4585,6 +4585,32 @@ def _analysis_or_error(conn: sqlite3.Connection, analysis_id: int) -> dict[str, 
     return analysis
 
 
+def _tool_list_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
+    status = _arg_optional_str(arguments, "status")
+    if status and status not in store.ANALYSIS_STATUSES:
+        raise ToolError(
+            "invalid status", f"status must be one of {', '.join(store.ANALYSIS_STATUSES)}"
+        )
+    workspace = _arg_optional_str(arguments, "workspace")
+    if workspace and workspace not in store.WORKSPACE_FILTERS:
+        raise ToolError(
+            "invalid workspace",
+            f"workspace must be one of {', '.join(store.WORKSPACE_FILTERS)}",
+        )
+    search = _arg_optional_str(arguments, "search")
+    limit = _arg_optional_int(arguments, "limit", store.DEFAULT_ANALYSIS_LIMIT)
+    with contextlib.closing(_open()) as conn:
+        rows = store.list_analyses(
+            conn,
+            status=status or None,
+            search=search or None,
+            workspace=workspace or None,
+            limit=limit,
+        )
+        total = store.count_analyses(conn)
+    return {"analyses": rows, "count": len(rows), "total": total}
+
+
 def _tool_get_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
     analysis_id = _arg_int(arguments, "analysis_id")
     with contextlib.closing(_open()) as conn:
@@ -7097,6 +7123,21 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _READ,
             _tool_list_notifications,
+        ),
+        Tool(
+            "list_analyses",
+            "List analyses with their binary, status and scope; `workspace` reads the owning"
+            " binary's scope as personal (no owning team), team or public.",
+            _object(
+                {
+                    "status": _enum("Keep only this status.", store.ANALYSIS_STATUSES),
+                    "workspace": _enum("Keep only this scope.", store.WORKSPACE_FILTERS),
+                    "search": _str("Match the binary name or the engine label."),
+                    "limit": _int(f"Most rows to return (default {store.DEFAULT_ANALYSIS_LIMIT})."),
+                }
+            ),
+            _READ,
+            _tool_list_analyses,
         ),
         Tool(
             "get_analysis",

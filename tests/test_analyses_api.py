@@ -7,9 +7,10 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import analysis_log, journal, store
+from reportal import analysis_log, auth, journal, store
 
 
 def _seed(conn: sqlite3.Connection) -> dict[str, int]:
@@ -417,3 +418,85 @@ class TestBytes:
 
         assert status.startswith("404")
         assert json_body(payload, headers)["error"] == "binary not on disk"
+
+
+class TestWorkspaceFilter:
+    def _analyse(self, conn: sqlite3.Connection, *, team: bool, index: int = 0) -> int:
+        """One binary (optionally owned by a team) with an analysis.
+
+        Each call registers its own binary, because the hash is the register's
+        identity: two calls with one hash would be one binary.
+        """
+        team_id = 0
+        if team:
+            user, _token = auth.add_user(conn, name=f"owner{index}", role="admin")
+            team_id = int(auth.create_team(conn, name=f"team{index}")["id"])
+            auth.add_member(conn, team_id, int(user["id"]))
+        binary_id = store.add_binary(conn, sha256=f"{index:02d}" * 32, name=f"demo{index}.exe")
+        if team:
+            store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+        return store.create_analysis(conn, binary_id=binary_id, engine="manual")
+
+    def test_the_listing_carries_the_binary_scope(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, team=True, index=5)
+        status, headers, body = wsgi_request("GET", "/api/analyses")
+        assert status.startswith("200"), body
+        row = json_body(body, headers)["analyses"][0]
+        assert row["visibility"] == "team"
+        assert row["owner_team_name"] == "team5"
+
+    def test_the_workspace_filter_selects_one_scope(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, team=False, index=1)
+        self._analyse(conn, team=True, index=2)
+        personal, headers, body = wsgi_request("GET", "/api/analyses?workspace=personal")
+        assert personal.startswith("200"), body
+        assert json_body(body, headers)["count"] == 1
+        assert json_body(body, headers)["analyses"][0]["owner_team_id"] is None
+
+        team, headers, body = wsgi_request("GET", "/api/analyses?workspace=team")
+        assert json_body(body, headers)["count"] == 1
+        assert json_body(body, headers)["analyses"][0]["owner_team_name"] == "team2"
+
+        # A team-scoped object is not public, so the public filter keeps the other.
+        public, headers, body = wsgi_request("GET", "/api/analyses?workspace=public")
+        assert json_body(body, headers)["count"] == 1
+        assert json_body(body, headers)["analyses"][0]["owner_team_id"] is None
+
+    def test_an_unknown_workspace_is_400(self) -> None:
+        status, headers, body = wsgi_request("GET", "/api/analyses?workspace=nonsense")
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid workspace"
+
+    def test_the_store_refuses_an_unknown_filter(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError):
+            store.list_analyses(conn, workspace="nonsense")
+
+    def test_the_cli_and_the_tool(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        from typer.testing import CliRunner
+
+        from reportal import cli, mcp_server
+
+        self._analyse(conn, team=False, index=1)
+        self._analyse(conn, team=True, index=2)
+        runner = CliRunner()
+        payload = json.loads(
+            runner.invoke(cli.app, ["analyses", "--workspace", "team", "--json"]).output
+        )
+        assert payload["count"] == 1
+        assert payload["analyses"][0]["owner_team_name"] == "team2"
+
+        listed = runner.invoke(cli.app, ["analyses"])
+        assert listed.exit_code == 0, listed.output
+        assert "personal" in listed.output
+
+        bad = runner.invoke(cli.app, ["analyses", "--workspace", "nonsense"])
+        assert bad.exit_code == 1
+        assert "unknown workspace" in bad.output
+
+        found, failed = mcp_server.call_tool("list_analyses", {"workspace": "team"})
+        assert not failed, found
+        assert found["count"] == 1
+
+        refused, failed = mcp_server.call_tool("list_analyses", {"workspace": "nonsense"})
+        assert failed
+        assert refused["error"] == "invalid workspace"

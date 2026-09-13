@@ -285,6 +285,9 @@ export const ANALYSIS_STATUSES = [
 // Sort orders the analyses listing accepts; mirrors store.ANALYSIS_ORDERS.
 export const ANALYSIS_ORDERS = ["newest", "oldest"] as const;
 
+/** The workspace filter's labels; mirrors store.WORKSPACE_FILTERS. */
+export const ANALYSIS_WORKSPACES = ["personal", "team", "public"] as const;
+
 // Rows one analyses request asks for; mirrors store.DEFAULT_ANALYSIS_LIMIT.
 export const DEFAULT_ANALYSIS_LIMIT = 100;
 

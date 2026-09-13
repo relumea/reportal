@@ -6133,17 +6133,28 @@ def conversation_run_events(conversation_id: int, request: Request) -> Response:
 
 @router.get("/api/analyses")
 def list_analyses(request: Request) -> Response:
-    """Analyses with their binary, filtered by ``?status=`` and ``?search=``.
+    """Analyses with their binary and scope, filtered by status, search and workspace.
 
     ``?order=`` is one of :data:`reportal.store.ANALYSIS_ORDERS` and
     ``?limit=`` is bounded by :data:`reportal.store.MAX_ANALYSIS_LIMIT`; an
     unknown value is a 400.  ``total`` counts every analysis (or the binary's,
     with ``?binary_id=``) before the filters, so a filter that matched nothing
     says so instead of looking like an empty project.
+
+    ``?workspace=`` is one of :data:`reportal.store.WORKSPACE_FILTERS` and reads
+    the owning binary's scope the way the hosted portal's three controls do: an
+    object no team owns (`personal`), one a team does (`team`), or one the whole
+    workspace may see (`public`).  Each row carries its binary's `visibility`,
+    `owner_team_id` and `owner_team_name`, and the scope is written through
+    `PATCH /api/binaries/<id>/scope`, because the binary is the object reportal
+    stores a team on.
     """
     status = _query_text(request, "status")
     if status is not None and status not in store.ANALYSIS_STATUSES:
         return _invalid_query("status", status, store.ANALYSIS_STATUSES)
+    workspace = _query_text(request, "workspace")
+    if workspace is not None and workspace not in store.WORKSPACE_FILTERS:
+        return _invalid_query("workspace", workspace, store.WORKSPACE_FILTERS)
     order = _query_text(request, "order") or store.DEFAULT_ANALYSIS_ORDER
     if order not in store.ANALYSIS_ORDERS:
         return _invalid_query("order", order, store.ANALYSIS_ORDERS)
@@ -6161,6 +6172,7 @@ def list_analyses(request: Request) -> Response:
             binary_id=binary_id,
             status=status,
             search=_query_text(request, "search"),
+            workspace=workspace,
             order=order,
             limit=limit,
         )

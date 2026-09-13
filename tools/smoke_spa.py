@@ -628,6 +628,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("View log",),
             ("notepad.exe",),
             ("single-user loopback",),
+            # The owner and scope columns and the workspace filter.
+            ("Workspace",),
+            ("Seen by",),
         ),
     ),
     (
