@@ -2701,6 +2701,120 @@ def _external_failure(exc: external.ExternalError) -> ToolError:
     return ToolError(exc.code, exc.detail)
 
 
+def _tool_get_signature_batch(arguments: dict[str, Any]) -> dict[str, Any]:
+    raw = arguments.get("function_ids")
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or len(raw) > signatures.BATCH_LIMIT
+        or any(isinstance(entry, bool) or not isinstance(entry, int) for entry in raw)
+    ):
+        raise ToolError(
+            "invalid params",
+            f"function_ids must be a non-empty list of at most {signatures.BATCH_LIMIT} ids",
+        )
+    ids = [int(entry) for entry in raw]
+    with contextlib.closing(_open()) as conn:
+        rows = signatures.signatures_for(conn, ids)
+    return {"signatures": rows, "count": len(rows)}
+
+
+def _tool_copy_signature(arguments: dict[str, Any]) -> dict[str, Any]:
+    source_id = _arg_int(arguments, "source_function_id")
+    raw = arguments.get("targets")
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or len(raw) > signatures.BATCH_LIMIT
+        or any(isinstance(entry, bool) or not isinstance(entry, int) for entry in raw)
+    ):
+        raise ToolError(
+            "invalid params",
+            f"targets must be a non-empty list of at most {signatures.BATCH_LIMIT} ids",
+        )
+    targets = [int(entry) for entry in raw]
+    with contextlib.closing(_open()) as conn:
+        source = _require_function(conn, source_id)
+        analysis_id = int(source["analysis_id"])
+        members = {int(row["id"]) for row in store.list_functions(conn, analysis_id=analysis_id)}
+        outsiders = [target for target in targets if target not in members]
+        if outsiders:
+            raise ToolError(
+                "function not found",
+                f"function(s) {outsiders} are not in analysis {analysis_id}",
+            )
+        with journal.journaled(conn, journal.new_action()) as log:
+            report: dict[str, Any] = {
+                "source_function_id": source_id,
+                "targets": targets,
+                "applied": [],
+                "skipped": [],
+                "count": 0,
+            }
+            for target in targets:
+                try:
+                    result = surface.journaled_signature_write(
+                        conn,
+                        log,
+                        target,
+                        f"copied the signature of function {source_id} onto function {target}",
+                        partial(
+                            signatures.copy_signature,
+                            conn,
+                            source_id=source_id,
+                            targets=[target],
+                        ),
+                    )
+                except signatures.SignatureError as exc:
+                    report["skipped"].append({"function_id": target, "reason": str(exc)})
+                    continue
+                if result["applied"]:
+                    report["applied"].append(target)
+                else:
+                    report["skipped"].extend(result["skipped"])
+            report["count"] = len(report["applied"])
+            return log.attach(report)
+
+
+def _tool_import_type_definitions(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    raw = arguments.get("definitions")
+    if (
+        not isinstance(raw, list)
+        or not raw
+        or len(raw) > data_types.MAX_BULK_DEFINITIONS
+        or any(not isinstance(entry, str) for entry in raw)
+    ):
+        raise ToolError(
+            "invalid params",
+            f"definitions must be a non-empty list of at most"
+            f" {data_types.MAX_BULK_DEFINITIONS} C declarations",
+        )
+    create = not _arg_optional_bool(arguments, "update_only", False)
+    with contextlib.closing(_open()) as conn:
+        analysis = _analysis_or_error(conn, analysis_id)
+        binary_id = int(analysis["binary_id"])
+        with journal.journaled(conn, journal.new_action()) as log:
+            report = surface.bulk_data_type_definitions(
+                conn, log, binary_id=binary_id, definitions=list(raw), create=create
+            )
+            return log.attach(report)
+
+
+def _tool_get_data_type_functions(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    data_type_id = _arg_int(arguments, "data_type_id")
+    with contextlib.closing(_open()) as conn:
+        analysis = _analysis_or_error(conn, analysis_id)
+        data_type = store.get_data_type(conn, data_type_id)
+        if data_type is None or int(data_type["binary_id"]) != int(analysis["binary_id"]):
+            raise ToolError(
+                "data type not found",
+                f"no data type {data_type_id} in analysis {analysis_id}",
+            )
+        return data_types.references(conn, data_type_id)
+
+
 def _tool_list_external_sources(arguments: dict[str, Any]) -> dict[str, Any]:
     return external.describe()
 
@@ -6536,6 +6650,59 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_append_analysis_log,
+        ),
+        Tool(
+            "get_signature_batch",
+            "Signatures for many functions in one read, in the order the ids were given; a"
+            " function with none reports null.",
+            _object(
+                {
+                    "function_ids": _array("Function ids to read.", _int("Function id.")),
+                },
+                ("function_ids",),
+            ),
+            _READ,
+            _tool_get_signature_batch,
+        ),
+        Tool(
+            "get_data_type_functions",
+            "The functions that use one data type of an analysis's binary, from the stored"
+            " reference index.",
+            _object(
+                {"analysis_id": _ANALYSIS_ID, "data_type_id": _int("Data type id.")},
+                ("analysis_id", "data_type_id"),
+            ),
+            _READ,
+            _tool_get_data_type_functions,
+        ),
+        Tool(
+            "copy_signature",
+            "Copy one function's signature onto others in the same analysis, journaling each"
+            " target's previous signature and history.",
+            _object(
+                {
+                    "source_function_id": _FUNCTION_ID,
+                    "targets": _array("Function ids to copy it onto.", _int("Function id.")),
+                },
+                ("source_function_id", "targets"),
+            ),
+            _WRITE,
+            _tool_copy_signature,
+        ),
+        Tool(
+            "import_type_definitions",
+            "Create or update data types for an analysis's binary from C declarations, parsing"
+            " each with the structs-import parser; update_only refuses a new type.",
+            _object(
+                {
+                    "analysis_id": _ANALYSIS_ID,
+                    "definitions": _array("C declarations.", _str("A C declaration.")),
+                    "update_only": _bool("Refuse a declaration whose type is not stored yet."),
+                },
+                ("analysis_id", "definitions"),
+            ),
+            _WRITE,
+            _tool_import_type_definitions,
         ),
         Tool(
             "list_external_sources",

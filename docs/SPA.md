@@ -358,7 +358,13 @@ panel (the settings **API Key** tab): the stored credentials with their scope,
 team, byte length and last-four hint, a form that stores or replaces one (name,
 value, scope and team) or removes a row, and a password-typed value field; it
 reads `GET /api/secrets` and writes `PUT`/`DELETE /api/secrets/<name>`, and it
-never renders a value because no response carries one.  The External view
+never renders a value because no response carries one.  The signature panel carries a copy control: comma-separated target ids and
+Copy signature, posting to `POST /api/analyses/<id>/signatures/copy` with the
+panel's function as the source, and reporting how many targets took the copy.
+The data types panel carries a declaration box with Create from declarations and
+Update from declarations, posting the pasted C to `POST` or `PUT
+/api/analyses/<id>/data-types` for the binary's latest analysis (the route is
+analysis-scoped) and rendering the created/updated/skipped counts.  The External view
 (Analysis group) lists the external-source registry with each source's kind and
 availability and the two switches behind a remote one, and carries a pull form
 (analysis id and source, with Pull posting to `POST

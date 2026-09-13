@@ -4076,6 +4076,30 @@ def get_binary_additional_details_status(binary_id: int) -> Response:
 # ── Functions ──────────────────────────────────────────────────────
 
 
+@router.get("/api/functions/signatures")
+def get_function_signatures(request: Request) -> Response:
+    """Signatures for many functions in one read, in the order the ids were given.
+
+    The query is ``?ids=1,2,3`` (bounded by :data:`_BATCH_ID_LIMIT`).  A
+    function with no signature yet reports ``null`` and one the store does not
+    know reports ``found: false``, so a caller can tell the two apart; nothing
+    is computed and no engine runs.
+    """
+    ids = _id_list(request, "ids")
+    if ids is None:
+        return json_error(
+            400,
+            error="invalid ids",
+            detail=f"ids must be a comma-separated list of at most {_BATCH_ID_LIMIT} integers",
+        )
+    if not ids:
+        return json_error(400, error="invalid ids", detail="ids must name at least one function")
+    with contextlib.closing(_open()) as conn:
+        seen = [function_id for function_id in ids if store.get_function(conn, function_id)]
+        rows = signatures.signatures_for(conn, ids)
+    return json_response({"signatures": rows, "count": len(rows), "found": len(seen)})
+
+
 @router.get("/api/functions/{function_id}")
 def get_function(function_id: int) -> Response:
     with contextlib.closing(_open()) as conn:
@@ -7866,6 +7890,236 @@ def job_events(job_id: int) -> Response:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Data types and signatures, in bulk ─────────────────────────────
+#
+# The hosted bulk halves: copy one function's signature onto many, create or
+# update an analysis's types from caller-supplied definitions, read many
+# signatures at once and read the functions that use one type.  Each write is
+# journaled through the shared surface helper, so one action covers the batch
+# and a revert puts every row back.
+
+
+# The bound every bulk read and write shares: a batch is a caller's list, not a
+# corpus dump, so an id list or a definition list past this is a 400.
+_BATCH_ID_LIMIT = 200
+MAX_BULK_TYPE_DEFINITIONS = 100
+
+
+def _id_list(request: Request, name: str) -> list[int] | None:
+    """Parse a comma-separated id query parameter, or None when it is unusable."""
+    raw = request.query_params.get(name)
+    if raw is None:
+        return None
+    text = raw.strip()
+    if not text:
+        return []
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) > _BATCH_ID_LIMIT:
+        return None
+    ids: list[int] = []
+    for part in parts:
+        if not part.isdigit():
+            return None
+        ids.append(int(part))
+    return ids
+
+
+def _definition_list(body: dict[str, Any]) -> list[Any] | None:
+    """The ``types`` a bulk data-type route carries, or None when unusable.
+
+    A single string is accepted as a whole C header and split into its top-level
+    declarations server-side, so a caller does not have to know where a struct
+    ends; a list is taken as the declarations it is.
+    """
+    raw = body.get("types")
+    if isinstance(raw, str):
+        raw = data_types.split_definitions(raw)
+    if not isinstance(raw, list) or not raw:
+        return None
+    if len(raw) > MAX_BULK_TYPE_DEFINITIONS:
+        return None
+    if any(not isinstance(entry, (str, dict)) for entry in raw):
+        return None
+    return raw
+
+
+@router.post("/api/analyses/{analysis_id}/signatures/copy")
+def copy_analysis_signatures(
+    analysis_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Copy one function's signature onto many in the same analysis; journaled.
+
+    The body is ``{"source_function_id": int, "targets": [int, ...]}``.  A
+    target that is the source, is unknown, or cannot take the copy is skipped
+    with its reason and keeps its signature; the whole batch is one action.
+    """
+    raw_source = body.get("source_function_id")
+    if isinstance(raw_source, bool) or not isinstance(raw_source, int):
+        return json_error(
+            400, error="invalid source", detail="source_function_id must be an integer"
+        )
+    raw_targets = body.get("targets")
+    if not isinstance(raw_targets, list) or not raw_targets:
+        return json_error(400, error="invalid targets", detail="targets must be a non-empty list")
+    if len(raw_targets) > _BATCH_ID_LIMIT or any(
+        isinstance(entry, bool) or not isinstance(entry, int) for entry in raw_targets
+    ):
+        return json_error(
+            400,
+            error="invalid targets",
+            detail=f"targets must be at most {_BATCH_ID_LIMIT} function ids",
+        )
+    targets = [int(entry) for entry in raw_targets]
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        function_ids = {
+            int(row["id"]) for row in store.list_functions(conn, analysis_id=analysis_id)
+        }
+        if int(raw_source) not in function_ids:
+            return json_error(
+                404,
+                error="function not found",
+                detail=f"function {raw_source} is not in analysis {analysis_id}",
+            )
+        outsiders = [target for target in targets if target not in function_ids]
+        if outsiders:
+            return json_error(
+                404,
+                error="function not found",
+                detail=f"function(s) {outsiders} are not in analysis {analysis_id}",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report: dict[str, Any] = {
+                "source_function_id": int(raw_source),
+                "targets": targets,
+                "applied": [],
+                "skipped": [],
+                "count": 0,
+            }
+
+            def _copy(target: int) -> dict[str, Any]:
+                return signatures.copy_signature(conn, source_id=int(raw_source), targets=[target])
+
+            for target in targets:
+                try:
+                    result = _journal_signature_write(
+                        conn,
+                        log,
+                        target,
+                        f"copied the signature of function {raw_source} onto function {target}",
+                        partial(_copy, target),
+                    )
+                except signatures.SignatureError as exc:
+                    report["skipped"].append({"function_id": target, "reason": str(exc)})
+                    continue
+                if result["applied"]:
+                    report["applied"].append(target)
+                else:
+                    report["skipped"].extend(result["skipped"])
+            report["count"] = len(report["applied"])
+    return json_response(log.attach(report))
+
+
+@router.post("/api/analyses/{analysis_id}/data-types")
+def create_analysis_data_types(
+    analysis_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Create data types for an analysis's binary from C definitions; journaled.
+
+    The body is ``{"types": ["typedef struct {...} Foo;", ...]}`` (an entry may
+    also be an object carrying its declaration under ``definition``).  Each
+    definition is parsed by the same parser the structs import uses; an
+    unusable one is skipped with its reason rather than guessed at, and the
+    batch is one journaled action, one entry per type.
+    """
+    definitions = _definition_list(body)
+    if definitions is None:
+        return json_error(
+            400,
+            error="invalid types",
+            detail=(
+                f"types must be a non-empty list of at most {MAX_BULK_TYPE_DEFINITIONS} definitions"
+            ),
+        )
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        binary_id = int(analysis["binary_id"])
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report = surface.bulk_data_type_definitions(
+                conn, log, binary_id=binary_id, definitions=definitions, create=True
+            )
+    return json_response(log.attach(report))
+
+
+@router.put("/api/analyses/{analysis_id}/data-types")
+def update_analysis_data_types(
+    analysis_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Update an analysis's existing data types from C definitions; journaled.
+
+    The same body as the bulk create, but a definition naming a type the binary
+    does not carry is skipped ``no stored type named ...`` rather than created,
+    which is what makes this the update half of the hosted pair.
+    """
+    definitions = _definition_list(body)
+    if definitions is None:
+        return json_error(
+            400,
+            error="invalid types",
+            detail=(
+                f"types must be a non-empty list of at most {MAX_BULK_TYPE_DEFINITIONS} definitions"
+            ),
+        )
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        binary_id = int(analysis["binary_id"])
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report = surface.bulk_data_type_definitions(
+                conn, log, binary_id=binary_id, definitions=definitions, create=False
+            )
+    return json_response(log.attach(report))
+
+
+@router.get("/api/analyses/{analysis_id}/data-types/{data_type_id}/functions")
+def get_data_type_functions(analysis_id: int, data_type_id: int) -> Response:
+    """The functions that use one data type, from the stored reference index.
+
+    The type must belong to the analysis's binary; the payload is the reference
+    report the `/api/data-types/<id>/references` route serves, so the two cannot
+    disagree about who uses a type.
+    """
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        data_type = store.get_data_type(conn, data_type_id)
+        if data_type is None or int(data_type["binary_id"]) != int(analysis["binary_id"]):
+            return json_error(
+                404,
+                error="data type not found",
+                detail=f"no data type {data_type_id} in analysis {analysis_id}",
+            )
+        report = data_types.references(conn, data_type_id)
+    return json_response(report)
 
 
 # ── Models ─────────────────────────────────────────────────────────

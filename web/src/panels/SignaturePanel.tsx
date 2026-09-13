@@ -10,6 +10,7 @@ import {
   ErrorNote,
   Field,
   Loading,
+  Note,
   Panel,
   Toolbar,
 } from "../components";
@@ -22,7 +23,13 @@ const NO_SIGNATURE_HINT =
   "No signature stored for this function. Import signatures from the binary detail view.";
 
 /** The signature model of one function: head edit, parameter table, add and remove. */
-export function SignaturePanel({ functionId }: { functionId: number }): ReactNode {
+export function SignaturePanel({
+  functionId,
+  analysisId,
+}: {
+  functionId: number;
+  analysisId: number;
+}): ReactNode {
   const key = panelKey("fn", functionId, "signature");
   const loader = (): Promise<FunctionSignatureDetail> =>
     api<FunctionSignatureDetail>(`/functions/${functionId}/signature`);
@@ -52,7 +59,74 @@ export function SignaturePanel({ functionId }: { functionId: number }): ReactNod
       subtitle="Seeded from the stored decompilation; edits are stored locally."
     >
       {body}
+      <SignatureCopy
+        functionId={functionId}
+        analysisId={analysisId}
+        onCopied={() => refreshPanel(key, loader)}
+      />
     </Panel>
+  );
+}
+
+/** Copy this function's signature onto others in the same analysis. */
+function SignatureCopy({
+  functionId,
+  analysisId,
+  onCopied,
+}: {
+  functionId: number;
+  analysisId: number;
+  onCopied: () => void;
+}): ReactNode {
+  const [targets, setTargets] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [note, setNote] = useState("");
+
+  const copy = (): void => {
+    const ids = targets
+      .split(",")
+      .map((part) => Number(part.trim()))
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (!ids.length) {
+      setNote("Name at least one function id.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNote("");
+    api<{ count: number; skipped: Array<{ function_id: number; reason: string }> }>(
+      `/analyses/${analysisId}/signatures/copy`,
+      { method: "POST", json: { source_function_id: functionId, targets: ids } },
+    )
+      .then((result) => {
+        setNote(
+          `Copied onto ${result.count} of ${ids.length} function(s)` +
+            (result.skipped.length ? `, ${result.skipped.length} skipped` : ""),
+        );
+        setTargets("");
+        onCopied();
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <>
+      <Toolbar>
+        <Field
+          label="Copy to"
+          hint="Comma-separated function ids in this analysis."
+        >
+          <input value={targets} onChange={(event) => setTargets(event.target.value)} />
+        </Field>
+        <Button tone="primary" pending={busy} onClick={copy}>
+          Copy signature
+        </Button>
+      </Toolbar>
+      {error ? <ErrorNote error={error} /> : null}
+      {note ? <Note>{note}</Note> : null}
+    </>
   );
 }
 

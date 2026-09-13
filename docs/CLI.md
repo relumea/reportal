@@ -93,6 +93,19 @@ reportal ai-line-comment-add <function-id> <line> <body> [--author NAME] [--json
 reportal ai-line-comment-edit <function-id> <line> <body> [--json]
 reportal ai-line-comment-rm <function-id> <line> [--json]
                                            # add, edit or remove the comment stored at a line
+reportal signatures-batch <function-id>... [--json]
+                                           # signatures for many functions in one read, in the
+                                           #   order the ids were given (at most 200)
+reportal signature-copy <analysis-id> <source-id> <target-id>... [--json]
+                                           # copy one function's signature onto others in the
+                                           #   analysis, journaled per target
+reportal data-types-import <analysis-id> [--definition DECL]... [--file PATH] [--update-only] [--json]
+                                           # create or update types from C declarations; a struct
+                                           #   may span lines, and --update-only refuses a name
+                                           #   the binary does not carry yet
+reportal data-type-functions <analysis-id> <data-type-id> [--json]
+                                           # the functions that use one data type, from the
+                                           #   stored reference index
 reportal external-sources [--json]          # the external-source registry, with each
                                            #   source's kind and availability
 reportal external <analysis-id> [--source NAME] [--json]

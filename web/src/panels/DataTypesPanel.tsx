@@ -25,6 +25,7 @@ import {
   DEFAULT_DECOMPILER_BACKEND,
 } from "../constants";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
+import { useAsync } from "../useAsync";
 import type {
   DataType,
   DataTypeChange,
@@ -116,6 +117,9 @@ export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [prototypeResult, setPrototypeResult] = useState<SignatureExportResult | null>(null);
   const [prototypeError, setPrototypeError] = useState<unknown>(null);
   const [prototypeForceNeeded, setPrototypeForceNeeded] = useState(false);
+  const [declarations, setDeclarations] = useState("");
+  const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkError, setBulkError] = useState<unknown>(null);
 
   // The list filter is the API's own: the query string names the kind, the
   // namespace path and the search needle, so one mechanism decides what a
@@ -157,6 +161,41 @@ export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
       .catch((error: unknown) => {
         setActionError(error);
       })
+      .finally(() => setBusy(""));
+  };
+
+  // The bulk route is analysis-scoped (the hosted one is), so the panel reads
+  // the binary's latest analysis id rather than guessing one.
+  const analyses = useAsync(
+    () => api<{ analyses: Array<{ id: number }> }>(`/analyses?binary_id=${binaryId}&limit=1`),
+    [binaryId],
+  );
+
+  const bulkTypes = (create: boolean): void => {
+    const analysisId = analyses.data?.analyses?.[0]?.id;
+    if (analysisId === undefined) {
+      setBulkError(new Error("no analysis for this binary yet"));
+      return;
+    }
+    if (!declarations.trim()) {
+      setBulkError(new Error("paste at least one declaration"));
+      return;
+    }
+    setBulkError(null);
+    setBulkStatus("");
+    setBusy(create ? "bulk-create" : "bulk-update");
+    api<{ created: number; updated: number; skipped: number }>(
+      `/analyses/${analysisId}/data-types`,
+      { method: create ? "POST" : "PUT", json: { types: declarations } },
+    )
+      .then((result) => {
+        setBulkStatus(
+          `created ${result.created}, updated ${result.updated}, skipped ${result.skipped}`,
+        );
+        setDeclarations("");
+        refreshPanel(typesKey, loadTypes);
+      })
+      .catch((error: unknown) => setBulkError(error))
       .finally(() => setBusy(""));
   };
 
@@ -251,6 +290,12 @@ export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
           <Button pending={busy === "import"} onClick={importFromScan}>
             Import from scan
           </Button>
+          <Button pending={busy === "bulk-create"} onClick={() => bulkTypes(true)}>
+            Create from declarations
+          </Button>
+          <Button pending={busy === "bulk-update"} onClick={() => bulkTypes(false)}>
+            Update from declarations
+          </Button>
           <Field label="Export header">
             <input
               type="text"
@@ -284,6 +329,18 @@ export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
       ) : (
         <Muted>The type model is stored locally; import seeds it from the stored structs scan.</Muted>
       )}
+      <Field
+        label="Declarations"
+        hint="C declarations; a struct may span lines and the server splits them."
+      >
+        <textarea
+          rows={4}
+          value={declarations}
+          onChange={(event) => setDeclarations(event.target.value)}
+        />
+      </Field>
+      {bulkError ? <ErrorNote error={bulkError} /> : null}
+      {bulkStatus ? <Badge hue="match">{bulkStatus}</Badge> : null}
       {status ? <Badge hue="match">{status}</Badge> : null}
       {signatureStatus ? <Badge hue="match">{signatureStatus}</Badge> : null}
       {actionError ? <ErrorNote error={actionError} /> : null}

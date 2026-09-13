@@ -153,6 +153,9 @@ SOURCE_REVERT = "revert"
 # Actor recorded on a history row when the caller does not name one.
 DEFAULT_ACTOR = "manual"
 
+# Most definitions one bulk create or update accepts in a single call.
+MAX_BULK_DEFINITIONS = 100
+
 # The model fields a history entry diffs, in the order a listing renders them.
 # ``source`` is recorded in the state (a revert restores it) but is not a model
 # field, so it is not part of the diff a reader sees.
@@ -1556,64 +1559,168 @@ def import_types(
     entries = stored.get("structs")
     entries = entries if isinstance(entries, list) else []
 
+    report = import_definitions(conn, binary_id=binary_id, definitions=entries, source=SOURCE_SCAN)
+    return {
+        "binary_id": binary_id,
+        "created": report["created"],
+        "updated": report["updated"],
+        "skipped": report["skipped"],
+        "skipped_types": report["skipped_types"],
+    }
+
+
+def split_definitions(text: str) -> list[str]:
+    """Split a C header into its top-level declarations.
+
+    A semicolon inside braces belongs to a struct, union or enum member, so only
+    a ``;`` at brace depth zero ends a declaration; a ``//`` or ``/* */``
+    comment and a ``#`` preprocessor line are dropped, because neither is a
+    declaration the parser can use.  A trailing fragment without its semicolon
+    is dropped rather than guessed at.
+    """
+    declarations: list[str] = []
+    buffer: list[str] = []
+    depth = 0
+    index = 0
+    while index < len(text):
+        char = text[index]
+        pair = text[index : index + 2]
+        if pair == "//":
+            end = text.find("\n", index)
+            index = len(text) if end < 0 else end + 1
+            continue
+        if pair == "/*":
+            end = text.find("*/", index + 2)
+            index = len(text) if end < 0 else end + 2
+            continue
+        if char == "#" and not "".join(buffer).strip():
+            end = text.find("\n", index)
+            index = len(text) if end < 0 else end + 1
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth = max(0, depth - 1)
+        elif char == ";" and depth == 0:
+            candidate = "".join(buffer).strip()
+            if candidate:
+                declarations.append(f"{candidate};")
+            buffer = []
+            index += 1
+            continue
+        buffer.append(char)
+        index += 1
+    return declarations
+
+
+def apply_definition(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int,
+    definition: Any,
+    name_hint: str = "",
+    create: bool = True,
+    source: str = SOURCE_MANUAL,
+) -> tuple[str, str]:
+    """Create or update one type from a C definition; returns (outcome, detail).
+
+    The outcome is ``created``, ``updated`` or ``skipped`` and the detail names
+    the type or the reason.  *create* False refuses a definition whose name is
+    not stored yet, which is the bulk-update half of the hosted route.
+    """
+    if not isinstance(definition, str) or not definition.strip():
+        return "skipped", "no definition"
+    try:
+        parsed = parse_definition(definition)
+    except DefinitionError as exc:
+        return "skipped", str(exc)
+    name = str(parsed["name"])
+    try:
+        validate_identifier(name)
+    except InvalidIdentifierError as exc:
+        return "skipped", str(exc)
+    existing = store.find_data_type_by_name(conn, binary_id, name)
+    if existing is None:
+        if not create:
+            return "skipped", f"no stored type named {name!r}"
+        data_type_id = store.add_data_type(
+            conn,
+            binary_id=binary_id,
+            name=name,
+            size=parsed["size"],
+            members=parsed["members"],
+            kind=parsed["kind"],
+            values=parsed["values"],
+            target=parsed["target"],
+            element_count=parsed["element_count"],
+            source=source,
+        )
+        created_row = store.get_data_type(conn, data_type_id)
+        if created_row is not None:
+            _record(
+                conn,
+                data_type_id=data_type_id,
+                binary_id=binary_id,
+                previous=None,
+                current=_state(created_row),
+                source=source,
+            )
+        return "created", name
+    _save(
+        conn,
+        existing,
+        members=parsed["members"],
+        kind=parsed["kind"],
+        values=parsed["values"],
+        target=parsed["target"],
+        element_count=parsed["element_count"],
+        source=source,
+    )
+    return "updated", name
+
+
+def import_definitions(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int,
+    definitions: Sequence[Any],
+    create: bool = True,
+    source: str = SOURCE_MANUAL,
+) -> dict[str, Any]:
+    """Create or update types from caller-supplied C definitions.
+
+    This is the bulk half of the hosted `POST|PUT /v3/analyses/{id}/data-types`
+    route: *definitions* is a list of C declaration strings (or scan-shaped
+    objects carrying one under ``definition``), each applied in order, and the
+    report counts what each one did.  Nothing is inferred: an unusable
+    definition is skipped with its reason rather than guessed at.
+    """
     created = 0
     updated = 0
     skipped: list[dict[str, str]] = []
-    for entry in entries:
-        if not isinstance(entry, dict):
-            skipped.append({"name": "", "reason": "scan entry is not an object"})
+    applied: list[dict[str, str]] = []
+    for entry in definitions:
+        if isinstance(entry, dict):
+            definition = entry.get("definition")
+            hint = str(entry.get("name") or "")
+        else:
+            definition = entry
+            hint = ""
+        outcome, detail = apply_definition(
+            conn,
+            binary_id=binary_id,
+            definition=definition,
+            name_hint=hint,
+            create=create,
+            source=source,
+        )
+        if outcome == "skipped":
+            skipped.append({"name": hint or detail, "reason": detail})
             continue
-        definition = entry.get("definition")
-        if not isinstance(definition, str) or not definition.strip():
-            skipped.append({"name": str(entry.get("name") or ""), "reason": "no definition"})
-            continue
-        try:
-            parsed = parse_definition(definition)
-        except DefinitionError as exc:
-            skipped.append({"name": str(entry.get("name") or ""), "reason": str(exc)})
-            continue
-        name = parsed["name"]
-        try:
-            validate_identifier(name)
-        except InvalidIdentifierError as exc:
-            skipped.append({"name": name, "reason": str(exc)})
-            continue
-        existing = store.find_data_type_by_name(conn, binary_id, name)
-        if existing is None:
-            data_type_id = store.add_data_type(
-                conn,
-                binary_id=binary_id,
-                name=name,
-                size=parsed["size"],
-                members=parsed["members"],
-                kind=parsed["kind"],
-                values=parsed["values"],
-                target=parsed["target"],
-                element_count=parsed["element_count"],
-                source=SOURCE_SCAN,
-            )
-            created_row = store.get_data_type(conn, data_type_id)
-            if created_row is not None:
-                _record(
-                    conn,
-                    data_type_id=data_type_id,
-                    binary_id=binary_id,
-                    previous=None,
-                    current=_state(created_row),
-                    source=SOURCE_SCAN,
-                )
+        applied.append({"name": detail, "outcome": outcome})
+        if outcome == "created":
             created += 1
         else:
-            _save(
-                conn,
-                existing,
-                members=parsed["members"],
-                kind=parsed["kind"],
-                values=parsed["values"],
-                target=parsed["target"],
-                element_count=parsed["element_count"],
-                source=SOURCE_SCAN,
-            )
             updated += 1
     return {
         "binary_id": binary_id,
@@ -1621,6 +1728,7 @@ def import_types(
         "updated": updated,
         "skipped": len(skipped),
         "skipped_types": skipped,
+        "applied": applied,
     }
 
 

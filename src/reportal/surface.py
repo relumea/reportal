@@ -20,11 +20,11 @@ surface.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from reportal import engines, families, journal, lineage, store, threat
+from reportal import data_types, engines, families, journal, lineage, store, threat
 
 # ``fail(status, error, detail)``: build the exception a surface raises.
 Fail = Callable[[int, str, str], Exception]
@@ -141,6 +141,119 @@ def journaled_signature_write(
         description=f"signature history of function {function_id}",
     )
     return result
+
+
+def bulk_data_type_definitions(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    *,
+    binary_id: int,
+    definitions: Sequence[Any],
+    create: bool = True,
+) -> dict[str, Any]:
+    """Create or update many data types from C definitions in one action.
+
+    This is the shared bulk write path: the HTTP route, the CLI and the MCP tool
+    all call it, so the same definitions produce the same report and the same
+    revert.  An existing type goes through :func:`journaled_data_type_write`,
+    which snapshots the row it replaces and the history it appends; a create has
+    no id to snapshot yet, so it runs first and the row it added (with its
+    history) is journaled as new, which is what makes a revert delete it.
+    """
+    applied: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    for entry in definitions:
+        definition = entry.get("definition") if isinstance(entry, dict) else entry
+        hint = str(entry.get("name") or "") if isinstance(entry, dict) else ""
+        name = _definition_name(definition)
+        existing = None if not name else store.find_data_type_by_name(conn, binary_id, name)
+        if existing is not None:
+
+            def _update(definition: Any = definition, hint: str = hint) -> dict[str, Any]:
+                outcome, detail = data_types.apply_definition(
+                    conn,
+                    binary_id=binary_id,
+                    definition=definition,
+                    name_hint=hint,
+                    create=True,
+                )
+                return {"outcome": outcome, "detail": detail}
+
+            try:
+                row = journaled_data_type_write(
+                    conn,
+                    log,
+                    int(existing["id"]),
+                    f"updated data type {existing['id']} in bulk",
+                    _update,
+                )
+            except data_types.DataTypeError as exc:
+                skipped.append({"name": hint or str(name), "reason": str(exc)})
+                continue
+            if row["outcome"] == "skipped":
+                skipped.append({"name": hint or str(row["detail"]), "reason": str(row["detail"])})
+                continue
+            applied.append({"name": str(row["detail"]), "outcome": "updated"})
+            continue
+        try:
+            outcome, detail = data_types.apply_definition(
+                conn,
+                binary_id=binary_id,
+                definition=definition,
+                name_hint=hint,
+                create=create,
+            )
+        except data_types.DataTypeError as exc:
+            skipped.append({"name": hint or str(name), "reason": str(exc)})
+            continue
+        if outcome == "skipped":
+            skipped.append({"name": hint or str(detail), "reason": str(detail)})
+            continue
+        if outcome == "created":
+            created_row = store.find_data_type_by_name(conn, binary_id, str(detail))
+            if created_row is not None:
+                created_id = int(created_row["id"])
+                journal.journaled_new_rows(
+                    conn,
+                    log,
+                    table="data_types",
+                    where="id = ?",
+                    params=(created_id,),
+                    before=[],
+                    key=("id",),
+                    description=f"created data type {created_id} in bulk",
+                )
+                journal.journaled_new_rows(
+                    conn,
+                    log,
+                    table="data_type_history",
+                    where="data_type_id = ?",
+                    params=(created_id,),
+                    before=[],
+                    key=("id",),
+                    description=f"history of data type {created_id}",
+                )
+        applied.append({"name": str(detail), "outcome": outcome})
+    return {
+        "binary_id": binary_id,
+        "created": sum(1 for entry in applied if entry["outcome"] == "created"),
+        "updated": sum(1 for entry in applied if entry["outcome"] == "updated"),
+        "applied": applied,
+        "skipped": len(skipped),
+        "skipped_types": skipped,
+    }
+
+
+def _definition_name(definition: Any) -> str:
+    """The name one C declaration declares, or "" when it does not parse."""
+    if not isinstance(definition, str) or not definition.strip():
+        return ""
+    try:
+        parsed = data_types.parse_definition(definition)
+    except data_types.DefinitionError:
+        return ""
+    name = parsed.get("name")
+    return str(name) if name else ""
 
 
 def journaled_data_type_write(

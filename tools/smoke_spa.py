@@ -668,6 +668,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             (SMOKE_TYPE_MEMBER,),
             (SMOKE_TYPE_GAP,),
             (SMOKE_TYPE_SIZE_WARNING,),
+            # The bulk declaration controls the panel carries beside the scan
+            # import: creating and updating types from pasted C.
+            ("Create from declarations",),
+            ("Update from declarations",),
             ("Function triage",),
             (FUNCTION_TRIAGE_SUMMARY,),
             ("Crypto",),
@@ -737,6 +741,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Signature",),
             (SMOKE_SIGNATURE_PARAMETER,),
             ("bits 32",),
+            # The signature panel's bulk copy control.
+            ("Copy signature",),
             # The three reference tables replace the combined Xrefs panel.
             ("Globals",),
             ("Callers",),

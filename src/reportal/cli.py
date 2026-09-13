@@ -154,6 +154,7 @@ from reportal._paths import (
     project_root,
     reports_dir,
 )
+from reportal.surface import bulk_data_type_definitions as _bulk_data_types
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
 from reportal.surface import journaled_signature_write as _journal_signature_write
 
@@ -1169,6 +1170,194 @@ def analysis_update_command(
         typer.echo(json.dumps(log.attach(updated)))
         return
     console.print(f"analysis {analysis_id}: engine {updated.get('engine')}")
+
+
+@app.command("signatures-batch")
+def signatures_batch_command(
+    function_id: list[int] = typer.Argument(..., help="Function ids to read in one call"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Signatures for many functions in one read; never runs the engine."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if len(function_id) > signatures.BATCH_LIMIT:
+        _fail(f"at most {signatures.BATCH_LIMIT} function ids per call", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        rows = signatures.signatures_for(conn, function_id)
+    if json_output:
+        typer.echo(json.dumps({"signatures": rows, "count": len(rows)}))
+        return
+    table = Table(title="signatures", show_header=True, header_style="bold")
+    table.add_column("Function", justify="right", style="cyan")
+    table.add_column("Name", style="green")
+    table.add_column("Return", style="magenta")
+    table.add_column("Convention")
+    table.add_column("Parameters", justify="right")
+    for row in rows:
+        signature = row["signature"]
+        table.add_row(
+            str(row["function_id"]),
+            str(row.get("name") or ""),
+            "" if signature is None else str(signature["return_type"]),
+            "" if signature is None else str(signature["calling_convention"]),
+            "" if signature is None else str(len(signature["parameters"])),
+        )
+    console.print(table)
+
+
+@app.command("signature-copy")
+def signature_copy_command(
+    analysis_id: int = typer.Argument(..., help="Analysis the functions belong to"),
+    source_id: int = typer.Argument(..., help="Function whose signature is copied"),
+    target_id: list[int] = typer.Argument(..., help="Function ids to copy it onto"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Copy one function's signature onto others in the same analysis; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        members = {int(row["id"]) for row in store.list_functions(conn, analysis_id=analysis_id)}
+        if source_id not in members:
+            _fail(f"function {source_id} is not in analysis {analysis_id}", json_output)
+        outsiders = [target for target in target_id if target not in members]
+        if outsiders:
+            _fail(f"function(s) {outsiders} are not in analysis {analysis_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report: dict[str, Any] = {
+                "source_function_id": source_id,
+                "targets": list(target_id),
+                "applied": [],
+                "skipped": [],
+                "count": 0,
+            }
+            for target in target_id:
+                try:
+                    result = _journal_signature_write(
+                        conn,
+                        log,
+                        target,
+                        f"copied the signature of function {source_id} onto function {target}",
+                        partial(
+                            signatures.copy_signature, conn, source_id=source_id, targets=[target]
+                        ),
+                    )
+                except signatures.SignatureError as exc:
+                    report["skipped"].append({"function_id": target, "reason": str(exc)})
+                    continue
+                if result["applied"]:
+                    report["applied"].append(target)
+                else:
+                    report["skipped"].extend(result["skipped"])
+            report["count"] = len(report["applied"])
+    if json_output:
+        typer.echo(json.dumps(log.attach(report)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(
+        f"copied the signature of function {source_id} onto"
+        f" {report['count']} of {len(target_id)} function(s)"
+    )
+    for entry in report["skipped"]:
+        console.print(f"  skipped function {entry['function_id']}: {entry['reason']}")
+
+
+@app.command("data-types-import")
+def data_types_import_command(
+    analysis_id: int = typer.Argument(..., help="Analysis whose binary the types belong to"),
+    definition: list[str] = typer.Option([], "--definition", help="A C declaration; repeatable"),
+    file: str = typer.Option("", "--file", help="A file of declarations, one per line"),
+    update_only: bool = typer.Option(
+        False, "--update-only", help="Refuse a declaration whose type is not stored yet"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Create or update data types for an analysis's binary from C declarations.
+
+    Each declaration is parsed by the same parser the structs scan import uses;
+    an unusable one is skipped with its reason.  The whole batch is one
+    journaled action, so a revert removes the types it created.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    declarations = list(definition)
+    if file:
+        try:
+            text = Path(file).read_text(encoding="utf-8")
+        except OSError as exc:
+            _fail(f"cannot read {file}: {exc}", json_output)
+        declarations.extend(data_types.split_definitions(text))
+    if not declarations:
+        _fail("provide at least one --definition or a --file", json_output)
+    if len(declarations) > data_types.MAX_BULK_DEFINITIONS:
+        _fail(f"at most {data_types.MAX_BULK_DEFINITIONS} declarations per call", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        binary_id = int(analysis["binary_id"])
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report = _bulk_data_types(
+                conn,
+                log,
+                binary_id=binary_id,
+                definitions=declarations,
+                create=not update_only,
+            )
+    if json_output:
+        typer.echo(json.dumps(log.attach(report)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(
+        f"binary {binary_id}: {report['created']} created, {report['updated']} updated,"
+        f" {report['skipped']} skipped"
+    )
+    for entry in report["skipped_types"]:
+        console.print(f"  skipped {entry['name']}: {entry['reason']}")
+
+
+@app.command("data-type-functions")
+def data_type_functions_command(
+    analysis_id: int = typer.Argument(..., help="Analysis the type belongs to"),
+    data_type_id: int = typer.Argument(..., help="Data type whose users to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The functions that use one data type, from the stored reference index."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        data_type = store.get_data_type(conn, data_type_id)
+        if data_type is None or int(data_type["binary_id"]) != int(analysis["binary_id"]):
+            _fail(f"no data type {data_type_id} in analysis {analysis_id}", json_output)
+        report = data_types.references(conn, data_type_id)
+    if json_output:
+        typer.echo(json.dumps(report))
+        return
+    users = report.get("used_by_functions") or []
+    if not users:
+        console.print("[yellow]No function uses this type.[/yellow]")
+        return
+    table = Table(title=f"functions using {report.get('name', data_type_id)}")
+    table.add_column("Function", justify="right", style="cyan")
+    table.add_column("Name", style="green")
+    table.add_column("Relation")
+    for entry in users:
+        table.add_row(
+            str(entry.get("function_id", "")),
+            str(entry.get("name", "")),
+            ", ".join(str(usage) for usage in entry.get("usages") or []),
+        )
+    console.print(table)
 
 
 @app.command("external-sources")

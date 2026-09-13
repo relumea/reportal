@@ -68,7 +68,7 @@ export function FunctionDetail({ functionId }: { functionId: number }): ReactNod
   return (
     <>
       <FunctionHeader fn={fn} />
-      <SignaturePanel functionId={functionId} />
+      <SignaturePanel functionId={functionId} analysisId={fn.analysis_id} />
       <CodeSection functionId={functionId} />
       <DecompilationPanel functionId={functionId} />
       <ReferencesSection functionId={functionId} binaryId={fn.binary_id} />

@@ -202,6 +202,11 @@ their pages by the same rule.
 | `/api/functions/<id>/pipeline` | POST | run the AI decompilation component composition; body `{"disabled": [...]}` optional; 404 unknown function, 503 `pipeline-unavailable` only when the composition cannot be assembled (a skipped or failed stage is a step on the run) |
 | `/api/functions/<id>/pipeline` | GET | stored latest run with its steps and the function's durable artifacts; 404 `no-run` before the first run |
 | `/api/pipeline/runs/<id>` | GET | one pipeline run with its steps; 404 `run not found` |
+| `/api/functions/signatures` | GET | signatures for many functions in one read; `?ids=1,2,3` (at most 200), in the caller's order, with `signature: null` for a function that has none and `found: false` for an unknown id; 400 `invalid ids` |
+| `/api/analyses/<id>/signatures/copy` | POST | copy one function's signature onto others in the analysis; body `{"source_function_id", "targets"}`; journaled, with a per-target `applied`/`skipped` report; 400 `invalid source`/`invalid targets`, 404 unknown analysis or a function outside it |
+| `/api/analyses/<id>/data-types` | POST | create or update an analysis's data types from C declarations; body `{"types": [<declaration>...]}` or one header string, split at top-level semicolons; one journaled action with per-entry results; 400 `invalid types` |
+| `/api/analyses/<id>/data-types` | PUT | the same body, but a declaration whose type is not stored is skipped rather than created (the bulk update half) |
+| `/api/analyses/<id>/data-types/<data_type_id>/functions` | GET | the functions that use one type of the analysis's binary, from the stored reference index; 404 `data type not found` when the type belongs to another binary |
 | `/api/external/sources` | GET | the external-source registry: each source's name, kind, availability and reason, plus whether the remote gate is on and a VirusTotal key resolves |
 | `/api/analyses/<id>/external/<source>` | POST | run one source for the analysis and store its answer as the `external:<source>` scan; 403 `external-disabled`, 503 `external-unavailable`, 400 `no-content-hash`, 502 `external-fetch-failed`, 404 `unknown source`; journaled |
 | `/api/analyses/<id>/external/<source>` | GET | the stored answer of one source; 404 `no-scan` before the first pull |

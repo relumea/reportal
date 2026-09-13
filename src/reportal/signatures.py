@@ -99,6 +99,9 @@ SOURCE_REVERT = "revert"
 # Actor recorded on a history row when the caller does not name one.
 DEFAULT_ACTOR = "manual"
 
+# Most function ids one batch read accepts, so a listing cannot ask for the corpus.
+BATCH_LIMIT = 200
+
 # A C identifier; the model rejects anything else as a function or parameter
 # name.
 _IDENTIFIER_RE = re.compile(r"\A[A-Za-z_]\w*\Z")
@@ -540,10 +543,128 @@ def list_signatures(conn: sqlite3.Connection, *, binary_id: int) -> list[dict[st
     return [_signature_view(row) for row in store.list_signatures(conn, binary_id=binary_id)]
 
 
+def ensure_signature(conn: sqlite3.Connection, function_id: int) -> dict[str, Any]:
+    """Return the function's signature row, creating an empty one when it has none.
+
+    The setters need a row to edit; this is what a caller uses to start one, so
+    a copy onto a function that had no signature creates it rather than failing.
+    The empty row is not recorded as a history change: the first real edit
+    records the change from empty, which is what a reader expects to see.
+    """
+    row = store.get_signature(conn, function_id)
+    if row is not None:
+        return _load(conn, function_id)
+    function = store.get_function(conn, function_id)
+    if function is None:
+        raise UnknownSignatureError(f"no function with id {function_id}")
+    store.upsert_signature(
+        conn,
+        function_id=function_id,
+        name=str(function["name"]),
+        return_type="",
+        calling_convention="",
+        parameters=[],
+        source=SOURCE_MANUAL,
+    )
+    return _load(conn, function_id)
+
+
 def get_signature(conn: sqlite3.Connection, function_id: int) -> dict[str, Any] | None:
     """One function signature by its function id, or None."""
     row = store.get_signature(conn, function_id)
     return _signature_view(row) if row is not None else None
+
+
+def signatures_for(conn: sqlite3.Connection, function_ids: Sequence[int]) -> list[dict[str, Any]]:
+    """One row per requested function: its stored signature, or None for one.
+
+    This is the batch read the hosted `GET /v3/functions/signatures` serves: the
+    order is the caller's, a function with no signature yet reports ``null``,
+    and a function the store does not know is reported with ``found: false``
+    rather than omitted, so a caller can tell "no signature" from "no function".
+    """
+    rows: list[dict[str, Any]] = []
+    for function_id in function_ids:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            rows.append({"function_id": function_id, "found": False, "signature": None})
+            continue
+        rows.append(
+            {
+                "function_id": function_id,
+                "found": True,
+                "name": str(function["name"]),
+                "signature": get_signature(conn, function_id),
+            }
+        )
+    return rows
+
+
+def copy_signature(
+    conn: sqlite3.Connection,
+    *,
+    source_id: int,
+    targets: Sequence[int],
+) -> dict[str, Any]:
+    """Copy one function's signature onto each target; writes, journals nothing.
+
+    The caller journaled the action (``surface.journaled_signature_write``), so
+    this only writes.  A target that does not exist, is the source itself or
+    refuses a write is reported in ``skipped`` with its reason and keeps its
+    stored signature; a source with no signature is
+    :class:`UnknownSignatureError`.
+    """
+    source = get_signature(conn, source_id)
+    if source is None:
+        raise UnknownSignatureError(f"function {source_id} has no stored signature")
+    parameters = [
+        {
+            "type_text": str(parameter["type"]),
+            "name": str(parameter.get("name") or ""),
+            "at": parameter.get("at"),
+            "kind": parameter.get("kind"),
+            "bits": parameter.get("bits"),
+        }
+        for parameter in source["parameters"]
+    ]
+    applied: list[int] = []
+    skipped: list[dict[str, Any]] = []
+    for target in targets:
+        if int(target) == int(source_id):
+            skipped.append({"function_id": int(target), "reason": "the source function"})
+            continue
+        if store.get_function(conn, int(target)) is None:
+            skipped.append({"function_id": int(target), "reason": "not found"})
+            continue
+        try:
+            ensure_signature(conn, int(target))
+            delete_signature(conn, int(target))
+            ensure_signature(conn, int(target))
+            for parameter in parameters:
+                add_parameter(
+                    conn,
+                    int(target),
+                    type_text=str(parameter["type_text"]),
+                    name=str(parameter["name"]),
+                    at=parameter["at"],
+                    kind=parameter["kind"],
+                    bits=parameter["bits"],
+                )
+            set_return_type(conn, int(target), return_type=str(source["return_type"]))
+            set_calling_convention(
+                conn, int(target), calling_convention=str(source["calling_convention"])
+            )
+        except SignatureError as exc:
+            skipped.append({"function_id": int(target), "reason": str(exc)})
+            continue
+        applied.append(int(target))
+    return {
+        "source_function_id": int(source_id),
+        "targets": [int(target) for target in targets],
+        "applied": applied,
+        "skipped": skipped,
+        "count": len(applied),
+    }
 
 
 def set_return_type(
