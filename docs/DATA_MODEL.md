@@ -57,6 +57,15 @@ writes a journal row of kind `renames-applied` whose payload carries the
 previous decompilation text and backend, so `revert_renames` restores exactly
 that text and deletes the row.
 
+The notification feed (`notifications.py`) has no table: it derives its items
+from `journal_entries` (one item per action, described by the action's newest
+entry) and `analysis_log_entries` (one item per entry, joined to its binary),
+which is why nothing can drift from what those two wrote and why a dismissal is
+the client's to remember.  `journal.list_actions`/`count_actions` and
+`analysis_log.list_recent`/`count_recent` are the readers it uses; `since` is
+an inclusive ISO comparison so a poller never loses an item written in the same
+second as its watermark.
+
 `journal_entries` holds one row per recorded inverse of a request-scoped write
 (`action` groups the entries of one HTTP request or CLI invocation, `kind` the
 descriptor kind, `description`, `descriptor_json`, `created_at` and `status`

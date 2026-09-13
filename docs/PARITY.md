@@ -117,7 +117,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (141 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (142 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -335,7 +335,7 @@ write (deflate member, 12-byte header with the CRC check byte, the three-key
 stream cipher, verified by reading the archive back with `zipfile` plus the
 password, and refusing a wrong one).  `GET /api/binaries/<id>/download-zipped`,
 `reportal download --zip [--password]`, the `export_zipped_binary` MCP tool
-(141 tools: 67 read-only, 74 destructive) and a Zipped link in the binaries
+(142 tools: 68 read-only, 74 destructive) and a Zipped link in the binaries
 table expose it; the archive is deflated into a spooled temporary file so a
 256 MiB binary is never held whole, and the password is documented as a shared
 convention rather than a security measure.

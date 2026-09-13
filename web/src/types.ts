@@ -1866,6 +1866,35 @@ export interface DieInfo {
   sources: Record<string, DetailSource>;
 }
 
+/** One item of the notification feed, derived from the journal or the log. */
+export interface NotificationItem {
+  /** Stable per source row (or action); what a client keys its dismissal on. */
+  id: string;
+  kind: "action" | "log";
+  severity: "info" | "warn" | "error";
+  message: string;
+  at: string;
+  /** Journaled-action items only. */
+  action?: string;
+  status?: string;
+  entries?: number;
+  revertible?: boolean;
+  /** Analysis-log items only. */
+  analysis_id?: number;
+  binary_id?: number | null;
+  binary_name?: string | null;
+}
+
+/** The `GET /api/notifications` payload. */
+export interface NotificationsPayload {
+  notifications: NotificationItem[];
+  count: number;
+  total: number;
+  since: string | null;
+  sources: string[];
+  latest: string | null;
+}
+
 /** The portal security checklist, keyed by item name in portal order. */
 export interface PeSecurity {
   aslr?: PeSecurityItem;

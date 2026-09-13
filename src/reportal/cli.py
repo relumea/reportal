@@ -122,6 +122,7 @@ from reportal import (
     lineage,
     llm,
     matching,
+    notifications,
     pdf,
     pipeline,
     protocols,
@@ -579,6 +580,50 @@ def analysis_delete(
 def _journal_error_text(exc: Exception) -> str:
     """Return a journal failure's message without the KeyError quoting."""
     return str(exc.args[0]) if exc.args else str(exc)
+
+
+@app.command("notifications")
+def notifications_command(
+    since: str | None = typer.Option(
+        None, "--since", help="Only items newer than this ISO timestamp"
+    ),
+    limit: int = typer.Option(
+        notifications.DEFAULT_FEED_LIMIT, "--limit", help="How many items to list"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Show the notification feed derived from the journal and the analysis log."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = notifications.feed(
+                conn,
+                since=notifications.parse_since(since) if since else None,
+                limit=limit,
+            )
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+        payload["latest"] = notifications.latest(conn)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("When", style="cyan")
+    table.add_column("Source")
+    table.add_column("Severity")
+    table.add_column("Item")
+    for item in payload["notifications"]:
+        table.add_row(
+            str(item["at"]),
+            str(item["kind"]),
+            str(item["severity"]),
+            str(item["message"]),
+        )
+    console.print(table)
+    if payload["latest"]:
+        console.print(f"\n[bold cyan]latest[/bold cyan] {payload['latest']}")
 
 
 @app.command("journal")

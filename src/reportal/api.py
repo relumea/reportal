@@ -66,6 +66,7 @@ from reportal import (
     lineage,
     llm,
     matching,
+    notifications,
     pdf,
     pipeline,
     protocols,
@@ -5843,6 +5844,44 @@ def bulk_functions(body: dict[str, Any] = Depends(json_body)) -> Response:
 
 
 # ── Journal ────────────────────────────────────────────────────────
+
+
+@router.get("/api/notifications")
+def list_notifications(request: Request) -> Response:
+    """The notification feed, derived from the journal and the analysis log.
+
+    ``?since=`` is an ISO timestamp (the ``since`` a previous response carried,
+    usually) and ``?limit=`` is bounded by :data:`reportal.notifications.
+    MAX_FEED_LIMIT`; either being unusable is a 400.  ``?sources=`` narrows the
+    feed to ``action``, ``log`` or both.  Nothing is stored and nothing is
+    written: dismissal lives in the client, keyed by each item's stable ``id``.
+    """
+    since_raw = _query_text(request, "since")
+    since = None
+    if since_raw is not None:
+        try:
+            since = notifications.parse_since(since_raw)
+        except ValueError as exc:
+            return json_error(400, error="invalid since", detail=str(exc))
+    limit = _query_int(request, "limit")
+    limit = notifications.DEFAULT_FEED_LIMIT if limit is None else limit
+    if not 1 <= limit <= notifications.MAX_FEED_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {notifications.MAX_FEED_LIMIT}",
+        )
+    sources = notifications.SOURCES
+    raw_sources = _query_text(request, "sources")
+    if raw_sources is not None:
+        sources = tuple(part.strip() for part in raw_sources.split(",") if part.strip())
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = notifications.feed(conn, since=since, limit=limit, sources=sources)
+        except ValueError as exc:
+            return json_error(400, error="invalid sources", detail=str(exc))
+        payload["latest"] = notifications.latest(conn)
+    return json_response(payload)
 
 
 @router.get("/api/journal")

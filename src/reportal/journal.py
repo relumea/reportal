@@ -733,6 +733,56 @@ def list_entries(
     return [_entry_row(row) for row in conn.execute(sql, params)]
 
 
+def count_actions(conn: sqlite3.Connection, *, since: str | None = None) -> int:
+    """How many actions there are, whatever a reader's page is."""
+    ensure_schema(conn)
+    sql = f"SELECT COUNT(DISTINCT action) FROM {_TABLE}"
+    params: list[Any] = []
+    if since is not None:
+        sql += " WHERE created_at >= ?"
+        params.append(since)
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
+def list_actions(
+    conn: sqlite3.Connection, *, since: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+) -> list[dict[str, Any]]:
+    """One row per action, newest first, described by its newest entry.
+
+    An action writes one entry per descriptor, so a listing that read entries
+    would repeat the same action many times.  This reads the newest entry of
+    each action and counts the action's rows, which is what a feed renders:
+    ``id``, ``action``, ``kind``, ``description``, ``created_at`` and ``status``
+    of that newest entry, ``entries`` for the action's row count and ``active``
+    for how many of them are still awaiting a revert.  *since* is an ISO
+    timestamp compared as text, the format the rows are written in, and it is
+    inclusive: two writes in the same second share one timestamp, so an item
+    written at the named second is still returned and a polling reader
+    de-duplicates by id rather than losing it.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    ensure_schema(conn)
+    sql = (
+        f"SELECT e.*, (SELECT COUNT(*) FROM {_TABLE} c WHERE c.action = e.action) AS entries,"
+        f" (SELECT COUNT(*) FROM {_TABLE} a WHERE a.action = e.action AND a.status = ?) AS active"
+        f" FROM {_TABLE} e WHERE e.id IN (SELECT MAX(id) FROM {_TABLE} GROUP BY action)"
+    )
+    params: list[Any] = [STATUS_ACTIVE]
+    if since is not None:
+        sql += " AND e.created_at >= ?"
+        params.append(since)
+    sql += " ORDER BY e.id DESC LIMIT ?"
+    params.append(min(limit, MAX_LIST_LIMIT))
+    rows = []
+    for row in conn.execute(sql, params):
+        entry = _entry_row(row)
+        entry["entries"] = int(row["entries"])
+        entry["active"] = int(row["active"])
+        rows.append(entry)
+    return rows
+
+
 def _load_descriptor(raw: str) -> dict[str, Any]:
     """Parse a stored descriptor, or raise :class:`JournalError` for a corrupt one."""
     try:

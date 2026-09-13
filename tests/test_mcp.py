@@ -126,6 +126,7 @@ _READ_ONLY_TOOLS = frozenset(
         "list_graph_backends",
         "search",
         "list_journal",
+        "list_notifications",
     }
 )
 
@@ -368,8 +369,8 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 141
-        assert len(_READ_ONLY_TOOLS) == 67
+        assert len(names) == 142
+        assert len(_READ_ONLY_TOOLS) == 68
         assert len(_DESTRUCTIVE_TOOLS) == 74
 
     def test_every_tool_is_well_formed(self) -> None:

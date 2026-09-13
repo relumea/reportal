@@ -2192,7 +2192,8 @@ summary:hover {
    top; the dialog keeps its own scroll so a long result list never grows the
    page.  The input owns the keyboard, so nothing else here is tabbable. */
 .search-overlay,
-.cheatsheet-overlay {
+.cheatsheet-overlay,
+.notifications-overlay {
   position: fixed;
   inset: 0;
   z-index: 40;
@@ -2204,7 +2205,8 @@ summary:hover {
 }
 
 .search-dialog,
-.cheatsheet-dialog {
+.cheatsheet-dialog,
+.notifications-dialog {
   width: min(720px, 100%);
   max-height: 70vh;
   display: flex;
@@ -2293,9 +2295,46 @@ kbd.key {
   white-space: nowrap;
 }
 
-.search-dialog-head {
+.search-dialog-head,
+.notifications-head {
   padding: var(--space-3);
   border-bottom: 1px solid var(--border);
+}
+
+.notifications-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.notifications-head > :first-child {
+  margin-right: auto;
+}
+
+.notification-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.notification-when {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.notification-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.notification-src {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 .search-input {

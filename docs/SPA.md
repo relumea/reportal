@@ -392,6 +392,16 @@ Delete behind the confirm pattern that calls `DELETE /api/analyses/<id>`.  There
 is no owner column: reportal is a single-user loopback tool, the view says so,
 and it links to the Journal view, which is where who did what is recorded.  The
 Binaries view carries a Browse analyses action beside Browse functions.
+The topbar carries a Notifications button (`views/NotificationsDialog.tsx`):
+the count of feed items this browser has not dismissed, opening a dialog over
+`GET /api/notifications` with each item's severity badge, time, message and its
+binary link, a Dismiss per item and a Dismiss all.  The feed refreshes on an
+interval while the shell is mounted, and the dismissed ids live in
+localStorage under `reportal.notifications.dismissed`, because the server
+stores nothing: dismissal is the reader's, exactly as the hosted portal keeps
+it.  The dialog follows the cheatsheet's focus contract (focus on open, return
+on close, Tab contained, Escape closes).
+
 Both detail views carry a Comments panel (`panels/CommentsPanel.tsx`) scoped to
 the binary or the function: it lists each comment's author and timestamps with
 an add box, and shows Edit and Delete on a comment whose author equals the

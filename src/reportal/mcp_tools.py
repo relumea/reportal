@@ -54,6 +54,7 @@ from reportal import (
     lineage,
     llm,
     matching,
+    notifications,
     pdf,
     pipeline,
     plugins,
@@ -3306,6 +3307,20 @@ def _journal_error_text(exc: Exception) -> str:
     return str(exc.args[0]) if exc.args else str(exc)
 
 
+def _tool_list_notifications(arguments: dict[str, Any]) -> dict[str, Any]:
+    limit = _arg_optional_int(arguments, "limit", notifications.DEFAULT_FEED_LIMIT)
+    since = _arg_optional_str(arguments, "since")
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = notifications.feed(
+                conn, since=notifications.parse_since(since) if since else None, limit=limit
+            )
+        except ValueError as exc:
+            raise ToolError("invalid notification query", str(exc)) from exc
+        payload["latest"] = notifications.latest(conn)
+    return payload
+
+
 def _tool_list_journal(arguments: dict[str, Any]) -> dict[str, Any]:
     limit = _arg_optional_int(arguments, "limit", journal.DEFAULT_LIST_LIMIT)
     action = _arg_optional_str(arguments, "action")
@@ -5088,6 +5103,19 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_extract_archive,
+        ),
+        Tool(
+            "list_notifications",
+            "The notification feed derived from the action journal and the analysis log,"
+            " newest first; dismissal is the client's, keyed by each item's id.",
+            _object(
+                {
+                    "since": _str("Only items newer than this ISO timestamp."),
+                    "limit": _int(f"Maximum items (default {notifications.DEFAULT_FEED_LIMIT})."),
+                }
+            ),
+            _READ,
+            _tool_list_notifications,
         ),
         Tool(
             "list_journal",

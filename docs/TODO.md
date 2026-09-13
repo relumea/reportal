@@ -273,6 +273,15 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   log (`GET /api/notifications?since=`), with a topbar bell; dismissal lives in
   the browser unless it has to persist, in which case one small table.
 - Size: S.
+- **Status:** Closed, derived and unstored.  `notifications.feed` normalizes one
+  item per journaled action (with its status, row count and whether it is still
+  revertible) and one per analysis-log entry (with its severity and its binary)
+  into one newest-first page with the true total and an inclusive `since`;
+  `GET /api/notifications` (400 `invalid since`/`invalid limit`/`invalid
+  sources`), `reportal notifications [--since] [--limit]`, the read-only
+  `list_notifications` MCP tool and the topbar bell with per-item and dismiss-all
+  controls over a localStorage set cover it.  Nothing is stored, which is the
+  point: there is no second writer to drift from the journal and the log.
 
 ### 15. Composition scoping and the hosted category taxonomy
 

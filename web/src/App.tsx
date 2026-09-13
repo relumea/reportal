@@ -35,6 +35,7 @@ import { JournalView } from "./views/JournalView";
 import { KnowledgeView } from "./views/KnowledgeView";
 import { MatchesView } from "./views/MatchesView";
 import { CheatsheetDialog } from "./views/CheatsheetDialog";
+import { NotificationsBell } from "./views/NotificationsDialog";
 import { SearchModal } from "./views/SearchModal";
 import { SearchView } from "./views/SearchView";
 
@@ -340,6 +341,7 @@ export function App(): ReactNode {
       <main className="main">
         <header className="topbar">
           <h1 id="title">{title}</h1>
+          <NotificationsBell />
           <span className="health" id="health">
             {health ? (
               <>

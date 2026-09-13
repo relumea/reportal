@@ -334,6 +334,11 @@ reportal graph-sync <binary-id> [--backend NAME] [--json]
 reportal graph-query <query> [--backend NAME] [--json]
                                            # node id or text search over a backend that
                                            #   supports querying (sqlite does)
+reportal notifications [--json] [--since ISO] [--limit N]
+                                           # the notification feed derived from the action
+                                           #   journal and the analysis log, newest first;
+                                           #   reads only, stores nothing, and prints the
+                                           #   latest time to pass back as --since
 reportal journal [--json] [--action ID] [--limit N]
                                            # list recorded action-journal entries, newest
                                            #   first, optionally narrowed to one action

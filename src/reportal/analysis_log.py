@@ -158,3 +158,49 @@ def list_entries(
         (analysis_id, limit, offset),
     )
     return [_entry_row(row) for row in cursor.fetchall()], total
+
+
+def count_recent(conn: sqlite3.Connection, *, since: str | None = None) -> int:
+    """How many entries there are, whatever a reader's page is."""
+    ensure_schema(conn)
+    sql = f"SELECT COUNT(*) FROM {TABLE}"
+    params: list[Any] = []
+    if since is not None:
+        sql += " WHERE created_at >= ?"
+        params.append(since)
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
+def list_recent(
+    conn: sqlite3.Connection, *, since: str | None = None, limit: int = DEFAULT_LOG_LIMIT
+) -> list[dict[str, Any]]:
+    """The newest entries across every analysis, with their binary's name.
+
+    :func:`list_entries` reads one analysis; this is what a feed reads, so each
+    row carries the owning analysis's ``binary_id`` and ``binary_name`` for a
+    client to link.  *since* is an ISO timestamp compared as text, the format
+    the rows are written in, and it is inclusive, so an entry written at the
+    named second is still returned.  *limit* is bounded by
+    :data:`MAX_LOG_LIMIT`.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    ensure_schema(conn)
+    sql = (
+        f"SELECT l.*, a.binary_id AS binary_id, b.name AS binary_name"
+        f" FROM {TABLE} l JOIN analyses a ON a.id = l.analysis_id"
+        f" JOIN binaries b ON b.id = a.binary_id"
+    )
+    params: list[Any] = []
+    if since is not None:
+        sql += " WHERE l.created_at >= ?"
+        params.append(since)
+    sql += " ORDER BY l.id DESC LIMIT ?"
+    params.append(min(limit, MAX_LOG_LIMIT))
+    rows = []
+    for row in conn.execute(sql, params):
+        entry = _entry_row(row)
+        entry["binary_id"] = int(row["binary_id"])
+        entry["binary_name"] = str(row["binary_name"])
+        rows.append(entry)
+    return rows
