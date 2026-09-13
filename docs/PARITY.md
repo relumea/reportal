@@ -12,8 +12,10 @@ Status vocabulary:
 - **Implemented**: usable end to end through the API or CLI.
 - **Scaffolded**: storage and/or endpoints exist, but the capability is
   incomplete or has no engine behind it yet.
-- **Planned**: not built.
-- **Not-applicable**: out of scope for a local, offline tool.
+- **Planned**: not built yet; a local implementation is specified and tracked in the
+  gap inventory below.
+- **Not-applicable**: no local implementation is meaningful, because the capability
+  is a hosted service with no offline equivalent.
 
 | Capability | Status | Backing engine | Notes |
 |------------|--------|----------------|-------|
@@ -45,7 +47,7 @@ Status vocabulary:
 | Bulk actions | Implemented | local store | `POST /api/binaries/bulk` (`add_tag`, `remove_tag`, `delete`) and `POST /api/functions/bulk` (`rename`, `clear_matches`) apply one action to a bounded id list (`MAX_BULK_IDS`), validate the action against a named set, reject an empty list, and answer `{"action", "requested", "applied", "skipped": [{"id", "reason"}]}`; an unknown id is skipped with a reason instead of failing the batch, and a `delete` cascades the binary's analyses, functions, scans, comments, conversations and documents. `reportal bulk-tag <tag> <binary-id>... [--remove]`, `reportal bulk-delete <binary-id>... [--yes]` (an interactive confirmation without `--yes`) and `reportal bulk-prefix <prefix> <function-id>... [--replace]` wrap the same actions, and a prefix rename goes through the normal rename path so every change is recorded in `name_history` with source `bulk-prefix`. The `bulk_binaries` and `bulk_functions` MCP tools are destructive, and the SPA Binaries list carries selection checkboxes with an add-tag, remove-tag and delete bar while the Functions list carries a bulk prefix rename. |
 | Search | Implemented | local | `GET /api/search?q=&kind=&limit=` over binaries, functions, collections and tags, with LIKE escaping. `kind=all` (the default) is the substring behaviour the route always had; `kind=sha256` matches a full hash or a prefix, `kind=binary` a binary name, `kind=collection` a collection name and `kind=tag` a tag name, so every typed query stays a subset of the default. Every row carries the metadata the store holds (a binary's size, format, arch, created and tags; a collection's member count; a tag's tagged-binary count) plus the `match` field that made it hit, and `counts` reports each group's returned count against its matched total so a limited page never reads as a total. A SHA-256 prefix shorter than `store.MIN_SHA256_PREFIX` (8), a non-hex value and a prefix matching more than one binary answer 400 `short-hash`, `invalid-hash` and `ambiguous-hash`; an unknown kind is 400 `invalid-kind`. The SPA carries both surfaces: the Search view's grouped tables (each heading states returned-of-total) and the global `⌘K`/`Ctrl+K` modal, which opens from anywhere, keeps the query input focused, cycles the four query types with Tab, moves a roving highlight with the arrow keys, opens the highlighted hit with Enter, closes on Escape and returns focus where it was, and traps focus while open. Both read `src/views/SearchResults.tsx`'s shared hit model; reportal has no per-collection or per-tag detail route, so those hits lead to the Collections and Binaries lists. This is a local, offline store search; the hosted portal searches its own hosted corpus. |
 | Firmware and archive extraction | Implemented (stdlib formats only) | local | `reportal extract <binary-id> [--password TEXT] [--collection ID]`, `POST /api/binaries/<id>/extract` and the destructive `extract_archive` MCP tool unpack a **stored** archive and register the binaries it holds, reporting each member with the id it became or the reason it was skipped, as one journal action. Supported formats are exactly the ones the standard library reads without an external tool: `.zip` and `.apk` (a zip), `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz` and a single-member `.gz` (a `.gz` whose contents are a tar is read as one, sniffed with `tarfile.is_tarfile`). `.rar` and `.7z` are refused 400 `external-tool-required` naming the unpacker reportal does not ship (`unrar`, `7z`), and reportal never shells out; **firmware unpacking is not implemented** (the hosted portal runs a hosted extractor for firmware images; that is not-applicable locally). Safety comes before the feature: members are extracted into a temporary directory under `<workspace>/binaries/` (removed either way, so nothing is written outside it) and every member is validated before a byte is written. Refused per member with its reason: an absolute name, a `..` component, a path resolving outside the extraction root, a symlink or hardlink, a device, FIFO or socket, a member past `MAX_MEMBER_BYTES` (256 MiB), a total past `MAX_TOTAL_BYTES` (512 MiB), a ratio past `MAX_COMPRESSION_RATIO` (200:1) and an archive past `MAX_MEMBERS` (4096). A password-protected zip extracts with the supplied password (ZipCrypto; the stdlib reads it) and is refused `password-required` without one and `bad-password` with the wrong one; tar archives carry no password. Members register by content hash into one collection (the body's `collection_id`, else one named after the archive, reused when it exists), so a member already stored is reported as a duplicate; the whole request is one journal action. |
-| Firmware upload / sandbox detonation | Not-applicable | none | reportal never runs target binaries and has no sandbox or dynamic-execution path; rebrew's headless runners (wine, DOSBox) execute compilers, not samples. The hosted portal's firmware flow runs a hosted extractor and its sandbox is a hosted service, neither of which exists locally. |
+| Firmware upload / sandbox detonation | Planned | none | Planned 1.2: a local carving and extraction path (signature scan, entropy map, squashfs/jffs2/cramfs readers written against the formats, external tools refused by name) plus an off-by-default sandbox runner. reportal never runs target binaries and has no sandbox or dynamic-execution path; rebrew's headless runners (wine, DOSBox) execute compilers, not samples. The hosted portal's firmware flow runs a hosted extractor and its sandbox is a hosted service, neither of which exists locally. |
 | Knowledge documents + semantic search + graph | Implemented | local + optional LLM (OpenAI-compatible) | `reportal ingest <binary-id> <path> [--title TEXT]`, `reportal documents <binary-id>` and `reportal knowledge <binary-id> "query" [--limit N]`, plus `POST /api/binaries/<id>/documents` (a `multipart/form-data` upload), `POST /api/documents` (a pasted note), `GET /api/binaries/<id>/documents`, `GET`/`DELETE /api/documents/<id>` and `GET /api/knowledge/search?q=&binary_id=&limit=` store text documents (markdown, source, config, logs, HTML) scoped to one binary or to the project. Ingestion decodes UTF-8 with invalid sequences replaced, rejects content past `knowledge.BINARY_CONTROL_RATIO` NUL/control characters as binary and empty content as empty, strips HTML to its visible text, splits the text into `CHUNK_CHARS` chunks overlapping by `CHUNK_OVERLAP` at paragraph/sentence boundaries, dedupes by sha256 inside the scope and caps the document at `MAX_DOCUMENT_BYTES`, the scope at `MAX_DOCUMENTS_PER_SCOPE` and each document at `MAX_CHUNKS_PER_DOCUMENT`. Search ranks the stored chunks: with an embeddings endpoint configured the query is embedded (a `POST <endpoint>/embeddings` request) and compared to the stored vectors by cosine similarity, and without one the local TF-IDF cosine ranks the same chunks, so search needs no configuration and no extra dependency; each hit reports the `method` (`embeddings` or `tfidf`) that scored it. Nothing fetches a URL: the only request is the optional embeddings call, and a document ingested without one stays searchable through the TF-IDF path. Six MCP tools expose the same store (`list_documents`, `search_knowledge`, `retrieve_knowledge` read-only; `ingest_document`, `ingest_url`, `delete_document` destructive) and the SPA Knowledge view lists, ingests (file or pasted note) and searches. Guarded URL ingestion is built and off by default: `REPORTAL_ALLOW_REMOTE_INGEST` or a workspace `[knowledge] allow_remote = true` enables `reportal ingest-url <binary-id> <url> [--title TEXT] [--project]`, `POST /api/knowledge/fetch` (body `{"scope_kind", "scope_id", "url", "title"}`), `GET /api/knowledge/config`, the SPA Knowledge view's URL field (shown only when the config route reports it enabled) and the destructive `ingest_url` MCP tool. The guards: only `http`/`https`, a host is required, credentials in the URL are rejected, every address the host resolves to is checked against the loopback, private, link-local, multicast, unspecified, reserved and IPv4-mapped IPv6 ranges with any one blocked answer rejecting the target, and the port is restricted to 80/443 plus the scheme default; `fetch` follows redirects manually, re-validates each hop and reads the connected peer's own address before consuming the body, so a host that resolves publicly during the check and connects to a private address is still rejected (a transport that exposes no peer address reports it as `unverified` and the pre-flight answer stands); it streams the body and aborts past `MAX_BYTES`, and accepts only `text/*`, `application/json`, `application/xml`, `application/x-yaml` or a missing content type, sending no auth header and no cookie. What is not covered: the request has already been sent by the time the peer is known, so only the body is withheld, and a network namespace with no private routes would isolate more strongly. A fetch that fails writes no document, a stored document's `source` is the final URL so a re-fetch of the same bytes is a duplicate, and a disabled path answers 403 `remote-ingest-disabled`. Otherwise the only request is the optional embeddings call, and a document ingested without one stays searchable through the TF-IDF path. The knowledge graph over those documents is the second half and is implemented locally as a deterministic entity/relation graph: `POST /api/binaries/<id>/graph` rebuilds it from stored rows (the binary, its functions, the recorded matches, its documents, the stored struct/capability/unstrip/triage scans and its tags), `GET /api/binaries/<id>/graph` serves it (404 `no-graph` before the first build, `?kind=` keeps one node kind, `?include_documents=true` adds the document nodes, which are left out by default so the graph stays small), `GET /api/graph/nodes/<node_id>` returns one node with its neighbors grouped by relation, `reportal graph-build <binary-id>` and `reportal graph <binary-id> [--node ID]` are the CLI, three MCP tools (`get_graph`, `graph_neighbors` read-only; `build_graph` destructive) expose the same calls and the SPA Graph view renders the node counts by kind, a filterable node table (kind, label, degree) and the selected node's neighbor groups with links to the function or document behind a node. The node kinds are `binary`, `function`, `document`, `struct`, `tag`, `capability` and `library` and the relations `contains`, `documented-by`, `has-capability`, `has-tag`, `recovered`, `identifies`, `matched-with` and `mentions`; call edges (`function -calls-> function`) are omitted because nothing stored carries them (reportal reads the call graph per function through `rebrew xrefs`), so they are not fabricated. The build is local and deterministic with no LLM, no external store and no new dependency. Retrieval is implemented: `knowledge.retrieve` is the ranking with a named `RETRIEVAL_LIMIT` and a blank-query guard, and `knowledge.as_context` renders the hits as a bounded, citable block (`[n] <title> (<source>): <text>`, each snippet cut at `RETRIEVAL_SNIPPET_CHARS`, a hit that would push the block past `RETRIEVAL_CONTEXT_CHARS` dropped). A conversation appends a `Relevant documents` section built from its binary's documents, placed last so the `MAX_CONTEXT_CHARS` cap truncates it first, and returns the hits as `sources` for the SPA's `Sources` disclosure; `GET /api/functions/<id>/knowledge?q=`, `GET /api/binaries/<id>/knowledge?q=`, `reportal context <function-id> [--query TEXT]` and the read-only `retrieve_knowledge` MCP tool expose the same retrieval. The AI decompilation pipeline's `retrieve-knowledge` component derives `knowledge` from the function's name, VA and stored summary, and `name-variables` and `summarize` pass it into their prompts. Retrieved document text is untrusted input: it is quoted as data to reason about, never executed and never spliced into a command, and the conversation system prompt says so and never treats it as an instruction. The graph is pluggable through a backend registry (`reportal.graph_backends`): `GET /api/graph/backends` lists the registered backends, `POST /api/binaries/<id>/graph/sync` (body `{"backend": "..."}`, default the configured one), `GET /api/graph/query?q=&backend=`, `reportal graph-backends`, `reportal graph-sync <binary-id> [--backend NAME]` and `reportal graph-query <query> [--backend NAME]` drive them, the read-only `list_graph_backends` and destructive `sync_graph_backend` MCP tools expose the same calls, and the SPA Graph view carries a backend selector, a Sync control that is disabled with its reason when the backend is unavailable, and a query box for a backend that supports querying. The built-in `sqlite` backend is the default and reads the local store (its sync is a no-op that reports the stored counts); the optional `cognee` backend pushes the same graph into a Cognee dataset, is available only with the `cognee` extra (`uv sync --extra cognee`), and takes its dataset name from `REPORTAL_COGNEE_DATASET` or `[knowledge] cognee_dataset` (default `reportal`). An uninstalled backend answers 503 `backend-unavailable` with the install hint rather than a traceback. |
 | Reports / PDF | Implemented | rebrew + local PDF writer | `reportal report <binary-id>` and `POST /api/binaries/<id>/report` run `rebrew report --json --output <workspace>/reports/<binary-id>` in the binary's rebrew project context and store the engine result (`out`, `pages` and a coverage `summary` of `total_functions`, `covered_functions`, `coverage_pct`, `matched_pct`, `byte_coverage_pct`, `status_counts`); `GET /api/binaries/<id>/report` serves the stored result and answers 404 `no-scan` when none exists. `GET /reports/<binary-id>/` and `GET /reports/<binary-id>/<path>` serve the generated HTML site from that tree (the root serves `index.html`), and the binary detail Report panel links to it. PDF export is implemented locally over the scans the portal already stored (`src/reportal/pdf.py`, laid out by reportal and serialized by reportlab): `reportal report-pdf <binary-id> [--output PATH] [--force] [--json]` and `POST /api/binaries/<id>/report/pdf` render a multi-page text-only PDF (Helvetica/Helvetica-Bold, uncompressed content streams, written with reportlab's `invariant=1` so the bytes are reproducible) with a title block, the coverage summary, fingerprint, capabilities, triage, function triage, security, crypto, threat, secrets counts (never a value), behavior, protocols, hardening, remediation and lineage, and write it to `<workspace>/reports/<binary-id>/report.pdf`; `GET /api/binaries/<id>/report/pdf` serves it as `application/pdf` and answers 404 `no-pdf` with the generate hint before the first render, 404 `binary not found` for an unknown id. The render is stored-only (no engine run), a section whose scan is absent is omitted, every row list has a named cap so a huge scan cannot produce a thousand pages, and the bytes are deterministic for the same rows and generated date. This is a text-only summary of reportal's own scans, not the hosted portal's PDF export and not a rendering of the `rebrew report` HTML site. |
 | Triage | Implemented | rebrew + optional LLM (OpenAI-compatible) | Two layers. The binary dossier: `reportal triage <binary-id>` and `POST /api/binaries/<id>/triage` run `rebrew analyze --json` and store the one-shot dossier under the binary's analysis; `GET /api/binaries/<id>/triage` serves the stored dossier and answers 404 `no-scan` when none exists. The dossier covers binary layout, detected toolchain, strings, imports, references, function coverage, dispatch tables and FLIRT hits, and the binary detail Triage panel renders the toolchain, meta and count summary with the raw JSON in a `<details>`. The per-function layer: `reportal function-triage <binary-id> [--limit N] [--function ID]...` and `POST /api/binaries/<id>/function-triage` (body `{"function_ids": [...], "limit": N}`, both optional) select the target functions (explicit ids, else the top `limit` candidates), build each one's untrusted context (its stored decompilation, else a disassembly through `rebrew asm`), ask the configured endpoint for `{"summary", "score" 0..1, "capabilities"}` and store one `ai_artifacts` row of kind `function-triage` per function plus one aggregate `function-triage` scan for the binary; `GET` on the same route is stored-only and answers 404 `no-scan`. `function_triage.score_candidates` is the deterministic fallback and the ranking when no endpoint is configured: it scores size, a status that is not a byte match (`STUB`, `NEAR_MATCHING`, ...), a stored decompilation, a placeholder name and the recorded match count into a named `heuristic_score` in 0..1 with the contributing reasons. With no LLM the same shape is produced from that score and a one-line summary derived from the function's metadata, `model` is `""` and the payload's notes say so; a function whose context cannot be resolved (no stored decompilation and no engine, or no rebrew project context) is recorded in the payload's `skipped` list with a reason instead of failing the run. A missing engine is 503 only when the LLM path needs a disassembly. The binary detail Function triage panel renders the model/method line, the scored rows with their summaries and method badge, and the skipped list. The hosted portal's AI threat report is not reproduced here; the local Threat Report capability below covers the IOC and MITRE half deterministically. |
@@ -68,9 +70,9 @@ Status vocabulary:
 | Agent conversations | Implemented (optional) | local store + external LLM (OpenAI-compatible) | `reportal chat-new --function <id> \| --binary <id>` and `POST /api/conversations` open a chat scoped to one stored function or binary; `reportal chat <conversation-id> "message"` and `POST /api/conversations/<id>/messages` append the turn and call the configured chat-completions endpoint. The request is a fixed system prompt plus a context block assembled from stored local data only (the function row with its stored disassembly and decompilation, or the binary row with its stored triage summary and capability scan) and the last `HISTORY_TURN_LIMIT` turns. No engine runs, no tool is called and no MCP is involved. Conversations and their messages live in the `conversations` and `messages` tables (`GET /api/conversations?scope_kind=&scope_id=`, `GET`/`DELETE /api/conversations/<id>`), the SPA Conversations view lists, creates, opens, sends to and deletes threads, and the function and binary detail views carry a Chat about this action. A message without a configured endpoint answers 503 `llm-unavailable`; the whole feature is off by default. This is not the hosted portal's tool-calling agent: the model can only answer from the stored context. |
 | Integrations inventory | Implemented | local registries | The hosted portal's Integrations page lists the plugins, SDKs and the MCP endpoint it offers. reportal answers the same question about itself: `reportal integrations` and `GET /api/integrations` read the five registries a plugin enters through (`reportal.components`, `reportal.auto_workers`, `reportal.graph_backends`, `reportal.effect_handlers`, `reportal.mcp_tools`) and report, per seam, the entry-point group, the in-tree module declaring the built-ins and one row per part the registry holds with the fields that seam exposes (a component's origin, requires and provides; a backend's availability and whether it can be queried; a worker's write plan; a handler's descriptor kind and whether it is built-in; a tool's destructive annotation). The read-only `list_integrations` MCP tool and the SPA Integrations view render the same payload. Only the component registry tracks where a part was declared, so an empty origin means the registry does not record one, never that the part is built-in. This is reportal's own seam set, not the hosted platform's plugin catalogue. |
 | MCP tool server | Implemented | local + rebrew + optional LLM | The hosted portal's MCP server (`https://api.reveng.ai/mcp/`, Streamable HTTP with `Authorization: Bearer` and an `mcp-session-id`) is matched locally by `reportal mcp`, an stdio server on the official `mcp` SDK (newline-delimited JSON-RPC 2.0 on stdin/stdout) that serves `initialize`, `notifications/initialized`, `tools/list` and `tools/call` at the negotiated protocol version (currently `2025-06-18`) and reports `serverInfo` `{"name", "title", "version"}`. It exposes reportal's capabilities as 129 plugin tools declared in `src/reportal/mcp_tools.py`; a third party registers through the `reportal.mcp_tools` entry-point group. 61 tools are read-only and 68 are destructive (`destructiveHint: true`), the destructive ones covering the same engine runs and store mutations the HTTP routes do; handlers call reportal's internal functions directly and never make an HTTP request back into reportal. The read tools keep the stored-only routes stored-only. There is no auth (no OAuth, JWT or API key): the server is a local stdio process, so the pipe is the whole trust boundary; Streamable HTTP, sessions, SSE and server-side logging are not emulated. |
-| Dynamic execution | Not-applicable | none | reportal never runs target binaries. rebrew's headless runners (wine, DOSBox) execute compilers, not samples. |
-| Auth / teams | Not-applicable | none | Loopback-only, single-user tool. recoverage's `--token` pattern is the model if a LAN bind is ever needed. |
-| Firmware | Not-applicable | none | The engine stack targets PE/x86-32 and ELF; no firmware formats. |
+| Dynamic execution | Planned | none | Planned 1.2: an off-by-default sandbox run (bubblewrap or firejail, no network namespace, wall-clock and memory caps, a recorded syscall and file-effect report) with the trust boundary written into docs/THREAT_MODEL.md. reportal never runs target binaries. rebrew's headless runners (wine, DOSBox) execute compilers, not samples. |
+| Auth / teams | Planned | none | Planned 1.2: bearer-token auth with users, roles and per-object team scoping, loopback-only by default so an existing install keeps working unauthenticated. Loopback-only, single-user tool. recoverage's `--token` pattern is the model if a LAN bind is ever needed. |
+| Firmware | Planned | none | Planned 1.2: firmware image handling (carving, filesystem extraction, per-region entropy, architecture guess from the extracted ELF/PE members) as a local capability of its own. The engine stack targets PE/x86-32 and ELF; no firmware formats. |
 
 ## Not applicable locally
 
@@ -102,3 +104,210 @@ Optional items that are not implemented:
   The route would therefore only reset a status with no work behind it, which
   is a stub rather than a requeue; the per-scan POSTs are the re-run entry
   points instead.
+
+## Gap inventory
+
+Measured against the live RevEng.AI surface, not against a memory of it.  Three
+sources, all re-runnable:
+
+| Source | What it gives | Where |
+|--------|---------------|-------|
+| OpenAPI 3.1 spec, **v4.34.0** | 158 paths, 190 operations, 20 tags | `https://docs.reveng.ai/openapi.json` |
+| Hosted MCP server | 36 tools, 9 destructive | `https://api.reveng.ai/mcp/` (`tools/list`) |
+| Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
+
+reportal's own surface for the comparison is its FastAPI schema (182
+method/path pairs) plus the MCP tool registry (129 tools).  Every row below is
+a capability the hosted spec has and reportal does not, with the hosted
+operations that prove it.  Batching is by cluster, not by route: one cluster is
+one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
+
+### A. Asynchronous operation workflow (hosted `Agent` tag, 35 operations)
+
+Every long-running hosted capability is queued and polled: `POST
+/v3/analyses/{id}/crypto-scan:run`, `.../execution-scan:run`,
+`.../filesystem-scan:run`, `.../networking-scan:run`, `.../security-scan:run`,
+`.../agents/rename-unnamed-functions`, `/v2/analyses/{id}/agent/triage`,
+`.../agent/capabilities`, `.../agent/remediation`, `.../agent/report-analysis`,
+each with a `GET .../status`, a result read (`GET /v3/operations/<kind>/<id>`)
+and a cancel (`POST .../:cancel`).  reportal runs the same scans synchronously:
+the request blocks, there is no queue, no status, no cancel and no live
+progress, and a client that times out loses the run.  Auto mode is the only
+subsystem with a run id, and it is not the hosted contract.
+
+Planned: one `jobs` table and one runner (a bounded thread pool) that every scan
+and agent posts to, `GET /api/jobs`, `GET /api/jobs/<id>` (status, progress,
+result, error), `POST /api/jobs/<id>/cancel`, an SSE progress channel, and the
+per-scan POST routes growing a `queued` response form.  CLI: `reportal jobs`,
+`reportal job <id>`, `--wait` on the scan commands.  MCP: `list_jobs`,
+`get_job`, `cancel_job`.
+
+### B. AI decompilation as a first-class artifact (hosted 18 operations)
+
+reportal stores a summary, inline comments, type suggestions and rename
+suggestions over a decompilation that rebrew produced.  The hosted model is
+richer and is the public reference for per-line decompiler trust
+(`docs/REVENGAI.md` item 8): `POST /v3/functions/{id}/ai-decompilation` produces
+a rewritten function, `GET .../ai-decompilation` reads it, `.../status` reports
+the workflow, `.../events` streams it over SSE (`GET`, server-sent), and
+`.../line-attributions` gives per-line provenance.  `.../tokens` lists
+placeholder tokens with `PATCH .../overrides` applying analyst
+variable/function name overrides.  Inline comments are per line:
+`GET|POST|PATCH|DELETE /v3/functions/{id}/ai-decompilation/inline-comments[/{line}]`
+with their own `/status`.  `summary` and `type-suggestions` each have their own
+regeneration endpoint, and `GET|PATCH /v2/functions/{id}/ai-decompilation/rating`
+carries analyst feedback.
+
+Planned: an `ai_decompilations` artifact table holding the rewritten C, the
+token map with overrides, per-line attributions and the rating; routes for
+start/read/status/events/overrides/rating; per-line comment CRUD beside the
+existing artifact; a CLI `ai-decompile` plus `ai-override` and `ai-rate`; MCP
+tools; an SPA view rendering the rewrite with line attributions and the token
+prompts.
+
+### C. Dynamic execution and sandbox detonation (hosted `Analyses - Core`)
+
+`GET /v2/analyses/{id}/dynamic-execution/report` and `.../status`: the hosted
+portal detonates the sample and reports what it did.  reportal reads bytes and
+never runs a sample (`docs/THREAT_MODEL.md` states that as a guarantee), so this
+is the largest single gap and the one that moves the trust boundary.  The local
+form is a sandbox run with no network, a read-only root, a separate PID and
+mount namespace, a wall-clock and memory cap, and a recorded report: process
+tree, opened files, writes, sockets attempted, exit status and a stdout/stderr
+tail.  Off by default, refused unless the workspace opts in, and refused
+outright when no sandbox runner is installed.  Firmware detonation reuses the
+same runner over a carved member (`docs/REVENGAI.md` notes `mal_unpack` is
+Windows-only and orthogonal; the local runner is the general case).
+
+### D. Analysis lifecycle (hosted `Analyses - Core`, 32 operations)
+
+reportal has list, create, delete, logs (read), scans.  Missing: read one
+analysis (`GET /v2|v3/analyses/{id}/basic`), update it (`PATCH
+/v2/analyses/{id}`), its status (`.../status`), its recorded parameters
+(`.../params`, which is what makes a re-run reproducible), requeue
+(`.../requeue`), the function map (`.../func_maps`), example analyses
+(`/v3/analyses/examples`), raw bytes (`/v3/analyses/{id}/bytes`), appending a
+log entry over HTTP (`POST /v2/analyses/{id}/logs`), analysis tags (`GET|PATCH
+/v2/analyses/{id}/tags`), bulk delete and bulk tag (`PATCH /v2/analyses/delete`,
+`PATCH /v2/analyses/tags/add`), and imported functions with their callers
+(`/v3/analyses/{id}/imported-functions[/{id}]`).
+
+### E. Collections (hosted 16 operations)
+
+reportal has list, create and add binaries.  Missing: read one (`GET
+/v3/collections/{id}`), update (`PATCH`), delete (`DELETE`), remove binaries
+(`DELETE /v3/collections/{id}/binaries`), replace binaries (`PATCH
+.../binaries`) and replace tags (`PATCH .../tags`).
+
+### F. Users, auth and IAM (hosted 5 operations)
+
+`GET /v2/iam/me`, `GET /v2/iam/me/permissions`, `GET /v2/users/{id}`,
+`GET /v2/users/activity`, `POST /v2/users/feedback`.  reportal is
+loopback-only and single-user with no identity at all.  The local form is
+bearer-token auth with users, roles (`admin`/`analyst`/`viewer`), a permission
+read that states what the caller may do, per-object team scoping on the
+analyst-write paths, an activity feed derived from the action journal, and
+local feedback notes.  Loopback binds stay unauthenticated so an existing
+single-user install keeps working.
+
+### G. Models (hosted 1 operation plus analysis parameters)
+
+`GET /v2/models` lists the hosted models (`binnet-0.7`, `binnet-1.0`) and
+`POST /v3/analyses/{id}/upgrade-model` re-analyses a binary on a newer one; an
+analysis records the model it ran under.  Locally the analogous artifact is
+which decompiler backend, LLM model and engine version produced a stored
+result, so a scan can be re-run and compared when the model changes.  Planned:
+a `models` registry (name, kind, version, availability), a model recorded on
+every analysis and scan, `GET /api/models`, and `POST
+/api/analyses/<id>/upgrade` re-running the stored scans under a different model
+with the before/after both kept.
+
+### H. External sources (hosted 3 operations)
+
+`POST /v2/analysis/{id}/external/vt` pulls VirusTotal data, `GET .../vt` reads
+it, `GET .../vt/status` reports the pull.  reportal makes no network call unless
+the user configures one, so the local form is an external-source registry with
+an offline provider (the local families, capabilities and threat evidence) and
+an opt-in remote provider (VirusTotal, behind a key and the same
+enabled-by-configuration gate `remote_ingest.py` uses), storing the answer as a
+scan with its source and fetch time.
+
+### I. Config (hosted 1 operation)
+
+`GET /v2/config`.  reportal's `/api/health` reports liveness and row counts but
+not what the instance can do.  Planned: `GET /api/config` reporting the enabled
+features (LLM bridge, remote ingest, sandbox, external sources), the caps in
+force, the versions (reportal, rebrew, schema) and the auth mode.
+
+### J. Function-level extras (hosted `Functions - Core`, 24 operations)
+
+Missing locally: indirect call sites (`GET
+/v3/functions/{id}/indirect-call-sites`), per-function capabilities (`GET
+/v3/functions/{id}/capabilities`), per-function strings (`GET
+/v3/functions/{id}/strings`), manual callee edges (`POST
+/v3/functions/{id}/callees`), name canonicalization over a batch (`POST
+/v3/functions/canonical-names`), callees/callers for many functions at once
+(`GET /v3/functions/callees-callers`, `GET /v2/functions/callees_callers`),
+matching over an explicit function set (`GET|POST /v3/functions/matches`), and
+analyst-supplied strings per function and per analysis (`POST
+/v3/functions/{id}/user-provided-strings`, `POST
+/v3/analyses/{id}/user-provided-strings`, `PUT /v2/analyses/{id}/strings`).
+
+### K. Data types and signatures (hosted 11 operations)
+
+reportal has the editable model, history and revert, and reference indices.
+Missing: copy signatures between functions (`POST
+/v3/analyses/{id}/signatures/copy`), bulk create and bulk update of an
+analysis's data types (`POST|PUT /v3/analyses/{id}/data-types`), signatures for
+many functions in one read (`GET /v3/functions/signatures`), and the
+functions-using-a-data-type read as its own route (`GET
+/v3/analyses/{id}/data-types/{id}/functions`).
+
+### L. Agentic conversations (hosted 7 operations)
+
+The hosted conversation is an agent run: `GET /v2/conversations/{id}/events`
+streams it over SSE, `POST .../cancel` stops it, and `POST .../confirm` approves
+or rejects a **pending tool confirmation**.  reportal's conversation is a
+single-turn chat over stored context with no tools, no stream, no cancel and no
+confirmation gate.  Planned: conversation runs with SSE events, a tool-call
+loop over the local MCP registry (read-only tools auto-approved, destructive
+ones gated on `POST /api/conversations/<id>/confirm`), cancel, and the turns
+kept in the existing tables.
+
+### M. Reports (hosted 3 operations)
+
+Hosted PDF generation is a workflow: `POST /v3/analyses/{id}/pdf` starts it,
+`GET .../pdf/status` reports it, `GET .../pdf` downloads it.  reportal renders
+the PDF synchronously and never records that it did.  Planned: the report run
+becomes a stored job with a status and a download route, plus the analysis
+report-analysis agent result beside it.
+
+### N. Binary extras (hosted `Binaries`, 11 operations)
+
+Missing locally: a password-protected zipped download (`GET
+/v2/binaries/{id}/download-zipped`; the stdlib cannot write ZipCrypto, so the
+local implementation writes the PKWARE scheme directly), Detect-It-Easy style
+information (`GET /v2/binaries/{id}/die-info`, richer than the signature table
+in `filetypes.py`), and additional details with a status read (`GET
+/v3/binaries/{id}/additional-details[/status]`: rich header, PDB path, overlay,
+version resources).
+
+### Beyond parity
+
+Capabilities the hosted portal advertises but has not shipped, or has no public
+implementation of, taken from `docs/REVENGAI.md` and from what its own spec
+leaves out.  These are additions, not gap closures:
+
+| # | Capability | Why it is beyond parity | Effort |
+|---|------------|-------------------------|--------|
+| 1 | reportal as an MCP **client**: register external MCP servers and expose their tools beside the local 129 | the hosted server is a tool provider only; nothing consumes it | M |
+| 2 | Equivalence proving between two functions (constraint solver over the IR) beside the textual diff | they publish a diff and a similarity score, not a proof | L |
+| 3 | Ground-truth corpus harness: build a labelled corpus, run matching over it, report precision/recall | no hosted evaluation surface | M |
+| 4 | Signature-equivalence short-circuit and a structured sync summary for any imported name set | named in the survey as a pattern worth adopting, absent from their API | S |
+| 5 | Capability manifest generated from the code, with a drift check in the gate | their plugins carry `.revengai/features.json`; the portal does not | S |
+| 6 | Prefixed search grammar (`sha256:`, `tag:`, `binary:`, `collection:`, comma lists) over the typed search | their SDKs document it for plugins only | S |
+| 7 | Rename review queue: per-row accept/reject, similarity bands, never overwrite an analyst-authored name, pushback suppression | their plugins implement parts of it client-side, the API does not | M |
+| 8 | Offline similarity prefilter with TLSH/ssdeep/import-hash/function-boundary hashes in the fingerprint bundle | their detail models carry these; the local engine's fingerprint does not | S |
+
+Effort is S (hours), M (a day or two), L (a week or more) for a vertical slice
+with tests.
