@@ -38,6 +38,7 @@ under the hyphenated heading.
 - Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
+- Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
 - Teams and scope: [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 
@@ -632,6 +633,17 @@ case-insensitively).
 
 `404`. The membership addressed by `DELETE /api/teams/<id>/members/<user_id>`
 does not exist, so there is nothing to remove.
+
+### invalid-region
+
+`400`. A firmware carve named a region index that does not exist, an empty
+`regions` list, or a region list that is not a list of indexes. Run `reportal
+firmware <binary-id>` (or `GET /api/binaries/<id>/firmware`) to see the indexes
+the stored pass reports.
+
+### region-not-found
+
+`404`. No region carries that index in the binary's stored firmware scan.
 
 ### scope-forbidden
 

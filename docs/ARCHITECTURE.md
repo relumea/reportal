@@ -26,7 +26,8 @@ reportal/
 │   ├── cli.py                # Typer CLI (init, import-rebrew, add-binary, serve, ...)
 │   ├── server.py             # shared FastAPI app, JSON helpers, Host guard, db(),
 │   │                         #   the require_auth dependency (off unless configured)
-│   ├── auth.py               # local identity: users, roles, bearer tokens, the gate
+│   ├── auth.py               # local identity: users, teams, roles, bearer tokens, the gate
+│   │                         #   and the object-visibility rule (visible_clause/may_write)
 │   ├── api.py                # every /api/* route (the JSON API)
 │   ├── ui.py                 # the built SPA, /static assets and /reports site
 │   ├── webapp.py             # composition root: includes the two routers
@@ -36,6 +37,9 @@ reportal/
 │   │                         #   tar.bz2/tar.xz, single-member gz; per-member safety
 │   │                         #   refusals and named caps; `.rar`/`.7z` refused by name
 │   ├── engines.py            # rebrew adapter: in-process calls, JSON + text
+│   ├── firmware.py           # firmware carving: magic-based region detection, the
+│   │                         #   sampled entropy map and the region extents the
+│   │                         #   archive reader can unpack; nothing executed
 │   ├── components.py         # component framework: context, journal, registry, reload
 │   ├── effects.py            # undo dispatcher: kind-to-handler registry, plan replay
 │   ├── integrations.py       # plugin-seam inventory read from the live registries
@@ -255,6 +259,25 @@ predicate the scope setters and the collection membership route share.  A team
 delete resets its objects to public rather than orphaning them.  `docs/THREAT_MODEL.md` carries the residual
 risks, the largest of which is that authorization is per route kind rather than
 per object.
+
+## Firmware carving
+
+`firmware.py` is the one module that looks for embedded images, and it is pure
+byte work: it reads the file `store` already holds, finds the magics in
+`firmware.SIGNATURES` (a magic straddling a read boundary is still found, and a
+fixed-offset signature is checked at the file's start only), and reports each
+region as the span to the next magic, capped at `firmware.MAX_REGION_BYTES` and
+bounded at `MAX_REGIONS`.  A region is a *carve*, not a parse: reportal reads no
+squashfs or UBI inode table, so a filesystem region is material rather than a
+tree, and the payload says so.  A gzip region is trimmed to the extent
+`firmware.gzip_member_length` reports (zlib reads the member; the archive reader
+rejects trailing non-zero data), which is what makes the gzip, tar and zip
+regions extractable through `archive.extract`, keyed by
+`firmware.ARCHIVE_SUFFIXES`.  `api.firmware_extract_binary` orchestrates one
+journaled action for the three surfaces: an extractable region contributes the
+members the archive reader finds, every other region is written out as a binary
+of its own through the same `_register_member` path an upload uses, and all of
+them join one collection.  Nothing is mounted, spawned or executed.
 
 ## Engine contract
 

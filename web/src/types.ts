@@ -1887,6 +1887,55 @@ export interface TeamsPayload {
   count: number;
 }
 
+/** One embedded region a firmware carve found. */
+export interface FirmwareRegion {
+  index: number;
+  offset: number;
+  size: number;
+  kind: string;
+  label: string;
+  confidence: string;
+  entropy: number;
+  truncated: boolean;
+}
+
+/** `GET|POST /api/binaries/<id>/firmware`: the carve pass over a stored image. */
+export interface FirmwareScan {
+  binary_id: number;
+  analysis_id: number;
+  size: number;
+  signatures: number;
+  regions: FirmwareRegion[];
+  region_count: number;
+  truncated: boolean;
+  entropy: { offset: number; length: number; entropy: number }[];
+  entropy_window: number;
+  max_region_bytes: number;
+  extractable_kinds: string[];
+  note: string;
+}
+
+/** `POST /api/binaries/<id>/firmware/extract`: what one carve registered. */
+export interface FirmwareExtraction {
+  binary_id: number;
+  collection_id: number;
+  collection_name: string;
+  regions: FirmwareRegion[];
+  members: {
+    region: number;
+    kind: string;
+    name: string;
+    size: number;
+    binary_id: number | null;
+    duplicate: boolean;
+    skipped: string;
+  }[];
+  kept: number;
+  skipped: number;
+  note: string;
+  journal_action?: string;
+}
+
 /** One local user; the token digest is never part of the answer. */
 export interface UserRow {
   id: number;

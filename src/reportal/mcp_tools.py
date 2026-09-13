@@ -46,6 +46,7 @@ from reportal import (
     engines,
     families,
     filetypes,
+    firmware,
     function_triage,
     graph,
     graph_backends,
@@ -3402,6 +3403,48 @@ def _tool_set_collection_scope(arguments: dict[str, Any]) -> dict[str, Any]:
     return _set_object_scope(arguments, kind="collection")
 
 
+def _tool_run_firmware_scan(arguments: dict[str, Any]) -> dict[str, Any]:
+    from reportal import api
+
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        try:
+            return api.firmware_carve_binary(conn, binary_id)
+        except api.ExtractError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
+def _tool_get_firmware_scan(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        payload = firmware.regions(conn, binary_id)
+    if payload is None:
+        raise ToolError(
+            "no-scan",
+            f"binary {binary_id} has no firmware scan; run 'reportal firmware {binary_id}'",
+        )
+    return payload
+
+
+def _tool_extract_firmware_regions(arguments: dict[str, Any]) -> dict[str, Any]:
+    from reportal import api
+
+    binary_id = _arg_int(arguments, "binary_id")
+    regions = _arg_optional_int_list(arguments, "regions")
+    collection_id = _arg_optional_int(arguments, "collection_id", 0)
+    with contextlib.closing(_open()) as conn:
+        try:
+            return api.firmware_extract_binary(
+                conn,
+                binary_id,
+                region_indexes=regions,
+                collection_id=collection_id,
+            )
+        except api.ExtractError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -3779,27 +3822,47 @@ def _tool_submit_job(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     raw = arguments.get("params")
     params = raw if isinstance(raw, dict) else {}
-    with contextlib.closing(_open()) as conn:
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
         try:
             job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=params)
         except ValueError as exc:
             raise ToolError("invalid job", str(exc)) from exc
         except KeyError as exc:
             raise ToolError("binary not found", str(exc.args[0])) from exc
+        journal.journaled_create(
+            log,
+            table=jobs.TABLE,
+            key=int(job["id"]),
+            description=f"queued {kind} job {job['id']} for binary {binary_id}",
+        )
     jobs.ensure_worker()
-    return job
+    return log.attach(job)
 
 
 def _tool_cancel_job(arguments: dict[str, Any]) -> dict[str, Any]:
     job_id = _arg_int(arguments, "job_id")
-    with contextlib.closing(_open()) as conn:
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        if jobs.get_job(conn, job_id) is None:
+            raise ToolError("job not found", f"no job with id {job_id}")
+        journal.journaled_rows(
+            conn,
+            log,
+            table=jobs.TABLE,
+            where="id = ?",
+            params=(job_id,),
+            description=f"cancelled job {job_id}",
+        )
         try:
             job = jobs.cancel(conn, job_id)
         except ValueError as exc:
             raise ToolError("job-not-cancellable", str(exc)) from exc
-    if job is None:
-        raise ToolError("job not found", f"no job with id {job_id}")
-    return job
+    return log.attach(job or {})
 
 
 def _tool_run_jobs(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5657,6 +5720,41 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_set_collection_scope,
+        ),
+        Tool(
+            "get_firmware_scan",
+            "A binary's stored firmware carve: its embedded regions (offset, size, kind,"
+            " entropy, confidence) and the sampled entropy map.  Read-only, never runs a"
+            " thing.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _READ,
+            _tool_get_firmware_scan,
+        ),
+        Tool(
+            "run_firmware_scan",
+            "Carve a stored firmware image and store the pass: magic-based region detection"
+            " plus an entropy map, all offline byte work with nothing executed.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _WRITE,
+            _tool_run_firmware_scan,
+        ),
+        Tool(
+            "extract_firmware_regions",
+            "Carve the regions of a stored firmware scan out and register what they hold: a"
+            " gzip, tar or zip region is unpacked with the archive reader, every other region"
+            " is stored as a binary of its own.  One journaled action.",
+            _object(
+                {
+                    "binary_id": _int("Binary id."),
+                    "regions": _array(
+                        "Region indexes to carve (default: every one).", _int("Index.")
+                    ),
+                    "collection_id": _int("Collection the carved binaries join."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_extract_firmware_regions,
         ),
         Tool(
             "ingest_document",

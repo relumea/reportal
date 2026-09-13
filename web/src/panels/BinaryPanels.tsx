@@ -80,6 +80,9 @@ import type {
   FileTypeMatch,
   FileTypeResult,
   Fingerprint,
+  FirmwareExtraction,
+  FirmwareRegion,
+  FirmwareScan,
   FunctionTriageResult,
   HardeningScan,
   ImportTable,
@@ -184,6 +187,8 @@ const NO_SCAN_MESSAGES = {
   related: "No related-binary scan yet. Run the scan to rank the other binaries against this one.",
   composition:
     "No composition analysis yet. Run it to read how this binary's functions match the corpus.",
+  firmware:
+    "No firmware carve yet. Run it to find the images embedded in this file.",
 } as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -2839,6 +2844,99 @@ function RelatedBody({ result }: { result: RelatedResult }): ReactNode {
       />
       <ScanNotes notes={result.notes} />
     </>
+  );
+}
+
+export function FirmwarePanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "firmware");
+  const path = `/binaries/${binaryId}/firmware`;
+  const entry = usePanel(key, () => api<FirmwareScan>(path));
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const carve = (): void => {
+    setBusy(true);
+    setError(null);
+    setMessage("");
+    refreshPanel(key, () =>
+      api<FirmwareScan>(path, { method: "POST" }).finally(() => setBusy(false)),
+    );
+  };
+  const extract = (index: number): void => {
+    setBusy(true);
+    setError(null);
+    setMessage("");
+    void api<FirmwareExtraction>(`${path}/extract`, {
+      method: "POST",
+      json: { regions: [index] },
+    })
+      .then((result) => {
+        const kept = result.members
+          .filter((member) => member.binary_id !== null)
+          .map((member) => member.name);
+        setMessage(
+          kept.length
+            ? `Carved into collection ${result.collection_name}: ${kept.join(", ")}`
+            : `Nothing registered from region ${index}.`,
+        );
+        refreshPanel(key, () => api<FirmwareScan>(path));
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Panel
+      title="Firmware carving"
+      subtitle="The embedded images this file carries, found by their magics. Nothing is executed."
+      actions={
+        <Button tone="primary" pending={busy} onClick={carve}>
+          Carve
+        </Button>
+      }
+    >
+      {error ? <ErrorNote error={error} /> : null}
+      {message ? <Muted>{message}</Muted> : null}
+      <PanelBody entry={entry} hint="Loading the carve" noScanHint={NO_SCAN_MESSAGES.firmware}>
+        {(data) => {
+          const regions: FirmwareRegion[] = Array.isArray(data.regions) ? data.regions : [];
+          const samples: { entropy: number }[] = Array.isArray(data.entropy) ? data.entropy : [];
+          const peak = samples.reduce((high, sample) => Math.max(high, sample.entropy), 0);
+          if (regions.length === 0) {
+            return <Muted>No embedded image magic matched in {data.size} bytes.</Muted>;
+          }
+          return (
+            <>
+              <Muted>
+                {data.region_count} region(s) in {data.size} bytes, {data.signatures} signature(s)
+                matched; entropy sampled per {data.entropy_window} bytes, peak {peak.toFixed(2)}.
+              </Muted>
+              <DataTable
+                columns={[
+                  { label: "#", key: "index", numeric: true },
+                  { label: "Offset", mono: true, render: (row) => `0x${row.offset.toString(16)}` },
+                  { label: "Size", numeric: true, render: (row) => row.size.toLocaleString() },
+                  { label: "Kind", render: (row) => <Badge mono>{row.kind}</Badge> },
+                  { label: "Label", key: "label" },
+                  { label: "Confidence", key: "confidence" },
+                  { label: "Entropy", numeric: true, render: (row) => row.entropy.toFixed(2) },
+                  {
+                    label: "Actions",
+                    render: (row) => (
+                      <Button size="sm" pending={busy} onClick={() => extract(row.index)}>
+                        Carve out
+                      </Button>
+                    ),
+                  },
+                ]}
+                rows={regions}
+                rowKey={(row) => row.index}
+              />
+              <Muted>{data.note}</Muted>
+            </>
+          );
+        }}
+      </PanelBody>
+    </Panel>
   );
 }
 

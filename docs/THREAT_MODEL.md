@@ -86,7 +86,15 @@ choice is a real boundary, and it is what the rest of this document qualifies.
    tool-call markup, and the artifact parsers require their fields, so a
    malformed answer raises `LlmError` rather than storing a partial artifact.
    The model's output is data; nothing in reportal evaluates it.
-7. **Engine JSON to the store.**  `engines.RebrewEngine._run` spawns the rebrew
+7. **Firmware bytes to the carve.**  `firmware.py` reads the stored file and
+   looks for magics; it writes nothing itself, and
+   `api.firmware_extract_binary` writes carved regions into temporary files
+   under the workspace's `binaries/` directory, which the same
+   `archive.extract` and `_register_member` path an upload uses then registers
+   or refuses.  Nothing is mounted, spawned or executed, so a firmware image is
+   untrusted input to a byte scanner and to the stdlib archive readers, not to a
+   loader.
+8. **Engine JSON to the store.**  `engines.RebrewEngine._run` spawns the rebrew
    CLI with a fixed subcommand and decodes its stdout as JSON, raising
    `EngineError` for invalid JSON or a non-object; the bounded stderr tail is
    `engines.STDERR_TAIL_CHARS`.  The engine's output is trusted only as far as
@@ -113,7 +121,9 @@ choice is a real boundary, and it is what the rest of this document qualifies.
 - **Executing the analysed sample.**  reportal has no route that runs the
   binary; analysis is delegated to rebrew subcommands that parse bytes
   (`engines.RebrewEngine`).  Malware containment, dynamic analysis and network
-  isolation of a sample are the sandbox's problem, not reportal's.
+  isolation of a sample are the sandbox's problem, not reportal's.  Firmware
+  carving follows the same rule: it reads bytes and writes region files, and it
+  never mounts an image or runs its contents.
 - **Documents, comments and conversations have no scope of their own.**  The
   team scope lives on binaries and collections; a document, a comment or a
   conversation is reached through the binary or function it hangs off, so it

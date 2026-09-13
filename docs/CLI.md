@@ -17,6 +17,13 @@ reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--
                                            #   'infected', a shared convention, not a secret);
                                            #   --analysis reads the id as an analysis id and
                                            #   writes that analysis's binary
+reportal firmware <binary-id> [--json]       # carve a stored firmware image: its embedded
+                                           #   regions, their entropy and confidence;
+                                           #   offline byte work, nothing executed
+reportal firmware-extract <binary-id> [--region N]... [--collection ID] [--json]
+                                           # carve regions out as binaries; a gzip, tar or
+                                           #   zip region is unpacked, the rest are stored
+                                           #   as binaries of their own; one journal action
 reportal extract <binary-id> [--password TEXT] [--collection ID] [--json]
                                            # unpack a stored archive with the stdlib
                                            #   (zip/apk, tar/tar.gz/tgz/tar.bz2/tar.xz, gz),

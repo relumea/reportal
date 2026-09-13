@@ -28,303 +28,24 @@ endpoint is configured; without one every AI route answers 503
 ```
 reportal/
 ├── pyproject.toml          # package config, entry point: reportal; mypy, ruff and coverage config
-├── Makefile                # the gate (make check, see "Gate") and the dev server (make run)
+├── Makefile                # the gate (make check) and the dev server (make run)
 ├── scripts/                # gate helpers: vnu-html.sh, check_wheel.py
 ├── .github/workflows/check.yml  # CI: every gate target but the two browser ones
 ├── README.md               # user-facing docs
 ├── LICENSE                 # MIT
-├── docs/README.md          # docs index
-├── docs/PARITY.md          # capability map vs portal.reveng.ai
-├── docs/ARCHITECTURE.md    # module map, store, engine contract, HTTP surface, SPA
-├── docs/COMPONENTS.md      # component model: revertible effects, reactive activation, gaps
-├── docs/ERRORS.md          # one section per error code, what it means and what to do
-├── docs/API.md             # the HTTP surface, route by route
-├── docs/CLI.md             # every `reportal` command, its options and what it writes
-├── docs/SPA.md             # the single-page app, module by module
-├── docs/DATA_MODEL.md      # the SQLite schema and what writes each table
+├── docs/                   # README (index), PARITY, ARCHITECTURE, COMPONENTS, ERRORS,
+│                           #   API, CLI, SPA, DATA_MODEL, THREAT_MODEL, DR_RUNBOOK
 ├── tests/                  # pytest suite (self-contained, tmp_path based)
-├── tools/
-│   ├── cdp.py              # shared DevTools client: launch Chrome, render a route, wait on the DOM
-│   ├── smoke_spa.py        # builds web/ when needed, then headless-Chrome smoke over every route
-│   ├── audit_ui.py         # headless-Chrome UI gate: overflow, clipped text, contrast, names
-│   └── seed_e2e.py         # seeds the Playwright suite's workspace (smoke seeding + collections + tag)
-├── web/                    # Vite + React + TypeScript frontend (bun)
-│   ├── package.json        # scripts: dev, build, preview, lint (oxlint), typecheck, test:ui
-│   ├── vite.config.ts      # root web/, base /static/, outDir ../src/reportal/assets/dist
-│   ├── playwright.config.ts # Playwright: one chromium project, global seed + server setup
-│   ├── index.html          # Vite entry page (mounts #root)
-│   ├── public/favicon.svg  # copied verbatim into the build
-│   ├── tests/              # Playwright specs plus the seed, server and fixture helpers
-│   └── src/
-│       ├── main.tsx        # React root, imports the global stylesheet
-│       ├── App.tsx         # shell: grouped sidebar, topbar, health line, route dispatch
-│       ├── components.tsx  # UI primitives: Panel, Button, Badge, Field, DataTable,
-│       │                   #   SegmentMeter, Readout, EmptyState, Loading, ErrorNote,
-│       │                   #   CodeBlock, KeyValue
-│       ├── design.ts       # instrument token names: status/confidence/severity
-│       │                   #   entities, the hue families, the meter geometry
-│       ├── queryClient.ts  # the one react-query client the views and the
-│       │                   #   panel cache fetch through
-│       ├── useAsync.ts     # a view's query: data/error/reload over react-query,
-│       │                   #   with a per-signal poll interval
-│       ├── live.ts         # useChangedIds: the change flash, reduced-motion aware
-│       ├── keys.ts         # the keyboard layer: the shortcut registry, combo
-│       │                   #   normalization, the focus/typing rules, the shared
-│       │                   #   filter-focus and table-row handlers, displayCombo
-│       ├── styles.css      # design tokens (hues, ramp, grid, spacing, type) + primitives
-│       ├── router.ts       # the sidebar's groups, labels and view paths
-│       ├── api.ts          # typed fetch wrapper (ApiError carries error/detail)
-│       ├── panelCache.ts   # the detail panels' cache, over react-query
-│       ├── types.ts        # API response types
-│       ├── constants.ts    # decompiler backends and disassembly formats
-│       ├── views/          # dashboard, binaries, functions, matches, collections,
-│       │                   #   conversations, search, details, the search modal
-│       │                   #   and the keyboard cheatsheet dialog
-│       └── panels/         # binary and function detail panels
-└── src/reportal/
-    ├── __init__.py         # __version__
-    ├── __main__.py         # python -m reportal
-    ├── _paths.py           # reportal.toml walk-up (WorkspaceNotFound), REPORTAL_DB override,
-    │                       #   db_path(), reports_dir(), binaries_dir(), stored_binary_path()
-    ├── store.py            # SQLite schema + typed CRUD; the typed search
-    │                       #   (SEARCH_KINDS/SEARCH_GROUPS, SearchError, MIN_SHA256_PREFIX,
-    │                       #   DEFAULT_/MAX_SEARCH_LIMIT) and the upload/extract helpers
-    │                       #   (find_binary_by_sha256, find_collection_by_name) (binaries, analyses, functions, matches,
-    │                       #   scans, rebrew project contexts, malware families, decompilations,
-    │                       #   comments, binary deletion with its cascade, collections with
-    │                       #   their membership, tags and their change timestamp, ...)
-    ├── analysis_log.py     # structured analysis log: analysis_log_entries (analysis, severity
-    │                       #   from one closed set, message, time), append_entry, list_entries
-    │                       #   (newest first, bounded, with the true total), MAX_LOG_LIMIT
-    ├── engines.py          # in-process rebrew adapter:
-    │                       #   fingerprints/imports/strings/pe-info/decompilation/analyze/
-    │                       #   report/xrefs/struct-recovery/crypto-scan/security-scan as parsed
-    │                       #   dicts, disassembly as text; disassemble/control_flow_graph/
-    │                       #   test_source call the engine's entry points directly
-    ├── llm.py              # optional OpenAI-compatible bridge for the AI extras
-    │                       #   (AI_KINDS, LlmConfig from env then reportal.toml [llm], LlmClient,
-    │                       #   chat completions, embeddings, summarize/inline_comments/
-    │                       #   suggest_types/rename_suggestions/threat_narrative,
-    │                       #   get_client/set_client)
-    ├── components.py       # component framework: Context (named values + reversible journal,
-    │                       #   subscribe/names, provide/revoke/record/revert), Component
-    │                       #   (requires/provides/effect/revert), registry with the
-    │                       #   `reportal.components` entry-point group, Registration
-    │                       #   (origin/module/reloadable), reload_component/reload_all
-    ├── effects.py          # the one undo dispatcher: a registry of descriptor kinds ->
-    │                       #   inverse actions (`reportal.effect_handlers` entry-point
-    │                       #   group), apply_descriptor/apply_undo_plan, plan_context,
-    │                       #   and the journal's row/file kinds
-    ├── journal.py          # the app-wide action journal: Journal/journaled (one action
-    │                       #   per request or invocation, entries in `journal_entries`),
-    │                       #   the generic row/file descriptor builders and the wiring
-    │                       #   helpers (journaled_rows/create/new_rows/file/ingest/rename/
-    │                       #   scan/scan_result/graph_rebuild), revert_action/revert_entry/
-    │                       #   list_entries/prune_entries, MAX_FILE_BYTES
-    ├── pipeline.py         # the AI decompilation composition: built-in stages, reactive
-    │                       #   activation (activate/deactivate), run_pipeline/revert_run,
-    │                       #   ComponentHost (live context for reload) plus the process-wide
-    │                       #   live host and withdraw_component, `[pipeline] disabled`
-    ├── auto_store.py       # auto-mode tables CRUD: auto_runs/auto_tasks/auto_attempts,
-    │                       #   latest_auto_run, auto_run_effects, record_auto_task_outcome
-    │                       #   (task + undo plan in one commit), run/task status + kind constants
-    ├── auto_workers.py     # auto-mode worker registry (Worker/WorkerResult/WorkerContext,
-    │                       #   register_worker/workers/refresh_workers, `reportal.auto_workers`
-    │                       #   entry-point group) and the deterministic offline worker
-    ├── auto_llm_worker.py  # the engine-verified `llm_c_source` worker: annotation marker
-    │                       #   from rebrew-project.toml, model prompt, rebrew test verification
-    ├── auto_mode.py        # auto orchestrator: selection, decomposition, bounded fan-out,
-    │                       #   objective acceptance, aggregation, per-task undo-plan
-    │                       #   persistence, run_auto/revert_auto_run/recover_auto_run
-    ├── conversations.py    # scoped chats over stored local data and the LLM bridge
-    │                       #   (SCOPE_KINDS, build_context, scope_knowledge, SYSTEM_PROMPT,
-    │                       #   send_message, default_title, MAX_CONTEXT_CHARS, HISTORY_TURN_LIMIT)
-    ├── comments.py         # analyst comments: scope and body validation over the `comments`
-    │                       #   table (SCOPE_KINDS, MAX_COMMENT_CHARS, DEFAULT_AUTHOR,
-    │                       #   add/list/get/update/delete, UnknownScopeError)
-    ├── bulk_actions.py     # bulk actions shared by the API, the CLI and the MCP tools
-    │                       #   (BINARY_ACTIONS, FUNCTION_ACTIONS, ANALYSIS_ACTIONS,
-    │                       #   MAX_BULK_IDS, apply_binary_action, apply_function_action,
-    │                       #   apply_analysis_action)
-    ├── archive.py          # stdlib-only archive extraction (zip/apk, tar/tar.gz/tgz/tar.bz2/
-    │                       #   tar.xz, single-member gz): archive_kind, extract with per-member
-    │                       #   outcomes, the traversal/link/device/bomb refusals and the named
-    │                       #   caps (MAX_MEMBER_BYTES, MAX_TOTAL_BYTES, MAX_COMPRESSION_RATIO,
-    │                       #   MAX_MEMBERS); `.rar`/`.7z` are refused by name (external tool),
-    │                       #   firmware unpacking is out of scope
-    ├── similarity.py       # optional resembl-backed structural similarity (SimilarityUnavailable,
-    │                       #   available, similarity, confidence_scores, cache_info, clear_cache)
-    ├── matching.py         # local function matching over the corpus under MatchSettings
-    │                       #   (match_binary, cached_disassembler, binary_match_rows,
-    │                       #   transfer_matches, plan_transfer, apply_transfer)
-    ├── diffing.py          # pure line alignment for the Match / Diff view (align,
-    │                       #   summary, strip_addresses)
-    ├── diffview.py         # resolve a match pair to two listings and align them
-    │                       #   (function_diff, DiffError, DIFF_KINDS)
-    ├── lineage.py          # pairwise function lineage between two binaries:
-    │                       #   compare_functions, compare_binaries and the stored
-    │                       #   comparison CRUD (the `lineage` scan, keyed by the
-    │                       #   right binary id)
-    ├── related.py          # relationship ranking of the stored binaries around
-    │                       #   one target: relationship (signals and their
-    │                       #   classification), find_related (the `related` scan)
-    │                       #   and derive_bundle; named thresholds and caps
-    ├── composition.py      # per-binary composition against the stored matches:
-    │                       #   compute_composition/run_composition, the five
-    │                       #   name-source labels, the quality bands and the
-    │                       #   `composition` scan (stored-only, no engine)
-    ├── unstrip.py          # auto-unstrip: library-identification proposals and apply
-    ├── renames.py          # LLM identifier renaming over a stored decompilation:
-    │                       #   suggest_renames/apply_renames/revert_renames, the
-    │                       #   word-boundary rewrite and the `renames-applied` journal
-    ├── capabilities.py     # capability tagging: deterministic import/string classification
-    ├── families.py         # local malware-family signatures: the store-backed bundle
-    │                       #   (sha256/imphash/rich-header hashes, import hash and set,
-    │                       #   capability set), derive_bundle, detect_binary scoring,
-    │                       #   register_family/list_families/get_family/delete_family,
-    │                       #   stored as the `detect` scan
-    ├── function_triage.py  # per-function triage: the deterministic heuristic
-    │                       #   (score_candidates, WEIGHT_*, METHOD_*), the LLM run
-    │                       #   (summarize_functions, stored_function_triage) and the
-    │                       #   `function-triage` scan/artifact kind
-    ├── behavior.py         # behavioral scans: execution, networking and filesystem
-    │                       #   import/string heuristics (BEHAVIOR_DOMAINS, BEHAVIOR_RULES,
-    │                       #   DOMAIN_SCAN_KINDS, classify, scan_domain)
-    ├── hardening.py        # anti-analysis and obfuscation scans: an import/string rule
-    │                       #   table plus numeric/structure thresholds over the
-    │                       #   fingerprint, imports, strings and stored triage
-    │                       #   (HARDENING_DOMAINS, ANTI_ANALYSIS_RULES, DOMAIN_SCAN_KINDS,
-    │                       #   classify_anti_analysis, classify_obfuscation, scan_hardening)
-    ├── filetypes.py        # bundled file-type, packer and protector detection: the
-    │                       #   SIGNATURES table (FileSignature/SignatureMatch over section
-    │                       #   names, entry-point bytes, strings, import DLLs, the Rich
-    │                       #   header and an executable-section entropy threshold), the
-    │                       #   derived confidence rule, detect and run_filetype (the
-    │                       #   `filetype` scan)
-    ├── secrets.py          # secrets scan: the credential pattern table (SECRET_PATTERNS),
-    │                       #   Shannon entropy and redaction; scan_secrets, run_secrets,
-    │                       #   stored as the `secrets` scan
-    ├── protocols.py        # protocol inference: the PROTOCOLS table (import/scheme/
-    │                       #   literal rules, well-known ports), infer_protocols,
-    │                       #   scan_protocols, stored as the `protocols` scan
-    ├── threat.py           # local threat report: IOC extraction (extract_iocs), ATT&CK
-    │                       #   mapping (map_techniques, TECHNIQUES), optional LLM narrative
-    │                       #   (build_threat_report), stored as the `threat` scan; the
-    │                       #   software-type classifier (SOFTWARE_TYPES, SOFTWARE_TYPE_RULES,
-    │                       #   classify_software) and the 0-100 threat score (score_threat,
-    │                       #   CONTRIBUTION_*, SCORE_*) over the stored evidence, with
-    │                       #   stored_evidence/classify_binary deriving both at read time
-    ├── error_docs.py       # the error-code catalogue: ERROR_DOC_ANCHORS (code -> the
-    │                       #   docs/ERRORS.md section), PARAMETRIZED_DOC_ANCHORS for the
-    │                       #   per-field validation messages, doc_anchor/doc_url
-    ├── remediation.py      # remediation artifacts: distinctive_strings, distinctive_imports,
-    │                       #   build_yara_rule, classify_specificity, validate_rule (yarac),
-    │                       #   build_snort_rule, build_stix_bundle, as_json, build_remediation;
-    │                       #   PE rules anchor on pe.imphash() when the fingerprint carries
-    │                       #   one; Snort rules come from the stored `threat` scan's network
-    │                       #   indicators (ports from the stored `protocols` scan), STIX is a
-    │                       #   deterministic 2.1 bundle over the same indicators; all three
-    │                       #   are stored as the `remediation` scan
-    ├── pdf.py              # PDF report writer over the stored scans, laid out here and
-    │                       #   serialized by reportlab (invariant, uncompressed:
-    │                       #   PdfLayout (wrap/paginate/tables/header+footer), text_width,
-    │                       #   wrap_text, page_count, render_report, write_report; text-only
-    ├── knowledge.py        # document ingestion, semantic search and retrieval: extract_text,
-    │                       #   chunk_text, ingest_document, search_knowledge, retrieve, as_context,
-    │                       #   TEXT_EXTENSIONS, KnowledgeError, the embedding path and the local
-    │                       #   TF-IDF fallback
-    ├── remote_ingest.py    # guarded remote (URL) ingestion, off by default: remote_enabled/
-    │                       #   require_enabled (ALLOW_REMOTE_ENV or [knowledge]
-    │                       #   allow_remote), validate_target (scheme/host/credentials/address/port
-    │                       #   guards), fetch (manual redirect re-validation, size cap, content-type
-    │                       #   allowlist) and ingest_url; the test-only allow_loopback seam
-    ├── graph.py            # deterministic knowledge graph over stored rows: build_graph,
-    │                       #   graph_payload, neighbors, entity_mentions, GRAPH_NODE_KINDS,
-    │                       #   the node kinds, edge relations and their caps
-    ├── graph_backends.py   # pluggable graph-backend registry: GraphBackend (name,
-    │                       #   available/describe/sync/optional query), sync_graph/run_query,
-    │                       #   the built-in sqlite and optional cognee backends, translate_graph,
-    │                       #   the `reportal.graph_backends` entry-point group, configured_backend_name
-    │                       #   and cognee_dataset_name (REPORTAL_GRAPH_BACKEND /
-    │                       #   REPORTAL_COGNEE_DATASET or [knowledge] graph_backend / cognee_dataset)
-    ├── data_types.py       # editable type model over the stored structs scan: parse_definition
-    │                       #   (struct/union/enum/typedef/pointer/array/function kinds),
-    │                       #   normalize_members/recompute, import_types, the type/member edits,
-    │                       #   the per-mutation history and its revert (list_history/revert_history),
-    │                       #   render_header/render_as_c and export_header (the apply artifact),
-    │                       #   filter_types/namespace_tree and the references reverse indices
-    ├── signatures.py       # editable function signatures over the stored decompilations:
-    │                       #   parse_signature, seed_signatures, the head/parameter edits,
-    │                       #   render_prototype(s) and export_prototypes (the apply artifact)
-    ├── instance.py         # what this install can do: versions, features, limits, counts
-    ├── details.py          # the composed binary-detail reads: the Detect-It-Easy
-    │                       #   identity (die_info) and the asynchronous details
-    │                       #   (additional_details, status) derived from the stored
-    │                       #   pe-info/filetype scans and the fingerprint, each
-    │                       #   reporting the sources it used and the command that
-    │                       #   fills a missing one
-    ├── jobs.py             # the asynchronous operation workflow: the `jobs` table, the
-    │                       #   JOB_KINDS registry (each kind a thin wrapper over the scan
-    │                       #   runner its route calls, journaled the same way), submit/claim/
-    │                       #   run_pending/cancel, the bounded background pool and the
-    │                       #   server-sent event stream; one step per job and no interrupting
-    │                       #   a running engine call are the stated ceilings
-    ├── notifications.py    # the notification feed, derived rather than stored: one item
-    │                       #   per journaled action from the journal and one per analysis-log
-    │                       #   entry, normalized to one shape, newest first, bounded, with
-    │                       #   the true total and a `since` filter; reads only, writes
-    │                       #   nothing, and dismissal lives in the client
-    ├── plugins.py          # the one entry-point reader every registry discovers through
-    ├── zipcrypto.py        # the password-protected zip writer (PKWARE ZipCrypto)
-    ├── surface.py          # the checks and journal writers the API, CLI and MCP share
-    ├── server.py           # shared FastAPI (ASGI) app: JSON helpers, gzip, Host guard,
-    │                       #   the error envelope as a response and an exception, the
-    │                       #   json_body/optional_json_body dependencies, db(), and the
-    │                       #   require_auth dependency a router mounts for the API gate
-    ├── auth.py             # local identity: the users and teams tables, roles and their
-    │                       #   permission sets, bearer tokens (digest only), the
-    │                       #   constant-time authenticate, the object-visibility clause and
-    │                       #   write predicate, and required() from REPORTAL_AUTH or
-    │                       #   [auth] required; off by default
-    ├── api.py              # router: every /api/* route (the JSON API)
-    ├── ui.py               # router: the built SPA, /static assets and the
-    │                       #   /reports/<id> generated site, each resolved under its root
-    ├── webapp.py           # composition root: includes the two routers
-    ├── cli.py              # Typer CLI: init, serve, mcp, config, stats, revert, tags, tag,
-    │                       #   collections, collection-show, collection-new,
-    │                       #   collection-edit, collection-rm, collection-add,
-    │                       #   collection-remove, collection-tags, apply-match,
-    │                       #   analysis, analysis-update, analysis-log, analysis-requeue,
-    │                       #   analysis-tags, imported-functions, analysis-bulk-tag,
-    │                       #   analysis-bulk-delete, users, user-add, user-token,
-    │                       #   user-edit, user-rm, teams, team-add, team-rm, team-member,
-    │                       #   binary-scope, collection-scope,
-    │                       #   comments, comment-add, comment-rm, bulk-tag, bulk-delete,
-    │                       #   bulk-prefix, diff, lineage, related, composition, families,
-    │                       #   family-add, family-rm, detect,
-    │                       #   add-binary, download, extract, enrich, decompile, triage, report,
-    │                       #   report-pdf,
-    │                       #   unstrip, unstrip-apply, import-rebrew, crypto-scan, pe-info,
-    │                       #   die-info, additional-details, filetype,
-    │                       #   capabilities,
-    │                       #   secrets, protocols, behavior, hardening, security-scan, threat, yara,
-    │                       #   snort, stix,
-    │                       #   structs, match, ingest, suggest-renames, apply-renames,
-    │                       #   revert-renames, types, types-import, type-rename,
-    │                       #   type-member, types-export, types-history,
-    │                       #   types-revert, signature-history,
-    │                       #   signature-revert, memory, section-coverage,
-    │                       #   documents, knowledge, ingest-url,
-    │                       #   graph-build, graph, ai-comments, notifications, jobs,
-    │                       #   job, job-submit, job-run, job-cancel
-    ├── mcp_tools.py        # MCP tool registry: Tool (name/description/input_schema/
-    │                       #   annotations/handler), register_tool/tools/refresh_tools,
-    │                       #   the 168 built-in tools, `reportal.mcp_tools` entry-point group
-    ├── mcp_server.py       # stdio MCP server: newline-delimited JSON-RPC 2.0 over stdin/stdout
-    │                       #   (initialize, notifications/initialized, tools/list, tools/call)
-    └── assets/dist/        # generated Vite build (gitignored; served by ui.py)
+├── tools/                  # cdp.py (DevTools client), smoke_spa.py, audit_ui.py, seed_e2e.py
+├── web/                    # Vite + React + TypeScript SPA (bun); src/views and src/panels
+└── src/reportal/           # the package: the module-by-module map is
+                            #   docs/ARCHITECTURE.md ("Process layout"), which is the one
+                            #   canonical list; the modules this file's Conventions section
+                            #   describes in detail are the plugin seams (components.py,
+                            #   effects.py, auto_workers.py, mcp_tools.py,
+                            #   graph_backends.py) and the shared helpers (store.py,
+                            #   journal.py, server.py, api.py, cli.py)
 ```
-
 ## Gate
 
 `make check` is the single gate: ruff and ruff format over the tree, oxlint,
@@ -354,7 +75,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 187 source files` is the finish line.
+`Success: no issues found in 189 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -368,7 +89,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.11%, 22944 statements with 1810 missed. `[tool.coverage.report] fail_under`
+92.10%, 23314 statements with 1841 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -668,8 +389,11 @@ action-journal entries and is read-only; `revert_journal_entry` replays one
 action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
+`get_firmware_scan` reads the stored carve pass and is read-only;
+`run_firmware_scan` carves and stores one and `extract_firmware_regions` carves
+its regions out as binaries, so both are destructive.
 The registry
-declares 168 built-in tools, 76 read-only and 92 destructive.
+declares 171 built-in tools, 77 read-only and 94 destructive.
 
 ## SPA
 
@@ -774,8 +498,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 168 built-in
-tools (76 read-only, 92 destructive).
+and `run_match` expose the same over MCP, and the counts stay 171 built-in
+tools (77 read-only, 94 destructive).
 
 ### Scaling
 

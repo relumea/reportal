@@ -321,6 +321,39 @@ class TestRoute:
         assert payload["status"] == jobs.STATUS_QUEUED, "the pool is off, so nothing ran it"
         assert payload["kind"] == "composition"
 
+    def test_submitting_is_journaled_and_revertible(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+
+        status, payload = _post("/api/jobs", {"kind": "composition", "binary_id": binary_id})
+
+        assert status.startswith("202")
+        assert payload["journal_action"], "the queued row is one journaled action"
+        job_id = int(payload["id"])
+        assert jobs.get_job(conn, job_id) is not None
+
+        journal.revert_action(conn, payload["journal_action"])
+
+        assert jobs.get_job(conn, job_id) is None
+
+    def test_cancelling_is_journaled_and_revertible(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        job = _submit(conn, tmp_path)
+
+        status, payload = _post(f"/api/jobs/{job['id']}/cancel")
+
+        assert status.startswith("200")
+        assert payload["status"] == jobs.STATUS_CANCELLED
+        assert payload["journal_action"]
+
+        journal.revert_action(conn, payload["journal_action"])
+
+        restored = jobs.get_job(conn, int(job["id"]))
+        assert restored is not None
+        assert restored["status"] == jobs.STATUS_QUEUED
+
     def test_an_unknown_kind_is_400(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         status, payload = _post("/api/jobs", {"kind": "nope", "binary_id": _binary(conn, tmp_path)})
 

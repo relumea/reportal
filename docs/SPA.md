@@ -393,6 +393,13 @@ disabled flag, New token rotates and shows the replacement once, and Delete
 goes through the confirm pattern.  With auth off the page says so and the API is
 the local operator's, which is the honest reading of an empty user table.
 
+The binary detail's Firmware panel (`panels/BinaryPanels.tsx`) reads the stored
+carve pass and offers Carve (the POST), a region table (index, offset, size,
+kind badge, label, confidence, entropy) with a per-row Carve out control that
+posts one region to `/firmware/extract` and reports what it registered, and the
+entropy summary line; before the first run it shows the no-scan hint with the
+same Carve button.
+
 The Users view also carries the Teams panel: `GET /api/teams` as a table (id,
 name, member count, description) with a create form, a per-row "add member"
 select over the known users and a Delete behind the confirm pattern, so team

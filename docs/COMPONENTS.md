@@ -231,6 +231,12 @@ read as a claim:
   that does not exist or that a previous attempt of the same run owns.  The
   contract that would close it is recording the path's prior state in the
   descriptor and refusing to delete a file the run did not write.
+- **The journal is request-scoped state, not a session log.**  One `Journal`
+  per HTTP request or CLI invocation is the unit the paper's revertible effect
+  maps onto here; the authenticated identity of that request is not recorded on
+  the entry (`journal._SCHEMA` has no actor column), so a revert is reversible
+  but not attributable.  The users, teams, memberships and scopes are ordinary
+  journaled rows like any other.
 - **App-wide mediation is partial, and the wired set is explicit.**  The
   pipeline journals through a `Context` and auto mode journals per task into its
   run's plan, and both stay run-scoped by design: a run's plan is scoped to the
@@ -289,6 +295,31 @@ read as a claim:
     restores, on the routes, CLI and MCP.
   - **Graph and report files.**  The graph rebuild (see the caveat below) and
     the PDF report file.
+  - **The analysis lifecycle.**  The engine relabel, the log append and the
+    requeue (`PATCH /api/analyses/<id>`, `POST .../logs`, `POST .../requeue`, the
+    `update_analysis` / `append_analysis_log` / `requeue_analysis` MCP tools and
+    the matching CLI commands), where a requeue revert restores the status, the
+    finish time and the log entry it added; and the analysis bulk delete and
+    bulk tag (`POST /api/analyses/bulk`), one action over the id list.
+  - **Queued operations.**  Submitting a job journals the `jobs` row it inserts
+    (`POST /api/jobs`, `reportal job-submit`, the `submit_job` MCP tool), so a
+    revert takes the queue entry back; cancelling journals the row it flips and
+    a revert returns it to `queued` (`POST /api/jobs/<id>/cancel` and its two
+    siblings).  The scan a job performs is journaled by the runner through the
+    same `journal.journaled_scan` the direct route uses, so a queued run is
+    revertible exactly like a direct one.
+  - **Identity and teams.**  User create (the row is deleted on revert), the
+    role or disabled update, token rotation (the previous digest is restored)
+    and delete (the row comes back), on the routes, the CLI and the MCP tools;
+    team create, update and delete, where a team delete journals its members and
+    the binaries and collections that lose their scope; membership add and
+    remove; and the object scope setter on a binary or a collection.
+  - **Firmware.**  The carve pass journals the `scans` row it creates or
+    replaces (and the `analyses` row only when it created it), through the same
+    `journal.journaled_scan` every other scan route uses; the region extraction
+    is one action covering every carved binary, the files it stored and the
+    collection it joined (`POST /api/binaries/<id>/firmware/extract`, `reportal
+    firmware-extract`, the `extract_firmware_regions` MCP tool).
   Still unwired, with the reason:
   - **Run-scoped plans.**  The pipeline and auto mode keep their own plans by
     design (above), so `run_pipeline`, `revert_pipeline_run`, `run_auto`,
@@ -314,8 +345,11 @@ read as a claim:
     ingest the journal covers, so reverting an ingest removes the chunks and
     their vectors together; nothing re-embeds on restore, which is why the
     journal records no separate vector descriptor.
-  - **Authentication-free single-user state.**  There is no session, key or
-    permission row to revert.
+  - **The finished-job history.**  `jobs._prune` drops terminal `jobs` rows
+    past `MAX_JOB_HISTORY`.  It is bookkeeping over rows nothing reads back (a
+    job's durable effect is the scan it journaled), so it is not one of the
+    writes the action journal covers.  A queued job's own row is journaled, as
+    the wired list above says.
   - **The graph backend a rebuild may have pushed to.**  A graph rebuild's
     revert restores the local `graph_nodes` and `graph_edges` rows and removes
     the ones the rebuild created; a `graph/sync` already made is not undone, and

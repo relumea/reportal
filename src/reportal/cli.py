@@ -1398,12 +1398,20 @@ def job_submit_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     params = {"domain": domain} if domain else {}
     with contextlib.closing(store.connect(portal_db)) as conn:
-        try:
-            job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=params)
-        except KeyError as exc:
-            _fail(_journal_error_text(exc), json_output)
-        except ValueError as exc:
-            _fail(str(exc), json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=params)
+            except KeyError as exc:
+                _fail(_journal_error_text(exc), json_output)
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+            journal.journaled_create(
+                log,
+                table=jobs.TABLE,
+                key=int(job["id"]),
+                description=f"queued {kind} job {job['id']} for binary {binary_id}",
+            )
         if run:
             job = jobs.run_pending(conn, limit=1)[0]
     if json_output:
@@ -1445,12 +1453,23 @@ def job_cancel_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        try:
-            job = jobs.cancel(conn, job_id)
-        except ValueError as exc:
-            _fail(str(exc), json_output)
-    if job is None:
-        _fail(f"no job with id {job_id}", json_output)
+        if jobs.get_job(conn, job_id) is None:
+            _fail(f"no job with id {job_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=jobs.TABLE,
+                where="id = ?",
+                params=(job_id,),
+                description=f"cancelled job {job_id}",
+            )
+            try:
+                job = jobs.cancel(conn, job_id)
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+        job = log.attach(job or {})
     if json_output:
         typer.echo(json.dumps(job))
         return
@@ -3137,6 +3156,99 @@ def download(
         )
     else:
         console.print(f"[green]Wrote[/green] {written} bytes to {target}")
+
+
+# ── firmware ───────────────────────────────────────────────────────
+
+
+@app.command()
+def firmware(
+    binary_id: int = typer.Argument(..., help="Stored firmware image to carve"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Carve a stored firmware image: its embedded regions and their entropy.
+
+    Pure byte work: reportal reads no filesystem inode table, runs nothing and
+    stores the pass as the binary's `firmware` scan.
+    """
+    from reportal import api
+
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = api.firmware_carve_binary(conn, binary_id)
+        except api.ExtractError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"\n[bold cyan]{payload['region_count']} region(s)[/bold cyan] in {payload['size']} bytes"
+    )
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Index", justify="right")
+    table.add_column("Offset", style="cyan")
+    table.add_column("Size", justify="right")
+    table.add_column("Kind")
+    table.add_column("Entropy", justify="right")
+    table.add_column("Confidence")
+    for region in payload["regions"]:
+        table.add_row(
+            str(region["index"]),
+            hex(int(region["offset"])),
+            str(region["size"]),
+            str(region["kind"]),
+            str(region["entropy"]),
+            str(region["confidence"]),
+        )
+    console.print(table)
+    console.print(f"[dim]{payload['note']}[/dim]")
+
+
+@app.command("firmware-extract")
+def firmware_extract(
+    binary_id: int = typer.Argument(..., help="Stored firmware image whose regions to extract"),
+    region: list[int] = typer.Option(None, "--region", help="Region index to carve (repeatable)"),
+    collection_id: int = typer.Option(
+        0, "--collection", help="Collection the carved binaries join (default: one per firmware)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Carve the stored firmware's regions out and register what they hold.
+
+    A gzip, tar or zip region is unpacked with the archive reader; every other
+    region is stored as a binary of its own.  The whole request is one journal
+    action.
+    """
+    from reportal import api
+
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = api.firmware_extract_binary(
+                conn,
+                binary_id,
+                region_indexes=list(region) if region else None,
+                collection_id=collection_id,
+            )
+        except api.ExtractError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"[green]Carved[/green] {len(payload['regions'])} region(s) into collection"
+        f" {payload['collection_id']} ({payload['kept']} kept, {payload['skipped']} skipped)"
+    )
+    for member in payload["members"]:
+        state = member["skipped"] or f"binary {member['binary_id']}"
+        console.print(
+            f"  region {member['region']} ({member['kind']}): {member['name']} -> {state}"
+        )
 
 
 # ── extract ────────────────────────────────────────────────────────

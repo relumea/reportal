@@ -57,6 +57,7 @@ from reportal import (
     engines,
     families,
     filetypes,
+    firmware,
     function_triage,
     graph,
     graph_backends,
@@ -783,6 +784,241 @@ def extract_archive_binary(
         )
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def firmware_carve_binary(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """Carve *binary_id* and store the pass as its ``firmware`` scan; journaled.
+
+    Shared by the HTTP route, the CLI and the MCP tool, and wired the way every
+    other scan route is: `journal.journaled_scan` journals the `scans` row the
+    pass creates or replaces, and the analysis row only when the pass created it,
+    so reverting the action takes the stored carve back.  Raises
+    :class:`ExtractError` for an unknown binary or a row without a file, so the
+    three surfaces report the same vocabulary.
+    """
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise ExtractError(404, "binary not found", f"no binary with id {binary_id}")
+    if not Path(str(binary["path"])).is_file():
+        raise ExtractError(
+            400, "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+        )
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        try:
+            payload = journal.journaled_scan(
+                conn,
+                log,
+                binary_id,
+                firmware.SCAN_KIND,
+                lambda: firmware.scan(conn, binary_id),
+                engine="firmware",
+            )
+        except firmware.FirmwareError as exc:
+            status = 404 if exc.code.endswith("not found") else 400
+            raise ExtractError(status, exc.code, exc.detail) from None
+    return log.attach(payload)
+
+
+def firmware_extract_binary(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    *,
+    region_indexes: Sequence[int] | None = None,
+    collection_id: int = 0,
+) -> dict[str, Any]:
+    """Carve the regions of a stored firmware and register what they hold.
+
+    One journal action covers the whole request: a region the archive reader
+    can unpack (`reportal.firmware.ARCHIVE_SUFFIXES`) contributes its members,
+    and every other region is written out as a binary of its own with its
+    provenance recorded (the source binary, the offset and the kind).  Nothing
+    is executed: this reads bytes and copies them.
+    """
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise ExtractError(404, "binary not found", f"no binary with id {binary_id}")
+    source = Path(str(binary["path"]))
+    if not source.is_file():
+        raise ExtractError(
+            400, "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+        )
+    stored = firmware.regions(conn, binary_id)
+    if stored is None:
+        raise ExtractError(
+            404,
+            "no-scan",
+            f"binary {binary_id} has no firmware scan; run 'reportal firmware {binary_id}' first",
+        )
+    available = stored.get("regions") or []
+    selected = list(range(len(available))) if region_indexes is None else list(region_indexes)
+    if not selected:
+        raise ExtractError(400, "invalid-region", "at least one region index is required")
+    directory = binaries_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    temp_root = Path(tempfile.mkdtemp(dir=directory, prefix=".carve-"))
+    try:
+        resolved_regions: list[dict[str, Any]] = []
+        for index in selected:
+            try:
+                entry = firmware.region(source, index=index, regions_payload=stored)
+            except firmware.FirmwareError as exc:
+                raise ExtractError(400, exc.code, exc.detail) from None
+            target = temp_root / entry["name"]
+            firmware.write_region(source, target, offset=entry["offset"], size=entry["size"])
+            resolved_regions.append(entry)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            resolved_id, collection_name = _resolve_extract_collection(
+                conn, log, binary, collection_id
+            )
+            members: list[dict[str, Any]] = []
+            for entry in resolved_regions:
+                target = temp_root / entry["name"]
+                if entry["extractable"]:
+                    try:
+                        extraction = archive.extract(target, temp_root)
+                    except archive.ArchiveError as exc:
+                        members.append(
+                            {
+                                "region": entry["index"],
+                                "kind": entry["kind"],
+                                "name": entry["name"],
+                                "size": entry["size"],
+                                "binary_id": None,
+                                "duplicate": False,
+                                "skipped": exc.code,
+                            }
+                        )
+                        continue
+                    for member in extraction.members:
+                        registered = _register_member(conn, log, member, directory)
+                        registered["region"] = entry["index"]
+                        registered["kind"] = entry["kind"]
+                        _link_member(conn, log, resolved_id, registered)
+                        members.append(registered)
+                    continue
+                registered = _register_member(
+                    conn,
+                    log,
+                    archive.MemberOutcome(
+                        name=entry["name"], size=target.stat().st_size, path=target
+                    ),
+                    directory,
+                )
+                registered["region"] = entry["index"]
+                registered["kind"] = entry["kind"]
+                _link_member(conn, log, resolved_id, registered)
+                members.append(registered)
+        return log.attach(
+            {
+                "binary_id": binary_id,
+                "collection_id": resolved_id,
+                "collection_name": collection_name,
+                "regions": resolved_regions,
+                "members": members,
+                "kept": sum(1 for row in members if row["skipped"] == ""),
+                "skipped": sum(1 for row in members if row["skipped"] != ""),
+                "note": (
+                    "a carved region that is not a gzip, tar or zip is stored as a binary of"
+                    " its own; reportal reads no filesystem inode table"
+                ),
+            }
+        )
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+def _link_member(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    collection_id: int,
+    registered: dict[str, Any],
+) -> None:
+    """Add a registered member to the extraction's collection, journaled."""
+    binary_id = registered.get("binary_id")
+    if binary_id is None or not store.add_collection_binary(conn, collection_id, int(binary_id)):
+        return
+    log.record(
+        effects.EFFECT_ROW_DELETE,
+        f"added binary {binary_id} to collection {collection_id}",
+        journal.row_delete_descriptor(
+            "collection_binaries",
+            {"collection_id": collection_id, "binary_id": int(binary_id)},
+        ),
+    )
+
+
+@router.post("/api/binaries/{binary_id}/firmware")
+def firmware_scan(binary_id: int) -> Response:
+    """Carve a stored firmware image: its embedded regions and their entropy.
+
+    Pure byte work over the stored file: no engine call, no subprocess, nothing
+    executed.  The pass is stored as the ``firmware`` scan, so a re-read costs
+    nothing; 404 `binary not found`, 400 `binary not on disk`.
+    """
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = firmware_carve_binary(conn, binary_id)
+        except ExtractError as exc:
+            return json_error(exc.status, error=exc.code, detail=exc.detail)
+    return json_response(payload)
+
+
+@router.get("/api/binaries/{binary_id}/firmware")
+def firmware_regions(binary_id: int) -> Response:
+    """The stored carve pass of a binary; 404 `no-scan` before the first run."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        payload = firmware.regions(conn, binary_id)
+    if payload is None:
+        return json_error(
+            404,
+            error="no-scan",
+            detail=f"binary {binary_id} has no firmware scan; run 'reportal firmware {binary_id}'",
+        )
+    return json_response(payload)
+
+
+@router.post("/api/binaries/{binary_id}/firmware/extract")
+def firmware_extract(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Carve the stored firmware's regions out and register what they hold.
+
+    Body ``{"regions": [index, ...]}`` selects the regions (every one when the
+    key is absent) and ``{"collection_id": N}`` names the collection the carved
+    binaries join (one named after the firmware when absent).  The whole request
+    is one journal action, so its revert takes back every binary it created, the
+    files it stored and the collection it joined.  A region the archive reader
+    cannot unpack is carved as a binary of its own; 404 `no-scan` before the
+    first carve.
+    """
+    raw = body.get("regions")
+    if raw is not None and (
+        not isinstance(raw, list)
+        or any(isinstance(item, bool) or not isinstance(item, int) for item in raw)
+    ):
+        return json_error(400, error="invalid-region", detail="regions must be a list of indexes")
+    collection_id = body.get("collection_id", 0)
+    if isinstance(collection_id, bool) or not isinstance(collection_id, int):
+        return json_error(
+            400, error="invalid collection", detail="collection_id must be an integer"
+        )
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = firmware_extract_binary(
+                conn,
+                binary_id,
+                region_indexes=None if raw is None else [int(item) for item in raw],
+                collection_id=int(collection_id),
+            )
+        except ExtractError as exc:
+            return json_error(exc.status, error=exc.code, detail=exc.detail)
+    return json_response(payload, status=201)
 
 
 @router.post("/api/binaries/{binary_id}/extract")
@@ -7218,12 +7454,21 @@ def submit_job(body: dict[str, Any] = Depends(json_body)) -> Response:
     if raw_params is not None and not isinstance(raw_params, dict):
         return json_error(400, error="invalid params", detail="params must be an object")
     with contextlib.closing(_open()) as conn:
-        try:
-            job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=raw_params or {})
-        except ValueError as exc:
-            return json_error(400, error="invalid job", detail=str(exc))
-        except KeyError as exc:
-            return json_error(404, error="binary not found", detail=str(exc.args[0]))
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=raw_params or {})
+            except ValueError as exc:
+                return json_error(400, error="invalid job", detail=str(exc))
+            except KeyError as exc:
+                return json_error(404, error="binary not found", detail=str(exc.args[0]))
+            journal.journaled_create(
+                log,
+                table=jobs.TABLE,
+                key=int(job["id"]),
+                description=f"queued {kind} job {job['id']} for binary {binary_id}",
+            )
+        job = log.attach(job)
     if jobs.ensure_worker() is None and not jobs.pool_disabled():
         # No pool could start (the process has no workspace yet), so the job
         # would sit queued forever: run it now and answer the finished row
@@ -7242,13 +7487,23 @@ def cancel_job(job_id: int) -> Response:
     result or leaves it running.
     """
     with contextlib.closing(_open()) as conn:
-        try:
-            job = jobs.cancel(conn, job_id)
-        except ValueError as exc:
-            return json_error(409, error="job-not-cancellable", detail=str(exc))
-    if job is None:
-        return json_error(404, error="job not found", detail=f"no job with id {job_id}")
-    return json_response(job)
+        if jobs.get_job(conn, job_id) is None:
+            return json_error(404, error="job not found", detail=f"no job with id {job_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=jobs.TABLE,
+                where="id = ?",
+                params=(job_id,),
+                description=f"cancelled job {job_id}",
+            )
+            try:
+                job = jobs.cancel(conn, job_id)
+            except ValueError as exc:
+                return json_error(409, error="job-not-cancellable", detail=str(exc))
+    return json_response(log.attach(job or {}))
 
 
 @router.post("/api/jobs/run")
