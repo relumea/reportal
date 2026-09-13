@@ -31,6 +31,7 @@ from reportal import (
     agent,
     ai_decomp,
     analysis_log,
+    analytics,
     auth,
     auto_mode,
     auto_store,
@@ -4263,6 +4264,16 @@ def _tool_extract_firmware_regions(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError(exc.code, exc.detail) from exc
 
 
+def _tool_get_stats_series(arguments: dict[str, Any]) -> dict[str, Any]:
+    days = _arg_optional_int(arguments, "days", analytics.DEFAULT_SERIES_DAYS)
+    try:
+        analytics.normalize_days(days)
+    except analytics.SeriesError as exc:
+        raise ToolError("invalid days", exc.detail) from exc
+    with contextlib.closing(_open()) as conn:
+        return analytics.series(conn, days=days)
+
+
 def _tool_get_activity(arguments: dict[str, Any]) -> dict[str, Any]:
     actor = _arg_optional_str(arguments, "actor") or None
     since_raw = _arg_optional_str(arguments, "since")
@@ -6854,6 +6865,23 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_run_sandbox_detonation,
+        ),
+        Tool(
+            "get_stats_series",
+            "The dashboard time series over the last `days` days: analyses created, auto runs"
+            " started, journaled actions (the local analogue of the hosted credit count), and"
+            " the software type each analysis's binary derives; stored rows only, no engine"
+            " and no model.",
+            _object(
+                {
+                    "days": _int(
+                        f"Window length (default {analytics.DEFAULT_SERIES_DAYS}, at most"
+                        f" {analytics.MAX_SERIES_DAYS})."
+                    )
+                }
+            ),
+            _READ,
+            _tool_get_stats_series,
         ),
         Tool(
             "get_activity",

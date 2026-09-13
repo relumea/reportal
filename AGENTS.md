@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 214 source files` is the finish line.
+`Success: no issues found in 216 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.06%, 29020 statements with 2305 missed. `[tool.coverage.report] fail_under`
+92.07%, 29135 statements with 2310 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -461,7 +461,9 @@ serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 `get_firmware_scan` reads the stored carve pass and is read-only;
 `run_firmware_scan` carves and stores one and `extract_firmware_regions` carves
-its regions out as binaries, so both are destructive.  `get_activity` reads the
+its regions out as binaries, so both are destructive.  `get_stats_series` reads the dashboard's 30-day series (analyses, auto runs,
+journaled actions and the derived software types) from stored rows and is read-only.
+`get_activity` reads the
 activity feed and `list_feedback` the stored notes, so both are read-only;
 `add_feedback` writes one and is destructive.  `get_ai_decompilation`,
 `get_ai_decompilation_status`, `list_ai_decompilation_tokens`,
@@ -512,7 +514,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 222 built-in tools, 103 read-only and 119 destructive.
+declares 223 built-in tools, 104 read-only and 119 destructive.
 
 ## SPA
 
@@ -617,8 +619,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 222 built-in
-tools (103 read-only, 119 destructive).
+and `run_match` expose the same over MCP, and the counts stay 223 built-in
+tools (104 read-only, 119 destructive).
 
 ### Scaling
 

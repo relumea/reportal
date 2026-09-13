@@ -894,6 +894,26 @@ plaintext-at-rest boundary.  Authorization is two rules: a workspace secret
 needs an admin, a team secret needs that team's membership (or an admin), and
 with auth off the install is the single local operator.
 
+## Analytics
+
+`analytics.py` is the dashboard's only computation.  It reads `analyses`,
+`auto_runs` and `journal_entries` by day (`substr(created_at, 1, 10)`) and
+derives one more series from stored evidence: the software type each analysis's
+binary classifies as, through the same `threat.classify_binary` the threat and
+triage routes answer with, so the chart and the badge cannot disagree.  Nothing
+is stored: the series is a read, so a new scan or a rename shows up on the next
+load rather than waiting for a job to refresh a table.
+
+Two decisions are deliberate.  Every day in the window is present, a quiet one
+with a zero, because a chart with holes reads as missing data rather than as no
+activity; and the software-type derivation is bounded (`MAX_SERIES_ANALYSES`)
+with the bound stated in the payload's `notes`, because deriving a type reads
+several scans per binary and a long history would otherwise turn a dashboard
+load into a full-table scan of the scan table.  A binary whose type cannot be
+derived counts as `unknown` rather than being dropped, so the counts still add
+up to the analyses in the window.
+
+## Search
 ## Search
 
 `store.search` is one function behind the search route, the CLI and the MCP tool,

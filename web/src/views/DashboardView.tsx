@@ -19,6 +19,7 @@ import {
   EmptyState,
   ErrorNote,
   Loading,
+  Muted,
   NA,
   Panel,
   Readout,
@@ -34,6 +35,8 @@ import type {
   BinaryListRow,
   FunctionRow,
   Health,
+  StatsSeries,
+  StatsSeriesDay,
   JournalEntry,
   JournalList,
   PeInfo,
@@ -548,6 +551,91 @@ function useCoverageSettle(active: boolean, reload: () => void): void {
   }, [active, reload]);
 }
 
+/** Days the dashboard charts cover. */
+const SERIES_DAYS = 30;
+
+/**
+ * The three 30-day series, drawn as one bar per day.
+ *
+ * The bars are CSS heights over zero-count days included by the API, so the
+ * axis is continuous and a quiet day reads as zero rather than as a gap.  Each
+ * chart is labelled for a screen reader with its own total, because a bar chart
+ * with no text is unreadable without sight.
+ */
+function SeriesPanel({
+  series,
+  error,
+  onRetry,
+}: {
+  series: StatsSeries | null;
+  error: unknown;
+  onRetry: () => void;
+}): ReactNode {
+  if (error) {
+    return (
+      <Panel title="Last 30 days">
+        <ErrorNote error={error} onRetry={onRetry} />
+      </Panel>
+    );
+  }
+  if (!series) {
+    return (
+      <Panel title="Last 30 days">
+        <Loading label="Loading the activity series" rows={3} />
+      </Panel>
+    );
+  }
+  const charts: Array<{ key: keyof Omit<StatsSeriesDay, "date">; label: string; tone: string }> = [
+    { key: "analyses", label: "Binaries processed", tone: "series-a" },
+    { key: "auto_runs", label: "Agents triggered", tone: "series-b" },
+    { key: "actions", label: "Journaled actions", tone: "series-c" },
+  ];
+  const peak = Math.max(
+    1,
+    ...series.series.flatMap((day) => [day.analyses, day.auto_runs, day.actions]),
+  );
+  const types = Object.entries(series.totals.software_types);
+  return (
+    <Panel
+      title="Last 30 days"
+      subtitle={`${series.range.from} to ${series.range.to}: what this workspace did, counted from stored rows only.`}
+    >
+      {charts.map((chart) => (
+        <div className="series" key={chart.key}>
+          <div className="series-head">
+            <span>{chart.label}</span>
+            <span className="mono">{series.totals[chart.key]}</span>
+          </div>
+          <div
+            className="series-bars"
+            role="img"
+            aria-label={`${chart.label} per day over ${series.days} days, ${series.totals[chart.key]} in total`}
+          >
+            {series.series.map((day) => (
+              <span
+                key={`${chart.key}-${day.date}`}
+                className={`series-bar ${chart.tone}`}
+                style={{ height: `${Math.round((day[chart.key] / peak) * 100)}%` }}
+                title={`${day.date}: ${day[chart.key]}`}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+      <Muted>
+        Software types detected:{" "}
+        {types.length
+          ? types.map(([name, count]) => `${name} ${count}`).join(", ")
+          : "none yet"}
+        .
+      </Muted>
+      {series.notes.map((note) => (
+        <Muted key={note}>{note}</Muted>
+      ))}
+    </Panel>
+  );
+}
+
 export function DashboardView(): ReactNode {
   const health = useAsync(() => api<Health>("/health"), [], true, HEALTH_POLL_MS);
   const list = useAsync(() => api<{ binaries: BinaryListRow[] }>("/binaries"), []);
@@ -590,6 +678,13 @@ export function DashboardView(): ReactNode {
   const runIsRunning =
     runningId !== null && (liveRun.data === undefined || liveRun.data.status === "running");
   useCoverageSettle(runIsRunning, liveFunctions.reload);
+
+  const series = useAsync(
+    () => api<StatsSeries>(`/stats/series?days=${SERIES_DAYS}`),
+    [],
+    true,
+    SUMMARY_REFRESH_MS,
+  );
 
   const counts = health.data?.counts ?? null;
   const entries = journal.data?.entries ?? null;
@@ -659,6 +754,7 @@ export function DashboardView(): ReactNode {
     <div className="cockpit">
       <div className="cockpit-col">
         <SystemState counts={counts} changed={changedStats} />
+        <SeriesPanel series={series.data ?? null} error={series.error} onRetry={series.reload} />
         <BinaryPanel summaries={summaryRows} changed={changedBinaries} />
         <SectionPanel summary={focus} flashing={changedFocus.has("focus")} />
       </div>

@@ -502,7 +502,12 @@ reportal search <query> [--kind K] [--limit N] [--regex] [--json]
                                            #   expression with --regex, or one
                                            #   typed query (sha256, binary,
                                            #   collection, tag)
-reportal stats [--json]                    # row counts
+reportal stats [--series] [--days N] [--json]
+                                           # row counts, or the dashboard time
+                                           #   series with --series: analyses,
+                                           #   auto runs, journaled actions and
+                                           #   software types per day
+
 reportal activity [--actor NAME] [--since ISO] [--limit N] [--json]
                                            # what was done here and by whom: the journaled
                                            #   actions with their actor plus the analysis log

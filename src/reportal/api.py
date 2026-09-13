@@ -42,6 +42,7 @@ from reportal import (
     agent,
     ai_decomp,
     analysis_log,
+    analytics,
     archive,
     auth,
     auto_mode,
@@ -7392,6 +7393,34 @@ def graph_query(request: Request) -> Response:
             backend, conn, query=text, limit=graph_backends.DEFAULT_QUERY_LIMIT
         )
     return json_response(result)
+
+
+# ── Analytics ──────────────────────────────────────────────────────
+#
+# The dashboard's time series over rows the workspace already holds: analyses
+# created, the software type each one's binary derives, auto runs started and
+# journaled actions (the local analogue of the hosted portal's credit count).
+# Nothing is stored, so a chart cannot drift from the lists it summarizes.
+
+
+@router.get("/api/stats/series")
+def stats_series(request: Request) -> Response:
+    """The dashboard series over the last ``?days=`` days (30 by default).
+
+    ``days`` is bounded by :data:`analytics.MAX_SERIES_DAYS`; every day in the
+    window is present, a quiet one with a zero.  A binary whose software type
+    cannot be derived counts as ``unknown`` rather than being dropped, and the
+    payload's ``notes`` says when the derivation stopped at its bound.
+    """
+    requested = _query_int(request, "days")
+    days = analytics.DEFAULT_SERIES_DAYS if requested is None else requested
+    try:
+        analytics.normalize_days(int(days))
+    except analytics.SeriesError as exc:
+        return json_error(400, error="invalid days", detail=exc.detail)
+    with contextlib.closing(_open()) as conn:
+        payload = analytics.series(conn, days=int(days))
+    return json_response(payload)
 
 
 # ── Search ─────────────────────────────────────────────────────────

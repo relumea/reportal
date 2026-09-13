@@ -151,6 +151,25 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   the local analogue of credits; billing and a subscription page are not
   applicable locally.
 - Size: M.
+- **Status:** Closed.  `analytics.py` computes the three series plus the usage
+  counter over rows the workspace already holds and stores nothing, so a chart
+  cannot drift from the lists it summarizes: analyses created per day, auto runs
+  started per day, journaled actions per day (the local analogue of the hosted
+  credit count) and, per day, the software type each created analysis's binary
+  derives through `threat.classify_binary` (one derivation per binary, reused
+  for its analyses, capped by `MAX_SERIES_ANALYSES` with a note when the cap
+  bites, and a binary whose type cannot be derived counts as `unknown` rather
+  than being dropped).  Every day in the window is present, a quiet one with a
+  zero, because a chart with holes reads as missing data;
+  `GET /api/stats/series?days=` (30 by default, `MAX_SERIES_DAYS` at most, 400
+  `invalid days` outside), `reportal stats --series [--days N]` (the existing
+  command gained the series beside the row counts) and the read-only
+  `get_stats_series` MCP tool expose it.  The SPA's dashboard renders the three
+  charts as one bar per day over a shared peak, each labelled for a screen
+  reader with its total, plus the software-type totals and the payload's notes.
+  The hosted portal's credit balance, its subscription page and its per-user
+  attribution are not ported: a correct local analogue of a credit is an action
+  this workspace recorded, and there is no billing to attribute it to.
 
 ### 5. Analysis visibility, ownership and workspace scoping
 

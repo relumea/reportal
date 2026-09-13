@@ -1,7 +1,8 @@
 """Typer CLI for reportal.
 
 Subcommands: ``init`` (write the workspace marker and database), ``serve``
-(the portal web server), ``stats`` (row counts), ``revert`` (undo a rename),
+(the portal web server), ``stats`` (row counts, or ``--series``
+for the dashboard series), ``revert`` (undo a rename),
 ``tags``/``tag`` (list tags, tag a binary), ``apply-match`` (rename to a match
 candidate), ``diff`` (align a function against a match candidate), ``lineage``
 (compare two binaries' functions and report what is unchanged, changed, added
@@ -115,6 +116,7 @@ from reportal import (
     agent,
     ai_decomp,
     analysis_log,
+    analytics,
     auth,
     auto_mode,
     auto_store,
@@ -1091,12 +1093,29 @@ def mcp(
 
 @app.command()
 def stats(
+    series: bool = typer.Option(
+        False, "--series", help="The dashboard time series instead of row counts"
+    ),
+    days: int = typer.Option(
+        analytics.DEFAULT_SERIES_DAYS, "--days", help="Days the series covers"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Print portal row counts."""
+    """Print portal row counts, or the dashboard time series with ``--series``."""
     path = _db_path(json_output)
     if not path.exists():
         _fail(f"no reportal database at {path} (run 'reportal init')", json_output)
+    if series:
+        with contextlib.closing(store.connect(path)) as conn:
+            try:
+                payload = analytics.series(conn, days=days)
+            except analytics.SeriesError as exc:
+                _fail(f"invalid days: {exc.detail}", json_output)
+        if json_output:
+            typer.echo(json.dumps(payload))
+            return
+        _print_series(payload)
+        return
     with contextlib.closing(store.connect(path)) as conn:
         counts = store.counts(conn)
     if json_output:
@@ -1109,6 +1128,34 @@ def stats(
         table.add_row(key, str(value))
     console.print(f"\n[bold cyan]{path}[/bold cyan]")
     console.print(table)
+
+
+def _print_series(payload: dict[str, Any]) -> None:
+    """Print one dashboard series: its range, its totals and its busy days."""
+    console.print(
+        f"[bold]{payload['range']['from']} to {payload['range']['to']}[/bold]"
+        f" ({payload['days']} day(s))"
+    )
+    totals = payload["totals"]
+    console.print(
+        f"analyses {totals['analyses']}, auto runs {totals['auto_runs']},"
+        f" actions {totals['actions']}"
+    )
+    for name, count in totals["software_types"].items():
+        console.print(f"  software type {name}: {count}")
+    busy = [row for row in payload["series"] if any(row[key] for key in analytics.SERIES_KEYS)]
+    if not busy:
+        console.print("[yellow]No activity in this window.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Date", style="cyan")
+    for key in analytics.SERIES_KEYS:
+        table.add_column(key, justify="right")
+    for row in busy:
+        table.add_row(row["date"], *(str(row[key]) for key in analytics.SERIES_KEYS))
+    console.print(table)
+    for note in payload["notes"]:
+        console.print(f"[yellow]note[/yellow]: {note}")
 
 
 # ── analyses ───────────────────────────────────────────────────────

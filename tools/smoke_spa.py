@@ -599,6 +599,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("System state",),
             ("Coverage",),
             ("Live run",),
+            # The 30-day series: the panel title and its first chart's label.
+            ("Last 30 days",),
+            ("Binaries processed",),
+            ("Agents triggered",),
             ("Section coverage",),
         ),
     ),

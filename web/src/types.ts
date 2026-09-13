@@ -2772,3 +2772,26 @@ export interface SymbolFileList {
   symbol_files: SymbolFile[];
   count: number;
 }
+
+/** One day of the dashboard series. */
+export interface StatsSeriesDay {
+  date: string;
+  analyses: number;
+  auto_runs: number;
+  actions: number;
+}
+
+/** `GET /api/stats/series`. */
+export interface StatsSeries {
+  days: number;
+  range: { from: string; to: string };
+  series: StatsSeriesDay[];
+  software_types: Array<{ date: string; counts: Record<string, number> }>;
+  totals: {
+    analyses: number;
+    auto_runs: number;
+    actions: number;
+    software_types: Record<string, number>;
+  };
+  notes: string[];
+}
