@@ -39,6 +39,12 @@ CHANGELOG_FILE = "CHANGELOG.md"
 # page load into a slow parse.
 MAX_DOC_BYTES = 512 * 1024
 
+# The knowledge scope the manual is ingested into when a conversation asks about
+# reportal itself (TODO entry 16).  The scope has no id of its own, so every
+# caller passes the sentinel :data:`SCOPE_ID`.
+SCOPE_KIND = "docs"
+SCOPE_ID = 0
+
 # The error code the surfaces report when no documentation directory resolves.
 ERROR_NO_DOCS = "no-docs"
 ERROR_NO_DOC = "no-doc"
@@ -148,28 +154,16 @@ def pages() -> list[dict[str, Any]]:
 
     Raises :class:`NoDocsError` when no documentation directory resolves.
     """
-    directory = documents_dir()
-    if directory is None:
+    if documents_dir() is None:
         raise NoDocsError(
             f"no documentation directory: set {DOCS_ENV}, run from a workspace with"
             " a docs/ directory, or read the repository"
         )
-    found: dict[str, Path] = {}
-    for path in sorted(directory.glob("*.md")):
-        found.setdefault(path.stem, path)
-    ordered: list[Path] = []
-    for stem in PAGE_ORDER:
-        if stem in found:
-            ordered.append(found.pop(stem))
-    ordered.extend(found[stem] for stem in sorted(found))
     listing: list[dict[str, Any]] = []
-    for path in ordered:
+    for path in _page_files():
         text = _read(path)
-        listing.append({"slug": _slug_of(path), "title": _title_of(text, path.stem)})
-    changelog = changelog_path()
-    if changelog is not None:
-        text = _read(changelog)
-        listing.append({"slug": _slug_of(changelog), "title": _title_of(text, "Changelog")})
+        fallback = "Changelog" if path.name == CHANGELOG_FILE else path.stem
+        listing.append({"slug": _slug_of(path), "title": _title_of(text, fallback)})
     return listing
 
 
@@ -347,3 +341,46 @@ def page(slug: str) -> dict[str, Any]:
         "source": path.name,
         "version": __version__,
     }
+
+
+def excerpts() -> list[dict[str, str]]:
+    """Every shipped page as ingestable text, for the knowledge scope.
+
+    The knowledge chunker wants text rather than blocks, so a page is read
+    whole and bounded by :data:`MAX_DOC_BYTES`, with its title kept as the
+    document title and its filename as the source hint.  An empty result is the
+    honest answer for a wheel with no documents.
+    """
+    found: list[dict[str, str]] = []
+    for entry in _page_files():
+        text = _read(entry)
+        if not text.strip():
+            continue
+        found.append(
+            {
+                "slug": _slug_of(entry),
+                "title": _title_of(text, entry.stem),
+                "source": entry.name,
+                "text": text,
+            }
+        )
+    return found
+
+
+def _page_files() -> list[Path]:
+    """Every document file, in reading order: the same list :func:`pages` uses."""
+    directory = documents_dir()
+    if directory is None:
+        return []
+    available: dict[str, Path] = {}
+    for path in sorted(directory.glob("*.md")):
+        available.setdefault(path.stem, path)
+    ordered: list[Path] = []
+    for stem in PAGE_ORDER:
+        if stem in available:
+            ordered.append(available.pop(stem))
+    ordered.extend(available[stem] for stem in sorted(available))
+    changelog = changelog_path()
+    if changelog is not None:
+        ordered.append(changelog)
+    return ordered

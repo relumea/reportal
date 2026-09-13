@@ -926,6 +926,17 @@ page load into a slow parse; the truncation is silent, which is the one
 deliberate residual here because the alternative (refusing to show a document
 that is merely long) is worse for a reader.
 
+The same reader is what grounds a conversation about reportal itself
+(`conversations.SCOPE_KIND_DOCS`): `docs.excerpts()` hands the pages to
+`knowledge.ingest_document` under the `docs` scope, deduped by content hash, and
+the answer is assembled from the chunks `knowledge.retrieve` ranks.  The ingest
+happens on the first question rather than at startup, so an install that never
+asks pays nothing, and a page the knowledge layer refuses (too large, no
+extractable text) is skipped rather than failing the question.  The retrieval
+ranking is the local TF-IDF one unless an embeddings endpoint is configured, so
+a keyword query ranks best; that is the ceiling this inherits from the knowledge
+feature and it is stated in `docs/SPA.md` rather than hidden.
+
 ## Analytics
 
 `analytics.py` is the dashboard's only computation.  It reads `analyses`,

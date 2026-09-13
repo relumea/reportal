@@ -7,6 +7,8 @@ either directly into `send_message` or process-wide through `llm.set_client`.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import ANALYSIS, FailingLlmClient, FakeLlmClient
@@ -213,4 +215,73 @@ class TestSendMessage:
         conversation_id = _new_conversation(conn)
         result = conversations.send_message(conn, conversation_id=conversation_id, content="hi")
         assert result["assistant"]["content"] == "from the process client"
+        assert len(fake_llm.calls) == 1
+
+
+class TestDocumentationScope:
+    """The docs scope: reportal's own manual as the grounding text.
+
+    The pages are ingested into the `docs` knowledge scope on first use, so the
+    first question pays for the ingest and the next one only queries.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _docs(self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "manual.md").write_text(
+            "# Manual\n\nAdd a binary with reportal add-binary PATH.\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("REPORTAL_DOCS", str(tmp_path / "docs"))
+
+    def test_the_context_names_the_version(self, conn: sqlite3.Connection) -> None:
+        text = conversations.build_context(
+            conn, scope_kind="docs", scope_id=0, message="how do I add a binary"
+        )
+        assert "reportal manual" in text
+        assert "add a binary" in text or "add-binary" in text
+        assert "Relevant documents:" in text
+
+    def test_the_pages_are_ingested_once(self, conn: sqlite3.Connection) -> None:
+        conversations.scope_knowledge(conn, scope_kind="docs", scope_id=0, message="add a binary")
+        first = store.list_documents(conn, scope_kind="docs", scope_id=0)
+        assert len(first) == 1
+        conversations.scope_knowledge(conn, scope_kind="docs", scope_id=0, message="add a binary")
+        assert len(store.list_documents(conn, scope_kind="docs", scope_id=0)) == len(first)
+
+    def test_a_blank_message_injects_nothing(self, conn: sqlite3.Connection) -> None:
+        assert (
+            conversations.scope_knowledge(conn, scope_kind="docs", scope_id=0, message="  ") == []
+        )
+
+    def test_the_title_is_derived(self, conn: sqlite3.Connection) -> None:
+        assert (
+            conversations.default_title(conn, scope_kind="docs", scope_id=0)
+            == "reportal documentation"
+        )
+
+    def test_no_documentation_directory_injects_nothing(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("REPORTAL_DOCS", str(tmp_path / "missing"))
+        assert (
+            conversations.scope_knowledge(conn, scope_kind="docs", scope_id=0, message="anything")
+            == []
+        )
+        # The base block still says what is being asked about, rather than
+        # failing the question.
+        assert "reportal manual" in conversations.build_context(
+            conn, scope_kind="docs", scope_id=0, message="anything"
+        )
+
+    def test_a_docs_conversation_answers_through_the_bridge(
+        self, conn: sqlite3.Connection, fake_llm: FakeLlmClient
+    ) -> None:
+        conversation_id = store.create_conversation(
+            conn, scope_kind="docs", scope_id=0, title="docs"
+        )
+        fake_llm.response = "Use reportal add-binary."
+        result = conversations.send_message(
+            conn, conversation_id=conversation_id, content="how do I add a binary?"
+        )
+        assert result["assistant"]["content"] == "Use reportal add-binary."
         assert len(fake_llm.calls) == 1

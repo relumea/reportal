@@ -5844,6 +5844,10 @@ def _conversation_scope_detail(
         if store.get_function(conn, scope_id) is None:
             return f"no function with id {scope_id}"
         return None
+    if scope_kind == conversations.SCOPE_KIND_DOCS:
+        # The manual is one scope with no stored row, so every id names it; the
+        # id is carried for the conversation row's sake and never matched.
+        return None
     if store.get_binary(conn, scope_id) is None:
         return f"no binary with id {scope_id}"
     return None

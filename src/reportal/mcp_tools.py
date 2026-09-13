@@ -3350,6 +3350,9 @@ def _tool_create_conversation(arguments: dict[str, Any]) -> dict[str, Any]:
         if scope_kind == conversations.SCOPE_KIND_FUNCTION:
             if store.get_function(conn, scope_id) is None:
                 raise ToolError("function not found", f"no function with id {scope_id}")
+        elif scope_kind == conversations.SCOPE_KIND_DOCS:
+            # One manual with no stored row, so every id names it.
+            pass
         elif store.get_binary(conn, scope_id) is None:
             raise ToolError("binary not found", f"no binary with id {scope_id}")
         resolved = title.strip() or conversations.default_title(
@@ -6431,10 +6434,11 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "create_conversation",
-            "Create a conversation scoped to one stored function or binary.",
+            "Create a conversation scoped to one stored function, one binary or the"
+            " shipped documentation.",
             _object(
                 {
-                    "scope_kind": _enum("Scope kind.", ("function", "binary")),
+                    "scope_kind": _enum("Scope kind.", conversations.SCOPE_KINDS),
                     "scope_id": _int("Function or binary id to scope to."),
                     "title": _str("Conversation title (default: derived from the scope)."),
                 },

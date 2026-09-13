@@ -268,7 +268,7 @@ their pages by the same rule.
 | `/api/auto/runs/<id>` | GET | one auto run with its task tree and coverage; 404 `run not found` |
 | `/api/auto/runs/<id>/revert` | POST | remove the files the run wrote, restore the statuses it changed and delete its rows; 404 `run not found` |
 | `/api/conversations` | GET | conversations, optionally filtered by `?scope_kind=` and `?scope_id=` |
-| `/api/conversations` | POST | create a conversation; body `{"scope_kind": "function"\|"binary", "scope_id": ..., "title": optional}`; 404 for an unknown scope id |
+| `/api/conversations` | POST | create a conversation; body `{"scope_kind": "function"\|"binary"\|"docs", "scope_id": ..., "title": optional}`; 404 for an unknown scope id. A `docs` conversation grounds its answers in the shipped manual, which is ingested into the `docs` knowledge scope on the first question; its `scope_id` is carried but never matched, and its default title is `reportal documentation` |
 | `/api/conversations/<id>` | GET | one conversation plus its messages |
 | `/api/conversations/<id>` | DELETE | delete a conversation and its messages |
 | `/api/conversations/<id>/messages` | POST | send one message; body `{"content": ...}`; 400 on blank, 503 `llm-unavailable` without a client, 502 `llm-error` on model failure |
@@ -807,7 +807,10 @@ The conversation routes reuse that shape.  `POST /api/conversations` validates
 `scope_kind` against `conversations.SCOPE_KINDS` (400 `invalid scope kind`) and
 the scope id against the stored functions or binaries (404 `function not
 found` / `binary not found`), and derives the title from the scope row when the
-body carries none.  `GET`/`DELETE /api/conversations/<id>` and the message POST
+body carries none.  The `docs` scope names no table: it is one manual for the
+whole install, so its id is carried for the conversation row and never matched,
+and the first question ingests the shipped pages into the `docs` knowledge scope
+(deduped by content hash, so later ones only query).  `GET`/`DELETE /api/conversations/<id>` and the message POST
 answer 404 `conversation not found` for an unknown id; the message POST
 answers 400 `content must be a non-empty string` for a blank body, 503
 `llm-unavailable` without a configured endpoint and 502 `llm-error` when the

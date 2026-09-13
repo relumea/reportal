@@ -151,7 +151,7 @@ export const DEFAULT_DIFF_KIND: DiffKind = DIFF_KINDS[0];
 export const DEFAULT_DIFF_NORMALIZE = true;
 
 // Conversation scope kinds the API accepts; mirrors conversations.SCOPE_KINDS.
-export const CONVERSATION_SCOPE_KINDS = ["function", "binary"] as const;
+export const CONVERSATION_SCOPE_KINDS = ["function", "binary", "docs"] as const;
 export type ConversationScopeKind = (typeof CONVERSATION_SCOPE_KINDS)[number];
 
 // Auto-mode workers exposed in the start form; mirrors the built-in names in

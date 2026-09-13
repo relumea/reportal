@@ -92,6 +92,9 @@ entry.
   auto runs, journaled actions and the derived software types).
 - Agent-artifact ratings: a thumbs up/down and a note per stored scan, journaled
   and revertible.
+- A conversation about reportal itself: the `docs` scope ingests the shipped
+  manual on the first question and answers from it, with a per-scope canned
+  prompt list in the Conversations view.
 - The Integrations view's MCP onboarding card, which prints the one-liner and
   the client config for the 228 built-in tools.
 - Regular-expression and multi-value search, per-type provenance in the

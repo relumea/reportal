@@ -2879,3 +2879,11 @@ kbd.key {
   background: var(--surface-2);
   color: var(--text-muted);
 }
+
+/* The conversation prompt library: one ghost button per canned opener. */
+.prompt-library {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}

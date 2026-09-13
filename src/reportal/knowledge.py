@@ -100,10 +100,12 @@ _TEXT_WHITESPACE = "\t\n\r"
 
 # Document scopes.  A binary scope names a stored binary id; a project scope is
 # a workspace-level bucket with no table to validate against, the same loose
-# reference the conversation scopes use.
+# reference the conversation scopes use; the docs scope holds the shipped
+# manual, which `reportal.docs` ingests, and an id of zero.
 SCOPE_KIND_BINARY = "binary"
 SCOPE_KIND_PROJECT = "project"
-SCOPE_KINDS: tuple[str, ...] = (SCOPE_KIND_BINARY, SCOPE_KIND_PROJECT)
+SCOPE_KIND_DOCS = "docs"
+SCOPE_KINDS: tuple[str, ...] = (SCOPE_KIND_BINARY, SCOPE_KIND_PROJECT, SCOPE_KIND_DOCS)
 
 # Title a document carries when the caller supplies none.
 DEFAULT_DOCUMENT_TITLE = "untitled"

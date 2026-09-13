@@ -794,6 +794,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # The agent half: one tool loop per run over the local MCP registry.
             ("Agent run",),
             ("Run agent",),
+            # The prompt library: one canned opener per scope.
+            ("What does this function do?",),
         ),
     ),
     (

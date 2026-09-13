@@ -519,6 +519,15 @@ select in the table: `public` for the whole workspace, or a team that owns it
 (`PATCH /api/binaries/<id>/scope`).  The options come from `GET /api/teams`, so
 the control lists exactly the teams that exist.
 
+A conversation carries a prompt library: `SCOPE_PROMPTS` in
+`views/ConversationsView.tsx` names a few canned openers per scope (the manual,
+a binary, a function) and each is a ghost button that fills the message box, so
+the local assistant offers the hosted portal's context-dependent prompt choices
+without ever suggesting something its scope cannot answer.  The documentation
+scope grounds a chat in reportal's own manual (TODO entry 16): the scope kind is
+`docs`, its id is carried but never matched, and the pages are ingested into the
+`docs` knowledge scope on the first question.
+
 The Documentation view (`views/DocumentationView.tsx`, `#/docs`, `#/docs/:slug`
 and `#/changelog`, in the System group) is the portal's own manual, read from
 the workspace rather than from a checkout: `GET /api/docs` answers the index the

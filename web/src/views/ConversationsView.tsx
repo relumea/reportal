@@ -215,6 +215,30 @@ function AgentPanel({ conversationId }: { conversationId: number }): ReactNode {
 const SCOPE_HINTS: Record<ConversationScopeKind, string> = {
   function: "Function id",
   binary: "Binary id",
+  docs: "Documentation (the id is ignored)",
+};
+
+/** The canned prompts a conversation offers, by scope.  The hosted portal's
+ * assistant changes its prompt library with the page context; this is the local
+ * version of that: a few openers that fit what the scope can actually answer,
+ * and no prompt that names a capability the scope does not have. */
+const SCOPE_PROMPTS: Record<ConversationScopeKind, readonly string[]> = {
+  docs: [
+    "How do I add a binary and run an analysis?",
+    "Which error codes can a route return?",
+    "What is deliberately not implemented?",
+    "How does the knowledge graph work?",
+  ],
+  binary: [
+    "What does this binary import that looks risky?",
+    "Summarize the stored triage result.",
+    "Which capabilities were tagged and why?",
+  ],
+  function: [
+    "What does this function do?",
+    "Which strings and calls does it use?",
+    "Suggest a name for it.",
+  ],
 };
 
 /** The citations a reply was grounded in, as a small disclosure. */
@@ -494,6 +518,13 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
           Send
         </Button>
       </form>
+      <div className="prompt-library" aria-label="Suggested prompts">
+        {SCOPE_PROMPTS[data.scope_kind as ConversationScopeKind]?.map((prompt) => (
+          <Button key={prompt} size="sm" tone="ghost" onClick={() => setDraft(prompt)}>
+            {prompt}
+          </Button>
+        ))}
+      </div>
       {actionError ? <ErrorNote error={actionError} /> : null}
     </Panel>
   );

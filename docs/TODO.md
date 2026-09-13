@@ -486,6 +486,21 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   short canned-prompt list per scope in `ConversationsView`.  Off unless the LLM
   bridge is configured, like every other AI path.
 - Size: S.
+- **Status:** Closed.  `conversations.SCOPE_KIND_DOCS` is the third conversation
+  scope: `POST /api/conversations` with `{"scope_kind": "docs"}` (its
+  `scope_id` is carried for the row and never matched), the same over the
+  `create_conversation` MCP tool, and the scope select in the Conversations
+  view.  `docs.excerpts()` hands every page to `knowledge.ingest_document` under
+  the `docs` knowledge scope on the first question, deduped by content hash so a
+  later question only queries, and the answer is assembled from the chunks
+  `knowledge.retrieve` ranks plus a base block naming the release.  The
+  context's own base text says the manual is the source, so a model that is
+  asked about a version has one to cite.  `SCOPE_PROMPTS` in the Conversations
+  view adds the canned openers per scope (manual, binary, function); every
+  opener names something its scope can actually answer.  Ceiling: the ranking is
+  the local TF-IDF one unless an embeddings endpoint is configured, so a keyword
+  query ranks best; the hosted portal's assistant is tool-calling and this one
+  is not, which is cluster L's agent, a separate surface.
 
 ### 17. Collections list controls
 

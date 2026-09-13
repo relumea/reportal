@@ -25,7 +25,7 @@ import json
 import sqlite3
 from typing import Any
 
-from reportal import knowledge, llm, store
+from reportal import __version__, docs, knowledge, llm, store
 
 # Largest context block sent to the model, in characters.  The stored
 # disassembly and decompilation of one function are frequently longer than a
@@ -45,10 +45,13 @@ HISTORY_TURN_LIMIT = 10
 DOCUMENT_SECTION_HEADER = "Relevant documents:"
 
 # Conversation scopes.  The kind names the table a scope id refers to; the API
-# is what rejects an id that table does not hold.
+# is what rejects an id that table does not hold.  The documentation scope names
+# no table: it reads the shipped manual, so every caller passes
+# `docs.SCOPE_ID`.
 SCOPE_KIND_FUNCTION = "function"
 SCOPE_KIND_BINARY = "binary"
-SCOPE_KINDS: tuple[str, ...] = (SCOPE_KIND_FUNCTION, SCOPE_KIND_BINARY)
+SCOPE_KIND_DOCS = docs.SCOPE_KIND
+SCOPE_KINDS: tuple[str, ...] = (SCOPE_KIND_FUNCTION, SCOPE_KIND_BINARY, SCOPE_KIND_DOCS)
 
 # Roles stored in `messages`.  Only the user and assistant turns are recorded;
 # the system prompt and context are rebuilt for every request.
@@ -78,14 +81,16 @@ def build_context(
     A function scope carries the function row (VA, name, size, status), its
     stored disassembly and, when present, its stored decompilation.  A binary
     scope carries the binary row, the summary fields of its stored triage
-    dossier and its stored capability scan when present.  Both then append a
-    ``Relevant documents`` section holding the binary's documents that rank
-    against *message* (see :func:`scope_knowledge`); the section is last, so it
-    is what :data:`MAX_CONTEXT_CHARS` truncates first.  An absent *message*, a
-    scope with no matching document or an unknown scope leaves the section out
-    entirely, header included.  The result is capped at
-    :data:`MAX_CONTEXT_CHARS`.  An unknown scope kind or scope id yields an
-    empty string; nothing is computed from an engine.
+    dossier and its stored capability scan when present.  A documentation scope
+    carries the shipped manual instead: the pages are ingested into the docs
+    knowledge scope on first use and the message is answered from the chunks the
+    retrieval ranks (see :func:`scope_knowledge`).  Every scope then appends a
+    ``Relevant documents`` section holding the documents that rank against
+    *message*; the section is last, so it is what :data:`MAX_CONTEXT_CHARS`
+    truncates first.  An absent *message*, a scope with no matching document or
+    an unknown scope leaves the section out entirely, header included.  The
+    result is capped at :data:`MAX_CONTEXT_CHARS`.  An unknown scope kind or
+    scope id yields an empty string; nothing is computed from an engine.
     """
     text, _ = _context_and_sources(conn, scope_kind=scope_kind, scope_id=scope_id, message=message)
     return text
@@ -99,6 +104,8 @@ def _context_and_sources(
         text = _function_context(conn, scope_id)
     elif scope_kind == SCOPE_KIND_BINARY:
         text = _binary_context(conn, scope_id)
+    elif scope_kind == SCOPE_KIND_DOCS:
+        text = _documentation_context()
     else:
         return "", []
     hits = scope_knowledge(conn, scope_kind=scope_kind, scope_id=scope_id, message=message)
@@ -115,8 +122,9 @@ def scope_knowledge(
 
     A function conversation reads its binary's documents and a binary
     conversation that binary's, both through :func:`reportal.knowledge.retrieve`
-    with the retrieval limit.  A blank message, an unknown scope or a scope with
-    no documents answers [].
+    with the retrieval limit.  A documentation conversation reads the shipped
+    manual, which is ingested first.  A blank message, an unknown scope or a
+    scope with no documents answers [].
     """
     document_scope = _document_scope(conn, scope_kind=scope_kind, scope_id=scope_id)
     if document_scope is None:
@@ -144,6 +152,9 @@ def _document_scope(
         if binary is None:
             return None
         return knowledge.SCOPE_KIND_BINARY, int(binary["id"])
+    if scope_kind == SCOPE_KIND_DOCS:
+        _ingest_documentation(conn)
+        return docs.SCOPE_KIND, docs.SCOPE_ID
     return None
 
 
@@ -153,6 +164,48 @@ def _document_section(hits: list[dict[str, Any]]) -> str:
     if not block:
         return ""
     return f"{DOCUMENT_SECTION_HEADER}\n{block}"
+
+
+def _documentation_context() -> str:
+    """The base context block for a documentation conversation.
+
+    There is no scope row to read: the answer comes from the manual's chunks,
+    which :func:`_ingest_documentation` stores.  The block states which release
+    the documents belong to, so a model asked about a version has one to cite.
+    """
+    return (
+        "The reportal manual shipped with this instance (version"
+        f" {__version__}).  Its pages, the changelog included, are in the"
+        " documents below; answer from them and cite the page titles."
+    )
+
+
+def _ingest_documentation(conn: sqlite3.Connection) -> None:
+    """Ingest the shipped manual into the docs knowledge scope.
+
+    Idempotent by content hash, so a second question costs one query per page
+    rather than a re-chunk: ``knowledge.ingest_document`` returns the stored row
+    for bytes it already holds.  A page that the knowledge layer refuses (too
+    large, no extractable text) is skipped rather than failing the question, and
+    a missing documentation directory ingests nothing.
+    """
+    try:
+        pages = docs.excerpts()
+    except docs.DocsError:
+        return
+    for page in pages:
+        try:
+            knowledge.ingest_document(
+                conn,
+                scope_kind=docs.SCOPE_KIND,
+                scope_id=docs.SCOPE_ID,
+                title=page["title"],
+                source=page["source"],
+                mime="text/markdown",
+                data=page["text"].encode("utf-8"),
+            )
+        except knowledge.KnowledgeError:
+            continue
 
 
 def default_title(conn: sqlite3.Connection, *, scope_kind: str, scope_id: int) -> str:
@@ -166,6 +219,8 @@ def default_title(conn: sqlite3.Connection, *, scope_kind: str, scope_id: int) -
         binary = store.get_binary(conn, scope_id)
         if binary is not None:
             return str(binary["name"])
+    elif scope_kind == SCOPE_KIND_DOCS:
+        return "reportal documentation"
     return f"{scope_kind} {scope_id}"
 
 
