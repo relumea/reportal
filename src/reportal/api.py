@@ -72,6 +72,7 @@ from reportal import (
     lineage,
     llm,
     matching,
+    models,
     notifications,
     pdf,
     pipeline,
@@ -7863,6 +7864,60 @@ def job_events(job_id: int) -> Response:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Models ─────────────────────────────────────────────────────────
+#
+# The hosted portal runs an analysis under a named model and can upgrade it to a
+# newer one.  Locally a stored result comes from the engine, one decompiler
+# backend, the configured bridge model or the optional similarity extra, and the
+# registry names all of them so an analysis can record which one produced it.
+
+
+@router.get("/api/models")
+def list_models() -> Response:
+    """Every registered model with its kind, version and availability."""
+    return json_response(models.describe())
+
+
+@router.post("/api/analyses/{analysis_id}/upgrade")
+def upgrade_analysis_model(analysis_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Re-run one analysis's stored LLM artifacts under a named model.
+
+    The body is ``{"model": "<name>"}`` plus the optional ``functions`` id list
+    and ``limit``.  reportal re-runs the artifacts the analysis already stored
+    (a summary, inline comments, type suggestions, identifier renames); it never
+    re-analyses the binary, which is the one thing the hosted upgrade does that
+    has no local equivalent.  Every replaced artifact is journaled, so the
+    previous payloads are what a revert of the returned action restores.
+    """
+    name = _require_str(body, "model")
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        try:
+            functions = models.normalize_function_ids(body.get("functions"))
+            limit = models.normalize_limit(body.get("limit"))
+            target = models.upgradeable_model(name)
+        except models.UnknownModelError as exc:
+            return json_error(404, error="model not found", detail=str(exc))
+        except (models.NotUpgradeableError, models.InvalidModelError) as exc:
+            return json_error(400, error="invalid model", detail=str(exc))
+        except llm.LlmUnavailable as exc:
+            return json_error(503, error="llm-unavailable", detail=str(exc))
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = models.upgrade_analysis(
+                conn,
+                log,
+                analysis_id=analysis_id,
+                model=target.name,
+                functions=functions,
+                limit=limit,
+            )
+    return json_response(log.attach(result))
 
 
 # ── Analysis lifecycle ─────────────────────────────────────────────

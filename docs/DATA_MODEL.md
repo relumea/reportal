@@ -11,6 +11,13 @@ its import analysis is reused by engine label, and functions are refreshed by VA
 each stub becomes a `THUNK` function at its VA with `name_source` `import` and
 the 6-byte `jmp dword ptr [iat]` size, and a coverage-db row wins at the same VA.
 
+`analyses.model` names the registry entry (`models.py`) that last produced the
+analysis's stored AI artifacts; a row that predates the column is empty, which
+reads as "no model recorded" rather than an invented one.  The per-artifact
+model is where it always was, `ai_artifacts.model`, so one analysis upgraded to
+a new bridge model can hold artifacts from both, each labelled with the model
+that produced it.
+
 `analyses.status` is the source of truth for where an analysis stands, with the
 set declared once in `store.ANALYSIS_STATUSES` (`pending`, `processing`, `done`,
 `failed`, `cancelled`, mapping onto the hosted portal's Queued, Processing,

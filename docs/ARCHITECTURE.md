@@ -53,6 +53,8 @@ reportal/
 │   ├── auto_mode.py          # auto orchestrator: decompose, fan out, accept, aggregate, persist,
 │   │                          #   revert/recover
 │   ├── llm.py                # optional OpenAI-compatible bridge: chat completions + embeddings
+│   ├── models.py             # the model registry and the analysis upgrade: what produced a
+│   │                         #   stored result, and re-running the LLM artifacts
 │   ├── ai_decomp.py          # the AI decompilation artifact: the rewrite, its token map,
 │   │                         #   per-line attributions, overrides, rating and line comments
 │   ├── conversations.py      # scoped chats: stored context + retrieved documents, prompt assembly
@@ -732,6 +734,43 @@ marker rather than pretending to stream progress the call does not have, and a
 rewrite in flight cannot be cancelled. The token map is a scan plus the
 analyst's overrides, not the hosted portal's model-reported analysis of what
 each placeholder means.
+
+## Models
+
+`models.py` is the model registry: the one place that names what can produce a
+stored result.  The hosted portal runs an analysis under a named model and can
+upgrade it; reportal's producers are the `rebrew` engine, one decompiler
+backend, the configured bridge model and the optional similarity extra, so the
+registry names those instead of inventing a hosted model id.
+
+A `Model` is a frozen dataclass of name, kind, version, description, an
+`available()` check and the reason it is not, with `describe()` building the
+wire row.  The built-ins probe rather than cache a guess: the engine entry asks
+`engines.get_engine().available()`, the bridge entry reads the resolved
+`llm.LlmClient` (and lists the single `unconfigured` entry, which is never
+available, when no endpoint is set), and the similarity entry asks
+`similarity.available()`, which is a `find_spec` probe.  The registry mirrors
+the graph-backend seam: built-ins from `builtin_models()`, a third party
+through the `reportal.models` entry-point group, a broken registration skipped
+with a warning and a duplicate name a `RegistryError`.
+
+`upgrade_analysis` is the one writer, and it is deliberately narrow.  The
+hosted upgrade re-analyses the binary on a newer model; reportal cannot
+re-analyse without the engine and the project, so the upgrade re-runs the *LLM
+artifacts the analysis already stored* (a summary, inline comments, type
+suggestions, identifier renames) under the named `llm` model, journals every
+artifact it replaces through `journal.journaled_rows` and records the new model
+on the `analyses` row.  The before/after pair is therefore the action journal's,
+and a revert restores the previous payloads; a function whose re-run fails is
+reported in `skipped` and keeps its stored artifact, so one bad model response
+cannot strand a half-upgraded analysis.  A client that already sends the named
+model is used as it is, so an injected transport (and a test's stub) survives;
+a different name goes through `llm.with_model`, which shares the HTTP client and
+changes only the request's model field.
+
+The registry caches its built-ins at first use like every other registry here,
+so a process that configures an endpoint after that read calls
+`models.refresh_models()` to pick the new model name up.
 
 ## HTTP surface
 

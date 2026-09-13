@@ -32,6 +32,7 @@ import { FunctionDetail } from "./views/FunctionDetail";
 import { FunctionsView } from "./views/FunctionsView";
 import { GraphView } from "./views/GraphView";
 import { JobsView } from "./views/JobsView";
+import { ModelsView } from "./views/ModelsView";
 import { JournalView } from "./views/JournalView";
 import { KnowledgeView } from "./views/KnowledgeView";
 import { MatchesView } from "./views/MatchesView";
@@ -274,6 +275,7 @@ export function App(): ReactNode {
       handle: { view: "conversations", title: (params) => `Conversation #${params.conversationId}` },
     },
     { path: "/jobs", element: <JobsView />, handle: { view: "jobs", title: "Jobs" } },
+    { path: "/models", element: <ModelsView />, handle: { view: "models", title: "Models" } },
     { path: "/journal", element: <JournalRoute />, handle: { view: "journal", title: "Journal" } },
     {
       path: "/journal/:action",

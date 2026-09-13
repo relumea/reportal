@@ -527,6 +527,10 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("binaries", "visibility", "TEXT NOT NULL DEFAULT 'public'"),
     ("collections", "owner_team_id", "INTEGER"),
     ("collections", "visibility", "TEXT NOT NULL DEFAULT 'public'"),
+    # The model an analysis last ran under (``models.py``).  A row that
+    # predates the column was written before the registry existed, so the empty
+    # default reads as "no model recorded" rather than an invented one.
+    ("analyses", "model", "TEXT NOT NULL DEFAULT ''"),
 )
 
 # Statements run after the columns above are added, to fill what an existing
@@ -1062,19 +1066,27 @@ def imported_functions(
 
 
 def update_analysis(
-    conn: sqlite3.Connection, analysis_id: int, *, engine: str | None = None
+    conn: sqlite3.Connection,
+    analysis_id: int,
+    *,
+    engine: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any] | None:
-    """Set the engine label of one analysis; None when the id is unknown.
+    """Set the engine label or the model of one analysis; None for an unknown id.
 
     The engine label is what a reader uses to tell two analyses of one binary
-    apart, which is the only field the hosted update route carries that reportal
-    has a local meaning for; ``status`` moves through
-    :func:`update_analysis_status` and :func:`requeue_analysis` instead.
+    apart, and the model is which registry entry last produced its stored
+    artifacts (``models.py``).  Both are the fields the hosted update and
+    upgrade routes carry that reportal has a local meaning for; ``status`` moves
+    through :func:`update_analysis_status` and :func:`requeue_analysis`.
     """
     if get_analysis(conn, analysis_id) is None:
         return None
     if engine is not None:
         conn.execute("UPDATE analyses SET engine = ? WHERE id = ?", (engine, analysis_id))
+        conn.commit()
+    if model is not None:
+        conn.execute("UPDATE analyses SET model = ? WHERE id = ?", (model, analysis_id))
         conn.commit()
     return get_analysis(conn, analysis_id)
 

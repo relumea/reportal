@@ -815,6 +815,17 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         (("Identity",), ("single local user",), ("Bearer token",), ("Create user",)),
     ),
     (
+        "models",
+        "#/models",
+        (
+            ("Models",),
+            ("Upgrade an analysis",),
+            ("rebrew",),
+            ("decompiler",),
+            ("unavailable",),
+        ),
+    ),
+    (
         "journal",
         "#/journal",
         (("Journal",), (JOURNAL_ACTION,), (JOURNAL_DESCRIPTION,), ("Revert entry",)),

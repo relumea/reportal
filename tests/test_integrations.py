@@ -10,7 +10,17 @@ from typing import Any
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auto_workers, cli, components, effects, graph_backends, integrations, mcp_tools
+from reportal import (
+    auto_workers,
+    cli,
+    components,
+    effects,
+    graph_backends,
+    integrations,
+    mcp_tools,
+    models,
+    sandbox,
+)
 
 runner = CliRunner()
 
@@ -34,6 +44,8 @@ class TestInventory:
             graph_backends.GRAPH_BACKEND_ENTRY_POINT_GROUP,
             effects.EFFECT_ENTRY_POINT_GROUP,
             mcp_tools.TOOL_ENTRY_POINT_GROUP,
+            sandbox.RUNNER_ENTRY_POINT_GROUP,
+            models.MODEL_ENTRY_POINT_GROUP,
         }
 
     def test_counts_match_the_registries(self) -> None:

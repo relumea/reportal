@@ -202,6 +202,8 @@ their pages by the same rule.
 | `/api/functions/<id>/pipeline` | POST | run the AI decompilation component composition; body `{"disabled": [...]}` optional; 404 unknown function, 503 `pipeline-unavailable` only when the composition cannot be assembled (a skipped or failed stage is a step on the run) |
 | `/api/functions/<id>/pipeline` | GET | stored latest run with its steps and the function's durable artifacts; 404 `no-run` before the first run |
 | `/api/pipeline/runs/<id>` | GET | one pipeline run with its steps; 404 `run not found` |
+| `/api/models` | GET | the local model registry: the engine, every decompiler backend, the configured bridge model (or the single `unconfigured` entry) and the optional similarity extra, each with its kind, version, availability and reason |
+| `/api/analyses/<id>/upgrade` | POST | re-run one analysis's stored AI artifacts under a named `llm` model, journaling every artifact replaced; body `{"model", "functions"?, "limit"?}`; 400 `invalid model`, 404 `analysis not found` / `model not found`, 503 `llm-unavailable` |
 | `/api/pipeline/runs/<id>/revert` | POST | replay the run's undo plan newest-first and return what was undone; 404 `run not found` |
 | `/api/components` | GET | the component registry: each entry's `name`, `requires`, `provides`, `origin` and `reloadable` |
 | `/api/components/reload` | POST | re-read one component's declaring module and swap the live registry entry; body `{"name": "..."}` or `{"all": true}`; 404 unknown name, 400 neither/both/non-boolean `all`, 409 `not-reloadable`, 500 `component-missing` |

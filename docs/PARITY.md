@@ -424,17 +424,46 @@ read is covered by the list.
 
 ### G. Models (hosted 1 operation plus analysis parameters)
 
-**Status:** Planned. Nothing started.
+**Status:** Closed.  `src/reportal/models.py` is the registry and the upgrade.
 
-`GET /v2/models` lists the hosted models (`binnet-0.7`, `binnet-1.0`) and
-`POST /v3/analyses/{id}/upgrade-model` re-analyses a binary on a newer one; an
-analysis records the model it ran under.  Locally the analogous artifact is
-which decompiler backend, LLM model and engine version produced a stored
-result, so a scan can be re-run and compared when the model changes.  Planned:
-a `models` registry (name, kind, version, availability), a model recorded on
-every analysis and scan, `GET /api/models`, and `POST
-/api/analyses/<id>/upgrade` re-running the stored scans under a different model
-with the before/after both kept.
+`GET /api/models` lists every model this install can produce a stored result
+with: the `rebrew` engine (kind `engine`, with the installed version), each
+decompiler backend (`decompiler`), the configured bridge model (`llm`, or the
+single `unconfigured` entry when no endpoint is set) and the optional
+similarity extra (`similarity`).  Each entry carries its kind, version, an
+`available` flag and, when it is not, a fixed reason.  `reportal models` and
+the read-only `list_models` MCP tool serve the same payload, and the SPA's
+Models view tabulates it.
+
+An analysis records the model that last produced its artifacts: a `model`
+column on `analyses`, written by the upgrade, and every stored AI artifact
+already carries the `model` that produced it (`ai_artifacts.model`), which is
+where a per-artifact model lives rather than a second copy on each scan row.
+A scan that ran the engine records the analysis's engine label, so the
+producer of a non-LLM scan is the analysis's own model; the closed status says
+so instead of inventing a column.
+
+`POST /api/analyses/<id>/upgrade` (body `{"model", "functions"?, "limit"?}`),
+`reportal models`/`analysis-upgrade` and the destructive `upgrade_analysis_model`
+MCP tool re-run the analysis's *stored* LLM artifacts (a summary, inline
+comments, type suggestions, identifier renames) under the named `llm` model.
+Every artifact replaced is journaled with its inverse, so the returned action
+keeps the before/after pair and a revert puts the previous payloads back; a
+function whose re-run fails is reported in `skipped` with its reason and keeps
+its stored artifact, so one bad response never strands a half-upgraded
+analysis.  The candidate set is bounded by `DEFAULT_UPGRADE_LIMIT` 25 /
+`MAX_UPGRADE_LIMIT` 200, and an explicit `functions` list overrides the bound.
+A model of another kind is 400 `invalid model`, an unknown name 404
+`model not found`, and an unconfigured bridge 503 `llm-unavailable`.
+
+One ceiling is stated rather than hidden: the hosted upgrade re-analyses the
+binary on a newer model, and reportal cannot.  The upgrade re-runs the LLM
+artifacts and never re-analyses, which is what its `note` field and the CLI
+output both say.  The registry caches its built-ins the way every other plugin
+registry does, so a process that configures an endpoint after its first
+registry read calls `models.refresh_models()` (the other registries' `refresh_*`
+pattern); the routes read the registry per request, so a configured install
+sees the right entry.
 
 ### H. External sources (hosted 3 operations)
 

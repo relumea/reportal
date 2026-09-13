@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from reportal import auto_workers, components, effects, graph_backends, mcp_tools
+from reportal import auto_workers, components, effects, graph_backends, mcp_tools, models, sandbox
 
 # The module that declares each seam's built-in parts, and the entry-point group
 # a third party registers through.  Both come from the registry modules, so a
@@ -60,6 +60,18 @@ SEAMS: tuple[dict[str, str], ...] = (
         "group": mcp_tools.TOOL_ENTRY_POINT_GROUP,
         "module": "reportal.mcp_tools",
         "contributes": "tools an MCP client can call, annotated read-only or destructive",
+    },
+    {
+        "name": "models",
+        "group": models.MODEL_ENTRY_POINT_GROUP,
+        "module": "reportal.models",
+        "contributes": "one thing that can produce a stored result, with its kind and availability",
+    },
+    {
+        "name": "sandbox runners",
+        "group": sandbox.RUNNER_ENTRY_POINT_GROUP,
+        "module": "reportal.sandbox",
+        "contributes": "an isolated way to run one stored sample, off unless the workspace opts in",
     },
 )
 
@@ -122,6 +134,36 @@ def _effect_parts() -> list[dict[str, Any]]:
     ]
 
 
+def _model_parts() -> list[dict[str, Any]]:
+    """One row per registered model, with its kind and availability."""
+    return [
+        {
+            "name": model.name,
+            "detail": model.description,
+            "origin": "",
+            "kind": model.kind,
+            "version": model.version,
+            "available": model.available(),
+            "unavailable_reason": "" if model.available() else model.unavailable_reason(),
+        }
+        for model in models.models()
+    ]
+
+
+def _runner_parts() -> list[dict[str, Any]]:
+    """One row per registered sandbox runner, with its availability."""
+    return [
+        {
+            "name": runner.name,
+            "detail": runner.describe,
+            "origin": "",
+            "available": runner.available(),
+            "unavailable_reason": "" if runner.available() else runner.hint,
+        }
+        for runner in sandbox.registered_runners()
+    ]
+
+
 def _tool_parts() -> list[dict[str, Any]]:
     """One row per MCP tool, with its destructive annotation."""
     return [
@@ -142,6 +184,8 @@ PART_READERS = {
     "graph backends": _backend_parts,
     "effect handlers": _effect_parts,
     "MCP tools": _tool_parts,
+    "models": _model_parts,
+    "sandbox runners": _runner_parts,
 }
 
 # A seam's name is the key of :data:`PART_READERS`, so the two cannot disagree.

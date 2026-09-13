@@ -44,7 +44,7 @@ import os
 import re
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
 import httpx2
@@ -282,6 +282,11 @@ class LlmClient:
         """Model name sent with every request (the default when unconfigured)."""
         return self.config.model if self.config is not None else DEFAULT_MODEL
 
+    @property
+    def http_client(self) -> httpx2.Client | None:
+        """The injected transport, or None while the client builds its own."""
+        return self._http
+
     def available(self) -> bool:
         """True when an endpoint is configured."""
         return self.config is not None and bool(self.config.endpoint)
@@ -370,6 +375,19 @@ class LlmClient:
 
 
 # ── Embeddings ─────────────────────────────────────────────────────
+
+
+def with_model(client: LlmClient, model: str) -> LlmClient:
+    """Return a client for the same endpoint that sends a different model name.
+
+    The HTTP client is shared, so the same connection pool and the same injected
+    transport serve both; only the model field of the request changes.  Raises
+    :class:`LlmUnavailable` for a client with no endpoint configured.
+    """
+    config = client.config
+    if config is None or not client.available():
+        raise LlmUnavailable(UNAVAILABLE_DETAIL)
+    return LlmClient(replace(config, model=model), http=client.http_client)
 
 
 def embeddings(texts: list[str], *, client: LlmClient | None = None) -> list[list[float]] | None:

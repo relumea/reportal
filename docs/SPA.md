@@ -348,6 +348,12 @@ error in place.  The four flat artifacts each auto-load their stored-only `GET`
 and never call a model on render, a
 `no-artifact` answer shows a nothing-stored hint, and Generate (Suggest for
 Renames) posts to the AI route, surfacing 503 `llm-unavailable` in place.  The
+Models view (System group) tabulates the model registry, `GET /api/models`, with
+each entry's kind, version, availability and reason, and carries the upgrade
+form: an analysis id, an `llm` model and an optional function bound, posting to
+`POST /api/analyses/<id>/upgrade` and rendering the per-function `applied` and
+`skipped` rows, the `from` to `to` transition and the note that reportal re-runs
+artifacts rather than re-analysing the binary.  The
 Renames panel lists each stored suggestion with a checkbox, its reason and
 confidence, an Apply selected / Apply all pair (with a rename-function toggle
 for a function-kind suggestion) and a Revert; an apply or a revert refreshes the

@@ -102,6 +102,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "llm-error": "llm-error",
     "llm-unavailable": "llm-unavailable",
     "member-not-found": "member-not-found",
+    "model not found": "model-not-found",
     "no-artifact": "no-artifact",
     "no-decompilation": "no-decompilation",
     "no-engine-context": "no-engine-context",

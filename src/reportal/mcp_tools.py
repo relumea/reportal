@@ -60,6 +60,7 @@ from reportal import (
     lineage,
     llm,
     matching,
+    models,
     notifications,
     pdf,
     pipeline,
@@ -4025,6 +4026,41 @@ def _tool_requeue_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
     return log.attach(updated)
 
 
+def _tool_list_models(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Every registered model with its kind, version and availability."""
+    return models.describe()
+
+
+def _tool_upgrade_analysis_model(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    name = _arg_str(arguments, "model")
+    raw_functions = arguments.get("functions")
+    if raw_functions is not None and not isinstance(raw_functions, list):
+        raise ToolError("invalid params", "functions must be a list of function ids")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        try:
+            target = models.upgradeable_model(name)
+            functions = models.normalize_function_ids(raw_functions)
+            limit = models.normalize_limit(arguments.get("limit"))
+        except models.UnknownModelError as exc:
+            raise ToolError("model not found", str(exc)) from exc
+        except (models.NotUpgradeableError, models.InvalidModelError) as exc:
+            raise ToolError("invalid model", str(exc)) from exc
+        except llm.LlmUnavailable as exc:
+            raise ToolError("llm-unavailable", str(exc)) from exc
+        with journal.journaled(conn, journal.new_action()) as log:
+            result = models.upgrade_analysis(
+                conn,
+                log,
+                analysis_id=analysis_id,
+                model=target.name,
+                functions=functions,
+                limit=limit,
+            )
+            return log.attach(result)
+
+
 def _tool_set_analysis_tags(arguments: dict[str, Any]) -> dict[str, Any]:
     analysis_id = _arg_int(arguments, "analysis_id")
     names = _arg_str_list(arguments, "tags")
@@ -6374,6 +6410,35 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_append_analysis_log,
+        ),
+        Tool(
+            "list_models",
+            "Every registered model that can produce a stored result, with its kind,"
+            " version and availability.",
+            _object({}, ()),
+            _READ,
+            _tool_list_models,
+        ),
+        Tool(
+            "upgrade_analysis_model",
+            "Re-run an analysis's stored LLM artifacts under a named llm model, journaling"
+            " every artifact replaced; reportal never re-analyses the binary.",
+            _object(
+                {
+                    "analysis_id": _ANALYSIS_ID,
+                    "model": _str("The llm model to re-run the artifacts under."),
+                    "functions": _array(
+                        "Function ids to re-run; every candidate when omitted.",
+                        _int("Function id."),
+                    ),
+                    "limit": _int(
+                        f"Bound on the functions re-run (max {models.MAX_UPGRADE_LIMIT})."
+                    ),
+                },
+                ("analysis_id", "model"),
+            ),
+            _WRITE,
+            _tool_upgrade_analysis_model,
         ),
         Tool(
             "requeue_analysis",

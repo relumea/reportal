@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 195 source files` is the finish line.
+`Success: no issues found in 198 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.20%, 24603 statements with 1919 missed. `[tool.coverage.report] fail_under`
+92.27%, 24917 statements with 1927 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -129,8 +129,7 @@ cd web && bun run typecheck # tsc --noEmit
 cd web && bun run test:ui   # Playwright over a seeded workspace (see tests/)
 
 # Run
-# The command reference (`reportal init` through `reportal ai-line-comment-rm`)
-# is docs/CLI.md; `reportal --help` prints the same list.
+# The command reference is docs/CLI.md (`reportal --help` prints the same list).
 # Serve: `make run` builds the SPA from web/ and then serves the portal;
 # `make serve` serves the current build without rebuilding.
 make run            # build src/reportal/assets/dist, then serve (PORT=8002)
@@ -428,12 +427,15 @@ configured LLM for a whole rewritten function and stores it,
 `set_ai_decompilation_overrides` sets or clears the analyst names of its
 placeholder tokens, `rate_ai_decompilation` records feedback and
 `add_ai_line_comment`, `update_ai_line_comment` and `delete_ai_line_comment`
-write its per-line comments, so all six are destructive.  `get_sandbox_report` and
+write its per-line comments, so all six are destructive.  `list_models` reads the model
+registry and is read-only; `upgrade_analysis_model` re-runs an analysis's stored
+LLM artifacts under a named `llm` model, journaling every artifact it replaces,
+and is destructive.  `get_sandbox_report` and
 `get_sandbox_status` read the detonation ledger and are read-only;
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 188 built-in tools, 86 read-only and 102 destructive.
+declares 190 built-in tools, 87 read-only and 103 destructive.
 
 ## SPA
 
@@ -538,8 +540,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 188 built-in
-tools (86 read-only, 102 destructive).
+and `run_match` expose the same over MCP, and the counts stay 190 built-in
+tools (87 read-only, 103 destructive).
 
 ### Scaling
 
@@ -663,6 +665,16 @@ thousand functions.
   `Tool` or a zero-argument factory returning one.  The stdio server is
   `src/reportal/mcp_server.py`; it is the only module that writes the protocol
   to stdout.
+- Models follow the same pattern (`src/reportal/models.py`): the built-ins are
+  declared by `builtin_models()` (the engine, each decompiler backend, the
+  configured bridge model and the optional similarity extra) and a third party
+  registers through the `reportal.models` entry-point group, whose value is
+  `module:attr` naming a `Model` or a zero-argument factory returning one.  A
+  broken registration is skipped with a warning and a duplicate name is a
+  `RegistryError`.  `Model.describe()` carries the kind, version, availability
+  and the reason it is not available; only an `llm` model can be the target of
+  `models.upgrade_analysis`, which re-runs an analysis's stored LLM artifacts
+  and journals every replacement rather than re-analysing the binary.
 - Knowledge-graph backends follow the same pattern
   (`src/reportal/graph_backends.py`): built-ins are declared in
   `builtin_graph_backends()` (`sqlite`, the default, and the optional `cognee`)

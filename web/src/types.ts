@@ -999,6 +999,38 @@ export interface AiArtifact<T> {
   created_at?: string;
 }
 
+/** One entry of the model registry. */
+export interface ModelEntry {
+  name: string;
+  kind: string;
+  version: string;
+  available: boolean;
+  unavailable_reason: string;
+  description: string;
+}
+
+/** The model registry as its route serves it. */
+export interface ModelsPayload {
+  models: ModelEntry[];
+  count: number;
+  kinds: string[];
+  upgrade_kinds: string[];
+  note: string;
+}
+
+/** What one analysis upgrade re-ran. */
+export interface UpgradeResult {
+  analysis_id: number;
+  from: string;
+  to: string;
+  candidates: number;
+  applied: Array<{ function_id: number; kinds: string[] }>;
+  skipped: Array<{ function_id: number; reason: string }>;
+  upgraded: number;
+  note: string;
+  journal_action?: string;
+}
+
 /** One placeholder token of a stored AI decompilation. */
 export interface AiDecompilationToken {
   token: string;

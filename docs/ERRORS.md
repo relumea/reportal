@@ -244,6 +244,12 @@ the local type model.
 
 `404`. The id names no ingested document.
 
+### model-not-found
+
+`404`. An upgrade named a model the registry does not carry. Read
+`GET /api/models` and name one of its entries; only a `llm` entry can re-run an
+artifact, and another kind answers 400 `invalid model`.
+
 ### member-not-found
 
 `404`. The selector names no member of that data type.

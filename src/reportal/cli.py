@@ -126,6 +126,7 @@ from reportal import (
     lineage,
     llm,
     matching,
+    models,
     notifications,
     pdf,
     pipeline,
@@ -1165,6 +1166,83 @@ def analysis_update_command(
         typer.echo(json.dumps(log.attach(updated)))
         return
     console.print(f"analysis {analysis_id}: engine {updated.get('engine')}")
+
+
+@app.command("models")
+def models_command(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the registered models: what can produce a stored result."""
+    payload = models.describe()
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(title="models", show_header=True, header_style="bold")
+    table.add_column("Name", style="cyan")
+    table.add_column("Kind")
+    table.add_column("Version")
+    table.add_column("Available")
+    table.add_column("Description")
+    for model in payload["models"]:
+        table.add_row(
+            str(model["name"]),
+            str(model["kind"]),
+            str(model["version"]),
+            "yes" if model["available"] else f"no: {model['unavailable_reason']}",
+            str(model["description"]),
+        )
+    console.print(table)
+
+
+@app.command("analysis-upgrade")
+def analysis_upgrade_command(
+    analysis_id: int = typer.Argument(..., help="Analysis whose artifacts to re-run"),
+    model: str = typer.Option(..., "--model", help="The llm model to re-run them under"),
+    function: list[int] = typer.Option(
+        [], "--function", help="Re-run only these function ids; repeatable"
+    ),
+    limit: int | None = typer.Option(
+        None, "--limit", help=f"Bound on the functions re-run (max {models.MAX_UPGRADE_LIMIT})"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Re-run one analysis's stored LLM artifacts under a different model."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    try:
+        target = models.upgradeable_model(model)
+        functions = models.normalize_function_ids(function or None)
+        bound = models.normalize_limit(limit)
+    except models.UnknownModelError as exc:
+        _fail(str(exc), json_output)
+    except (models.NotUpgradeableError, models.InvalidModelError) as exc:
+        _fail(str(exc), json_output)
+    except llm.LlmUnavailable as exc:
+        _fail(f"llm-unavailable: {exc}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = models.upgrade_analysis(
+                conn,
+                log,
+                analysis_id=analysis_id,
+                model=target.name,
+                functions=functions,
+                limit=bound,
+            )
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(
+        f"analysis {analysis_id}: model {result['from'] or 'none'} -> {result['to']},"
+        f" {result['upgraded']} of {result['candidates']} function(s) re-run"
+    )
+    for entry in result["skipped"]:
+        console.print(f"  skipped function {entry['function_id']}: {entry['reason']}")
 
 
 @app.command("analysis-log")

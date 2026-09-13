@@ -93,6 +93,12 @@ reportal ai-line-comment-add <function-id> <line> <body> [--author NAME] [--json
 reportal ai-line-comment-edit <function-id> <line> <body> [--json]
 reportal ai-line-comment-rm <function-id> <line> [--json]
                                            # add, edit or remove the comment stored at a line
+reportal models [--json]                  # the model registry: what can produce a stored
+                                           #   result, with its kind, version and availability
+reportal analysis-upgrade <analysis-id> --model NAME [--function ID]... [--limit N] [--json]
+                                           # re-run the analysis's stored AI artifacts under a
+                                           #   different llm model, journaling every replacement;
+                                           #   reportal never re-analyses the binary
 reportal pipeline <function-id> [--json]   # run the component AI decompilation pipeline over one
                                            #   function, storing the run and its artifacts
 reportal pipeline-revert <run-id> [--json] # undo exactly what one stored run wrote

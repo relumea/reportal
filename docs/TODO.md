@@ -360,7 +360,7 @@ description lives in that file.
 | C | Dynamic execution and sandbox detonation (the opt-in runner and the firmware carve) | Closed in PARITY.md |
 | D | Analysis lifecycle (basic, params, requeue, bytes, tags, bulk, imported functions) | Closed in PARITY.md (example analyses is not applicable locally) |
 | F | Users, auth and IAM (roles, permissions, teams, scope, activity, feedback) | Closed in PARITY.md |
-| G | Models (registry, model per artifact, upgrade) | Planned |
+| G | Models (registry, model per artifact, upgrade) | Closed in PARITY.md |
 | H | External sources (VirusTotal), now with the team key in entry 3 | Planned |
 | J | Function-level extras (indirect call sites, capabilities, strings, user strings) | Planned |
 | K | Data types and signatures bulk operations | Planned |

@@ -68,6 +68,9 @@ CONFIG_TABLE = "sandbox"
 CONFIG_ENABLED = "enabled"
 CONFIG_RUNNER = "runner"
 RUNNER_ENV = "REPORTAL_SANDBOX_RUNNER"
+
+# Entry-point group third-party sandbox runners register in.
+RUNNER_ENTRY_POINT_GROUP = "reportal.sandbox_runners"
 _TRUTHY = frozenset({"1", "true", "yes", "on", "enabled"})
 
 # The fixed detail every disabled or unavailable path reports.
@@ -684,6 +687,6 @@ def refresh_runners() -> list[str]:
     """
     from reportal import plugins
 
-    for _name, _value, plugin in plugins.load("reportal.sandbox_runners", Runner, "Runner"):
+    for _name, _value, plugin in plugins.load(RUNNER_ENTRY_POINT_GROUP, Runner, "Runner"):
         register_runner(plugin)
     return [runner.name for runner in RUNNERS]
