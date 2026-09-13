@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import {
@@ -14,7 +14,14 @@ import {
 import type { Params, RouteObject } from "react-router";
 
 import { api } from "./api";
-import { focusViewFilter, installShortcuts, moveTableRow, registerShortcut } from "./keys";
+import {
+  cycleViewSection,
+  focusViewFilter,
+  installShortcuts,
+  moveTableRow,
+  registerShortcut,
+} from "./keys";
+import { toggleFunctionCodeView } from "./panels/FunctionPanels";
 import { NAV_GROUPS, NAV_LABELS, navPath } from "./router";
 import type { NavView } from "./router";
 import type { Health } from "./types";
@@ -130,9 +137,43 @@ function AnalysesRoute(): ReactNode {
   return <AnalysesView query={Object.fromEntries(params)} />;
 }
 
+/** Where the shell remembers whether the sidebar is collapsed. */
+const SIDEBAR_STORAGE_KEY = "reportal.sidebar.collapsed";
+
+/** Where the in-app history stack lives; it is per tab, not per install. */
+const HISTORY_STORAGE_KEY = "reportal.history";
+
+/** How many entries the in-app history keeps. */
+const HISTORY_LIMIT = 50;
+
+function storedCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
+  } catch {
+    // Storage disabled: the sidebar starts open and forgets the toggle.
+    return false;
+  }
+}
+
+function storedHistory(): { stack: string[]; index: number } {
+  try {
+    const raw = window.sessionStorage.getItem(HISTORY_STORAGE_KEY);
+    if (raw === null) return { stack: [], index: -1 };
+    const parsed = JSON.parse(raw) as { stack?: string[]; index?: number };
+    return { stack: parsed.stack ?? [], index: parsed.index ?? -1 };
+  } catch {
+    return { stack: [], index: -1 };
+  }
+}
+
 export function App(): ReactNode {
   const navigate = useNavigate();
   const location = useLocation();
+  const [collapsed, setCollapsed] = useState(storedCollapsed);
+  const history = useRef(storedHistory());
+  // Set while `stepHistory` navigates, so recording the new location does not
+  // push the entry the reader just stepped off.
+  const rewinding = useRef(false);
   const [health, setHealth] = useState<Health | null>(null);
   const [selectedFunctionId, setSelectedFunctionId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -151,6 +192,56 @@ export function App(): ReactNode {
       active = false;
     };
   }, []);
+
+  // The sidebar collapse is a preference, so it survives a reload.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_STORAGE_KEY, collapsed ? "1" : "0");
+    } catch {
+      // See storedCollapsed.
+    }
+  }, [collapsed]);
+
+  // The in-app history: every view the tab visited, oldest first, with the
+  // index the reader is on.  It is kept in sessionStorage so it is per tab, and
+  // the router's own back and forward still work beside it.
+  const remember = (path: string): void => {
+    const { stack, index } = history.current;
+    if (stack[index] === path) return;
+    const trimmed = [...stack.slice(0, index + 1), path].slice(-HISTORY_LIMIT);
+    history.current = { stack: trimmed, index: trimmed.length - 1 };
+    try {
+      window.sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.current));
+    } catch {
+      // See storedHistory.
+    }
+  };
+
+  useEffect(() => {
+    const path = `${location.pathname}${location.search}`;
+    if (rewinding.current) {
+      rewinding.current = false;
+      return;
+    }
+    remember(path);
+    // The recorded entry follows the location.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, location.search]);
+
+  const stepHistory = (delta: number): void => {
+    const { stack, index } = history.current;
+    const next = index + delta;
+    if (next < 0 || next >= stack.length) return;
+    const target = stack[next];
+    history.current = { stack, index: next };
+    try {
+      window.sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history.current));
+    } catch {
+      // See storedHistory.
+    }
+    rewinding.current = true;
+    void navigate(target);
+  };
 
   // The keyboard layer.  Every shortcut the shell honours is registered in one
   // place and installed once, which is what the cheatsheet renders; the keys
@@ -194,6 +285,42 @@ export function App(): ReactNode {
         scope: "view",
         description: "Focus the view's filter box",
         handler: () => focusViewFilter(),
+      }),
+      registerShortcut({
+        combo: "[",
+        scope: "view",
+        description: "Scroll to the previous section",
+        handler: () => cycleViewSection(-1),
+      }),
+      registerShortcut({
+        combo: "]",
+        scope: "view",
+        description: "Scroll to the next section",
+        handler: () => cycleViewSection(1),
+      }),
+      registerShortcut({
+        combo: "Space",
+        scope: "view",
+        description: "Toggle Disassembly and Control flow",
+        handler: () => toggleFunctionCodeView(),
+      }),
+      registerShortcut({
+        combo: "mod+b",
+        scope: "global",
+        description: "Collapse or expand the sidebar",
+        handler: () => setCollapsed((current) => !current),
+      }),
+      registerShortcut({
+        combo: "alt+arrowleft",
+        scope: "global",
+        description: "Go back in this tab's view history",
+        handler: () => stepHistory(-1),
+      }),
+      registerShortcut({
+        combo: "alt+arrowright",
+        scope: "global",
+        description: "Go forward in this tab's view history",
+        handler: () => stepHistory(1),
       }),
     ];
     const uninstall = installShortcuts();
@@ -345,12 +472,22 @@ export function App(): ReactNode {
       : (route?.title ?? "reportal");
 
   return (
-    <div className="layout">
+    <div className={collapsed ? "layout sidebar-collapsed" : "layout"}>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-dot" aria-hidden="true" />
           <span>reportal</span>
           <span className="brand-tag">workbench</span>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+            aria-expanded={!collapsed}
+            title="Toggle the sidebar (Ctrl/Command+B)"
+            onClick={() => setCollapsed((current) => !current)}
+          >
+            {collapsed ? "\u00bb" : "\u00ab"}
+          </button>
         </div>
         <nav className="nav" aria-label="Sections">
           {NAV_GROUPS.map((group) => (

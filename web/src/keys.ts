@@ -226,6 +226,25 @@ export function focusViewFilter(): boolean {
 }
 
 /**
+ * Scroll to the *delta*th panel in the content area, relative to the first one
+ * whose top is at or below the viewport: `]` steps to the next section, `[`
+ * to the previous, which is the hosted portal's section cycling.  Returns false
+ * on a view that has no panels to cycle.
+ */
+export function cycleViewSection(delta: number): boolean {
+  const panels = Array.from(document.querySelectorAll<HTMLElement>('#content section.panel'));
+  if (panels.length === 0) return false;
+  const tops = panels.map((panel) => panel.getBoundingClientRect().top);
+  // The section in view is the last one whose top has passed the header, so a
+  // step from a scrolled page moves to the next one rather than jumping back.
+  const current = tops.reduce((found, top, index) => (top <= 96 ? index : found), 0);
+  const next = Math.min(panels.length - 1, Math.max(0, current + delta));
+  panels[next].scrollIntoView({ behavior: "smooth", block: "start" });
+  panels[next].focus({ preventScroll: true });
+  return true;
+}
+
+/**
  * Move the focus *delta* rows through the first focusable table in the content
  * area (a row `DataTable` makes tabbable because clicking it navigates).  A
  * table with no such row leaves the keys inert, and the focus clamps at the

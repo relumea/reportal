@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api, isApiErrorCode } from "../api";
@@ -172,9 +172,30 @@ function CodeViewToggle({
 
 /** A function's code views, one at a time: the disassembly listing, or the
  *  basic-block control-flow graph.  The hosted portal shows the same pair. */
+/** The live code-view switch, so the `Space` binding can flip the panel
+ *  without a second copy of the state.  `CodeSection` is the only writer. */
+let codeViewSwitch: (() => void) | null = null;
+
+/** Flip the mounted function's code view; false when none is mounted. */
+export function toggleFunctionCodeView(): boolean {
+  if (codeViewSwitch === null) return false;
+  codeViewSwitch();
+  return true;
+}
+
 export function CodeSection({ functionId }: { functionId: number }): ReactNode {
   const [view, setView] = useState<FunctionCodeView>(DEFAULT_FUNCTION_CODE_VIEW);
   const toggle = <CodeViewToggle view={view} onChange={setView} />;
+  // The hosted portal's `Space` toggles Disassembly and Control Flow; the
+  // switch is published while this section is mounted and dropped when it
+  // unmounts, so the binding never acts on a view that is not showing one.
+  useEffect(() => {
+    codeViewSwitch = () =>
+      setView((current) => (current === "cfg" ? "disassembly" : "cfg"));
+    return () => {
+      codeViewSwitch = null;
+    };
+  }, []);
   return view === "cfg" ? (
     <CfgPanel functionId={functionId} toggle={toggle} />
   ) : (

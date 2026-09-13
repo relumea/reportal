@@ -38,6 +38,16 @@ for a stored-only GET that answered `no-scan`, or the error name and detail
 with a retry.  Heavy engine work never runs on render: stored scans load
 automatically and the run controls POST explicitly.
 
+The shell's own bindings (`src/App.tsx`) are the sidebar collapse
+(`Cmd/Ctrl+B`, a 64px rail whose preference is `SIDEBAR_STORAGE_KEY`), the
+per-tab view history on `Alt+Left`/`Alt+Right` (`HISTORY_STORAGE_KEY` in
+`sessionStorage`, fifty entries), `[`/`]` section cycling
+(`keys.cycleViewSection`) and `Space` flipping a function's Disassembly and
+Control flow view (`toggleFunctionCodeView`, which the mounted `CodeSection`
+publishes).  The router's own back and forward keep working beside the in-app
+history, and `stepHistory` marks its navigation so recording does not push the
+entry the reader just left.
+
 `src/keys.ts` is the SPA's keyboard layer.  Every shortcut is one registry entry
 (`combo`, `scope`, `description`, `handler`): `registerShortcut` refuses a combo
 twice in one scope, a `view`-scoped binding outranks a `global` one, `mod` is

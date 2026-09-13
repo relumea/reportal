@@ -95,6 +95,11 @@ entry.
 - A conversation about reportal itself: the `docs` scope ingests the shipped
   manual on the first question and answers from it, with a per-scope canned
   prompt list in the Conversations view.
+- The keyboard layer's shell half: a collapsible sidebar (`Cmd/Ctrl+B`), a
+  per-tab view history on `Alt+Left`/`Alt+Right`, `[`/`]` section cycling and
+  `Space` to switch a function's Disassembly and Control flow view.  Fixed with
+  it: an unstable effect dependency in the functions view that made the router
+  stop processing locations after that view mounted.
 - The upload panel's conveniences: a drag-and-drop zone, a per-row plan badge
   with a Configure-all control, duplicate and error banners over the per-entry
   results, and an in-place Extract an archive panel.

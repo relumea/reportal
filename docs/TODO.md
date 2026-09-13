@@ -462,6 +462,27 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   stack, and a selected-row or selected-pane model per view that let the `P`,
   `R`, `Space`, `G` and `Cmd/Ctrl+Enter` bindings exist at all.
 - Size: M.
+- **Status:** Closed for the collapse, the history stack, section cycling and
+  the code-view switch.  `Cmd/Ctrl+B` collapses the sidebar to a 64px rail
+  (labels and links go, the section dots stay) and the preference is remembered
+  under `SIDEBAR_STORAGE_KEY`; a first-of-its-kind control in the brand row is
+  the same toggle for a pointer.  `Alt+Left`/`Alt+Right` step a per-tab view
+  history kept in `sessionStorage` under `HISTORY_STORAGE_KEY` (fifty entries,
+  and `stepHistory` marks the navigation so recording does not push the entry
+  the reader just left); the router's own back and forward still work beside it.
+  `[` and `]` scroll to the previous and next panel, and `Space` flips a
+  function's Disassembly and Control flow through `toggleFunctionCodeView`,
+  which the mounted `CodeSection` publishes.  The cheatsheet renders all of it
+  from the live registry.  A real defect found while closing this entry is fixed
+  with it: `FunctionsView`'s drafts effect depended on the `filters.strings`
+  array, which `filtersFromQuery` rebuilds every render, so the view re-rendered
+  forever and the router never processed the next location.  Leaving
+  `#/functions` for any other view left the shell stuck on Functions with the
+  URL changed; the effect now keys on a stable string, and
+  `web/tests/navigation.spec.ts` covers it.  Gaps, stated rather than built: the
+  `P` (filters panel), `R` (rename) and `Cmd/Ctrl+Enter` (save a type) bindings
+  need a per-view selection model reportal does not have, and `G` belongs to the
+  memory dump's own address box.
 
 ### 13. Regular-expression and multi-value string search
 

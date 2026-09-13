@@ -58,7 +58,7 @@ test("confirming the bulk delete removes the selected binary", async ({ page }) 
     mimeType: "application/octet-stream",
     buffer: Buffer.from(filename),
   });
-  await page.getByRole("button", { name: "Upload" }).click();
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
   await expect(page.getByText(`Uploaded ${filename} as binary #`)).toBeVisible();
 
   await page.getByLabel(`select ${filename}`, { exact: true }).check();

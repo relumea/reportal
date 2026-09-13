@@ -22,7 +22,13 @@ function dialog(page: import("@playwright/test").Page) {
 }
 
 /** The bindings the shell registers outside the `g` prefix jumps. */
-const SHELL_BINDINGS = 5;
+// Shell bindings outside the per-view `g` jumps: search, the cheatsheet, the
+// two table row moves, the filter focus, the two section steps, the code-view
+// switch, the sidebar collapse and the two history steps.
+const SHELL_BINDINGS = 11;
+
+// One `g` jump per sidebar view plus the shell bindings above.
+const DECLARED_SHORTCUTS = 19 + SHELL_BINDINGS;
 
 test("a conflicting binding is refused at registration", () => {
   const probe = (): void => {};
@@ -99,7 +105,8 @@ test("the cheatsheet lists the registered set", async ({ page }) => {
 
   const declared = Number(await sheet.getAttribute("data-shortcut-count"));
   expect(declared).toBe(descriptions.length);
-  expect(declared).toBe(views.length + SHELL_BINDINGS);
+  expect(views).toHaveLength(19);
+  expect(declared).toBe(DECLARED_SHORTCUTS);
 
   // The visible keys are the combos, not the registry's spelling of them.
   const keys = await sheet.locator("kbd.key").allTextContents();

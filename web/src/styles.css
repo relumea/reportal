@@ -2963,3 +2963,47 @@ kbd.key {
   border-left-color: var(--danger);
   background: var(--danger-soft);
 }
+
+/* ── Sidebar collapse ─────────────────────────────────────────────────
+   Ctrl/Command+B collapses the sidebar to a narrow rail; the labels go and
+   the section dots stay, so the shell reads the same and the keyboard layer
+   still has every view. */
+.sidebar-toggle {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-1);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.layout.sidebar-collapsed {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.sidebar-collapsed .sidebar {
+  align-items: center;
+  padding: var(--space-3) var(--space-1);
+}
+
+.sidebar-collapsed .brand span:not(.brand-dot),
+.sidebar-collapsed .nav-group-label,
+.sidebar-collapsed .nav-link {
+  display: none;
+}
+
+.sidebar-collapsed .nav-group {
+  gap: 0;
+}
+
+.sidebar-collapsed .sidebar-toggle {
+  margin-left: 0;
+}

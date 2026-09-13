@@ -171,10 +171,14 @@ export function FunctionsView({
     if (binaryId !== null) setSelected(binaryId);
   }, [binaryId]);
 
+  const draftKey = `${filters.minSize}\u0000${filters.maxSize}\u0000${filters.strings.join("\u0000")}`;
   useEffect(() => {
     setDrafts({ minSize: filters.minSize, maxSize: filters.maxSize, string: "" });
     // The drafts follow the hash; a change here means the URL moved under us.
-  }, [filters.minSize, filters.maxSize, filters.strings]);
+    // The key is a string because `filters` is rebuilt on every render, so the
+    // array identity would fire this effect on every one of them.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
 
   const binariesResult = useAsync(() => api<{ binaries: Binary[] }>("/binaries"), []);
   const binaries = binariesResult.data?.binaries;
