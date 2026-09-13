@@ -140,6 +140,9 @@ DEFAULT_STRUCT_LIMIT = 50
 # body; the response is 413 `file-too-large`.
 MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 
+# Most string needles one function-list filter may carry, combined as any-of.
+MAX_FUNCTION_STRINGS = 16
+
 # Most files one batch upload may carry.  Each part is streamed to disk, so the
 # count is a resource bound beside the per-file size cap.
 MAX_UPLOAD_FILES = 64
@@ -225,6 +228,33 @@ def _query_int(request: Request, name: str) -> int | None:
         return int(raw)
     except ValueError:
         raise json_error(400, error=f"{name} must be an integer") from None
+
+
+def _query_list(request: Request, name: str, limit: int) -> tuple[list[str], Response | None]:
+    """Return every value of a repeated query parameter, bounded.
+
+    A filter that names several values at once (the function list's string
+    needles) arrives as repeated parameters rather than one delimited string, so
+    a value may contain the delimiter.  Returns ``(values, error)`` where a
+    non-None error is the 400 to answer.
+    """
+    values = [value.strip() for value in request.query_params.getlist(name)]
+    values = [value for value in values if value]
+    if len(values) > limit:
+        return [], json_error(
+            400,
+            error=f"invalid {name}",
+            detail=f"at most {limit} {name} values are accepted",
+        )
+    return values, None
+
+
+def _query_flag(request: Request, name: str) -> bool:
+    """Return a boolean query parameter, defaulting to false when absent."""
+    raw = request.query_params.get(name)
+    if raw is None or not str(raw).strip():
+        return False
+    return str(raw).strip().lower() in _QUERY_TRUE
 
 
 def _query_text(request: Request, name: str) -> str | None:
@@ -1141,21 +1171,29 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     order = _query_text(request, "order") or store.DEFAULT_FUNCTION_ORDER
     if order not in store.FUNCTION_ORDERS:
         return _invalid_query("order", order, store.FUNCTION_ORDERS)
+    strings, strings_error = _query_list(request, "string", MAX_FUNCTION_STRINGS)
+    if strings_error is not None:
+        return strings_error
+    regex = _query_flag(request, "regex")
     with contextlib.closing(_open()) as conn:
         if store.get_binary(conn, binary_id) is None:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
-        functions = store.list_functions(
-            conn,
-            binary_id=binary_id,
-            min_size=min_size,
-            max_size=max_size,
-            string=_query_text(request, "string"),
-            match=match,
-            sort=sort,
-            order=order,
-        )
+        try:
+            functions = store.list_functions(
+                conn,
+                binary_id=binary_id,
+                min_size=min_size,
+                max_size=max_size,
+                strings=strings,
+                regex=regex,
+                match=match,
+                sort=sort,
+                order=order,
+            )
+        except store.SearchError as exc:
+            return json_error(400, error=exc.code, detail=exc.detail)
         total = store.count_functions(conn, binary_id=binary_id)
         referrers: set[int] | None = None
         if refers_to is not None:
@@ -7363,11 +7401,17 @@ def search(request: Request) -> Response:
     its matched total.  ``?limit=`` bounds each group.  A typed query the store
     refuses (an ambiguous or malformed hash prefix, an unknown kind) answers its
     own 400.
+
+    ``?regex=true`` matches the query as a regular expression instead of a
+    substring (bounded, cached, and 400 ``invalid regex`` when it does not
+    compile), and a repeated ``?string=`` on the function list below is the
+    any-of form of the same idea.
     """
     query = request.query_params.get("q", "")
     query = query if isinstance(query, str) else ""
     kind = request.query_params.get("kind", store.SEARCH_KIND_ALL)
     kind = kind if isinstance(kind, str) and kind.strip() else store.SEARCH_KIND_ALL
+    regex = _query_flag(request, "regex")
     limit = _query_int(request, "limit")
     if limit is not None and not 1 <= limit <= store.MAX_SEARCH_LIMIT:
         return json_error(
@@ -7383,10 +7427,11 @@ def search(request: Request) -> Response:
                 kind=kind,
                 limit=limit or store.DEFAULT_SEARCH_LIMIT,
                 visible_to=_caller(request),
+                regex=regex,
             )
         except store.SearchError as exc:
             return json_error(400, error=exc.code, detail=exc.detail)
-    return json_response({"query": query, "kind": kind, **results})
+    return json_response({"query": query, "kind": kind, "regex": regex, **results})
 
 
 async def _request_form(request: Request) -> Any:

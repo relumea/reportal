@@ -42,6 +42,8 @@ deterministic heuristic, and store the result), ``report`` (generate the
 engine's HTML report into
 the workspace and store the result), ``unstrip`` (store library-identification
 rename proposals) and ``unstrip-apply`` (apply one stored proposal).
+``search`` runs the typed search (a substring by default, a bounded regular expression
+with ``--regex``, or one of the hash, binary, collection and tag kinds).
 ``symbols`` ingests a PDB or ELF/DWARF debug symbol file (its names are applied to
 the functions whose VA matches and its types are added to the model), ``symbols-status``
 lists the ingests and ``symbols-export`` renders one as a C header or JSON.
@@ -5996,6 +5998,54 @@ def symbols_export(
         console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
         return
     typer.echo(text, nl=False)
+
+
+# ── search ─────────────────────────────────────────────────────────
+
+
+@app.command()
+def search(
+    query: str = typer.Argument(..., help="What to search for"),
+    kind: str = typer.Option("all", "--kind", help="all, sha256, binary, collection or tag"),
+    limit: int = typer.Option(store.DEFAULT_SEARCH_LIMIT, "--limit", help="Most rows per group"),
+    regex: bool = typer.Option(False, "--regex", help="Match the query as a regular expression"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Search binaries, functions, collections and tags.
+
+    The query is a substring by default and a bounded regular expression with
+    ``--regex`` (a pattern that does not compile exits 1 with `invalid regex`).
+    ``--kind`` narrows it to one typed query: a hash prefix, a binary name, a
+    collection name or a tag name.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            results = store.search(conn, query, kind=kind, limit=limit, regex=regex)
+        except store.SearchError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps({"query": query, "kind": kind, "regex": regex, **results}))
+        return
+    counts = results["counts"]
+    if not any(results[key] for key in ("binaries", "functions", "collections", "tags")):
+        console.print("[yellow]Nothing matched.[/yellow]")
+        return
+    for key, title in (
+        ("binaries", "binaries"),
+        ("functions", "functions"),
+        ("collections", "collections"),
+        ("tags", "tags"),
+    ):
+        rows = results[key]
+        if not rows:
+            continue
+        console.print(f"[bold]{counts[key]['count']}/{counts[key]['total']}[/bold] {title}")
+        for row in rows:
+            name = row.get("name") or row.get("id")
+            console.print(f"  {name}  [dim]{row.get('match', '')}[/dim]")
 
 
 # ── conversations ──────────────────────────────────────────────────

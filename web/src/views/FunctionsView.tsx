@@ -35,7 +35,10 @@ interface FunctionFilters {
   match: string;
   minSize: string;
   maxSize: string;
-  string: string;
+  /** The decompilation needles, combined as any-of; empty means no filter. */
+  strings: string[];
+  /** Whether every needle is a regular expression. */
+  regex: boolean;
   /** An address whose referrers the list keeps; empty means no filter. */
   refersTo: string;
   sort: FunctionSort;
@@ -48,7 +51,8 @@ const DEFAULT_FILTERS: FunctionFilters = {
   match: "",
   minSize: "",
   maxSize: "",
-  string: "",
+  strings: [],
+  regex: false,
   refersTo: "",
   sort: DEFAULT_FUNCTION_SORT,
   order: DEFAULT_FUNCTION_ORDER,
@@ -66,7 +70,13 @@ function filtersFromQuery(query: Record<string, string>): FunctionFilters {
     match: oneOf(query.match, FUNCTION_MATCH_VALUES, ""),
     minSize: query.min_size ?? "",
     maxSize: query.max_size ?? "",
-    string: query.string ?? "",
+    // Several needles travel in one hash value, one per line, so a needle may
+    // carry anything a pattern needs (including a comma or a pipe).
+    strings:
+      query.string === undefined || query.string === ""
+        ? []
+        : query.string.split("\n").filter((value) => value.trim() !== ""),
+    regex: query.regex === "1",
     refersTo: query.refers_to ?? "",
     sort: oneOf(query.sort, FUNCTION_SORTS, DEFAULT_FUNCTION_SORT),
     order: oneOf(query.order, FUNCTION_ORDERS, DEFAULT_FUNCTION_ORDER),
@@ -81,7 +91,8 @@ function filterQuery(filters: FunctionFilters): Record<string, string> {
     match: filters.match,
     min_size: filters.minSize,
     max_size: filters.maxSize,
-    string: filters.string,
+    string: filters.strings.join("\n"),
+    regex: filters.regex ? "1" : "",
     refers_to: filters.refersTo,
     sort: filters.sort === DEFAULT_FUNCTION_SORT ? "" : filters.sort,
     order: filters.order === DEFAULT_FUNCTION_ORDER ? "" : filters.order,
@@ -94,8 +105,11 @@ function listPath(binaryId: number, filters: FunctionFilters): string {
   params.set("sort", filters.sort);
   params.set("order", filters.order);
   for (const [key, value] of Object.entries(filterQuery(filters))) {
-    if (key !== "sort" && key !== "order" && value !== "") params.set(key, value);
+    if (key === "sort" || key === "order" || key === "string" || value === "") continue;
+    params.set(key, value);
   }
+  // One `string` parameter per needle: the API combines them as any-of.
+  for (const needle of filters.strings) params.append("string", needle);
   return `/binaries/${binaryId}/functions?${params.toString()}`;
 }
 
@@ -150,7 +164,7 @@ export function FunctionsView({
   const [drafts, setDrafts] = useState({
     minSize: filters.minSize,
     maxSize: filters.maxSize,
-    string: filters.string,
+    string: "",
   });
 
   useEffect(() => {
@@ -158,9 +172,9 @@ export function FunctionsView({
   }, [binaryId]);
 
   useEffect(() => {
-    setDrafts({ minSize: filters.minSize, maxSize: filters.maxSize, string: filters.string });
+    setDrafts({ minSize: filters.minSize, maxSize: filters.maxSize, string: "" });
     // The drafts follow the hash; a change here means the URL moved under us.
-  }, [filters.minSize, filters.maxSize, filters.string]);
+  }, [filters.minSize, filters.maxSize, filters.strings]);
 
   const binariesResult = useAsync(() => api<{ binaries: Binary[] }>("/binaries"), []);
   const binaries = binariesResult.data?.binaries;
@@ -179,7 +193,7 @@ export function FunctionsView({
     filters.match !== "" ||
     filters.minSize !== "" ||
     filters.maxSize !== "" ||
-    filters.string !== "" ||
+    filters.strings.length > 0 ||
     filters.refersTo !== "";
 
   const path = effectiveId === null ? "/functions" : `/binaries/${effectiveId}/functions`;
@@ -192,11 +206,17 @@ export function FunctionsView({
   };
 
   const applyDrafts = (): void => {
+    const needle = drafts.string.trim();
     apply({
       minSize: drafts.minSize.trim(),
       maxSize: drafts.maxSize.trim(),
-      string: drafts.string.trim(),
+      strings: needle === "" ? filters.strings : [...filters.strings, needle],
     });
+    setDrafts({ ...drafts, string: "" });
+  };
+
+  const removeNeedle = (needle: string): void => {
+    apply({ strings: filters.strings.filter((value) => value !== needle) });
   };
 
   const toggleSort = (column: FunctionSort): void => {
@@ -393,15 +413,28 @@ export function FunctionsView({
               }}
             />
           </Field>
-          <Field label="String">
+          <Field label="Strings">
             <input
-              placeholder="in the stored decompilation"
+              placeholder="in the stored decompilation; Enter adds one"
               value={drafts.string}
               onChange={(event) => setDrafts({ ...drafts, string: event.target.value })}
               onKeyDown={(event) => {
-                if (event.key === "Enter") applyDrafts();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  applyDrafts();
+                }
               }}
             />
+          </Field>
+          <Field label="Pattern">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={filters.regex}
+                onChange={(event) => apply({ regex: event.target.checked })}
+              />
+              regular expressions
+            </label>
           </Field>
           <Button tone="primary" onClick={applyDrafts}>
             Apply filters
@@ -421,6 +454,19 @@ export function FunctionsView({
             <Button size="sm" tone="ghost" onClick={() => apply({ refersTo: "" })}>
               Clear referrer filter
             </Button>
+          </Note>
+        ) : null}
+        {filters.strings.length > 0 ? (
+          <Note>
+            {filters.regex ? "Patterns" : "Strings"}:{" "}
+            {filters.strings.map((needle) => (
+              <span key={needle} className="chip">
+                <span className="mono">{needle}</span>{" "}
+                <Button size="sm" tone="ghost" onClick={() => removeNeedle(needle)}>
+                  Remove
+                </Button>
+              </span>
+            ))}
           </Note>
         ) : null}
         {actionError ? <ErrorNote error={actionError} /> : null}

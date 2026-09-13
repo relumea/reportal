@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
@@ -1566,6 +1567,8 @@ def list_functions(
     min_size: int | None = None,
     max_size: int | None = None,
     string: str | None = None,
+    strings: Sequence[str] = (),
+    regex: bool = False,
     match: str | None = None,
     sort: str = DEFAULT_FUNCTION_SORT,
     order: str = DEFAULT_FUNCTION_ORDER,
@@ -1575,10 +1578,16 @@ def list_functions(
     ``sort`` names one of :data:`FUNCTION_SORT_COLUMNS` and ``order`` one of
     :data:`FUNCTION_ORDERS`; either being unknown raises :class:`ValueError`.
     Ties break on ``f.id``, so a listing is deterministic.  ``min_size`` and
-    ``max_size`` are inclusive byte bounds, ``string`` matches the function's
-    stored decompilation text (a literal the reversed source carries; a
-    function with none never matches) and ``match`` is one of
+    ``max_size`` are inclusive byte bounds, ``string`` and ``strings`` match the
+    function's stored decompilation text (a literal the reversed source carries;
+    a function with none never matches) and ``match`` is one of
     :data:`FUNCTION_MATCH_VALUES`.
+
+    Several needles are combined as any-of, so a filter listing three strings
+    keeps a function that carries any one of them.  ``regex=True`` treats every
+    needle as a regular expression through the same bounded, cached compiler
+    :func:`compile_regex` provides, and raises ``SearchError("invalid regex",
+    ...)`` for one that does not compile.
     """
     if sort not in FUNCTION_SORT_COLUMNS:
         raise ValueError(f"unknown function sort: {sort}")
@@ -1604,12 +1613,21 @@ def list_functions(
     if max_size is not None:
         clauses.append("f.size <= ?")
         params.append(max_size)
-    if string:
+    needles = [value for value in (string, *strings) if value]
+    if needles:
+        if regex:
+            for value in needles:
+                compile_regex(value)
+            register_regexp(conn)
+        alternatives: list[str] = []
+        for matcher in (_Match(value, regex=regex) for value in needles):
+            code_sql, code_param = matcher.clause("d.code")
+            alternatives.append(code_sql)
+            params.append(code_param)
         clauses.append(
             "EXISTS (SELECT 1 FROM decompilations d WHERE d.function_id = f.id"
-            " AND d.code LIKE ? ESCAPE '\\')"
+            " AND (" + " OR ".join(alternatives) + "))"
         )
-        params.append(_escape_like(string))
     if match is not None:
         exists = "EXISTS (SELECT 1 FROM matches m WHERE m.function_id = f.id)"
         clauses.append(exists if match == FUNCTION_MATCH_MATCHED else f"NOT {exists}")
@@ -3046,13 +3064,102 @@ def _count(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> int:
     return int(row[0]) if row else 0
 
 
-def _binary_match(row: Mapping[str, Any], needle: str) -> str:
-    """Which field of a binary row the lowercased *needle* matched."""
-    if needle and needle in str(row.get("sha256") or "").lower():
+def _binary_match(row: Mapping[str, Any], needle: _Match) -> str:
+    """Which field of a binary row the needle matched."""
+    if needle.test(row.get("sha256")):
         return SEARCH_KIND_SHA256
-    if needle and needle in str(row.get("name") or "").lower():
+    if needle.test(row.get("name")):
         return SEARCH_KIND_BINARY
     return "path"
+
+
+# Bounds for the opt-in regular-expression search.  A query is untrusted input,
+# so a pattern is capped and its compiled form cached; Python's `re` cannot be
+# interrupted once a match is running, so a pathological pattern costs what it
+# costs (a stated ceiling, not a timeout this module can enforce).
+MAX_REGEX_CHARS = 200
+REGEX_CACHE_SIZE = 64
+_REGEX_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+class _Match:
+    """One search needle: a literal substring or an opt-in regular expression.
+
+    ``clause`` builds the SQL fragment and its parameter for one column, so a
+    literal search keeps its escaped ``LIKE`` and a regex search swaps in the
+    ``REGEXP`` function :func:`register_regexp` installs.  ``test`` answers the
+    same question in Python for the row post-processing the helpers do (a tag
+    already matched by SQL still needs its match kind labeled).
+    """
+
+    def __init__(self, query: str, *, regex: bool = False) -> None:
+        self.regex = regex
+        self.query = query
+        self.literal = _escape_like(query)
+
+    def clause(self, column: str) -> tuple[str, str]:
+        """The SQL fragment and parameter that match *column*."""
+        if self.regex:
+            return f"{column} REGEXP ?", self.query
+        return f"{column} LIKE ? ESCAPE '\\'", f"%{self.literal}%"
+
+    def test(self, value: Any) -> bool:
+        """True when *value* matches, for a row the SQL already selected."""
+        text = str(value or "")
+        if not text:
+            return False
+        if self.regex:
+            return bool(compile_regex(self.query).search(text))
+        return self.query.lower() in text.lower()
+
+
+def compile_regex(pattern: str) -> re.Pattern[str]:
+    """Compile one search pattern, capped and cached.
+
+    Raises :class:`SearchError` with the ``invalid regex`` code for a pattern
+    that is too long or does not compile, so the API answers 400 and the CLI,
+    the MCP tool and the routes share one vocabulary.
+    """
+    if not pattern:
+        raise SearchError("invalid regex", "a regular expression must not be empty")
+    if len(pattern) > MAX_REGEX_CHARS:
+        raise SearchError(
+            "invalid regex", f"a regular expression is at most {MAX_REGEX_CHARS} characters"
+        )
+    cached = _REGEX_CACHE.get(pattern)
+    if cached is not None:
+        return cached
+    try:
+        compiled = re.compile(pattern)
+    except re.error as exc:
+        raise SearchError(
+            "invalid regex", f"{pattern!r} is not a regular expression: {exc}"
+        ) from None
+    if len(_REGEX_CACHE) >= REGEX_CACHE_SIZE:
+        _REGEX_CACHE.pop(next(iter(_REGEX_CACHE)))
+    _REGEX_CACHE[pattern] = compiled
+    return compiled
+
+
+def _regexp(pattern: Any, value: Any) -> int:
+    """The SQL ``REGEXP`` function: 1 when *value* matches *pattern*, else 0."""
+    if not isinstance(value, str) or not value:
+        return 0
+    try:
+        compiled = compile_regex(str(pattern or ""))
+    except SearchError:
+        return 0
+    return 1 if compiled.search(value) else 0
+
+
+def register_regexp(conn: sqlite3.Connection) -> None:
+    """Install the ``REGEXP`` function a regex query calls.
+
+    SQLite has no regular-expression engine of its own, so one Python function
+    is registered per connection.  It is deterministic, which is what lets
+    SQLite treat it as a pure function for the query planner.
+    """
+    conn.create_function("regexp", 2, _regexp, deterministic=True)
 
 
 def _binary_rows(
@@ -3060,7 +3167,7 @@ def _binary_rows(
     sql: str,
     params: tuple[Any, ...],
     limit: int,
-    needle: str,
+    needle: _Match,
     *,
     match: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
@@ -3078,15 +3185,17 @@ _BINARY_COLUMNS = "id, name, sha256, size, format, arch, created_at, path"
 
 
 def _search_binaries(
-    conn: sqlite3.Connection, pattern: str, needle: str, limit: int
+    conn: sqlite3.Connection, match: _Match, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """Binaries whose name, path or hash carries *pattern* (the default search)."""
+    """Binaries whose name, path or hash carries the needle (the default search)."""
+    name_sql, name_param = match.clause("name")
+    path_sql, path_param = match.clause("path")
+    hash_sql, hash_param = match.clause("sha256")
     sql = (
         f"SELECT {_BINARY_COLUMNS} FROM binaries"
-        " WHERE name LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\'"
-        " OR sha256 LIKE ? ESCAPE '\\' ORDER BY id"
+        f" WHERE {name_sql} OR {path_sql} OR {hash_sql} ORDER BY id"
     )
-    return _binary_rows(conn, sql, (pattern, pattern, pattern), limit, needle)
+    return _binary_rows(conn, sql, (name_param, path_param, hash_param), limit, match)
 
 
 def _search_sha256(
@@ -3116,78 +3225,84 @@ def _search_sha256(
             "ambiguous-hash",
             f"the prefix {value} matches {total} binaries; use a longer prefix",
         )
-    rows, _ = _binary_rows(conn, sql, (pattern,), limit, value)
+    rows, _ = _binary_rows(conn, sql, (pattern,), limit, _Match(value))
     return rows, total
 
 
 def _search_binary_names(
-    conn: sqlite3.Connection, pattern: str, needle: str, limit: int
+    conn: sqlite3.Connection, match: _Match, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """Binaries whose name carries *pattern*."""
-    sql = f"SELECT {_BINARY_COLUMNS} FROM binaries WHERE name LIKE ? ESCAPE '\\' ORDER BY id"
-    return _binary_rows(conn, sql, (pattern,), limit, needle)
+    """Binaries whose name carries the needle."""
+    name_sql, name_param = match.clause("name")
+    sql = f"SELECT {_BINARY_COLUMNS} FROM binaries WHERE {name_sql} ORDER BY id"
+    return _binary_rows(conn, sql, (name_param,), limit, match)
 
 
 def _search_binaries_by_tag(
-    conn: sqlite3.Connection, pattern: str, needle: str, limit: int
+    conn: sqlite3.Connection, match: _Match, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """Binaries carrying a tag whose name carries *pattern*."""
+    """Binaries carrying a tag whose name carries the needle."""
+    tag_sql, tag_param = match.clause("t.name")
     sql = (
         f"SELECT {_BINARY_COLUMNS} FROM binaries WHERE id IN ("
         " SELECT bt.binary_id FROM binary_tags bt JOIN tags t ON t.id = bt.tag_id"
-        " WHERE t.name LIKE ? ESCAPE '\\') ORDER BY id"
+        f" WHERE {tag_sql}) ORDER BY id"
     )
-    return _binary_rows(conn, sql, (pattern,), limit, needle, match=SEARCH_KIND_TAG)
+    return _binary_rows(conn, sql, (tag_param,), limit, match, match=SEARCH_KIND_TAG)
 
 
 def _search_functions(
-    conn: sqlite3.Connection, pattern: str, limit: int
+    conn: sqlite3.Connection, match: _Match, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """Functions whose name carries *pattern*."""
+    """Functions whose name carries the needle."""
+    name_sql, name_param = match.clause("f.name")
     sql = (
         "SELECT f.id, f.va, f.name, f.status, a.binary_id AS binary_id"
         " FROM functions f JOIN analyses a ON f.analysis_id = a.id"
-        " WHERE f.name LIKE ? ESCAPE '\\' ORDER BY f.va"
+        f" WHERE {name_sql} ORDER BY f.va"
     )
-    total = _count(conn, sql, (pattern,))
-    rows = _rows(conn.execute(f"{sql} LIMIT ?", (pattern, limit)))
+    total = _count(conn, sql, (name_param,))
+    rows = _rows(conn.execute(f"{sql} LIMIT ?", (name_param, limit)))
     for row in rows:
         row["match"] = "name"
     return rows, total
 
 
 def _search_collections(
-    conn: sqlite3.Connection, pattern: str, needle: str, limit: int, *, names_only: bool
+    conn: sqlite3.Connection, match: _Match, limit: int, *, names_only: bool
 ) -> tuple[list[dict[str, Any]], int]:
-    """Collections whose name carries *pattern*, or whose description does too."""
+    """Collections whose name carries the needle, or whose description does too."""
+    name_sql, name_param = match.clause("c.name")
     columns = (
         "SELECT c.id, c.name, c.description, c.created_at, ("
         " SELECT COUNT(*) FROM collection_binaries cb WHERE cb.collection_id = c.id"
-        " ) AS binary_count FROM collections c WHERE c.name LIKE ? ESCAPE '\\'"
+        " ) AS binary_count FROM collections c WHERE " + name_sql
     )
-    params: tuple[Any, ...] = (pattern,)
+    params: tuple[Any, ...] = (name_param,)
     if not names_only:
-        columns += " OR c.description LIKE ? ESCAPE '\\'"
-        params = (pattern, pattern)
+        description_sql, description_param = match.clause("c.description")
+        columns += f" OR {description_sql}"
+        params = (name_param, description_param)
     sql = f"{columns} ORDER BY c.id"
     total = _count(conn, sql, params)
     rows = _rows(conn.execute(f"{sql} LIMIT ?", (*params, limit)))
     for row in rows:
-        row["match"] = "name" if needle and needle in str(row["name"]).lower() else "description"
+        row["match"] = "name" if match.test(row["name"]) else "description"
     return rows, total
 
 
 def _search_tags(
-    conn: sqlite3.Connection, pattern: str, limit: int
+    conn: sqlite3.Connection, match: _Match, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """Tags whose name carries *pattern*, with their tagged-binary count."""
+    """Tags whose name carries the needle, with their tagged-binary count."""
+    name_sql, name_param = match.clause("t.name")
     sql = (
         "SELECT t.id, t.name, ("
         " SELECT COUNT(*) FROM binary_tags bt WHERE bt.tag_id = t.id"
-        " ) AS binary_count FROM tags t WHERE t.name LIKE ? ESCAPE '\\' ORDER BY t.name"
+        f" ) AS binary_count FROM tags t WHERE {name_sql} ORDER BY t.name"
     )
-    total = _count(conn, sql, (pattern,))
-    rows = _rows(conn.execute(f"{sql} LIMIT ?", (pattern, limit)))
+    total = _count(conn, sql, (name_param,))
+    rows = _rows(conn.execute(f"{sql} LIMIT ?", (name_param, limit)))
     for row in rows:
         row["match"] = "name"
     return rows, total
@@ -3200,6 +3315,7 @@ def search(
     limit: int = DEFAULT_SEARCH_LIMIT,
     kind: str = SEARCH_KIND_ALL,
     visible_to: Mapping[str, Any] | None = None,
+    regex: bool = False,
 ) -> dict[str, Any]:
     """Search the store by substring or by one typed query.
 
@@ -3215,6 +3331,12 @@ def search(
     a limit never reads as a total.  LIKE wildcards in *query* are escaped so a
     literal ``%`` matches a percent sign rather than every row.  A query the
     typed form refuses raises :class:`SearchError`.
+
+    ``regex=True`` matches *query* as a regular expression instead of a
+    substring: the pattern is compiled once (bounded by
+    :data:`MAX_REGEX_CHARS` and cached), a pattern that does not compile raises
+    ``SearchError("invalid regex", ...)``, and the ``sha256`` kind is refused
+    because a hash prefix is a literal by definition.
     """
     if kind not in SEARCH_KINDS:
         raise SearchError("invalid-kind", f"unknown search kind {kind!r}")
@@ -3224,8 +3346,14 @@ def search(
     query = query.strip()
     if not query:
         return _empty_search()
-    pattern = _escape_like(query)
-    needle = query.lower()
+    if regex:
+        if kind == SEARCH_KIND_SHA256:
+            raise SearchError(
+                "invalid regex", "the sha256 kind matches a literal hash prefix, not a pattern"
+            )
+        compile_regex(query)
+        register_regexp(conn)
+    needle = _Match(query, regex=regex)
 
     binaries: list[dict[str, Any]] = []
     functions: list[dict[str, Any]] = []
@@ -3236,21 +3364,17 @@ def search(
     if kind == SEARCH_KIND_SHA256:
         binaries, binary_total = _search_sha256(conn, query, limit)
     elif kind == SEARCH_KIND_BINARY:
-        binaries, binary_total = _search_binary_names(conn, pattern, needle, limit)
+        binaries, binary_total = _search_binary_names(conn, needle, limit)
     elif kind == SEARCH_KIND_COLLECTION:
-        collections, collection_total = _search_collections(
-            conn, pattern, needle, limit, names_only=True
-        )
+        collections, collection_total = _search_collections(conn, needle, limit, names_only=True)
     elif kind == SEARCH_KIND_TAG:
-        tags, tag_total = _search_tags(conn, pattern, limit)
-        binaries, binary_total = _search_binaries_by_tag(conn, pattern, needle, limit)
+        tags, tag_total = _search_tags(conn, needle, limit)
+        binaries, binary_total = _search_binaries_by_tag(conn, needle, limit)
     else:
-        binaries, binary_total = _search_binaries(conn, pattern, needle, limit)
-        functions, function_total = _search_functions(conn, pattern, limit)
-        collections, collection_total = _search_collections(
-            conn, pattern, needle, limit, names_only=False
-        )
-        tags, tag_total = _search_tags(conn, pattern, limit)
+        binaries, binary_total = _search_binaries(conn, needle, limit)
+        functions, function_total = _search_functions(conn, needle, limit)
+        collections, collection_total = _search_collections(conn, needle, limit, names_only=False)
+        tags, tag_total = _search_tags(conn, needle, limit)
 
     # The page is bounded, so the visibility filter runs over the returned rows:
     # a binary in a team the caller is not in drops out of the page.  The

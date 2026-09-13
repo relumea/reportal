@@ -337,7 +337,15 @@ the panels they changed and the function header, so the new name shows.  The
 diff view (`views/DiffView.tsx`) renders the two listings side by side with
 the changed lines marked (delete/insert styling), a `kind` select
 (`decomp`/`disasm`), a normalize checkbox, the similarity and the summary
-counts, loading through the diff route.  The conversation detail carries the Agent run panel: the question box
+counts, loading through the diff route.  The Functions view's filters carry several decompilation needles at once: each
+one is added with Enter, drawn as a chip with its own Remove control, and sent as
+repeated `string` parameters (any-of); an adjacent `regular expressions`
+checkbox sends `regex=true` so every needle is a pattern.  The needles travel in
+the hash one per line, so the filter stays shareable and a needle may contain any
+character.  The Search view's `regular expression` checkbox does the same for the
+typed search (disabled for the `sha256` kind, which is a literal prefix).
+
+The conversation detail carries the Agent run panel: the question box
 (`Run agent`), the run's status with its tool-call count, the event list (each
 tool call, a confirmation request, a rejection, the answer or a failure), the
 pending call with its exact arguments and `Approve call`/`Reject call`, a

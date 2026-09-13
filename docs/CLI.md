@@ -490,6 +490,13 @@ reportal journal-revert --action ID | --entry ID [--json]
                                            # replay one recorded action's or one entry's
                                            #   stored inverses; a wired command prints its
                                            #   action id to stderr (or in --json output)
+reportal search <query> [--kind K] [--limit N] [--regex] [--json]
+                                           # search binaries, functions,
+                                           #   collections and tags: a substring by
+                                           #   default, a bounded regular
+                                           #   expression with --regex, or one
+                                           #   typed query (sha256, binary,
+                                           #   collection, tag)
 reportal stats [--json]                    # row counts
 reportal activity [--actor NAME] [--since ISO] [--limit N] [--json]
                                            # what was done here and by whom: the journaled

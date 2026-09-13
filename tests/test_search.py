@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 from conftest import json_body, wsgi_request
+from typer.testing import CliRunner
 
-from reportal import store
+from reportal import api, cli, store
+from reportal._paths import DB_ENV
+
+runner = CliRunner()
 
 # Two binaries whose hashes share an eight-character prefix, so the hash query
 # has a genuinely ambiguous prefix to refuse.
@@ -212,3 +217,156 @@ class TestSearchRoute:
         _seed(conn)
         _, headers, body = wsgi_request("GET", "/api/search?q=alpha")
         assert json.loads(json.dumps(json_body(body, headers)))["query"] == "alpha"
+
+
+# ── The regular-expression search and the any-of string filter ─────
+
+
+class TestRegexSearch:
+    def test_a_pattern_matches_where_a_substring_would_not(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        literal = store.search(conn, "alpha.dll")
+        assert [row["name"] for row in literal["binaries"]] == ["alpha.dll"]
+        patterned = store.search(conn, r"^(alpha|gamma)\..*$", regex=True)
+        assert [row["name"] for row in patterned["binaries"]] == ["alpha.dll", "gamma.sys"]
+        assert patterned["functions"] == []
+
+    def test_a_function_name_is_matched_and_labeled(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, r"parse_.*", kind=store.SEARCH_KIND_ALL, regex=True)
+        assert [row["name"] for row in results["functions"]] == ["parse_alpha"]
+
+    def test_every_typed_kind_takes_a_pattern(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        for kind, key in (
+            (store.SEARCH_KIND_BINARY, "binaries"),
+            (store.SEARCH_KIND_COLLECTION, "collections"),
+            (store.SEARCH_KIND_TAG, "tags"),
+        ):
+            results = store.search(conn, "alpha", kind=kind, regex=True)
+            assert results[key], kind
+
+    def test_a_bad_pattern_is_refused(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(store.SearchError) as caught:
+            store.search(conn, "(", regex=True)
+        assert caught.value.code == "invalid regex"
+        assert store.search(conn, "", regex=True)["functions"] == []
+        with pytest.raises(store.SearchError):
+            store.search(conn, "x" * (store.MAX_REGEX_CHARS + 1), regex=True)
+
+    def test_a_hash_prefix_is_never_a_pattern(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(store.SearchError) as caught:
+            store.search(conn, HASH_A, kind=store.SEARCH_KIND_SHA256, regex=True)
+        assert caught.value.code == "invalid regex"
+
+    def test_the_compiled_pattern_is_cached(self) -> None:
+        first = store.compile_regex("alpha.*")
+        assert store.compile_regex("alpha.*") is first
+        for index in range(store.REGEX_CACHE_SIZE + 2):
+            store.compile_regex(f"pattern-{index}")
+        assert len(store._REGEX_CACHE) <= store.REGEX_CACHE_SIZE
+
+    def test_the_route_takes_the_pattern_flag(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        status, headers, body = wsgi_request("GET", "/api/search?q=%5Ebeta&regex=true")
+        assert status.startswith("200"), body
+        payload = json_body(body, headers)
+        assert payload["regex"] is True
+        assert [row["name"] for row in payload["binaries"]] == ["beta.exe"]
+
+        bad, headers, body = wsgi_request("GET", "/api/search?q=(&regex=true")
+        assert bad.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid regex"
+
+
+class TestStringFilter:
+    def _filtered(self, conn: sqlite3.Connection, *needles: str, regex: bool = False) -> Any:
+        return store.list_functions(conn, analysis_id=1, strings=list(needles), regex=regex)
+
+    def test_several_needles_are_any_of(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        store.set_decompilation(conn, 1, 'char *a = "alpha";', "kuna")
+        other = store.add_function(conn, analysis_id=1, va=0x2000, name="other")
+        store.set_decompilation(conn, other, 'char *b = "beta";', "kuna")
+        assert [row["id"] for row in self._filtered(conn, "alpha")] == [1]
+        assert [row["id"] for row in self._filtered(conn, "beta")] == [other]
+        assert sorted(row["id"] for row in self._filtered(conn, "alpha", "beta")) == [1, other]
+        assert self._filtered(conn, "gamma") == []
+
+    def test_a_pattern_filter_matches_the_text(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        store.set_decompilation(conn, 1, 'char *a = "alpha-42";', "kuna")
+        assert [row["id"] for row in self._filtered(conn, r"alpha-\d+", regex=True)] == [1]
+        assert self._filtered(conn, r"alpha-\d+") == []
+
+    def test_a_bad_pattern_filter_is_refused(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(store.SearchError) as caught:
+            self._filtered(conn, "(", regex=True)
+        assert caught.value.code == "invalid regex"
+
+    def test_the_route_takes_repeated_strings(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        store.set_decompilation(conn, 1, 'char *a = "alpha";', "kuna")
+        other = store.add_function(conn, analysis_id=1, va=0x2000, name="other")
+        store.set_decompilation(conn, other, 'char *b = "beta";', "kuna")
+        url = "/api/binaries/1/functions?string=alpha&string=beta"
+        status, headers, body = wsgi_request("GET", url)
+        assert status.startswith("200"), body
+        assert sorted(row["id"] for row in json_body(body, headers)["functions"]) == [1, other]
+
+        # A pattern the literal search cannot match: `al.ha` needs the dot.
+        patterned, headers, body = wsgi_request(
+            "GET", "/api/binaries/1/functions?string=al.ha&regex=true"
+        )
+        assert patterned.startswith("200"), body
+        assert [row["id"] for row in json_body(body, headers)["functions"]] == [1]
+
+        bad, headers, body = wsgi_request("GET", "/api/binaries/1/functions?string=(&regex=true")
+        assert bad.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid regex"
+
+    def test_the_route_bounds_the_needle_count(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        params = "&".join(f"string=n{index}" for index in range(api.MAX_FUNCTION_STRINGS + 1))
+        status, headers, body = wsgi_request("GET", f"/api/binaries/1/functions?{params}")
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid string"
+
+
+class TestSearchCli:
+    def test_the_command_lists_every_group(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        payload = json.loads(runner.invoke(cli.app, ["search", "alpha", "--json"]).output)
+        assert payload["query"] == "alpha"
+        assert [row["name"] for row in payload["binaries"]] == ["alpha.dll"]
+
+        human = runner.invoke(cli.app, ["search", "alpha"])
+        assert human.exit_code == 0, human.output
+        assert "alpha.dll" in human.output
+
+        nothing = runner.invoke(cli.app, ["search", "nothing-matches-this"])
+        assert nothing.exit_code == 0
+        assert "Nothing matched" in nothing.output
+
+    def test_the_command_takes_a_pattern_and_a_kind(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        patterned = runner.invoke(
+            cli.app, ["search", "^(alpha|beta)", "--regex", "--kind", "binary", "--json"]
+        )
+        assert patterned.exit_code == 0, patterned.output
+        assert [row["name"] for row in json.loads(patterned.output)["binaries"]] == [
+            "alpha.dll",
+            "beta.exe",
+        ]
+
+        bad = runner.invoke(cli.app, ["search", "(", "--regex"])
+        assert bad.exit_code == 1
+        assert "invalid regex" in bad.output
+
+    def test_the_command_fails_without_a_database(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "missing" / "portal.db"))
+        result = runner.invoke(cli.app, ["search", "alpha"])
+        assert result.exit_code == 1
+        assert "no reportal database" in result.output

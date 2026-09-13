@@ -894,6 +894,29 @@ plaintext-at-rest boundary.  Authorization is two rules: a workspace secret
 needs an admin, a team secret needs that team's membership (or an admin), and
 with auth off the install is the single local operator.
 
+## Search
+
+`store.search` is one function behind the search route, the CLI and the MCP tool,
+so the substring form and the opt-in regular-expression form cannot drift.  The
+substring form escapes `LIKE` wildcards and matches in SQL; the regex form
+registers a `REGEXP` function on the connection (`store.register_regexp`, a
+deterministic Python function, because SQLite carries no engine of its own) and
+swaps the clause, so the match still happens in the query rather than in Python
+over every row.
+
+A pattern is untrusted input: `store.compile_regex` caps it at
+`MAX_REGEX_CHARS`, caches the compiled form up to `REGEX_CACHE_SIZE`, and raises
+`SearchError("invalid regex", ...)` for a pattern that does not compile, which
+every surface maps to its own 400.  The honest ceiling is that Python's `re`
+cannot be interrupted once a match is running, so the pattern's length is what is
+bounded, not its running time.  The `sha256` kind is refused under `regex`
+because a hash prefix is a literal by definition.
+
+`store.list_functions` takes `strings` (several needles, combined as any-of in
+one `EXISTS` clause) and the same `regex` flag, so the function list's string
+filter uses one code path with the typed search rather than a second pattern
+engine.
+
 ## Agent runs
 
 `agent.py` turns a conversation from one model call into a tool loop over the

@@ -533,15 +533,22 @@ def _tool_get_binary(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_list_functions(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_optional_int(arguments, "binary_id", 0)
     analysis_id = _arg_optional_int(arguments, "analysis_id", 0)
+    strings = _arg_str_list(arguments, "strings")
+    regex = _arg_optional_bool(arguments, "regex", False)
     with contextlib.closing(_open()) as conn:
         if binary_id:
             _require_binary(conn, binary_id)
-        functions = store.list_functions(
-            conn,
-            binary_id=binary_id or None,
-            analysis_id=analysis_id or None,
-        )
-    return {"functions": functions}
+        try:
+            functions = store.list_functions(
+                conn,
+                binary_id=binary_id or None,
+                analysis_id=analysis_id or None,
+                strings=strings,
+                regex=regex,
+            )
+        except store.SearchError as exc:
+            raise ToolError(exc.code, exc.detail) from None
+    return {"functions": functions, "count": len(functions)}
 
 
 def _tool_get_function(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4453,12 +4460,13 @@ def _tool_search(arguments: dict[str, Any]) -> dict[str, Any]:
     query = _arg_str(arguments, "query")
     limit = _arg_optional_int(arguments, "limit", store.DEFAULT_SEARCH_LIMIT)
     kind = _arg_optional_str(arguments, "kind", store.SEARCH_KIND_ALL)
+    regex = _arg_optional_bool(arguments, "regex", False)
     with contextlib.closing(_open()) as conn:
         try:
-            results = store.search(conn, query, limit=limit, kind=kind)
+            results = store.search(conn, query, limit=limit, kind=kind, regex=regex)
         except store.SearchError as exc:
             raise ToolError(exc.code, exc.detail) from None
-    return {"query": query, "kind": kind, **results}
+    return {"query": query, "kind": kind, "regex": regex, **results}
 
 
 def _tool_extract_archive(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5003,11 +5011,17 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "list_functions",
-            "List function rows, optionally scoped to a binary or an analysis.",
+            "List function rows, optionally scoped to a binary or an analysis and filtered by"
+            " what their stored decompilation contains; several strings are combined as any-of.",
             _object(
                 {
                     "binary_id": _int("Limit to one binary's functions."),
                     "analysis_id": _int("Limit to one analysis's functions."),
+                    "strings": _array(
+                        "Needles the decompilation must contain (any one of them).",
+                        _str("A literal, or a pattern with regex."),
+                    ),
+                    "regex": _bool("Treat every string as a regular expression."),
                 }
             ),
             _READ,
@@ -6926,17 +6940,19 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "search",
-            "Search binaries, functions, collections and tags by substring, or by one"
-            " typed query (sha256, binary, collection or tag).",
+            "Search binaries, functions, collections and tags by substring (or by a bounded"
+            " regular expression with regex), or by one typed query (sha256, binary,"
+            " collection or tag).",
             _object(
                 {
-                    "query": _str("Substring or typed query to search for."),
+                    "query": _str("Substring, pattern or typed query to search for."),
                     "limit": _int(
                         f"Maximum rows per group (default {store.DEFAULT_SEARCH_LIMIT})."
                     ),
                     "kind": _enum(
                         "Query type (default all, the substring search).", store.SEARCH_KINDS
                     ),
+                    "regex": _bool("Match the query as a regular expression."),
                 },
                 ("query",),
             ),

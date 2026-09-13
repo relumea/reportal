@@ -71,7 +71,8 @@ the wrong type (`narrative must be a boolean`, `limit must be an integer`,
 `name must be a string`), a value outside its bound (`top must be positive`), or
 a value outside its closed vocabulary (`invalid params` for the auto-mode
 bounds, `invalid override`, `invalid rating`, `invalid line-comment`,
-`invalid kind`, `invalid backend`, `invalid severity`, and the rest).
+`invalid kind`, `invalid backend`, `invalid severity`, `invalid regex`
+(a search pattern that does not compile or is too long), and the rest).
 `detail` names the field and the accepted values. Send a value inside the range
 or the set the route documents.
 

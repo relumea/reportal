@@ -29,14 +29,18 @@ export function SearchView({
 }): ReactNode {
   const [draft, setDraft] = useState(query);
   const [kind, setKind] = useState<SearchKind>("all");
+  const [regex, setRegex] = useState(false);
 
   useEffect(() => {
     setDraft(query);
   }, [query]);
 
   const resultsResult = useAsync(
-    () => api<SearchResults>(`/search?q=${encodeURIComponent(query)}&kind=${kind}`),
-    [query, kind],
+    () =>
+      api<SearchResults>(
+        `/search?q=${encodeURIComponent(query)}&kind=${kind}${regex ? "&regex=true" : ""}`,
+      ),
+    [query, kind, regex],
     query !== "",
   );
   const results = resultsResult.data;
@@ -69,6 +73,17 @@ export function SearchView({
                 </option>
               ))}
             </select>
+          </Field>
+          <Field label="Pattern">
+            <label className="checkbox-field">
+              <input
+                type="checkbox"
+                checked={regex}
+                disabled={kind === "sha256"}
+                onChange={(event) => setRegex(event.target.checked)}
+              />
+              regular expression
+            </label>
           </Field>
           <Button tone="primary" onClick={() => onQuery(draft)}>
             Search

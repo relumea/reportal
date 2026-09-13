@@ -320,6 +320,27 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   pattern answered 400, plus repeated `string` values combined as any-of.  This
   is a query change; the secrets and strings scans stay fixed pattern tables.
 - Size: S.
+- **Status:** Closed.  `store.search(..., regex=True)` matches the query as a
+  regular expression instead of a substring and `store.list_functions(strings=[...],
+  regex=...)` combines several needles as any-of.  A pattern goes through
+  `store.compile_regex`, which caps it at `MAX_REGEX_CHARS`, caches the compiled
+  form (`REGEX_CACHE_SIZE`), and raises `SearchError("invalid regex", ...)` for
+  one that does not compile, so `GET /api/search?q=&regex=true` and a function
+  filter answer 400 `invalid regex`; `store.register_regexp` installs the SQL
+  `REGEXP` function (SQLite has no engine of its own), which is what lets the
+  match stay in the query rather than in Python over every row.  The `sha256`
+  kind refuses a pattern because a hash prefix is a literal by definition.  The
+  function filter repeats the `string` parameter (at most
+  `api.MAX_FUNCTION_STRINGS` values, each with its own Remove control in the
+  SPA, carried in the hash one per line so a needle may contain any character),
+  and `reportal search <query> [--kind K] [--regex]` plus the CLI's JSON form is
+  the new command-line face of the typed search, which the CLI did not have at
+  all.  `GET /api/search`, the `search` and `list_functions` MCP tools (the
+  latter gaining `strings` and `regex`) and the SPA's Search regex toggle and
+  Functions string chips expose the same.  A ceiling is stated rather than
+  hidden: Python's `re` cannot be interrupted once a match is running, so a
+  pathological pattern costs what it costs; the pattern length is what is
+  bounded.
 
 ### 14. Notifications
 
