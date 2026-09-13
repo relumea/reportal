@@ -672,6 +672,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # import: creating and updating types from pasted C.
             ("Create from declarations",),
             ("Update from declarations",),
+            # Debug symbol ingestion: the file control and its apply toggle.
+            ("Debug symbols",),
+            ("Ingest symbols",),
             ("Function triage",),
             (FUNCTION_TRIAGE_SUMMARY,),
             ("Crypto",),

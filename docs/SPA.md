@@ -348,6 +348,14 @@ follows the run's state stream at `GET /api/conversations/<id>/events`.  The
 panel is explicit that a tool which changes the workspace waits for the
 analyst's approval and that a rejection is answered another way.
 
+The Data types panel's neighbour is the Debug symbols panel: a file control, an
+`Apply names and types` checkbox and `Ingest symbols`, which posts the file as
+`multipart/form-data` to `POST /api/binaries/<id>/symbols` and renders the
+result (kind, symbol count, type count, names applied) with the parse's own
+notes under the table of ingests; each row exports the parse as a C header or
+JSON through `GET .../symbols/export`.  A binary with no ingest renders the
+nothing-stored state from the route's 404 `no-symbols` rather than an error.
+
 The per-function extras render between the references tables and the matches
 panel: indirect call sites (the cached listing's register and memory calls, each
 with its line, mnemonic and operand, with the nothing-cached hint when the

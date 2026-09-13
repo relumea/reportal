@@ -37,6 +37,7 @@ from starlette.responses import Response, StreamingResponse
 
 from reportal import (
     __version__,
+    _paths,
     activity,
     agent,
     ai_decomp,
@@ -91,6 +92,7 @@ from reportal import (
     similarity,
     store,
     surface,
+    symbols,
     threat,
     unstrip,
     user_strings,
@@ -8715,6 +8717,140 @@ def replace_analysis_strings(
             except user_strings.StringError as exc:
                 return json_error(400, error=exc.code, detail=exc.detail)
     return json_response(log.attach(report))
+
+
+# ── Debug symbols ──────────────────────────────────────────────────
+#
+# A symbol file is the one name source reportal cannot derive: the engine's
+# annotations, library identification and the rename paths all guess, while a
+# PDB or an ELF/DWARF table states what the toolchain knew.  The upload is
+# content-addressed beside the workspace's `binaries/` directory, parsed by the
+# stdlib readers in `symbols.py`, and applied as one journaled action.
+
+
+def _symbol_or_404(conn: sqlite3.Connection, binary_id: int) -> Response | None:
+    """The 404 a symbol route answers for an unknown binary, or None."""
+    if store.get_binary(conn, binary_id) is None:
+        return json_error(404, error="binary not found", detail=f"no binary with id {binary_id}")
+    return None
+
+
+@router.post("/api/binaries/{binary_id}/symbols")
+async def upload_symbols(binary_id: int, request: Request) -> Response:
+    """Ingest a debug symbol file: parse it, apply its names and store its types.
+
+    The body is a multipart upload with one ``file`` part (a PDB or an ELF with
+    DWARF) and an optional ``apply`` field, which is false to store the parse
+    without touching a name or a type.  The file is streamed into the
+    workspace's ``symbols/`` directory under its SHA-256, so a re-upload of the
+    same bytes lands on the same path and is one more ingest row, and the parse
+    is bounded and reported in full (its notes say what the reader did not do).
+    The import is one journaled action.
+    """
+    form = await _request_form(request)
+    if isinstance(form, Response):
+        return form
+    files = [part for part in form.getlist("file") if isinstance(part, UploadFile)]
+    if not files:
+        return json_error(400, error="no-file", detail="multipart body needs a 'file' part")
+    if len(files) > 1:
+        return json_error(400, error="too-many-files", detail="one symbol file per request")
+    raw_apply = _form_text(form.get("apply")).strip().lower()
+    apply = raw_apply not in {"false", "0", "no", "off"}
+    return await run_in_threadpool(_ingest_symbols, binary_id, files[0], apply)
+
+
+def _ingest_symbols(binary_id: int, upload: UploadFile, apply: bool) -> Response:
+    """Store and parse one uploaded symbol file (the blocking half of the route)."""
+    directory = _paths.project_root() / symbols.SYMBOLS_DIR
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        temp, _sha256, _size = _stream_upload(upload, directory)
+    except _PartError as exc:
+        return json_error(exc.status, error=exc.error, detail=exc.detail)
+    except OSError as exc:
+        return json_error(500, error="write-failed", detail=str(exc))
+    try:
+        data = temp.read_bytes()
+    except OSError as exc:
+        temp.unlink(missing_ok=True)
+        return json_error(500, error="write-failed", detail=str(exc))
+    if not data:
+        temp.unlink(missing_ok=True)
+        return json_error(400, error="empty-file", detail="uploaded file is empty")
+    try:
+        parsed = symbols.parse(data, filename=str(upload.filename or ""))
+    except symbols.UnreadableSymbolError as exc:
+        temp.unlink(missing_ok=True)
+        return json_error(400, error=exc.code, detail=exc.detail)
+    target = directory / symbols.digest(data)
+    os.replace(temp, target)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report = symbols.import_symbols(
+                conn,
+                log,
+                binary_id=binary_id,
+                data=data,
+                parsed=parsed,
+                path=str(target),
+                apply=apply,
+            )
+    return json_response(log.attach(report))
+
+
+@router.get("/api/binaries/{binary_id}/symbols")
+def list_symbols(binary_id: int) -> Response:
+    """Every symbol file ingested for one binary, newest first.
+
+    Answers 404 ``no-symbols`` when none was ingested, which is the difference
+    between "this binary has no symbols" and "the names came from elsewhere".
+    """
+    with contextlib.closing(_open()) as conn:
+        missing = _symbol_or_404(conn, binary_id)
+        if missing is not None:
+            return missing
+        rows = symbols.list_files(conn, binary_id)
+    if not rows:
+        return json_error(
+            404, error="no-symbols", detail=f"binary {binary_id} has no ingested symbol file"
+        )
+    return json_response({"binary_id": binary_id, "symbol_files": rows, "count": len(rows)})
+
+
+@router.get("/api/binaries/{binary_id}/symbols/export")
+def export_symbols(binary_id: int, request: Request) -> Response:
+    """Render one ingested parse as JSON or as a C header.
+
+    ``?format=c`` (the default) reuses the type model's renderer, so the header
+    and the editable model cannot disagree; ``?format=json`` answers the parse
+    itself.  ``?file_id=`` names one ingest; without it the newest is exported.
+    """
+    kind = _query_text(request, "format") or "c"
+    if kind not in ("c", "json"):
+        return json_error(400, error="invalid format", detail="format must be c or json")
+    file_id = _query_int(request, "file_id")
+    with contextlib.closing(_open()) as conn:
+        missing = _symbol_or_404(conn, binary_id)
+        if missing is not None:
+            return missing
+        try:
+            row = symbols.get_file(
+                conn, binary_id=binary_id, file_id=int(file_id) if file_id else None
+            )
+        except symbols.UnknownSymbolFileError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+    text = symbols.render_symbols(row["parsed"], kind=kind)
+    return Response(
+        content=text,
+        media_type="application/json" if kind == "json" else "text/plain",
+        headers={"Content-Disposition": f'inline; filename="symbols.{kind}"'},
+    )
 
 
 # ── Models ─────────────────────────────────────────────────────────

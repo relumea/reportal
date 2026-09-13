@@ -80,6 +80,7 @@ from reportal import (
     similarity,
     store,
     surface,
+    symbols,
     threat,
     unstrip,
     user_strings,
@@ -3106,6 +3107,81 @@ def _tool_canonicalize_function_names(arguments: dict[str, Any]) -> dict[str, An
             return log.attach(
                 {**plan, "applied": applied, "applied_count": len(applied), "dry_run": False}
             )
+
+
+def _binary_or_error(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """The binary row, or a tool error naming the id."""
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise ToolError("binary not found", f"no binary with id {binary_id}")
+    return binary
+
+
+def _tool_get_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    file_id = _arg_optional_int(arguments, "file_id", 0)
+    with contextlib.closing(_open()) as conn:
+        _binary_or_error(conn, binary_id)
+        try:
+            if file_id:
+                return symbols.get_file(conn, binary_id=binary_id, file_id=file_id)
+            rows = symbols.list_files(conn, binary_id)
+        except symbols.UnknownSymbolFileError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+    if not rows:
+        raise ToolError("no-symbols", f"binary {binary_id} has no ingested symbol file")
+    return {"binary_id": binary_id, "symbol_files": rows, "count": len(rows)}
+
+
+def _tool_import_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    path = _arg_str(arguments, "path")
+    apply = _arg_optional_bool(arguments, "apply", True)
+    try:
+        data, parsed = symbols.parse_file(path)
+    except symbols.UnreadableSymbolError as exc:
+        raise ToolError(exc.code, exc.detail) from exc
+    with contextlib.closing(_open()) as conn:
+        _binary_or_error(conn, binary_id)
+        directory = symbols.stored_path(symbols.digest(data)).parent
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            target = directory / symbols.digest(data)
+            target.write_bytes(data)
+        except OSError as exc:
+            raise ToolError("write-failed", str(exc)) from exc
+        with journal.journaled(conn, journal.new_action()) as log:
+            report = symbols.import_symbols(
+                conn,
+                log,
+                binary_id=binary_id,
+                data=data,
+                parsed=parsed,
+                path=str(target),
+                apply=apply,
+            )
+            return log.attach(report)
+
+
+def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    path = _arg_str(arguments, "path")
+    kind = _arg_optional_str(arguments, "format", "c").strip().lower() or "c"
+    if kind not in ("c", "json"):
+        raise ToolError("invalid format", "format must be c or json")
+    file_id = _arg_optional_int(arguments, "file_id", 0)
+    with contextlib.closing(_open()) as conn:
+        _binary_or_error(conn, binary_id)
+        try:
+            row = symbols.get_file(conn, binary_id=binary_id, file_id=file_id or None)
+        except symbols.UnknownSymbolFileError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+    text = symbols.render_symbols(row["parsed"], kind=kind)
+    try:
+        Path(path).write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise ToolError("write-failed", f"cannot write {path}: {exc}") from exc
+    return {"path": path, "format": kind, "bytes": len(text)}
 
 
 def _tool_list_external_sources(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -7078,6 +7154,56 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_cancel_conversation_run,
+        ),
+        Tool(
+            "get_symbols",
+            "The debug symbol files ingested for a binary (kind, counts, notes and the whole"
+            " parse), or one of them by id.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "file_id": _int("One ingest; the newest without it."),
+                },
+                ("binary_id",),
+            ),
+            _READ,
+            _tool_get_symbols,
+        ),
+        Tool(
+            "import_symbols",
+            "Ingest a debug symbol file: parse it with the stdlib readers, rename the functions"
+            " whose VA matches a symbol and add the aggregate types it declares, as one"
+            " journaled action.  apply=false stores the parse without changing anything.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "path": _str("The PDB or ELF/DWARF file to ingest."),
+                    "apply": _bool("False stores the parse only."),
+                },
+                ("binary_id", "path"),
+            ),
+            _WRITE,
+            _tool_import_symbols,
+        ),
+        Tool(
+            "export_symbols",
+            "Write one ingested parse to a path as a C header (reusing the type model's"
+            " renderer) or as JSON.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "path": _str("Where to write the export."),
+                    "format": {
+                        "type": "string",
+                        "enum": ["c", "json"],
+                        "description": "Defaults to c.",
+                    },
+                    "file_id": _int("One ingest; the newest without it."),
+                },
+                ("binary_id", "path"),
+            ),
+            _WRITE,
+            _tool_export_symbols,
         ),
         Tool(
             "get_indirect_call_sites",

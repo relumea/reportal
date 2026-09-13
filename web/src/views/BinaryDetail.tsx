@@ -39,6 +39,7 @@ import {
 import { DataTypesPanel } from "../panels/DataTypesPanel";
 import { CommentsPanel } from "../panels/CommentsPanel";
 import { MemoryPanel } from "../panels/MemoryPanel";
+import { SymbolsPanel } from "../panels/SymbolsPanel";
 import { panelKey, usePanel } from "../panelCache";
 import type { Binary } from "../types";
 import { ChatAboutButton } from "./ConversationsView";
@@ -84,6 +85,7 @@ export function BinaryDetail({ binaryId }: { binaryId: number }): ReactNode {
           <ThreatPanel binaryId={binary.id} />
           <RemediationPanel binaryId={binary.id} />
           <DataTypesPanel binaryId={binary.id} />
+          <SymbolsPanel binaryId={binary.id} />
           <UnstripPanel binaryId={binary.id} />
           <Panel
             title="Conversations"

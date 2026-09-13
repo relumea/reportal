@@ -42,6 +42,9 @@ deterministic heuristic, and store the result), ``report`` (generate the
 engine's HTML report into
 the workspace and store the result), ``unstrip`` (store library-identification
 rename proposals) and ``unstrip-apply`` (apply one stored proposal).
+``symbols`` ingests a PDB or ELF/DWARF debug symbol file (its names are applied to
+the functions whose VA matches and its types are added to the model), ``symbols-status``
+lists the ingests and ``symbols-export`` renders one as a C header or JSON.
 ``indirect-calls``, ``function-capabilities`` and ``function-strings`` read a function's
 cached indirect call sites, the capabilities its own imports and literals match and its
 analyst strings beside the derived literals, ``user-string-add``/``user-string-rm`` and
@@ -156,6 +159,7 @@ from reportal import (
     signatures,
     similarity,
     store,
+    symbols,
     threat,
     unstrip,
     user_strings,
@@ -5818,6 +5822,180 @@ def auto_recover(
         f"  {result['added_descriptors']} descriptor(s) added"
         f"  status {result['status']}"
     )
+
+
+# ── debug symbols ──────────────────────────────────────────────────
+
+
+@app.command("symbols")
+def symbols_ingest(
+    binary_id: int = typer.Argument(..., help="Binary the symbol file belongs to"),
+    path: str = typer.Argument(..., help="The PDB or ELF/DWARF file to ingest"),
+    no_apply: bool = typer.Option(
+        False, "--no-apply", help="Store the parse without renaming or adding types"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Ingest a debug symbol file: parse it and apply its names and types.
+
+    The file is stored content-addressed under the workspace's `symbols/`
+    directory, a function whose VA matches a symbol is renamed to it with the
+    `symbol` name source, and every aggregate type the file declares is added to
+    the editable type model.  Both writes are one journaled action.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    try:
+        data, parsed = symbols.parse_file(path)
+    except symbols.UnreadableSymbolError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        directory = symbols.stored_path(symbols.digest(data)).parent
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / symbols.digest(data)
+        try:
+            target.write_bytes(data)
+        except OSError as exc:
+            _fail(f"cannot store the symbol file: {exc}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report = symbols.import_symbols(
+                conn,
+                log,
+                binary_id=binary_id,
+                data=data,
+                parsed=parsed,
+                path=str(target),
+                apply=not no_apply,
+            )
+    if json_output:
+        typer.echo(json.dumps(log.attach(report)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(
+        f"[green]Ingested[/green] {report['kind']} symbols for binary {binary_id}:"
+        f" {report['symbols']} symbol(s), {report['types']} type(s),"
+        f" {report['applied']} name(s) applied"
+    )
+    for note in report["parsed"].get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+
+
+@app.command("symbols-status")
+def symbols_status(
+    binary_id: int = typer.Argument(..., help="Binary whose symbol files to list"),
+    file_id: int = typer.Option(None, "--file-id", help="One ingest; the newest without it"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The symbol files ingested for a binary, or one of them in full."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        try:
+            if file_id is None:
+                rows = symbols.list_files(conn, binary_id)
+                if not rows:
+                    _fail(
+                        f"no-symbols: binary {binary_id} has no ingested symbol file", json_output
+                    )
+                payload: Any = {"binary_id": binary_id, "symbol_files": rows, "count": len(rows)}
+                row = None
+            else:
+                row = symbols.get_file(conn, binary_id=binary_id, file_id=file_id)
+                payload = row
+        except symbols.UnknownSymbolFileError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        if row is not None:
+            typer.echo(json.dumps({**row, **row["parsed"]}))
+        else:
+            typer.echo(json.dumps(payload))
+        return
+    if row is not None:
+        _print_symbol_file(row)
+        return
+    table = Table(title=f"symbol files of binary {binary_id}")
+    table.add_column("Id", justify="right", style="magenta")
+    table.add_column("Kind")
+    table.add_column("Symbols", justify="right")
+    table.add_column("Types", justify="right")
+    table.add_column("Applied", justify="right")
+    table.add_column("Ingested")
+    for entry in payload["symbol_files"]:
+        table.add_row(
+            str(entry["id"]),
+            str(entry["kind"]),
+            str(entry["symbols"]),
+            str(entry["types"]),
+            str(entry["applied"]),
+            str(entry["created_at"]),
+        )
+    console.print(table)
+
+
+def _print_symbol_file(row: dict[str, Any]) -> None:
+    """Print one ingested symbol file: its counts, notes and a sample."""
+    parsed = row["parsed"]
+    console.print(
+        f"{row['kind']} file {row['id']}: {row['symbols']} symbol(s),"
+        f" {row['types']} type(s), {row['applied']} applied"
+    )
+    for note in parsed.get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+    for entry in parsed.get("symbols") or []:
+        address = f"0x{entry['va']:x}" if entry.get("va") else "n/a"
+        console.print(f"  {address}  {entry['kind']:<8} {entry['name']}")
+    for entry in parsed.get("types") or []:
+        console.print(
+            f"  type {entry['name']} ({entry['kind']}, {entry['size']} byte(s),"
+            f" {len(entry.get('members') or [])} member(s))"
+        )
+
+
+@app.command("symbols-export")
+def symbols_export(
+    binary_id: int = typer.Argument(..., help="Binary whose parse to export"),
+    format_kind: str = typer.Option("c", "--format", help="c or json"),
+    output: str = typer.Option("", "--output", help="Write here instead of stdout"),
+    file_id: int = typer.Option(None, "--file-id", help="One ingest; the newest without it"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Render an ingested parse as a C header or as JSON.
+
+    The C form reuses the type model's renderer, so an exported header and the
+    editable model cannot disagree.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    kind = format_kind.strip().lower()
+    if kind not in ("c", "json"):
+        _fail("format must be c or json", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        try:
+            row = symbols.get_file(conn, binary_id=binary_id, file_id=file_id)
+        except symbols.UnknownSymbolFileError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    text = symbols.render_symbols(row["parsed"], kind=kind)
+    if output.strip():
+        try:
+            Path(output).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            _fail(f"cannot write {output}: {exc}", json_output)
+        if json_output:
+            typer.echo(json.dumps({"path": output, "format": kind, "bytes": len(text)}))
+            return
+        console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
+        return
+    typer.echo(text, nl=False)
 
 
 # ── conversations ──────────────────────────────────────────────────

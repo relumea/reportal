@@ -2721,3 +2721,52 @@ export interface AgentRunList {
   runs: AgentRun[];
   count: number;
 }
+
+/** One symbol a debug symbol file declares. */
+export interface SymbolEntry {
+  name: string;
+  va: number | null;
+  size: number;
+  kind: string;
+  source: string;
+}
+
+/** One aggregate type a symbol file declares. */
+export interface SymbolType {
+  name: string;
+  kind: string;
+  size: number;
+  namespace: string;
+  members: Array<{ name: string; type: string; offset: number }>;
+}
+
+/** The parse one symbol file produced. */
+export interface SymbolParse {
+  kind?: string;
+  symbols?: SymbolEntry[];
+  types?: SymbolType[];
+  notes?: string[];
+  counts?: { symbols: number; types: number };
+}
+
+/** One ingested symbol file. */
+export interface SymbolFile {
+  id: number;
+  binary_id: number;
+  sha256: string;
+  kind: string;
+  size: number;
+  path: string;
+  parsed: SymbolParse;
+  symbols: number;
+  types: number;
+  applied: number;
+  created_at: string;
+}
+
+/** `GET /api/binaries/<id>/symbols`. */
+export interface SymbolFileList {
+  binary_id: number;
+  symbol_files: SymbolFile[];
+  count: number;
+}

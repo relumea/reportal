@@ -36,6 +36,17 @@ reportal extract <binary-id> [--password TEXT] [--collection ID] [--json]
                                            #   register each member by content hash into one
                                            #   collection and report each member and refusal;
                                            #   one journal action, reverted with the printed id
+reportal symbols <binary-id> <path> [--no-apply] [--json]
+                                           # ingest a PDB or ELF/DWARF symbol file:
+                                           #   parse it, rename the functions whose
+                                           #   VA matches a symbol and add the types
+                                           #   it declares, as one journal action
+reportal symbols-status <binary-id> [--file-id N] [--json]
+                                           # the ingested symbol files, or one in
+                                           #   full with its notes and its symbols
+reportal symbols-export <binary-id> [--format c|json] [--output PATH] [--file-id N]
+                                           # render one parse as a C header (through
+                                           #   the type model's renderer) or as JSON
 reportal enrich <binary-id>                # compute and store a rebrew fingerprint
 reportal decompile <function-id> [--backend kuna] [--named] [--json]
                                            # decompile through rebrew and store the source

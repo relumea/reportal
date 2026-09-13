@@ -235,6 +235,9 @@ their pages by the same rule.
 | `/api/secrets` | GET | every stored credential the caller may see, redacted to its name, scope, team, byte length and a last-four hint; `?scope=`/`?team_id=` filter; the value is never in a payload |
 | `/api/secrets/<name>` | PUT | store or replace one credential; body `{"value", "scope"?, "team_id"?}`; a workspace secret needs an admin, a team secret that team's membership; 400 `invalid secret`, 403 `secret forbidden`, 404 `team not found`; journaled |
 | `/api/secrets/<name>` | DELETE | remove one credential, journaled (a revert restores the row); `?scope=`/`?team_id=` name it; 404 `secret not found` |
+| `/api/binaries/<id>/symbols` | POST | ingest a debug symbol file: a multipart upload with one `file` part (a PDB or an ELF with DWARF) and an optional `apply` field (false stores the parse without applying it); the file is stored under `<workspace>/symbols/<sha256>` and its functions are renamed and its types added as one journaled action; 400 `no-file`/`too-many-files`/`empty-file`/`symbols-unreadable`, 404 `binary not found` |
+| `/api/binaries/<id>/symbols` | GET | every symbol file ingested for the binary, newest first, each with its kind, counts, notes and the whole parse; 404 `no-symbols` before the first ingest |
+| `/api/binaries/<id>/symbols/export` | GET | render one parse as a C header (`?format=c`, the default, through the type model's renderer) or as JSON (`?format=json`), `?file_id=` naming one ingest (the newest without it); 400 `invalid format`, 404 `no-symbols`/`run not found` for an unknown ingest |
 | `/api/models` | GET | the local model registry: the engine, every decompiler backend, the configured bridge model (or the single `unconfigured` entry) and the optional similarity extra, each with its kind, version, availability and reason |
 | `/api/analyses/<id>/upgrade` | POST | re-run one analysis's stored AI artifacts under a named `llm` model, journaling every artifact replaced; body `{"model", "functions"?, "limit"?}`; 400 `invalid model`, 404 `analysis not found` / `model not found`, 503 `llm-unavailable` |
 | `/api/pipeline/runs/<id>/revert` | POST | replay the run's undo plan newest-first and return what was undone; 404 `run not found` |
@@ -453,6 +456,20 @@ its next step boundary, and `GET .../events` streams the run's state rather than
 the model's tokens.  The run row and the messages it wrote are one journaled
 action; a tool the run called carries its own, so reverting a conversation does
 not undo a tool's write.
+A debug symbol file is the one name source reportal cannot derive, so `POST
+/api/binaries/<id>/symbols` stores it content-addressed under the workspace's
+`symbols/` directory, parses it with the stdlib readers (ELF symbol tables,
+DWARF 2 to 5 in `.debug_info` with the indexed `strx`/`addrx` forms resolved
+through the unit's own bases, and a PDB's MSF container and DBI symbol record
+stream) and applies it as one journaled action: a function whose VA matches a
+symbol is renamed with the `symbol` name source and every aggregate type is
+created or updated in the type model, so a revert puts both back.  `apply:
+false` stores the parse alone.  Every parse carries its `notes` naming the
+ceilings (a member offset carried by a DWARF location expression is skipped, a
+type reference deeper than `MAX_TYPE_DEPTH` is left out, and PDB types are not
+reconstructed because the TPI stream is not parsed), and `?format=c` renders
+the export through `data_types.render_header` so a header and the model cannot
+disagree.
 The function-level extras are derived from rows the workspace already holds and
 say so in every payload: the indirect call sites come from `disasm_cache` (a
 function with no cached listing reports `has_disassembly: false` and no sites

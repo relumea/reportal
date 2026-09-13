@@ -78,6 +78,10 @@ reportal/
 │   ├── capabilities.py       # deterministic capability tagging over imports and strings
 │   ├── families.py           # local malware-family signatures and detection (the `detect` scan)
 │   ├── function_triage.py    # per-function triage: heuristic score, LLM run, aggregate scan
+│   ├── symbols.py            # debug symbol ingestion: the ELF/DWARF readers, the
+│   │                         #   content-addressed store, the import and the export
+│   ├── pdb.py                # the PDB 7.0 reader: MSF container, DBI section map and
+│   │                         #   symbol record stream
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
 │   │                         #   derived callees, analyst-declared edges, canonical names
 │   ├── user_strings.py       # analyst strings at function or analysis scope, plus
@@ -929,6 +933,48 @@ The run row and the messages a turn wrote are one journaled action
 (`journal.journaled_create` for the row, `journal.journaled_messages` for the
 messages).  A tool the run called carries its own journal action, which the run's
 action does not cover: reverting a conversation does not undo a tool's write.
+
+## Debug symbols
+
+`symbols.py` reads the one name source reportal cannot derive.  The engine's
+annotations, library identification and the rename paths all guess; a PDB or an
+ELF/DWARF table states what the toolchain knew when it built the binary.
+
+`parse` dispatches on the file's magic.  `parse_elf` reads `.symtab` and
+`.dynsym` (the 32- and 64-bit layouts, the linked string table, `STT_FUNC` and
+`STT_OBJECT`) and then merges the DWARF subprograms, so one ELF gives one list.
+`parse_dwarf` reads `.debug_info` unit by unit: the unit headers of DWARF 2 to
+5, each unit's abbreviation table, the DIE stream with the full DWARF 5 form
+table, subprograms with their `DW_AT_low_pc`, and the aggregate tags with their
+members, member offsets and rendered member types.  DWARF 5 moved names and
+addresses behind the per-unit `DW_AT_str_offsets_base` and `DW_AT_addr_base`, so
+the root DIE is parsed first to resolve them before any indexed form in the unit
+is read.  `parse` hands a PDB to `pdb.py`, which reads the MSF 7.0 superblock,
+the stream directory and the DBI stream's section map and symbol record stream
+(public and procedure symbols, names only).
+
+`pdb.py` was checked against a PDB built by `clang -gcodeview` and `lld-link /debug`
+and cross-read with `llvm-pdbutil dump -publics`: the container, the DBI header and
+the symbol record stream read back the same publics.  A real PDB keeps its section
+map as `SectionMapEntry` records and its addresses in a separate section header
+stream, which this reader does not follow, so a real PDB's symbols answer
+`va: null` and only their names and kinds are reported; no address is invented.
+
+A form the reader cannot size ends the unit with a note rather than desyncing
+the DIE stream, and a member whose offset is a location expression is skipped
+rather than assumed to be zero: a guessed name or address is worse than a
+missing one, so every parse carries its own `notes` saying what it did not do.
+
+`import_symbols` is the one write path.  The file's bytes are stored
+content-addressed under the workspace's `symbols/` directory (the sha256 of the
+content, the way an upload is), a function whose VA matches a symbol is renamed
+through `journal.journaled_rename` with the `symbol` name source (a system name
+in `composition.NAME_SOURCE_MAP`), and every aggregate type is created or
+updated in the editable model, with both writes inside the caller's journaled
+action.  `render_symbols` renders a parse as JSON or as a C header through
+`data_types.render_header`, so the export and the editable model cannot
+disagree, and a function symbol is carried as a comment so a type maps back to
+the function it came from.
 
 ## HTTP surface
 

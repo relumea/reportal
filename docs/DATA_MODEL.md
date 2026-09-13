@@ -464,6 +464,16 @@ awaiting an analyst's decision, empty otherwise), the final `content` or the
 journaled action, so a revert removes both; a tool the run called carries its own
 journal action, which the run's does not cover.
 
+`symbol_files` is the debug-symbol ledger, owned by `symbols.py` and created by
+its own lazy `ensure_schema`.  One row is one ingest: the `binary_id`, the
+file's `sha256` and byte `size`, the `kind` (`elf`, `dwarf` or `pdb`), the
+stored `path` under the workspace's `symbols/` directory, `parsed_json` (the
+whole parse: its symbols, its types and the reader's notes) and the `symbols`,
+`types` and `applied` counts.  The raw file is content-addressed, so a re-upload
+of the same bytes lands on the same path and adds one more row; the names and
+types an ingest applied are journaled like every other write, and a binary
+delete cascades the rows away with the rest.
+
 `function_edges` and `user_strings` are the two per-function extras that carry
 rows of their own, each owned by its module (`function_extras.py`,
 `user_strings.py`) and created lazily by its own `ensure_schema`, the pattern

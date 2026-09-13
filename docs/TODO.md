@@ -53,6 +53,34 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   reuses the signature/type renderers.  A PDB writer is out of scope; export
   stays C headers and JSON.
 - Size: M.
+- **Status:** Closed.  `symbols.py` holds the readers and `pdb.py` the PDB one.
+  `reportal symbols <binary-id> <path>` (or `POST /api/binaries/<id>/symbols`, a
+  multipart upload) stores the file under `<workspace>/symbols/<sha256>`, parses
+  it with the stdlib readers and applies it as one journaled action: a function
+  whose VA matches a symbol is renamed to it with the `symbol` name source
+  (`store`-level, so the composition buckets read it as a system name) and every
+  aggregate type the file declares is created or updated in the editable type
+  model.  A DWARF subprogram, a base type, a pointer and a struct member come
+  from `.debug_info` (DWARF 2 to 5, the indexed `strx`/`addrx` forms included,
+  through the unit's own bases), an ELF symbol table from `.symtab`/`.dynsym`,
+  and a PDB from the MSF container's DBI symbol record stream (public and
+  procedure symbols, names only).  `GET /api/binaries/<id>/symbols` reads the
+  ingests (404 `no-symbols` before the first), `GET .../symbols/export?format=c`
+  renders the header through `data_types.render_header` so the export and the
+  model cannot disagree, the `get_symbols`, `import_symbols` and
+  `export_symbols` MCP tools expose the same, and the SPA's Debug symbols panel
+  uploads, lists and exports.  Each parse carries its own `notes` naming what
+  the reader did not do; the ceilings are DWARF expressions (a member offset
+  carried by one is skipped rather than guessed), DWARF type names deeper than
+  `MAX_TYPE_DEPTH`, and PDB types (the TPI stream is not parsed).  A real MSVC or lld PDB
+  stores its section map as `SectionMapEntry` records and its addresses in a section
+  header stream, so the PDB reader reports a symbol's name and its `kind` and answers
+  `va: null` rather than a made-up address: a PDB ingest therefore records names in the
+  stored parse and in the export, and renames a function only when the symbol carries
+  an address the map resolves (the ELF/DWARF path).  The reader was verified against
+  a PDB built with `clang -gcodeview` + `lld-link /debug` and cross-checked with
+  `llvm-pdbutil dump -publics`: the container, the DBI header, the symbol record
+  stream and the two publics it reports all read back, and no address is invented.
 
 ### 2. Teams, organisations and roles
 
