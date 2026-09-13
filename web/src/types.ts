@@ -2833,6 +2833,27 @@ export interface ArtifactRatings {
   kinds: string[];
 }
 
+/** One stored archive's member, as `POST /api/binaries/<id>/extract` reports it. */
+export interface ExtractMember {
+  name: string;
+  size: number;
+  skipped: string;
+  binary_id: number | null;
+  duplicate: boolean;
+}
+
+/** `POST /api/binaries/<id>/extract`: the collection and the members. */
+export interface ExtractResult {
+  binary_id: number;
+  collection_id: number;
+  collection_name: string;
+  members: ExtractMember[];
+  notes: string[];
+  kept: number;
+  skipped: number;
+  journal_action?: string;
+}
+
 /** One entry of the documentation index (`GET /api/docs`). */
 export interface DocPage {
   slug: string;

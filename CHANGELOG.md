@@ -95,6 +95,9 @@ entry.
 - A conversation about reportal itself: the `docs` scope ingests the shipped
   manual on the first question and answers from it, with a per-scope canned
   prompt list in the Conversations view.
+- The upload panel's conveniences: a drag-and-drop zone, a per-row plan badge
+  with a Configure-all control, duplicate and error banners over the per-entry
+  results, and an in-place Extract an archive panel.
 - The analyses list's richer controls: a multi-select status filter, platform
   and architecture filters built from what the register holds, six sort orders,
   a per-row re-analyse action, and copy-hashes in the bulk toolbar.

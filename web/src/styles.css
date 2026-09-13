@@ -2926,3 +2926,40 @@ kbd.key {
   flex-wrap: wrap;
   gap: var(--space-1);
 }
+
+/* ── Upload drop zone ─────────────────────────────────────────────────
+   One dashed target for drag and drop, and the batch banner the results
+   list opens with when a duplicate or a refusal happened. */
+.drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 68px;
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  text-align: center;
+}
+
+.drop-zone.dragging,
+.drop-zone:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.upload-banner {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-1);
+  background: var(--warn-soft);
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.upload-banner.upload-error {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}

@@ -619,6 +619,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Comments",),
             # The per-row download action, served by GET /api/binaries/<id>/download.
             ("Download",),
+            # The entry 11 conveniences: the drop zone and the in-place
+            # extraction panel.  (Configure all appears with a queued file.)
+            ("Drop binaries, firmware images or archives here",),
+            ("Extract an archive",),
         ),
     ),
     (

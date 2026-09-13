@@ -528,6 +528,18 @@ name, member count, description) with a create form, a per-row "add member"
 select over the known users and a Delete behind the confirm pattern, so team
 membership is managed in the browser the same way the CLI manages it.
 
+The Binaries view's upload panel (`views/BinariesView.tsx`) takes a batch one
+file at a time: a `Files` control and a dashed drop zone both queue files, each
+queued row carries its own name, tags, format and ISA, a `Configure all` pair
+applies a format and an ISA to every row at once, and a row nobody configured
+keeps the `auto` plan badge.  The batch posts as one multipart request with one
+options entry per part, so the whole request is one journal action; the result
+list opens with a duplicate banner and an error banner above the per-entry rows,
+each of which names what happened to that file.  The `Extract an archive` panel
+below unpacks an already stored archive into a collection (or one named after
+it) with an optional password and reports each member with the binary it became
+or the reason it was skipped.
+
 The Binaries view (`views/BinariesView.tsx`) carries the scope of each row as a
 select in the table: `public` for the whole workspace, or a team that owns it
 (`PATCH /api/binaries/<id>/scope`).  The options come from `GET /api/teams`, so

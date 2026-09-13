@@ -11,6 +11,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  Muted,
   Panel,
   Toolbar,
 } from "../components";
@@ -26,6 +27,7 @@ import type {
   Family,
   FamilyList,
   TeamsPayload,
+  ExtractResult,
   UploadBatchResult,
   UploadFileOptions,
 } from "../types";
@@ -97,6 +99,14 @@ export function BinariesView(): ReactNode {
   const teamData = useAsync(() => api<TeamsPayload>("/teams"), []);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [configure, setConfigure] = useState({ format: "", arch: "" });
+  // The stored archives this session uploaded, so the batch can be unpacked in
+  // place rather than by copying a hash into another view.
+  const [extractTarget, setExtractTarget] = useState("");
+  const [extractCollection, setExtractCollection] = useState("");
+  const [extractPassword, setExtractPassword] = useState("");
+  const [extractResult, setExtractResult] = useState<ExtractResult | null>(null);
   const [uploadCollection, setUploadCollection] = useState("");
   const [uploadResult, setUploadResult] = useState<UploadBatchResult | null>(null);
   const [uploadError, setUploadError] = useState<unknown>(null);
@@ -163,6 +173,39 @@ export function BinariesView(): ReactNode {
       reload();
     } catch (failure) {
       setBulkError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /** Apply one value to every queued row at once, the Configure all control. */
+  const configureAll = (patch: Partial<UploadRow>): void => {
+    setConfigure((current) => ({ ...current, ...patch }));
+    setUploadRows((current) => current.map((row) => ({ ...row, ...patch })));
+  };
+
+  const extract = async (): Promise<void> => {
+    setUploadError(null);
+    setExtractResult(null);
+    if (!extractTarget) {
+      setUploadError(new Error("Upload an archive first, then extract it."));
+      return;
+    }
+    setBusy("extract");
+    try {
+      const result = await api<ExtractResult>(`/binaries/${extractTarget}/extract`, {
+        method: "POST",
+        json: {
+          password: extractPassword || undefined,
+          collection_id: extractCollection ? Number(extractCollection) : 0,
+        },
+      });
+      setExtractResult(result);
+      setExtractPassword("");
+      reload();
+      collectionData.reload();
+    } catch (failure) {
+      setUploadError(failure);
     } finally {
       setBusy("");
     }
@@ -307,9 +350,70 @@ export function BinariesView(): ReactNode {
             </Button>
           ) : null}
         </Toolbar>
+        <div
+          className={dragging ? "drop-zone dragging" : "drop-zone"}
+          role="button"
+          tabIndex={0}
+          aria-label="Drop files to upload"
+          onDragOver={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            addFiles(event.dataTransfer.files);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              fileRef.current?.click();
+            }
+          }}
+        >
+          {busy === "upload" ? (
+            <span className="muted">Uploading {uploadRows.length} file(s)...</span>
+          ) : (
+            <span className="muted">
+              Drop binaries, firmware images or archives here, or choose them above. A duplicate
+              hash is reported rather than stored twice.
+            </span>
+          )}
+        </div>
         {uploadRows.length ? (
           <>
             <p className="muted">{uploadRows.length} selected for upload</p>
+            <Toolbar>
+              <Field label="Configure all">
+                <select
+                  aria-label="Format for every file"
+                  value={configure.format}
+                  onChange={(event) => configureAll({ format: event.target.value })}
+                >
+                  <option value="">Auto</option>
+                  {UPLOAD_FORMATS.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="ISA for every file">
+                <select
+                  aria-label="ISA for every file"
+                  value={configure.arch}
+                  onChange={(event) => configureAll({ arch: event.target.value })}
+                >
+                  <option value="">Auto</option>
+                  {UPLOAD_ARCHITECTURES.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </Toolbar>
             <DataTable
               columns={[
                 {
@@ -320,6 +424,21 @@ export function BinariesView(): ReactNode {
                       <span className="muted"> {row.file.size.toLocaleString()} B</span>
                     </span>
                   ),
+                },
+                {
+                  label: "Plan",
+                  render: (row) =>
+                    // A row nobody configured stays on the automatic plan, which
+                    // is what the hosted portal's dashed badge means.
+                    row.format === "" && row.arch === "" ? (
+                      <Badge tone="info" title="Format and ISA are derived from the file">
+                        auto
+                      </Badge>
+                    ) : (
+                      <span className="muted">
+                        {row.format || "auto"} / {row.arch || "auto"}
+                      </span>
+                    ),
                 },
                 {
                   label: "Name",
@@ -398,6 +517,16 @@ export function BinariesView(): ReactNode {
         {uploadError ? <ErrorNote error={uploadError} /> : null}
         {uploadResult ? (
           <div className="upload-results">
+            {uploadResult.duplicates > 0 ? (
+              <p className="upload-banner">
+                {uploadResult.duplicates} file(s) were already stored; the batches below name them.
+              </p>
+            ) : null}
+            {uploadResult.errors > 0 ? (
+              <p className="upload-banner upload-error">
+                {uploadResult.errors} file(s) were refused; each row states why.
+              </p>
+            ) : null}
             <p className="muted">
               {uploadResult.count} file(s): {uploadResult.duplicates} already stored,{" "}
               {uploadResult.errors} refused.
@@ -418,6 +547,84 @@ export function BinariesView(): ReactNode {
               <p className="muted">
                 One action reverts the whole batch:{" "}
                 <a href={`#/journal/${uploadResult.journal_action}`}>{uploadResult.journal_action}</a>
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </Panel>
+      <Panel
+        title="Extract an archive"
+        subtitle="Unpack a stored zip/apk, tar or gz and register every member it holds; one journal action reverts the whole extraction."
+        actions={
+          <Button tone="primary" pending={busy === "extract"} onClick={() => void extract()}>
+            Extract
+          </Button>
+        }
+      >
+        <Toolbar>
+          <Field label="Archive">
+            <select
+              value={extractTarget}
+              onChange={(event) => setExtractTarget(event.target.value)}
+            >
+              <option value="">Select a stored binary</option>
+              {(binaries ?? []).map((binary) => (
+                <option key={binary.id} value={binary.id}>
+                  {binary.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Into collection">
+            <select
+              value={extractCollection}
+              onChange={(event) => setExtractCollection(event.target.value)}
+            >
+              <option value="">One named after the archive</option>
+              {collections.map((collection) => (
+                <option key={collection.id} value={collection.id}>
+                  {collection.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Password">
+            <input
+              type="password"
+              value={extractPassword}
+              placeholder="for an encrypted zip"
+              onChange={(event) => setExtractPassword(event.target.value)}
+            />
+          </Field>
+        </Toolbar>
+        <Muted>
+          The archive has to be stored first, which is what the upload panel above does. A member
+          that is not a binary the portal can register is reported as skipped with its reason
+          rather than dropped silently.
+        </Muted>
+        {extractResult ? (
+          <div className="upload-results">
+            <p className="muted">
+              {extractResult.kept} of {extractResult.members.length} member(s) registered into{" "}
+              {extractResult.collection_name} ({extractResult.skipped} skipped).
+            </p>
+            <ul>
+              {extractResult.members.map((entry) => (
+                <li key={entry.name} className={entry.skipped ? "upload-error" : undefined}>
+                  {entry.skipped
+                    ? `${entry.name}: ${entry.skipped}`
+                    : entry.duplicate
+                      ? `Already stored ${entry.name} as binary #${entry.binary_id}.`
+                      : `Registered ${entry.name} as binary #${entry.binary_id}.`}
+                </li>
+              ))}
+            </ul>
+            {extractResult.journal_action ? (
+              <p className="muted">
+                One action reverts the whole extraction:{" "}
+                <a href={`#/journal/${extractResult.journal_action}`}>
+                  {extractResult.journal_action}
+                </a>
               </p>
             ) : null}
           </div>

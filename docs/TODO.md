@@ -427,6 +427,21 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   upload surface.  The per-file settings with no local meaning (model choice,
   tier-gated visibility, sandbox) are not built; debug symbols is entry 1.
 - Size: S.
+- **Status:** Closed.  The upload panel gained a dashed drop zone (`Drop
+  binaries, firmware images or archives here`) that queues whatever is dropped,
+  an in-flight line while the batch posts, a `Configure all` pair of selects
+  that applies a Format and an ISA to every queued row at once, and a `Plan`
+  column whose `auto` badge a row keeps until something changes it (the hosted
+  portal's dashed Auto badge).  The result list opens with a duplicate banner
+  and an error banner above the per-entry rows that already named each cause.
+  A new `Extract an archive` panel unpacks a stored archive in place: pick the
+  archive, a collection (else one named after it) and a password, and the
+  members come back with the binary each became or the reason it was skipped,
+  with the one journal action that reverts the whole extraction linked.  The
+  hosted per-file Analysis and Dynamic Execution settings that have no local
+  meaning (model choice, tier-gated visibility, sandbox arguments) are
+  deliberately not built and are stated as the gap.  Covered by the upload
+  batch e2e, whose drop-zone case drives a real `DragEvent`.
 
 ### 12. Keyboard layer: history, collapse, section cycling and per-view bindings
 
