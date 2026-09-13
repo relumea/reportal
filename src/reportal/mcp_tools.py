@@ -2890,12 +2890,16 @@ def _tool_get_config(_arguments: dict[str, Any]) -> dict[str, Any]:
     return instance.describe()
 
 
-def _tool_list_collections(_arguments: dict[str, Any]) -> dict[str, Any]:
+def _tool_list_collections(arguments: dict[str, Any]) -> dict[str, Any]:
+    order = _arg_optional_str(arguments, "order", store.DEFAULT_COLLECTION_ORDER)
     with contextlib.closing(_open()) as conn:
-        rows = store.list_collections(conn)
+        try:
+            rows = store.list_collections(conn, order=order)
+        except ValueError as exc:
+            raise ToolError("invalid order", str(exc)) from exc
         for row in rows:
             row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
-        return {"collections": rows, "count": len(rows)}
+        return {"collections": rows, "count": len(rows), "order": order}
 
 
 def _tool_get_collection(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4859,8 +4863,16 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "list_collections",
-            "List collections with their member and tag counts.",
-            _object({}),
+            "List collections with their member and tag counts, in the named order.",
+            _object(
+                {
+                    "order": {
+                        "type": "string",
+                        "enum": sorted(store.COLLECTION_ORDERS),
+                        "description": "id (default), name, size by member count, or updated",
+                    }
+                }
+            ),
             _READ,
             _tool_list_collections,
         ),

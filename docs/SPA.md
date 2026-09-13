@@ -365,7 +365,9 @@ selected rows and reports how many renamed and how many were skipped.
 
 The Collections view (`views/CollectionsView.tsx`, `#/collections`) lists the
 collections with their member and tag counts and creates one from a name and a
-description.  Selecting a row opens its detail panel: the collection's name,
+description, with a Sort control offering `id` (the default), `name`, `size` and
+`updated` over `GET /api/collections?order=`, which sorts server-side and echoes
+the order it applied.  Selecting a row opens its detail panel: the collection's name,
 description and scope are editable and saved with `PATCH /api/collections/<id>`,
 its tags are a comma-separated field saved with `PATCH
 /api/collections/<id>/tags` (the set is replaced, so clearing the field removes

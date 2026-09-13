@@ -832,6 +832,11 @@ def _require_collection(
 
 @app.command()
 def collections(
+    order: str = typer.Option(
+        store.DEFAULT_COLLECTION_ORDER,
+        "--order",
+        help=f"Sort by one of: {', '.join(store.COLLECTION_ORDERS)}",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """List collections with their member and tag counts."""
@@ -839,11 +844,14 @@ def collections(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        rows = store.list_collections(conn)
+        try:
+            rows = store.list_collections(conn, order=order)
+        except ValueError as exc:
+            _fail(str(exc), json_output)
         for row in rows:
             row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
     if json_output:
-        typer.echo(json.dumps({"collections": rows}))
+        typer.echo(json.dumps({"collections": rows, "order": order}))
         return
     table = Table(show_header=True, header_style="bold")
     table.add_column("Id", justify="right")

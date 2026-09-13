@@ -301,3 +301,111 @@ class TestStoreRules:
         stored = store.get_collection(conn, collection_id)
         assert stored is not None
         assert stored["binaries"] == []
+
+
+class TestOrder:
+    """The list's sort control: the vocabulary, each order and the timestamps."""
+
+    def _three(self, conn: sqlite3.Connection) -> dict[str, int]:
+        ids = {
+            "beta": store.create_collection(conn, name="beta"),
+            "alpha": store.create_collection(conn, name="alpha"),
+            "gamma": store.create_collection(conn, name="Gamma"),
+        }
+        first = _binary(conn, "first.exe")
+        second = _binary(conn, "second.exe")
+        store.replace_collection_binaries(conn, ids["alpha"], [first, second])
+        store.replace_collection_binaries(conn, ids["beta"], [first])
+        return ids
+
+    def _names(self, conn: sqlite3.Connection, order: str) -> list[str]:
+        return [row["name"] for row in store.list_collections(conn, order=order)]
+
+    def test_the_default_order_is_creation(self, conn: sqlite3.Connection) -> None:
+        self._three(conn)
+
+        assert self._names(conn, "id") == ["beta", "alpha", "Gamma"]
+        assert self._names(conn, store.DEFAULT_COLLECTION_ORDER) == ["beta", "alpha", "Gamma"]
+
+    def test_name_sorts_case_insensitively(self, conn: sqlite3.Connection) -> None:
+        self._three(conn)
+
+        assert self._names(conn, "name") == ["alpha", "beta", "Gamma"]
+
+    def test_size_sorts_by_member_count_then_name(self, conn: sqlite3.Connection) -> None:
+        self._three(conn)
+
+        assert self._names(conn, "size") == ["alpha", "beta", "Gamma"]
+
+    def test_updated_puts_the_most_recently_changed_first(self, conn: sqlite3.Connection) -> None:
+        ids = self._three(conn)
+        store.update_collection(conn, ids["gamma"], description="touched")
+
+        assert self._names(conn, "updated")[0] == "Gamma"
+
+    def test_an_unknown_order_is_a_value_error(self, conn: sqlite3.Connection) -> None:
+        try:
+            store.list_collections(conn, order="biggest")
+        except ValueError as exc:
+            assert "unknown collection order" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unknown order must be refused")
+
+    def test_every_write_path_touches_the_timestamp(self, conn: sqlite3.Connection) -> None:
+        # Each writer is checked the same way: touch the newest collection and
+        # it has to sort first under `updated`, whatever the clock resolution.
+        ids = self._three(conn)
+        binary_id = _binary(conn, "third.exe")
+        for touch in (
+            lambda: store.update_collection(conn, ids["gamma"], description="touched"),
+            lambda: store.replace_collection_binaries(conn, ids["gamma"], [binary_id]),
+            lambda: store.set_collection_tags(conn, ids["gamma"], ["triage"]),
+        ):
+            touch()
+
+            assert self._names(conn, "updated")[0] == "Gamma"
+
+    def test_a_write_that_changes_nothing_leaves_the_timestamp_alone(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = self._three(conn)
+        store.set_collection_tags(conn, ids["gamma"], ["triage"])
+        stamped = store.get_collection(conn, ids["gamma"])
+        assert stamped is not None
+        touched = str(stamped["updated_at"])
+
+        store.replace_collection_binaries(conn, ids["gamma"], [])
+        store.set_collection_tags(conn, ids["gamma"], ["triage"])
+
+        unchanged = store.get_collection(conn, ids["gamma"])
+        assert unchanged is not None
+        assert str(unchanged["updated_at"]) == touched
+
+    def test_the_route_echoes_the_order_it_applied(self, conn: sqlite3.Connection) -> None:
+        self._three(conn)
+
+        status, payload = _request("GET", "/api/collections?order=name")
+
+        assert status.startswith("200")
+        assert payload["order"] == "name"
+        assert [row["name"] for row in payload["collections"]] == ["alpha", "beta", "Gamma"]
+
+    def test_an_unknown_order_is_400(self, conn: sqlite3.Connection) -> None:
+        status, payload = _request("GET", "/api/collections?order=biggest")
+
+        assert status.startswith("400")
+        assert payload["error"] == "invalid order"
+        assert "biggest" in payload["detail"]
+
+    def test_a_column_a_pre_column_database_lacks_is_backfilled(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        collection_id = store.create_collection(conn, name="legacy")
+        conn.execute("UPDATE collections SET updated_at = '' WHERE id = ?", (collection_id,))
+        conn.commit()
+
+        store._upgrade_schema(conn)
+
+        row = store.get_collection(conn, collection_id)
+        assert row is not None
+        assert row["updated_at"] == row["created_at"]

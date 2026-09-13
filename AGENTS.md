@@ -92,7 +92,7 @@ reportal/
     │                       #   (find_binary_by_sha256, find_collection_by_name) (binaries, analyses, functions, matches,
     │                       #   scans, rebrew project contexts, malware families, decompilations,
     │                       #   comments, binary deletion with its cascade, collections with
-    │                       #   their membership and tags, ...)
+    │                       #   their membership, tags and their change timestamp, ...)
     ├── analysis_log.py     # structured analysis log: analysis_log_entries (analysis, severity
     │                       #   from one closed set, message, time), append_entry, list_entries
     │                       #   (newest first, bounded, with the true total), MAX_LOG_LIMIT
@@ -340,7 +340,7 @@ errors (a name another module imports without re-exporting it), and
 `engines.py:302` is a return-value error on the engine's decorator.
 
 **Coverage.** `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.61%, 20808 statements with 1537 missed. `[tool.coverage.report] fail_under`
+92.67%, 20833 statements with 1528 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 

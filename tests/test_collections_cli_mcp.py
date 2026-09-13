@@ -40,6 +40,27 @@ class TestCli:
         assert result.exit_code == 0
         assert "games" in result.output
 
+    def test_collections_sorts_by_the_named_order(self, tmp_path: Path, monkeypatch: Any) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        runner.invoke(cli.app, ["collection-new", "alpha", "--json"])
+        runner.invoke(cli.app, ["collection-new", "Beta", "--json"])
+
+        result = runner.invoke(cli.app, ["collections", "--order", "name", "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["order"] == "name"
+        assert [row["name"] for row in payload["collections"]] == ["alpha", "Beta", "games"]
+        assert ids["collection"] in [row["id"] for row in payload["collections"]]
+
+    def test_an_unknown_order_fails(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["collections", "--order", "biggest"])
+
+        assert result.exit_code == 1
+        assert "unknown collection order" in result.output
+
     def test_collection_show_reports_the_members(self, tmp_path: Path, monkeypatch: Any) -> None:
         ids = _seed(tmp_path, monkeypatch)
 
@@ -143,6 +164,32 @@ class TestMcp:
             "set_collection_tags",
         ):
             assert name in names
+
+    def test_list_collections_honours_the_order(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        store.create_collection(conn, name="zeta")
+        store.create_collection(conn, name="alpha")
+        tool = mcp_tools.get_tool("list_collections")
+        assert tool is not None
+
+        payload = tool.handler({"order": "name"})
+
+        assert payload["order"] == "name"
+        assert [row["name"] for row in payload["collections"]] == ["alpha", "zeta"]
+
+    def test_list_collections_refuses_an_unknown_order(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        tool = mcp_tools.get_tool("list_collections")
+        assert tool is not None
+
+        try:
+            tool.handler({"order": "biggest"})
+        except mcp_tools.ToolError as exc:
+            assert exc.error == "invalid order"
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unknown order must be a tool error")
 
     def test_get_collection_returns_members(
         self, portal_db: Path, conn: sqlite3.Connection

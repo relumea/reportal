@@ -5346,9 +5346,22 @@ def create_analysis(body: dict[str, Any] = Depends(json_body)) -> Response:
 
 
 @router.get("/api/collections")
-def list_collections() -> Response:
+def list_collections(request: Request) -> Response:
+    """Collections with their member and tag counts, in ``?order=``.
+
+    ``?order=`` is one of :data:`reportal.store.COLLECTION_ORDERS` (``id``, the
+    default, then ``name``, ``size`` by member count and ``updated`` by the last
+    membership, tag or field change); an unknown value is a 400.  The response
+    echoes the order it applied, so a client rendering a sorted table does not
+    have to assume one.
+    """
+    order = _query_text(request, "order") or store.DEFAULT_COLLECTION_ORDER
+    if order not in store.COLLECTION_ORDERS:
+        return _invalid_query("order", order, sorted(store.COLLECTION_ORDERS))
     with contextlib.closing(_open()) as conn:
-        return json_response({"collections": store.list_collections(conn)})
+        return json_response(
+            {"collections": store.list_collections(conn, order=order), "order": order}
+        )
 
 
 @router.post("/api/collections")

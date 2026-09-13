@@ -17,6 +17,8 @@ import {
   Panel,
   Toolbar,
 } from "../components";
+import { COLLECTION_ORDERS } from "../constants";
+import type { CollectionOrder } from "../constants";
 import type { Collection, CollectionDetail } from "../types";
 import { useAsync } from "../useAsync";
 
@@ -187,9 +189,10 @@ function CollectionDetailPanel({
 }
 
 export function CollectionsView(): ReactNode {
+  const [order, setOrder] = useState<CollectionOrder>("id");
   const { data, error, reload } = useAsync(
-    () => api<{ collections: Collection[] }>("/collections"),
-    [],
+    () => api<{ collections: Collection[]; order: CollectionOrder }>(`/collections?order=${order}`),
+    [order],
   );
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -243,6 +246,15 @@ export function CollectionsView(): ReactNode {
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
+          </Field>
+          <Field label="Sort">
+            <select value={order} onChange={(event) => setOrder(event.target.value as CollectionOrder)}>
+              {COLLECTION_ORDERS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
           </Field>
         </Toolbar>
         {error ? <ErrorNote error={error} onRetry={reload} /> : null}

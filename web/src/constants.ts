@@ -206,6 +206,11 @@ export const MAX_GRAPH_ROWS_SHOWN = 500;
 // API's lineage.LINEAGE_STATUSES.
 export const LINEAGE_STATUSES = ["unchanged", "changed", "removed", "added"] as const;
 
+// Orders the collections list accepts; the server sorts and echoes the value,
+// and `id` is the creation order it used before the control existed.
+export const COLLECTION_ORDERS = ["id", "name", "size", "updated"] as const;
+export type CollectionOrder = (typeof COLLECTION_ORDERS)[number];
+
 // Statuses the Lineage panel groups into tables; unchanged rows are only
 // counted, since a version pair is usually mostly unchanged.
 export const LINEAGE_ROW_STATUSES = ["changed", "removed", "added"] as const;

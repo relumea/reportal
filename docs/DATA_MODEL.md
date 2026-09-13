@@ -336,7 +336,16 @@ the page objects.  The binary detail Report panel carries a Download PDF link
 and a Generate PDF control that posts the route.
 
 `collections` is a named group of binaries (`name` UNIQUE, plus `description`
-and `scope`), `collection_binaries` is its membership and `collection_tags` is
+and `scope`, and `updated_at`, the last time its fields, its membership or its
+tags changed; `created_at` is when it was made and `_upgrade_schema` backfills
+`updated_at` from it for a database that predates the column), so
+`GET /api/collections?order=updated` and `reportal collections --order updated`
+sort by the most recent change.  Every writer goes through `touch_collection`:
+a rename or a scope change, a membership change that actually added or removed
+something, and a tag change that did.  A call that changes nothing leaves the
+timestamp alone, so the sort never reports a change that did not happen.
+
+`collection_binaries` is its membership and `collection_tags` is
 its tag links; both link tables cascade with the collection and with the binary
 or tag they point at.  `POST /api/collections` and `reportal collection-new`
 create one, `PATCH` renames it or sets its description and scope, `DELETE`

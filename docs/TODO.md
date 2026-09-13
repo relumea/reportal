@@ -2,7 +2,9 @@
 
 The running backlog.  One entry per thing reportal does not have yet, with the
 evidence that it is a real hosted surface, what reportal has today, and the
-local shape to build.
+local shape to build.  A closed entry keeps its evidence and gains a
+`**Status:** Closed` line naming the slice that closed it, so this file stays
+the record of what the crawl found rather than only of what is left.
 
 Two feeds keep it current:
 
@@ -314,6 +316,14 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   cluster F's identity, and the AI-model link the portal dropped has no local
   equivalent.
 - Size: S.
+- **Status:** Closed.  `collections.updated_at` records the last field,
+  membership or tag change (`touch_collection`, backfilled from `created_at`
+  for a database that predates the column), `list_collections(order=...)`
+  accepts `id`/`name`/`size`/`updated`, `GET /api/collections?order=` echoes the
+  order it applied and answers 400 `invalid order` for an unknown one,
+  `reportal collections --order` and the `list_collections` MCP tool expose the
+  same, and the Collections view carries the Sort control.  The scope filter
+  stays with cluster F.
 
 ## Open clusters from PARITY.md
 

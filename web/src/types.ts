@@ -220,6 +220,8 @@ export interface Collection {
   description: string;
   scope: string;
   binary_count: number;
+  /** When the collection's fields, members or tags last changed. */
+  updated_at: string;
 }
 
 /** One collection's members and tags, the shape `GET /api/collections/<id>` answers. */

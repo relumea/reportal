@@ -165,7 +165,7 @@
 | `/api/analyses` | POST | create analysis; body `{"binary_id": ..., "engine": ...}` |
 | `/api/analyses/<id>/logs` | GET | the analysis's structured log, newest first; `?limit=` (default `analysis_log.DEFAULT_LOG_LIMIT`, cap `MAX_LOG_LIMIT`) and `?offset=`; returns `{"logs", "count", "total", "limit", "offset"}` with the log's true total; 404 `analysis not found`, 400 for an out-of-range or non-integer bound; read-only |
 | `/api/analyses/<id>` | DELETE | delete one analysis with its functions, matches, scans and log entries, journaled so the revert restores them parent-first; 404 `analysis not found`, 409 `last-analysis` for a binary's only analysis while it holds functions (delete the binary instead) |
-| `/api/collections` | GET | collections with binary counts |
+| `/api/collections` | GET | collections with binary counts, in `?order=` (`id`, the default, `name`, `size` by member count, `updated` by the last field, membership or tag change); an unknown value is 400 `invalid order`, and the response echoes the `order` it applied |
 | `/api/collections` | POST | create collection; body `{"name": ..., "description": ..., "scope": ...}` |
 | `/api/collections/<id>/binaries` | POST | add a binary; body `{"binary_id": ...}` |
 | `/api/collections/<id>` | GET | one collection with its members (`id`, `name`, `sha256`, `size`) and its tags; 404 `collection not found` |

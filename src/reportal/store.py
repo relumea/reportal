@@ -224,7 +224,8 @@ CREATE TABLE IF NOT EXISTS collections (
     name        TEXT NOT NULL UNIQUE,
     description TEXT NOT NULL DEFAULT '',
     scope       TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS collection_binaries (
@@ -507,6 +508,16 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # this column existed was recorded outside a match run, so the empty
     # default reads as "no recorded settings" rather than an invented scope.
     ("matches", "settings_json", "TEXT NOT NULL DEFAULT ''"),
+    # The last time a collection's own fields, its membership or its tags
+    # changed.  A row that predates the column takes its creation time below,
+    # so the sort never puts an untouched collection before a touched one.
+    ("collections", "updated_at", "TEXT NOT NULL DEFAULT ''"),
+)
+
+# Statements run after the columns above are added, to fill what an existing
+# database could not know.  Each is idempotent, so running it again is a no-op.
+_BACKFILLS: tuple[str, ...] = (
+    "UPDATE collections SET updated_at = created_at WHERE updated_at = ''",
 )
 
 
@@ -516,6 +527,8 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
         existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+    for statement in _BACKFILLS:
+        conn.execute(statement)
     conn.commit()
 
 
@@ -1881,24 +1894,52 @@ def create_collection(
     if conn.execute("SELECT 1 FROM collections WHERE name = ?", (name,)).fetchone():
         raise ValueError(f"collection {name!r} already exists")
     cur = conn.execute(
-        "INSERT INTO collections (name, description, scope, created_at) VALUES (?, ?, ?, ?)",
-        (name, description, scope, now()),
+        "INSERT INTO collections (name, description, scope, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (name, description, scope, now(), now()),
     )
     conn.commit()
     return int(cur.lastrowid or 0)
 
 
-def list_collections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """All collections with their member-binary count."""
+# The orders :func:`list_collections` accepts, with the SQL each one sorts by.
+# ``size`` counts member binaries, largest first, so the collections holding the
+# most work read first; ``updated`` is newest change first.
+COLLECTION_ORDERS: dict[str, str] = {
+    "id": "c.id ASC",
+    "name": "c.name COLLATE NOCASE ASC, c.id ASC",
+    "size": "binary_count DESC, c.name COLLATE NOCASE ASC, c.id ASC",
+    "updated": "c.updated_at DESC, c.id DESC",
+}
+
+DEFAULT_COLLECTION_ORDER = "id"
+
+
+def list_collections(
+    conn: sqlite3.Connection, *, order: str = DEFAULT_COLLECTION_ORDER
+) -> list[dict[str, Any]]:
+    """All collections with their member-binary count, in *order*.
+
+    *order* is one of :data:`COLLECTION_ORDERS`; an unknown one raises
+    ``ValueError``, which the API, the CLI and the MCP tools map to their own
+    error vocabulary.
+    """
+    if order not in COLLECTION_ORDERS:
+        raise ValueError(f"unknown collection order: {order}")
     cur = conn.execute(
-        """
+        f"""
         SELECT c.*, (
             SELECT COUNT(*) FROM collection_binaries cb WHERE cb.collection_id = c.id
         ) AS binary_count
-        FROM collections c ORDER BY c.id
+        FROM collections c ORDER BY {COLLECTION_ORDERS[order]}
         """
     )
     return _rows(cur)
+
+
+def touch_collection(conn: sqlite3.Connection, collection_id: int) -> None:
+    """Record that a collection changed now; the caller commits."""
+    conn.execute("UPDATE collections SET updated_at = ? WHERE id = ?", (now(), collection_id))
 
 
 def find_collection_by_name(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
@@ -2015,6 +2056,8 @@ def update_collection(
         updates.append("scope = ?")
         params.append(scope)
     if updates:
+        updates.append("updated_at = ?")
+        params.append(now())
         params.append(collection_id)
         conn.execute(f"UPDATE collections SET {', '.join(updates)} WHERE id = ?", tuple(params))
         conn.commit()
@@ -2062,6 +2105,8 @@ def replace_collection_binaries(
             "DELETE FROM collection_binaries WHERE collection_id = ? AND binary_id = ?",
             (collection_id, binary_id),
         )
+    if added or removed:
+        touch_collection(conn, collection_id)
     conn.commit()
     return {"added": added, "removed": removed, "kept": sorted(current & target)}
 
@@ -2092,6 +2137,8 @@ def set_collection_tags(
             " (SELECT id FROM tags WHERE name = ?)",
             (collection_id, name),
         )
+    if added or removed:
+        touch_collection(conn, collection_id)
     conn.commit()
     return {"added": added, "removed": removed}
 

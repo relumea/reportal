@@ -259,7 +259,9 @@ reportal revert <function-id> <history-id> [--json]
                                            # restore the name a history row replaced
 reportal tags [--json]                     # list tags with tagged-binary counts
 reportal tag <binary-id> <name> [--remove] [--json]
-reportal collections [--json]              # list collections with member and tag counts
+reportal collections [--order ORDER] [--json]
+                                           # list collections with member and tag counts,
+                                           #   sorted by id (default), name, size or updated
 reportal collection-show <collection-id> [--json]
                                            # one collection with its members and tags
 reportal collection-new <name> [--description TEXT] [--scope TEXT] [--json]
