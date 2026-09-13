@@ -487,6 +487,20 @@ disabled flag, New token rotates and shows the replacement once, and Delete
 goes through the confirm pattern.  With auth off the page says so and the API is
 the local operator's, which is the honest reading of an empty user table.
 
+The Memory panel's `Whole binary` mode (`panels/MemoryPanel.tsx`) is the
+continuous hex dump: one scrollable region in virtual-address order whose span
+comes from the engine's own section map, with only the rows on screen rendered
+and the bytes read 256 at a time as the viewport approaches a window.  A region
+no section backs is a stated `gap` row, the same one the paged mode renders, so
+the dump never shows invented zeros.  The `Columns` control switches the virtual
+and file-offset readings (the file offset is shown beside the virtual address),
+`G` focuses the address box, `Tab` switches the column and the choice is
+remembered in `localStorage` under `MEMORY_COLUMN_STORAGE_KEY`.  The section
+table's virtual-address cell links here with `?memory=<address>`, which lands on
+and selects that row; the smoke's `check_memory_dump` and
+`web/tests/memory-page.spec.ts` assert the landing, the reading and the `G`
+binding.
+
 The binary detail's Sandbox detonation panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/dynamic-execution/status` for the opt-in state, the
 runner in use and the runs so far, carries a Detonate button with the two

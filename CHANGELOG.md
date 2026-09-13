@@ -95,6 +95,9 @@ entry.
 - A conversation about reportal itself: the `docs` scope ingests the shipped
   manual on the first question and answers from it, with a per-scope canned
   prompt list in the Conversations view.
+- A continuous whole-binary hex view: one scrollable dump in virtual-address
+  order, gaps stated rather than zero-filled, a click-through from a section's
+  address, and `G`/`Tab` for the address box and the offset column.
 - The Integrations view's MCP onboarding card, which prints the one-liner and
   the client config for the 228 built-in tools.
 - Regular-expression and multi-value search, per-type provenance in the

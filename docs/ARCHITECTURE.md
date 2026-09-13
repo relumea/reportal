@@ -898,6 +898,27 @@ plaintext-at-rest boundary.  Authorization is two rules: a workspace secret
 needs an admin, a team secret needs that team's membership (or an admin), and
 with auth off the install is the single local operator.
 
+## Memory
+
+`engines.read_memory` and `engines.read_memory_page` are the only byte readers.
+Both take their section map from the engine's own `pe-info` call and read the
+file exactly where that map says the bytes live, so reportal never parses a PE.
+An address the map does not back answers 400 `unmapped address` rather than
+inventing bytes, which is what lets the SPA's paged and continuous views render
+a `gap` row instead of zeros.
+
+The paged read (`read_memory_page`) is the one the SPA drives both ways: the
+full-file mode pages through it, and the continuous mode walks it forward along
+the engine's own `next` address, which is what steps over a gap in one hop
+instead of probing every window in it.  The continuous view fixes its address
+span from the first page's section map (the lowest backed address to the
+highest), renders only the rows on screen by absolute position inside a spacer
+of that span, and reads 256 bytes at a time as the viewport approaches the
+loaded edge; a row whose bytes have not arrived renders as a placeholder, never
+as zeros.  The ceiling is stated in `docs/TODO.md`: a byte before the first
+section or past the last is outside the span the dump can name, though the
+paged mode's go-to still reaches it.
+
 ## Documentation
 
 `docs.py` is the in-app manual, and its one design decision is that the server

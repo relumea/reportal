@@ -297,6 +297,24 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   offset/virtual mode, range selection with both copy forms, and clickable
   addresses in the sections panel.
 - Size: M.
+- **Status:** Closed.  The Memory panel's `Whole binary` mode is one scrollable
+  dump in virtual-address order: the span comes from the engine's own section
+  map, a region no section backs is the same stated `gap` row the paged view
+  renders (never zeros), and only the rows on screen are rendered, so a large
+  binary scrolls without loading whole.  The bytes arrive 256 at a time along
+  the engine's `next` address as the viewport approaches a window.  The Columns
+  control switches the virtual and file-offset readings (the file offset of an
+  address is shown beside the virtual one), `G` focuses the address box and
+  `Tab` switches the column, and the choice is remembered under
+  `MEMORY_COLUMN_STORAGE_KEY`.  The section table's virtual-address cell is a
+  `Link` into the dump, which lands on and selects that row, so a section and a
+  byte range are one click apart.  Byte click and shift-click select a range,
+  copied as space-separated hex, a C array or the raw ASCII.  Ceiling: the span
+  is the section map, so a byte before the first section or past the last is not
+  reachable; the paged mode's go-to covers an address the dump cannot name.  The
+  panel and the dump are covered by `web/tests/memory-page.spec.ts` and the
+  smoke's `check_memory_dump`, which asserts the link lands on the linked
+  address and that `G` focuses the box.
 
 ### 9. Per-type provenance and list controls (Data types)
 
