@@ -679,6 +679,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # Debug symbol ingestion: the file control and its apply toggle.
             ("Debug symbols",),
             ("Ingest symbols",),
+            # Analyst feedback on the stored agent artifacts.
+            ("Agent feedback",),
             ("Function triage",),
             (FUNCTION_TRIAGE_SUMMARY,),
             ("Crypto",),
@@ -833,7 +835,15 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
     (
         "integrations",
         "#/integrations",
-        (("Integrations",), ("reportal.components",), ("pipeline components",), ("prepare",)),
+        (
+            ("Integrations",),
+            ("reportal.components",),
+            ("pipeline components",),
+            ("prepare",),
+            # The MCP onboarding card: the command and the client config.
+            ("Connect an MCP client",),
+            ("claude mcp add reportal",),
+        ),
     ),
     (
         "users",

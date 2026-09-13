@@ -495,6 +495,12 @@ reportal journal-revert --action ID | --entry ID [--json]
                                            # replay one recorded action's or one entry's
                                            #   stored inverses; a wired command prints its
                                            #   action id to stderr (or in --json output)
+reportal rate <binary-id> <kind> [<verdict>] [--note TEXT] [--json]
+                                           # thumbs up/down on one stored agent
+                                           #   artifact; an empty verdict clears
+                                           #   it and the write is journaled
+reportal ratings <binary-id> [--json]      # every stored agent artifact with the
+                                           #   verdict on it
 reportal search <query> [--kind K] [--limit N] [--regex] [--json]
                                            # search binaries, functions,
                                            #   collections and tags: a substring by

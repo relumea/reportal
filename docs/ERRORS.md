@@ -33,6 +33,7 @@ under the hyphenated heading.
 - Uploads and archives: [no-file](#no-file), [empty-file](#empty-file), [file-too-large](#file-too-large), [too-many-files](#too-many-files), [unsupported-format](#unsupported-format), [external-tool-required](#external-tool-required), [password-required](#password-required), [bad-password](#bad-password), [corrupt-archive](#corrupt-archive), [archive-too-large](#archive-too-large), [too-many-members](#too-many-members), [binary-not-on-disk](#binary-not-on-disk), [too-many-documents](#too-many-documents)
 - Not found: [edge-not-found](#edge-not-found), [string-not-found](#string-not-found), [binary-not-found](#binary-not-found), [function-not-found](#function-not-found), [collection-not-found](#collection-not-found), [family-not-found](#family-not-found), [comment-not-found](#comment-not-found), [conversation-not-found](#conversation-not-found), [data-type-not-found](#data-type-not-found), [document-not-found](#document-not-found), [member-not-found](#member-not-found), [node-not-found](#node-not-found), [project-not-found](#project-not-found), [run-not-found](#run-not-found), [tag-not-found](#tag-not-found), [format-not-found](#format-not-found), [domain-not-found](#domain-not-found), [component-not-found](#component-not-found), [action-not-found](#action-not-found), [entry-not-found](#entry-not-found), [history-not-found](#history-not-found), [analysis-not-found](#analysis-not-found), [candidate-not-found](#candidate-not-found), [signature-not-found](#signature-not-found), [not-found](#not-found)
 - Debug symbols: [symbols-unreadable](#symbols-unreadable), [no-symbols](#no-symbols)
+- Agent artifacts: [no-artifact](#no-artifact)
 - Stored-only reads: [no-scan](#no-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
 - Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
 - Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
@@ -172,6 +173,13 @@ work is over cannot be un-run.
 `409`. The run is not waiting on a tool call, so there is nothing to approve or
 reject. A run pauses only when the model asks for a tool that changes the
 workspace, and only while it is waiting is a confirmation meaningful.
+
+### no-artifact
+
+`404`. An agent artifact's rating was asked for or set on a binary that has no
+stored scan of that kind, so there is nothing to have an opinion about. This is
+the artifact-specific sibling of `no-scan`: a rating route names a kind, and a
+kind the binary never produced is refused rather than stored against nothing.
 
 ### symbols-unreadable
 

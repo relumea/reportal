@@ -70,6 +70,7 @@ from reportal import (
     pipeline,
     plugins,
     protocols,
+    ratings,
     related,
     remediation,
     remote_ingest,
@@ -4264,6 +4265,36 @@ def _tool_extract_firmware_regions(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError(exc.code, exc.detail) from exc
 
 
+def _tool_list_artifact_ratings(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _binary_or_error(conn, binary_id)
+        return ratings.describe(conn, binary_id)
+
+
+def _tool_rate_artifact(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    kind = _arg_str(arguments, "kind")
+    rating = arguments.get("rating")
+    note = _arg_optional_str(arguments, "note")
+    with contextlib.closing(_open()) as conn:
+        _binary_or_error(conn, binary_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                result = ratings.journaled_set(
+                    conn,
+                    log,
+                    binary_id=binary_id,
+                    kind=kind,
+                    rating=rating,
+                    note=note,
+                    actor=journal.current_actor(),
+                )
+            except ratings.RatingError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(result)
+
+
 def _tool_get_stats_series(arguments: dict[str, Any]) -> dict[str, Any]:
     days = _arg_optional_int(arguments, "days", analytics.DEFAULT_SERIES_DAYS)
     try:
@@ -6865,6 +6896,35 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_run_sandbox_detonation,
+        ),
+        Tool(
+            "list_artifact_ratings",
+            "Every stored agent artifact of a binary (its scans) with the analyst's verdict on"
+            " it; an artifact that was never produced is left out and one that was produced"
+            " but not rated carries a null rating.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_list_artifact_ratings,
+        ),
+        Tool(
+            "rate_artifact",
+            "Record or clear the analyst's thumbs up/down on one stored agent artifact, with an"
+            " optional note; journaled, so a revert restores the previous verdict.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "kind": _enum("The stored artifact kind.", ratings.SCAN_KINDS),
+                    "rating": {
+                        "type": ["string", "null"],
+                        "enum": [*ratings.RATINGS, None],
+                        "description": "Empty or null clears the verdict.",
+                    },
+                    "note": _str("Why this verdict."),
+                },
+                ("binary_id", "kind"),
+            ),
+            _WRITE,
+            _tool_rate_artifact,
         ),
         Tool(
             "get_stats_series",

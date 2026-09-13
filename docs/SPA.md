@@ -405,6 +405,13 @@ reads `GET /api/secrets` and writes `PUT`/`DELETE /api/secrets/<name>`, and it
 never renders a value because no response carries one.  The signature panel carries a copy control: comma-separated target ids and
 Copy signature, posting to `POST /api/analyses/<id>/signatures/copy` with the
 panel's function as the source, and reporting how many targets took the copy.
+The binary detail's Agent feedback panel lists every stored agent artifact with
+its verdict and carries Up, Down and Clear per row, over
+`GET`/`PUT /api/binaries/<id>/ratings[/<kind>]`; it says how many of the stored
+artifacts carry a verdict.  The Integrations view ends with the "Connect an MCP
+client" card: the `claude mcp add` one-liner and the `~/.claude.json` snippet,
+each with a copy control, above the tool counts read from `GET /api/config`.
+
 The dashboard carries the 30-day activity series: three bar charts (binaries
 processed, agents triggered and journaled actions), one bar per day over a shared
 peak, each chart labelled for a screen reader with its total, plus the

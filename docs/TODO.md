@@ -209,6 +209,28 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   an MCP client" card in `IntegrationsView` rendering the `reportal mcp`
   command and the client config JSON.
 - Size: S.
+- **Status:** Closed.  `ratings.py` is the one small table: a verdict is keyed
+  by `(binary_id, kind)`, where the kind is one of the store's own scan kinds
+  (read from the `SCAN_KIND_*` constants, so a kind added there is rateable the
+  day it lands), and the artifact is the binary's stored scan of that kind, so a
+  verdict survives a re-run of the scan.  A verdict is `up` or `down` with an
+  optional note, an empty one clears it, and every write is journaled with the
+  row it replaced snapshotted and the row it created journalled for deletion, so
+  a revert restores the previous verdict whether the artifact was rated or not.
+  `GET /api/binaries/<id>/ratings` lists every stored artifact with its verdict
+  (an artifact that was never produced is left out; one that was produced and
+  not rated carries a null rating), `GET`/`PUT .../ratings/<kind>` read and write
+  one (400 `invalid rating`, 404 `no-artifact`), `reportal rate <binary-id>
+  <kind> [up|down] [--note]` and `reportal ratings <binary-id>` are the CLI, the
+  read-only `list_artifact_ratings` and destructive `rate_artifact` MCP tools
+  expose the same, and the binary detail's Agent feedback panel carries Up, Down
+  and Clear per stored artifact.  The AI decompilation artifact keeps its own
+  rating inside its payload, because it is a function-scoped artifact rather
+  than a binary's scan; nothing is duplicated.  The second half is the
+  `IntegrationsView` "Connect an MCP client" card, which renders the
+  `claude mcp add` one-liner and the `~/.claude.json` snippet with copy controls
+  and reads the tool counts from `GET /api/config`, so the card cannot promise a
+  registry the server does not have.
 
 ### 7. In-app documentation browser and changelog
 

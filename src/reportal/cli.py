@@ -43,6 +43,8 @@ deterministic heuristic, and store the result), ``report`` (generate the
 engine's HTML report into
 the workspace and store the result), ``unstrip`` (store library-identification
 rename proposals) and ``unstrip-apply`` (apply one stored proposal).
+``rate`` records an analyst's thumbs up/down on a stored agent artifact and ``ratings``
+lists them with the verdict.
 ``search`` runs the typed search (a substring by default, a bounded regular expression
 with ``--regex``, or one of the hash, binary, collection and tag kinds).
 ``symbols`` ingests a PDB or ELF/DWARF debug symbol file (its names are applied to
@@ -154,6 +156,7 @@ from reportal import (
     pdf,
     pipeline,
     protocols,
+    ratings,
     related,
     remediation,
     remote_ingest,
@@ -6045,6 +6048,85 @@ def symbols_export(
         console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
         return
     typer.echo(text, nl=False)
+
+
+# ── artifact ratings ───────────────────────────────────────────────
+
+
+@app.command("rate")
+def rate_artifact(
+    binary_id: int = typer.Argument(..., help="Binary whose stored artifact to rate"),
+    kind: str = typer.Argument(..., help="triage, threat, capabilities, remediation and the rest"),
+    verdict: str = typer.Argument("", help="up or down; empty clears the rating"),
+    note: str = typer.Option("", "--note", help="Why this verdict"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Record or clear the analyst's verdict on one stored agent artifact.
+
+    An artifact is the binary's stored scan of that kind, so the verdict
+    survives a re-run of the scan; the write is journaled and a revert restores
+    the previous verdict.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = ratings.journaled_set(
+                    conn,
+                    log,
+                    binary_id=binary_id,
+                    kind=kind,
+                    rating=verdict,
+                    note=note,
+                    actor=journal.current_actor(),
+                )
+            except ratings.RatingError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    if result.get("rating"):
+        console.print(f"[green]Rated[/green] {kind}: {result['rating']}")
+    else:
+        console.print(f"[green]Cleared[/green] the {kind} rating")
+
+
+@app.command("ratings")
+def list_ratings_command(
+    binary_id: int = typer.Argument(..., help="Binary whose artifacts to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Every stored agent artifact of the binary with the verdict on it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        payload = ratings.describe(conn, binary_id)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if not payload["artifacts"]:
+        console.print("[yellow]No stored agent artifacts to rate.[/yellow]")
+        return
+    table = Table(title=f"agent artifacts of binary {binary_id}")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Stored")
+    table.add_column("Rating")
+    table.add_column("Note")
+    for entry in payload["artifacts"]:
+        rating = entry["rating"]
+        table.add_row(
+            str(entry["kind"]),
+            "yes" if entry["stored"] else "no",
+            str(rating["rating"]) if rating else "unrated",
+            str(rating["note"]) if rating else "",
+        )
+    console.print(table)
 
 
 # ── search ─────────────────────────────────────────────────────────

@@ -1,7 +1,20 @@
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Badge, Card, DataTable, Loading, Muted, NA, Panel } from "../components";
+import {
+  Badge,
+  Button,
+  Card,
+  CodeBlock,
+  DataTable,
+  ErrorNote,
+  Loading,
+  Muted,
+  NA,
+  Panel,
+  Toolbar,
+} from "../components";
 import { KeyValue } from "../components";
 import type {
   InstanceConfig,
@@ -121,6 +134,76 @@ function InstanceCard(): ReactNode {
   );
 }
 
+/**
+ * How to connect an MCP client to this workspace.
+ *
+ * The card renders the one-liner and the client JSON an MCP client needs, with
+ * the tool counts read from `/api/config` so the card cannot promise a registry
+ * the server does not have.  The workspace path is the page's own runtime
+ * value rather than a guess: a config file with a wrong path is worse than none.
+ */
+function McpCard(): ReactNode {
+  const { data, error } = useAsync(() => api<InstanceConfig>("/config"), []);
+  const [copied, setCopied] = useState("");
+
+  const copy = async (label: string, text: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(label);
+    } catch {
+      // A browser that refuses the clipboard still shows the text to copy.
+      setCopied("");
+    }
+  };
+
+  if (error) {
+    return (
+      <Panel title="Connect an MCP client">
+        <ErrorNote error={error} />
+      </Panel>
+    );
+  }
+  if (!data) {
+    return (
+      <Panel title="Connect an MCP client">
+        <Loading label="Reading the instance config" rows={2} />
+      </Panel>
+    );
+  }
+  const workspace = window.location.origin;
+  const command = `claude mcp add reportal -- reportal mcp`;
+  const config = JSON.stringify(
+    { mcpServers: { reportal: { command: "reportal", args: ["mcp"] } } },
+    null,
+    2,
+  );
+  return (
+    <Panel
+      title="Connect an MCP client"
+      subtitle={`${data.mcp.total} tools (${data.mcp.read_only} read-only, ${data.mcp.destructive} destructive) over stdio, no auth: the pipe is the trust boundary.`}
+    >
+      <Muted>
+        reportal's MCP server speaks newline-delimited JSON-RPC on stdin/stdout, so any MCP
+        client runs it from its own config. The workspace is resolved the way every other command
+        resolves it, by walking up to the nearest reportal.toml, so run the client from a workspace
+        (or pass a path it can start in).
+      </Muted>
+      <CodeBlock text={command} title="One-liner" />
+      <Toolbar>
+        <Button size="sm" onClick={() => void copy("command", command)}>
+          Copy the one-liner
+        </Button>
+        <Button size="sm" tone="ghost" onClick={() => void copy("config", config)}>
+          Copy the config
+        </Button>
+        {copied ? <Muted>Copied the {copied}.</Muted> : null}
+      </Toolbar>
+      <CodeBlock text={config} title="~/.claude.json" />
+      <Muted>This page is served from {workspace}.</Muted>
+    </Panel>
+  );
+}
+
 export function IntegrationsView(): ReactNode {
   const { data, error } = useAsync(() => api<IntegrationInventory>("/integrations"), []);
 
@@ -143,6 +226,7 @@ export function IntegrationsView(): ReactNode {
             <SeamCard key={seam.name} seam={seam} />
           ))}
           <InstanceCard />
+          <McpCard />
         </>
       )}
     </Panel>

@@ -59,6 +59,7 @@ def _drop_action(payload: dict[str, Any]) -> dict[str, Any]:
 # belongs to; every other listed capability is mutating.
 _READ_ONLY_TOOLS = frozenset(
     {
+        "list_artifact_ratings",
         "get_stats_series",
         "get_symbols",
         "list_conversation_runs",
@@ -168,6 +169,7 @@ _READ_ONLY_TOOLS = frozenset(
 
 _DESTRUCTIVE_TOOLS = frozenset(
     {
+        "rate_artifact",
         "import_symbols",
         "export_symbols",
         "run_conversation_agent",
@@ -450,9 +452,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 223
-        assert len(_READ_ONLY_TOOLS) == 104
-        assert len(_DESTRUCTIVE_TOOLS) == 119
+        assert len(names) == 225
+        assert len(_READ_ONLY_TOOLS) == 105
+        assert len(_DESTRUCTIVE_TOOLS) == 120
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():

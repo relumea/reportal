@@ -16,6 +16,7 @@ import {
   ErrorNote,
   Field,
   KeyValue,
+  Loading,
   Muted,
   NA,
   Note,
@@ -68,6 +69,7 @@ import {
 } from "../constants";
 import type {
   AdditionalDetails,
+  ArtifactRatings,
   BehaviorScan,
   Binary,
   CapabilitiesResult,
@@ -890,6 +892,102 @@ export function UnpackedFilesPanel(): ReactNode {
         and the portal runs no sample. The engine&apos;s only unpack path is{" "}
         <code>rebrew unpack-lzexe</code>, which covers DOS LZEXE 0.90/0.91 executables.
       </Note>
+    </Panel>
+  );
+}
+
+/**
+ * Analyst feedback on the binary's stored agent artifacts.
+ *
+ * One control per stored artifact: thumbs up, thumbs down, or clear.  An
+ * artifact that was never produced is not listed, and the panel says how many
+ * of the stored ones carry a verdict.
+ */
+export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const { data, error, reload } = useAsync(
+    () => api<ArtifactRatings>(`/binaries/${binaryId}/ratings`),
+    [binaryId],
+  );
+  const [busy, setBusy] = useState("");
+  const [actionError, setActionError] = useState<unknown>(null);
+
+  const rate = async (kind: string, rating: string): Promise<void> => {
+    setBusy(`${kind}-${rating}`);
+    setActionError(null);
+    try {
+      await api(`/binaries/${binaryId}/ratings/${kind}`, {
+        method: "PUT",
+        json: { rating },
+      });
+      reload();
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <Panel
+      title="Agent feedback"
+      subtitle="Thumbs up or down on a stored agent artifact; the verdict survives a re-run of the scan."
+    >
+      {error ? <ErrorNote error={error} onRetry={reload} /> : null}
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      {!data ? (
+        <Loading label="Loading the artifact ratings" rows={2} />
+      ) : data.artifacts.length === 0 ? (
+        <EmptyState>No stored agent artifact to rate yet.</EmptyState>
+      ) : (
+        <>
+          <Muted>
+            {data.rated} of {data.count} stored artifact(s) rated.
+          </Muted>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Artifact</th>
+                <th>Verdict</th>
+                <th>Note</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {data.artifacts.map((entry) => (
+                <tr key={entry.kind}>
+                  <td className="mono">{entry.kind}</td>
+                  <td>{entry.rating ? entry.rating.rating : "unrated"}</td>
+                  <td className="muted">{entry.rating ? entry.rating.note : ""}</td>
+                  <td>
+                    <Button
+                      size="sm"
+                      pending={busy === `${entry.kind}-up`}
+                      onClick={() => void rate(entry.kind, "up")}
+                    >
+                      Up
+                    </Button>{" "}
+                    <Button
+                      size="sm"
+                      pending={busy === `${entry.kind}-down`}
+                      onClick={() => void rate(entry.kind, "down")}
+                    >
+                      Down
+                    </Button>{" "}
+                    <Button
+                      size="sm"
+                      tone="ghost"
+                      pending={busy === `${entry.kind}-`}
+                      onClick={() => void rate(entry.kind, "")}
+                    >
+                      Clear
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
     </Panel>
   );
 }

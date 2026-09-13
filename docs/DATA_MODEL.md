@@ -452,6 +452,15 @@ a write no request made.  An existing database gets the column through
 `journal.ensure_schema`, which adds it before creating its index, and the rows
 written before it read as an empty actor rather than an invented one.
 
+`artifact_ratings` is the analyst's verdict on a stored agent artifact, owned by
+`ratings.py` and created by its own lazy `ensure_schema`.  One row is one verdict:
+the `binary_id`, the scan `kind` it is about, the `rating` (`up` or `down`), an
+optional `note`, the `actor` and the times, unique on `(binary_id, kind)` so a
+verdict replaces rather than accumulates.  A row exists only while a verdict
+does: clearing one deletes it, and the write is journaled with the previous row
+snapshotted, so a revert restores the verdict that was there.  A binary delete
+cascades the rows away with the rest of its data.
+
 `conversation_runs` is the agent half of a conversation, owned by `agent.py` and
 created by its own lazy `ensure_schema`.  One row is one run: the
 `conversation_id`, the terminal or live `status` (`running`,

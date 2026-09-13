@@ -2795,3 +2795,30 @@ export interface StatsSeries {
   };
   notes: string[];
 }
+
+/** One agent artifact of a binary with the analyst's verdict on it. */
+export interface ArtifactRating {
+  binary_id: number;
+  kind: string;
+  rating: string;
+  note: string;
+  actor: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One stored agent artifact, rated or not. */
+export interface ArtifactEntry {
+  kind: string;
+  stored: boolean;
+  rating: ArtifactRating | null;
+}
+
+/** `GET /api/binaries/<id>/ratings`. */
+export interface ArtifactRatings {
+  binary_id: number;
+  artifacts: ArtifactEntry[];
+  count: number;
+  rated: number;
+  kinds: string[];
+}

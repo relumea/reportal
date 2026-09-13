@@ -82,6 +82,7 @@ from reportal import (
     pdf,
     pipeline,
     protocols,
+    ratings,
     related,
     remediation,
     remote_ingest,
@@ -7393,6 +7394,82 @@ def graph_query(request: Request) -> Response:
             backend, conn, query=text, limit=graph_backends.DEFAULT_QUERY_LIMIT
         )
     return json_response(result)
+
+
+# ── Artifact ratings ───────────────────────────────────────────────
+#
+# The hosted portal's agent cards each carry a thumbs up/down on the result.
+# Locally an "agent artifact" is a stored scan: triage, threat, capabilities,
+# remediation and the rest.  One small table records the analyst's verdict per
+# stored artifact, so a re-run keeps it.
+
+
+@router.get("/api/binaries/{binary_id}/ratings")
+def list_artifact_ratings(binary_id: int) -> Response:
+    """Every stored agent artifact of the binary with the analyst's verdict on it.
+
+    An artifact that was never produced is left out; one that was produced but
+    not rated carries `rating: null`, so the two are distinguishable.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        payload = ratings.describe(conn, binary_id)
+    return json_response(payload)
+
+
+@router.get("/api/binaries/{binary_id}/ratings/{kind}")
+def get_artifact_rating(binary_id: int, kind: str) -> Response:
+    """One artifact's rating, whether or not a verdict is stored."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        try:
+            ratings.require_artifact(conn, binary_id, kind)
+        except ratings.RatingError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+        stored = ratings.get_rating(conn, binary_id=binary_id, kind=kind)
+    return json_response({"binary_id": binary_id, "kind": kind, "rating": stored})
+
+
+@router.put("/api/binaries/{binary_id}/ratings/{kind}")
+def set_artifact_rating(
+    binary_id: int, kind: str, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Record or clear the analyst's verdict on one stored artifact; journaled.
+
+    The body is ``{"rating": "up"|"down"|null, "note"?: "..."}``; an empty
+    rating clears the verdict rather than storing an empty one, and the write is
+    journaled, so a revert restores what was there.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = ratings.journaled_set(
+                    conn,
+                    log,
+                    binary_id=binary_id,
+                    kind=kind,
+                    rating=body.get("rating"),
+                    note=body.get("note"),
+                    actor=journal.current_actor(),
+                )
+            except ratings.RatingError as exc:
+                return json_error(
+                    400 if exc.code == ratings.ERROR_INVALID else 404,
+                    error=exc.code,
+                    detail=exc.detail,
+                )
+    return json_response(log.attach(result))
 
 
 # ── Analytics ──────────────────────────────────────────────────────

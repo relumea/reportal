@@ -39,6 +39,7 @@ import {
 import { DataTypesPanel } from "../panels/DataTypesPanel";
 import { CommentsPanel } from "../panels/CommentsPanel";
 import { MemoryPanel } from "../panels/MemoryPanel";
+import { ArtifactRatingsPanel } from "../panels/BinaryPanels";
 import { SymbolsPanel } from "../panels/SymbolsPanel";
 import { panelKey, usePanel } from "../panelCache";
 import type { Binary } from "../types";
@@ -93,6 +94,7 @@ export function BinaryDetail({
           <RemediationPanel binaryId={binary.id} />
           <DataTypesPanel binaryId={binary.id} query={query} />
           <SymbolsPanel binaryId={binary.id} />
+          <ArtifactRatingsPanel binaryId={binary.id} />
           <UnstripPanel binaryId={binary.id} />
           <Panel
             title="Conversations"
