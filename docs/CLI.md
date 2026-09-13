@@ -361,6 +361,16 @@ reportal journal-revert --action ID | --entry ID [--json]
                                            #   stored inverses; a wired command prints its
                                            #   action id to stderr (or in --json output)
 reportal stats [--json]                    # row counts
+reportal users [--json]                    # local users with their roles and state;
+                                           #   never a token digest
+reportal user-add <name> [--role viewer|analyst|admin] [--json]
+                                           # create a user and print its token once
+                                           #   (only the digest is stored); journaled
+reportal user-token <user-id> [--json]     # replace a user's token, printed once
+reportal user-edit <user-id> [--role R] [--disable|--enable] [--json]
+                                           # set the role or the disabled state; journaled
+reportal user-rm <user-id> [--yes] [--json]
+                                           # delete a user; journaled
 reportal config [--json]                   # what this instance can do: versions,
                                            #   features, limits and MCP tool counts;
                                            #   needs no workspace
@@ -399,6 +409,8 @@ reportal analysis-bulk-delete <analysis-id>... [--yes] [--json]
                                            #   them; a binary's only analysis while it holds
                                            #   functions is skipped with a reason
 reportal serve [--port 8002] [--host 127.0.0.1] [--no-open]
+                                           # a non-loopback --host refuses to start
+                                           #   unless token auth is on and a user exists
 reportal mcp [--json]                      # run the stdio MCP server: newline-delimited
                                            #   JSON-RPC 2.0 on stdin/stdout (initialize,
                                            #   notifications/initialized, tools/list, tools/call)

@@ -24,7 +24,9 @@ reportal/
 │   ├── __init__.py           # __version__
 │   ├── __main__.py           # python -m reportal
 │   ├── cli.py                # Typer CLI (init, import-rebrew, add-binary, serve, ...)
-│   ├── server.py             # shared FastAPI app, JSON helpers, Host guard, db()
+│   ├── server.py             # shared FastAPI app, JSON helpers, Host guard, db(),
+│   │                         #   the require_auth dependency (off unless configured)
+│   ├── auth.py               # local identity: users, roles, bearer tokens, the gate
 │   ├── api.py                # every /api/* route (the JSON API)
 │   ├── ui.py                 # the built SPA, /static assets and /reports site
 │   ├── webapp.py             # composition root: includes the two routers
@@ -46,7 +48,8 @@ reportal/
 │   ├── llm.py                # optional OpenAI-compatible bridge: chat completions + embeddings
 │   ├── conversations.py      # scoped chats: stored context + retrieved documents, prompt assembly
 │   ├── comments.py           # analyst comments: scope/body validation over the comments table
-│   ├── bulk_actions.py       # bulk tag/delete over binaries and prefix rename/clear over functions
+│   ├── bulk_actions.py       # bulk tag/delete over binaries and analyses, and prefix
+│   │                         #   rename/clear over functions
 │   ├── similarity.py         # resembl-backed scoring, cached per listing
 │   ├── matching.py           # corpus matching: MatchSettings scope, rank, floor,
 │   │                         #   confidence, store; symbol transfer (name/signature/both)
@@ -219,6 +222,28 @@ engine-reported edge.  `GET /api/analyses/<id>/bytes` resolves an analysis to it
 binary and returns the same streamed response
 `GET /api/binaries/<id>/download` builds, through the one
 `api._streamed_binary` helper.
+
+## Identity and the API gate
+
+Token auth is off unless `REPORTAL_AUTH=required` or the workspace
+`[auth] required = true` turns it on (`auth.required`, a pure configuration
+read), so a loopback install behaves exactly as before and no request pays for
+a check it does not need.  With it on, `api.router` is built with
+`dependencies=[Depends(server.require_auth)]`, which is the one place the gate
+lives: a route added later is behind it without being told, and a route cannot
+opt out by omission.  The dependency resolves the bearer token to a user
+(`auth.authenticate`, constant-time digest comparison), refuses a disabled user,
+computes the permission the method and path need (`auth.required_permission`:
+`read`, `write`, or `admin` for `/api/users*`) and compares it with the role's
+set (`auth.ROLE_PERMISSIONS`); it leaves the user on `request.state.user`, which
+is what `GET /api/iam/me` reports and what the next slice's per-object scoping
+will read.  `cli.serve` refuses a non-loopback bind unless the gate is armed and
+at least one enabled user exists (`cli._require_lan_auth`), so the unauthenticated
+remote control plane the old posture allowed cannot be reached by forgetting a
+flag.  Only a token's SHA-256 digest is stored; the token is returned once, by
+the call that created or rotated it.  `docs/THREAT_MODEL.md` carries the residual
+risks, the largest of which is that authorization is per route kind rather than
+per object.
 
 ## Engine contract
 

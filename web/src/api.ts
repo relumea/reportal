@@ -38,6 +38,30 @@ export interface RequestOptions {
 
 const API_PREFIX = "/api";
 
+/** Where the browser keeps the bearer token an authenticated install needs. */
+export const TOKEN_STORAGE_KEY = "reportal.token";
+
+/** The token the browser holds, or an empty string. */
+export function storedToken(): string {
+  try {
+    return window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? "";
+  } catch {
+    // A browser with storage disabled can still read an open install; it just
+    // cannot remember a token across reloads.
+    return "";
+  }
+}
+
+/** Remember (or forget, with an empty value) the token the browser sends. */
+export function storeToken(token: string): void {
+  try {
+    if (token) window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    else window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // Nothing to do: the header still comes from storedToken() this session.
+  }
+}
+
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const init: RequestInit = { method: options.method ?? "GET", headers: {} };
   if (options.json !== undefined) {
@@ -45,6 +69,10 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     init.headers = { "Content-Type": "application/json" };
   } else if (options.body !== undefined) {
     init.body = options.body;
+  }
+  const token = storedToken();
+  if (token) {
+    init.headers = { ...(init.headers as Record<string, string>), Authorization: `Bearer ${token}` };
   }
   const response = await fetch(`${API_PREFIX}${path}`, init);
   const payload: unknown = await response.json().catch(() => ({}));

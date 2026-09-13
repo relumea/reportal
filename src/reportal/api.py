@@ -39,6 +39,7 @@ from reportal import (
     __version__,
     analysis_log,
     archive,
+    auth,
     auto_mode,
     auto_store,
     auto_workers,
@@ -86,7 +87,14 @@ from reportal import (
     zipcrypto,
 )
 from reportal._paths import binaries_dir, db_path, reports_dir
-from reportal.server import db, json_body, json_error, json_response, optional_json_body
+from reportal.server import (
+    db,
+    json_body,
+    json_error,
+    json_response,
+    optional_json_body,
+    require_auth,
+)
 from reportal.surface import classified as _classified
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
 from reportal.surface import journaled_signature_write as _journal_signature_write
@@ -110,7 +118,7 @@ _engine = partial(surface.engine, fail=_fail)
 _project_context = partial(surface.project_context, fail=_fail)
 _require_binary = partial(surface.require_binary, fail=_fail)
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_auth)])
 
 # The disassembly format `disasm_cache` holds.  The cache key is the function
 # id alone, so only this format is cached; a `hex` request runs the engine and
@@ -7579,3 +7587,182 @@ def set_analysis_tags(analysis_id: int, body: dict[str, Any] = Depends(json_body
                     )
             tags = store.get_binary_tags(conn, binary_id)
     return json_response(log.attach({"analysis_id": analysis_id, "tags": tags}))
+
+
+# ── Identity and users ─────────────────────────────────────────────
+#
+# Token auth is off unless the environment or the workspace config turns it on,
+# so a single-user loopback install keeps working unchanged.  When it is on,
+# `server.require_auth` has already resolved the caller and every request below
+# is authenticated; the user table itself needs the `admin` permission.  A user
+# row's token digest never reaches a response: only the token a create or a
+# rotation hands back once does.
+
+
+def _auth_failure(exc: auth.AuthError) -> Response:
+    """Map a user validation failure onto its JSON status and error name."""
+    if isinstance(exc, auth.UserExistsError):
+        status = 409
+    elif isinstance(exc, auth.UnknownUserError):
+        status = 404
+    else:
+        status = 400
+    return json_error(status, error=exc.code, detail=exc.detail)
+
+
+def _caller(request: Request) -> dict[str, Any] | None:
+    """The authenticated caller, or None while auth is off."""
+    user = getattr(request.state, "user", None)
+    return user if isinstance(user, dict) else None
+
+
+@router.get("/api/iam/me")
+def iam_me(request: Request) -> Response:
+    """Who the caller is and what it may do.
+
+    With auth off the install is a single local user and the answer says so
+    (``auth: "open"``, every permission); with it on the answer is the
+    authenticated user with its role and the permissions that role carries.
+    """
+    user = _caller(request)
+    if user is None:
+        return json_response(
+            {
+                "auth": "open",
+                "user": None,
+                "role": None,
+                "permissions": list(auth.ROLE_PERMISSIONS[auth.ROLE_ADMIN]),
+            }
+        )
+    role = str(user["role"])
+    return json_response(
+        {
+            "auth": "required",
+            "user": user,
+            "role": role,
+            "permissions": list(auth.permissions_for(role)),
+        }
+    )
+
+
+@router.get("/api/iam/me/permissions")
+def iam_me_permissions(request: Request) -> Response:
+    """The permission list the caller's role carries, nothing else."""
+    user = _caller(request)
+    role = None if user is None else str(user["role"])
+    return json_response(
+        {
+            "role": role,
+            "auth": "open" if user is None else "required",
+            "permissions": list(
+                auth.permissions_for(role) if role else auth.ROLE_PERMISSIONS[auth.ROLE_ADMIN]
+            ),
+            "roles": list(auth.ROLES),
+        }
+    )
+
+
+@router.get("/api/users")
+def list_users() -> Response:
+    """Every user with its role and state; the token digest is never included."""
+    with contextlib.closing(db()) as conn:
+        users = auth.list_users(conn)
+    return json_response({"users": users, "count": len(users)})
+
+
+@router.post("/api/users")
+def create_user(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Create one user and return its token once; journaled and revertible."""
+    name = _require_str(body, "name")
+    role = _optional_str(body, "role", auth.ROLE_ANALYST)
+    with contextlib.closing(db()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                user, token = auth.add_user(conn, name=name, role=role)
+            except auth.AuthError as exc:
+                return _auth_failure(exc)
+            journal.journaled_create(
+                log,
+                table=auth.TABLE,
+                key=int(user["id"]),
+                description=f"created user {user['name']}",
+            )
+    return json_response(log.attach({**user, "token": token}), status=201)
+
+
+@router.patch("/api/users/{user_id}")
+def update_user(user_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Set one user's role or disabled flag; journaled and revertible."""
+    if "role" not in body and "disabled" not in body:
+        return json_error(400, error=auth.ERROR_INVALID_USER, detail="provide role or disabled")
+    role = _optional_str(body, "role") if "role" in body else None
+    if role is not None and role not in auth.ROLES:
+        return _invalid_query("role", role, auth.ROLES)
+    disabled = body.get("disabled")
+    if disabled is not None and not isinstance(disabled, bool):
+        return json_error(400, error=auth.ERROR_INVALID_USER, detail="disabled must be a boolean")
+    with contextlib.closing(db()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            return json_error(
+                404, error=auth.ERROR_USER_NOT_FOUND, detail=f"no user with id {user_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"updated user {user_id}",
+            )
+            try:
+                updated = auth.update_user(conn, user_id, role=role, disabled=disabled)
+            except auth.AuthError as exc:
+                return _auth_failure(exc)
+    return json_response(log.attach(updated or {}))
+
+
+@router.post("/api/users/{user_id}/token")
+def rotate_user_token(user_id: int) -> Response:
+    """Replace one user's token and return the new one once; journaled."""
+    with contextlib.closing(db()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            return json_error(
+                404, error=auth.ERROR_USER_NOT_FOUND, detail=f"no user with id {user_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"rotated the token of user {user_id}",
+            )
+            token = auth.rotate_token(conn, user_id)
+    return json_response(log.attach({"id": user_id, "token": token}))
+
+
+@router.delete("/api/users/{user_id}")
+def delete_user(user_id: int) -> Response:
+    """Delete one user; journaled, so a revert puts the row back."""
+    with contextlib.closing(db()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            return json_error(
+                404, error=auth.ERROR_USER_NOT_FOUND, detail=f"no user with id {user_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"deleted user {user_id}",
+            )
+            auth.delete_user(conn, user_id)
+    return json_response(log.attach({"deleted": user_id}))

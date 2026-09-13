@@ -810,6 +810,11 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         (("Integrations",), ("reportal.components",), ("pipeline components",), ("prepare",)),
     ),
     (
+        "users",
+        "#/users",
+        (("Identity",), ("single local user",), ("Bearer token",), ("Create user",)),
+    ),
+    (
         "journal",
         "#/journal",
         (("Journal",), (JOURNAL_ACTION,), (JOURNAL_DESCRIPTION,), ("Revert entry",)),

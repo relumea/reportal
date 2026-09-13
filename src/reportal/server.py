@@ -13,6 +13,7 @@ same security headers.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import json
 import logging
@@ -26,7 +27,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
-from reportal import __version__, error_docs, store
+from reportal import __version__, auth, error_docs, store
 from reportal._paths import WorkspaceNotFound, db_path
 
 app = FastAPI(
@@ -88,6 +89,31 @@ def db() -> sqlite3.Connection:
     if not path.exists():
         store.init_db(path)
     return store.connect(path)
+
+
+def require_auth(request: Request) -> None:
+    """Refuse an API request that carries no acceptable token, when auth is on.
+
+    Auth is off unless the environment or the workspace config turns it on, so
+    the default single-user loopback install is unchanged and this check costs a
+    configuration read.  When it is on, every ``/api`` request needs
+    ``Authorization: Bearer <token>``: a missing or unknown token is 401
+    ``unauthorized``, a disabled user is 401 as well, and a role that does not
+    carry the permission the method and path imply is 403 ``forbidden``.  The
+    authenticated user is left on ``request.state.user`` for the routes that
+    report it.
+    """
+    if not auth.required():
+        return
+    token = auth.token_of(request.headers.get(auth.AUTHORIZATION_HEADER))
+    with contextlib.closing(db()) as conn:
+        user = auth.authenticate(conn, token)
+    if user is None:
+        raise json_error(401, error=auth.ERROR_UNAUTHORIZED, detail=auth.UNAUTHORIZED_DETAIL)
+    needed = auth.required_permission(request.method, request.url.path)
+    if needed not in auth.permissions_for(str(user["role"])):
+        raise json_error(403, error=auth.ERROR_FORBIDDEN, detail=auth.FORBIDDEN_DETAIL)
+    request.state.user = user
 
 
 def _accepts_gzip(accept_encoding: str) -> bool:

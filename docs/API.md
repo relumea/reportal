@@ -2,8 +2,28 @@
 
 *Reference material moved out of AGENTS.md.*
 
+## Authentication
+
+Token auth is off unless `REPORTAL_AUTH=required` (or the workspace
+`[auth] required = true`) turns it on, so a loopback install is unchanged and
+every route answers as it always did.  With it on, every `/api` request needs
+`Authorization: Bearer <token>` (`server.require_auth`, a router dependency, so
+no route can be added outside it): a missing, wrong or disabled user's token is
+401 `unauthorized`, and a role that does not carry the permission the method and
+path imply is 403 `forbidden`.  Roles are `viewer` (read), `analyst` (read and
+write) and `admin` (also the user table); `docs/THREAT_MODEL.md` has the rest.
+`cli.serve` refuses a non-loopback bind unless auth is on and at least one
+enabled user exists.
+
 | Path | Method | Description |
 |------|--------|-------------|
+| `/api/iam/me` | GET | who the caller is: `auth` (`open` or `required`), the `user`, its `role` and the `permissions` that role carries; with auth off the user is null and the permissions are all three, because the caller is the local operator |
+| `/api/iam/me/permissions` | GET | the caller's `role`, the `permissions` it carries, the `auth` mode and the closed `roles` list |
+| `/api/users` | GET | every user with its `role`, `has_token`, `disabled` and `created_at`; the token digest is never part of an answer; admin only when auth is on |
+| `/api/users` | POST | create a user; body `{"name", "role"?}` (role defaults to `analyst`); 201 with the user and its `token`, which is shown once because only the digest is stored; journaled and revertible; 400 `invalid-user` for a blank name or an unknown role, 409 `user-exists` |
+| `/api/users/<id>` | PATCH | set the user's `role` or `disabled`; body `{"role"?, "disabled"?}` (400 `invalid-user` with neither); journaled and revertible |
+| `/api/users/<id>/token` | POST | replace the user's token and return the new one once; the previous token stops authenticating; journaled, so a revert restores the digest |
+| `/api/users/<id>` | DELETE | delete one user; journaled, so a revert puts the row back |
 | `/api/health` | GET | status, version, database path, row counts |
 | `/api/config` | GET | what this instance can do: `version`, the engine's availability and origin, its decompiler backends, the LLM bridge's state and model, the database path and table count, the on/off `features`, every cap in `limits`, and the MCP tool counts; a pure read, so a client can fetch it on start |
 | `/api/binaries` | GET | all binaries with function counts |

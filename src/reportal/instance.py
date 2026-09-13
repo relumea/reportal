@@ -20,6 +20,7 @@ from reportal import (
     __version__,
     analysis_log,
     archive,
+    auth,
     bulk_actions,
     comments,
     conversations,
@@ -133,7 +134,7 @@ def features() -> dict[str, Any]:
         "similarity": similarity.available(),
         "graph_backend": graph_backends.configured_backend_name(),
         "graph_backends": [backend.name for backend in graph_backends.graph_backends()],
-        "auth": "single-user",
+        "auth": "token" if auth.required() else "single-user",
         "sandbox": False,
         "external_sources": False,
     }

@@ -1866,6 +1866,31 @@ export interface DieInfo {
   sources: Record<string, DetailSource>;
 }
 
+/** One local user; the token digest is never part of the answer. */
+export interface UserRow {
+  id: number;
+  name: string;
+  role: string;
+  created_at: string;
+  disabled: boolean;
+  has_token: boolean;
+}
+
+/** `GET /api/users`: every user and the count. */
+export interface UsersPayload {
+  users: UserRow[];
+  count: number;
+}
+
+/** `GET /api/iam/me`: the caller's identity and the permissions it carries. */
+export interface Me {
+  /** `open` while token auth is off, `required` when a token has to be sent. */
+  auth: "open" | "required";
+  user: UserRow | null;
+  role: string | null;
+  permissions: string[];
+}
+
 /** The `GET /api/analyses/<id>/status` payload. */
 export interface AnalysisStatus {
   analysis_id: number;

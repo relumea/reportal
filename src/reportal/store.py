@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from reportal import analysis_log
+from reportal import analysis_log, auth
 
 # Function statuses that count as a byte-equality match.  Mirrors rebrew's
 # MATCHED_STATUSES so `reportal stats` reports the same number recoverage does.
@@ -539,6 +539,7 @@ def init_db(db_path: Path) -> None:
         conn.executescript(_SCHEMA)
         _upgrade_schema(conn)
         analysis_log.ensure_schema(conn)
+        auth.ensure_schema(conn)
 
 
 def _rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:

@@ -39,6 +39,7 @@ import { CheatsheetDialog } from "./views/CheatsheetDialog";
 import { NotificationsBell } from "./views/NotificationsDialog";
 import { SearchModal } from "./views/SearchModal";
 import { SearchView } from "./views/SearchView";
+import { UsersView } from "./views/UsersView";
 
 // The `g` prefix jumps to a sidebar view: its initial where that is unique,
 // otherwise a letter from the word (`g o` for Auto-mode, `g n` for
@@ -294,6 +295,11 @@ export function App(): ReactNode {
       path: "/integrations",
       element: <IntegrationsView />,
       handle: { view: "integrations", title: "Integrations" },
+    },
+    {
+      path: "/users",
+      element: <UsersView />,
+      handle: { view: "users", title: "Users" },
     },
     {
       path: "*",

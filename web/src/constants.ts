@@ -446,3 +446,6 @@ export const UPLOAD_ARCHITECTURES = ["x86_32", "x86_64", "arm64"] as const;
 
 // Files one batch upload may carry; mirrors the API's MAX_UPLOAD_FILES.
 export const MAX_UPLOAD_FILES = 64;
+
+// Roles a user may carry; mirrors auth.ROLES.
+export const ROLES = ["viewer", "analyst", "admin"] as const;

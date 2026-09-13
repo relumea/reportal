@@ -94,6 +94,7 @@ from rich.table import Table
 from reportal import (
     __version__,
     analysis_log,
+    auth,
     auto_mode,
     auto_store,
     auto_workers,
@@ -353,6 +354,27 @@ def init(
 # ── serve ──────────────────────────────────────────────────────────
 
 
+def _require_lan_auth(portal_db: Path) -> None:
+    """Refuse a remote bind that would expose an unauthenticated API.
+
+    A loopback bind is the single-user default and needs no identity; a bind
+    another machine can reach is a different promise, so it needs token auth
+    switched on and at least one enabled user token, and exits with the way to
+    get there instead of serving an open API.
+    """
+    if not auth.required():
+        _fail(
+            f"refusing to bind beyond loopback without token auth: {auth.NOT_REQUIRED_DETAIL}",
+            False,
+        )
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        active = [
+            user for user in auth.list_users(conn) if user["has_token"] and not user["disabled"]
+        ]
+    if not active:
+        _fail(f"refusing to bind beyond loopback: {auth.NO_USER_DETAIL}", False)
+
+
 @app.command()
 def serve(
     port: int = typer.Option(8002, "--port", "-p", min=0, max=65535, help="Port to serve on"),
@@ -371,6 +393,8 @@ def serve(
         store.init_db(path)
 
     is_loopback = host in LOOPBACK_HOSTS
+    if not is_loopback:
+        _require_lan_auth(path)
     _server.configure_hosts(set(LOOPBACK_HOSTS) if is_loopback else None)
 
     display_host = f"[{host}]" if ":" in host else host
@@ -388,6 +412,195 @@ def serve(
         pass
     except OSError as exc:
         _fail(f"Failed to start server on {url}: {exc.strerror or exc}", json_output=False)
+
+
+# ── users ──────────────────────────────────────────────────────────
+
+
+@app.command()
+def users(json_output: bool = typer.Option(False, "--json", help="Output results as JSON")) -> None:
+    """List the local users with their roles and state."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        rows = auth.list_users(conn)
+    if json_output:
+        typer.echo(
+            json.dumps({"users": rows, "count": len(rows), "auth_required": auth.required()})
+        )
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ID", style="magenta", justify="right")
+    table.add_column("Name", style="cyan")
+    table.add_column("Role")
+    table.add_column("Token")
+    table.add_column("State")
+    table.add_column("Created", style="dim")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            str(row["name"]),
+            str(row["role"]),
+            "yes" if row["has_token"] else "no",
+            "disabled" if row["disabled"] else "active",
+            str(row["created_at"]),
+        )
+    console.print(f"\n[bold cyan]{len(rows)} user(s)[/bold cyan]")
+    console.print(table)
+    if not auth.required():
+        console.print(
+            "Token auth is off. An install that only binds loopback needs none; a remote bind"
+            f" requires it: {auth.NOT_REQUIRED_DETAIL}"
+        )
+
+
+@app.command("user-add")
+def user_add(
+    name: str = typer.Argument(..., help="User name"),
+    role: str = typer.Option(auth.ROLE_ANALYST, "--role", help="viewer, analyst or admin"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Create a user and print its token once.
+
+    Only the token's digest is stored, so the token cannot be read back later;
+    `reportal user-token <id>` issues a new one.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                user, token = auth.add_user(conn, name=name, role=role)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+            journal.journaled_create(
+                log,
+                table=auth.TABLE,
+                key=int(user["id"]),
+                description=f"created user {user['name']}",
+            )
+    payload = log.attach({**user, "token": token})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"[green]Created[/green] user {user['name']} (id {user['id']}, role {user['role']})"
+    )
+    console.print(f"  token: {token}")
+    console.print("  This is the only time the token is shown.")
+    _print_journal_action(log, json_output)
+
+
+@app.command("user-token")
+def user_token(
+    user_id: int = typer.Argument(..., help="User id whose token to replace"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Replace one user's token and print the new one once."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_user(conn, user_id) is None:
+            _fail(f"no user with id {user_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"rotated the token of user {user_id}",
+            )
+            token = auth.rotate_token(conn, user_id)
+    payload = log.attach({"id": user_id, "token": token})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Rotated[/green] the token of user {user_id}: {token}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("user-edit")
+def user_edit(
+    user_id: int = typer.Argument(..., help="User id to change"),
+    role: str | None = typer.Option(None, "--role", help="New role"),
+    disable: bool = typer.Option(False, "--disable", help="Disable the user's token"),
+    enable: bool = typer.Option(False, "--enable", help="Re-enable the user's token"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Set a user's role, or disable or re-enable it; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if role is None and not disable and not enable:
+        _fail("provide --role, --disable or --enable", json_output)
+    if disable and enable:
+        _fail("--disable and --enable are mutually exclusive", json_output)
+    disabled = True if disable else (False if enable else None)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_user(conn, user_id) is None:
+            _fail(f"no user with id {user_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"updated user {user_id}",
+            )
+            try:
+                updated = auth.update_user(conn, user_id, role=role, disabled=disabled)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    payload = log.attach(updated or {})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if updated is not None:
+        state = "disabled" if updated["disabled"] else "active"
+        console.print(f"[green]Updated[/green] user {user_id}: role {updated['role']}, {state}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("user-rm")
+def user_rm(
+    user_id: int = typer.Argument(..., help="User id to delete"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete one user; journaled, so a revert puts the row back."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if not yes and not typer.confirm(f"Delete user {user_id}?"):
+        _fail("aborted", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_user(conn, user_id) is None:
+            _fail(f"no user with id {user_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"deleted user {user_id}",
+            )
+            auth.delete_user(conn, user_id)
+    payload = log.attach({"deleted": user_id})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Deleted[/green] user {user_id}")
+    _print_journal_action(log, json_output)
 
 
 # ── mcp ────────────────────────────────────────────────────────────

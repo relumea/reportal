@@ -125,7 +125,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (156 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (161 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -283,16 +283,42 @@ every write that changed something) through `?order=`.
 
 ### F. Users, auth and IAM (hosted 5 operations)
 
-**Status:** Planned. Nothing started.
+**Status:** In progress.  Shipped: local identity, roles and the API gate.
 
-`GET /v2/iam/me`, `GET /v2/iam/me/permissions`, `GET /v2/users/{id}`,
-`GET /v2/users/activity`, `POST /v2/users/feedback`.  reportal is
-loopback-only and single-user with no identity at all.  The local form is
-bearer-token auth with users, roles (`admin`/`analyst`/`viewer`), a permission
-read that states what the caller may do, per-object team scoping on the
-analyst-write paths, an activity feed derived from the action journal, and
-local feedback notes.  Loopback binds stay unauthenticated so an existing
-single-user install keeps working.
+- users, roles and bearer tokens (`src/reportal/auth.py`, the `users` table):
+  `viewer` reads, `analyst` reads and writes, `admin` also manages users, with
+  the permission sets declared once in `auth.ROLE_PERMISSIONS` and the
+  permission one request needs derived from its method and path
+  (`auth.required_permission`).  Only a token's SHA-256 digest is stored
+  (`auth.hash_token`) and the token is 256 bits of `secrets.token_urlsafe`
+  randomness, shown once by the call that created or rotated it; comparison is
+  `hmac.compare_digest` and a disabled user never authenticates.
+- `GET /api/iam/me` and `.../permissions` answer the hosted `iam/me` pair: the
+  auth mode, the caller, its role and the permissions that role carries; with
+  auth off the caller is the local operator and the answer says so.
+- the user surface the hosted `users/{id}` read implies: `GET /api/users`,
+  `POST /api/users` (201 with the token once), `PATCH /api/users/<id>`,
+  `POST /api/users/<id>/token` and `DELETE /api/users/<id>`, every write
+  journaled and revertible, and never a digest in a response.
+- the gate itself: `server.require_auth` is a router dependency, so every
+  `/api` route is behind it and a route added later cannot opt out.  Auth is
+  armed only by `REPORTAL_AUTH=required` or `[auth] required = true`, so a
+  loopback install keeps working unchanged, and `reportal serve --host` refuses
+  a non-loopback bind unless the gate is armed and an enabled user exists
+  (`cli._require_lan_auth`).
+- `reportal users`/`user-add`/`user-token`/`user-edit`/`user-rm`, the
+  `list_users`, `add_user`, `rotate_user_token`, `update_user` and `delete_user`
+  MCP tools (161 tools: 75 read-only, 86 destructive) and the SPA Users view
+  (identity block, the browser's bearer-token field, the user table with role,
+  disable, rotate and delete) expose the same.  `docs/THREAT_MODEL.md` records
+  the moved boundary and its residual risks.
+
+Still open in this cluster: per-object team scoping (a `teams` table with
+membership and a scope on each analyst write), the activity feed
+(`GET /v2/users/activity`, derived from the action journal once a journal entry
+records the actor it happened for) and local feedback notes
+(`POST /v2/users/feedback`).  The hosted `GET /v2/users/{id}` single-user read
+is covered by the list; `docs/TODO.md` entries 2 and 5 track the scoping work.
 
 ### G. Models (hosted 1 operation plus analysis parameters)
 

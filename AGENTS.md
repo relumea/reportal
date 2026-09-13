@@ -279,7 +279,12 @@ reportal/
     ├── surface.py          # the checks and journal writers the API, CLI and MCP share
     ├── server.py           # shared FastAPI (ASGI) app: JSON helpers, gzip, Host guard,
     │                       #   the error envelope as a response and an exception, the
-    │                       #   json_body/optional_json_body dependencies, db()
+    │                       #   json_body/optional_json_body dependencies, db(), and the
+    │                       #   require_auth dependency a router mounts for the API gate
+    ├── auth.py             # local identity: the users table, roles and their permission
+    │                       #   sets, bearer tokens (digest only), the constant-time
+    │                       #   authenticate, and required() from REPORTAL_AUTH or
+    │                       #   [auth] required; off by default
     ├── api.py              # router: every /api/* route (the JSON API)
     ├── ui.py               # router: the built SPA, /static assets and the
     │                       #   /reports/<id> generated site, each resolved under its root
@@ -290,7 +295,8 @@ reportal/
     │                       #   collection-remove, collection-tags, apply-match,
     │                       #   analysis, analysis-update, analysis-log, analysis-requeue,
     │                       #   analysis-tags, imported-functions, analysis-bulk-tag,
-    │                       #   analysis-bulk-delete,
+    │                       #   analysis-bulk-delete, users, user-add, user-token,
+    │                       #   user-edit, user-rm,
     │                       #   comments, comment-add, comment-rm, bulk-tag, bulk-delete,
     │                       #   bulk-prefix, diff, lineage, related, composition, families,
     │                       #   family-add, family-rm, detect,
@@ -311,7 +317,7 @@ reportal/
     │                       #   job, job-submit, job-run, job-cancel
     ├── mcp_tools.py        # MCP tool registry: Tool (name/description/input_schema/
     │                       #   annotations/handler), register_tool/tools/refresh_tools,
-    │                       #   the 156 built-in tools, `reportal.mcp_tools` entry-point group
+    │                       #   the 161 built-in tools, `reportal.mcp_tools` entry-point group
     ├── mcp_server.py       # stdio MCP server: newline-delimited JSON-RPC 2.0 over stdin/stdout
     │                       #   (initialize, notifications/initialized, tools/list, tools/call)
     └── assets/dist/        # generated Vite build (gitignored; served by ui.py)
@@ -346,7 +352,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 184 source files` is the finish line.
+`Success: no issues found in 186 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -360,7 +366,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.37%, 22009 statements with 1679 missed. `[tool.coverage.report] fail_under`
+92.23%, 22430 statements with 1742 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -483,6 +489,22 @@ rather drive the queue with `reportal job-run`.
 | Setting | Env var | Default |
 |---------|---------|---------|
 | Job pool | `REPORTAL_JOBS_POOL` (falsey: `0`, `false`, `no`, `off`) | on |
+
+### Identity configuration
+
+Token auth is off by default, so a loopback install answers every request as the
+local operator.  Turning it on puts every `/api` route behind
+`Authorization: Bearer <token>`; `reportal serve --host` refuses a non-loopback
+bind unless it is on and an enabled user exists.
+
+| Setting | Env var | `reportal.toml` key | Default |
+|---------|---------|---------------------|---------|
+| Require token auth | `REPORTAL_AUTH` (truthy: `1`, `true`, `yes`, `on`, `required`) | `[auth] required = true` | off |
+
+User management is `reportal user-add <name> [--role viewer|analyst|admin]`
+(which prints the token once), `user-token`, `user-edit`, `user-rm` and `users`.
+Only the token's SHA-256 digest is stored, and the SPA keeps the bearer token in
+`localStorage` (`api.TOKEN_STORAGE_KEY`).
 
 ### Graph backend configuration
 
@@ -634,13 +656,15 @@ restores the state one history row recorded, is journaled and is destructive.
 comment store and is read-only; `add_comment`, `update_comment` and
 `delete_comment` write it and are destructive.  `bulk_binaries`,
 `bulk_functions` and `bulk_analyses` apply one action to a bounded id list through
-`bulk_actions`, so all three are destructive.  `list_journal` reads the
+`bulk_actions`, so all three are destructive.  `list_users` reads the user table
+(never a digest) and is read-only; `add_user`, `rotate_user_token`,
+`update_user` and `delete_user` write it and are destructive.  `list_journal` reads the
 action-journal entries and is read-only; `revert_journal_entry` replays one
 action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 The registry
-declares 156 built-in tools, 74 read-only and 82 destructive.
+declares 161 built-in tools, 75 read-only and 86 destructive.
 
 ## SPA
 
@@ -745,8 +769,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 156 built-in
-tools (74 read-only, 82 destructive).
+and `run_match` expose the same over MCP, and the counts stay 161 built-in
+tools (75 read-only, 86 destructive).
 
 ### Scaling
 
@@ -784,6 +808,13 @@ thousand functions.
 - Ruff: line length 100, `select` groups E/F/W/I/UP/B/SIM/A/DTZ/G/N/PGH/TID/RUF100/T10/C4/RET/PIE/ISC/FURB/T20, no ignores.
 - Typer CLI; human output to stderr through `Console(stderr=True)`; `--json` payloads to stdout.
 - FastAPI application served by uvicorn, loopback bind by default, Host-header guard against DNS rebinding.  `server.app` is the ASGI app and `api.router`/`ui.router` are its routes.  A handler is a plain `def` (FastAPI runs it on the threadpool) unless it parses a multipart body itself, takes `request: Request` when it reads the query string and `body: dict[str, Any] = Depends(json_body)` (or `optional_json_body`) when it reads a JSON body.  Nothing 500s on a request error: `json_error` is both a response and an exception, and the handlers in `server.py` keep FastAPI's own refusals (405, a malformed path parameter, an unreadable multipart body) inside the `{"error", "detail", "doc_url"}` envelope.
+- Token auth is one router dependency on `api.router`
+  (`server.require_auth`), armed only by `REPORTAL_AUTH` or `[auth] required`, so a
+  new `/api` route is behind the gate by construction and an install that never
+  enables it behaves exactly as before.  `auth.py` owns the `users` table, the role
+  permission sets (`ROLE_PERMISSIONS`), the digest-only token storage and the
+  constant-time comparison; `cli.serve` refuses a non-loopback bind while the gate is
+  off or no enabled user exists, and `docs/THREAT_MODEL.md` records the boundary.
 - SPA is Vite + React + TypeScript in `web/`, built with bun into
   `src/reportal/assets/dist/` (generated, gitignored).  Routing is
   react-router and every fetch is `@tanstack/react-query`; no CDN.

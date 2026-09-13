@@ -376,3 +376,19 @@ typo cannot half rewrite a collection.  Every one of those writes is one journal
 action: a delete records its links before its own row, because a revert replays
 newest-first and a link restored before its parent exists trips the foreign key
 (`tests/test_collections_api.py` pins that order).
+
+`users` is the local identity table, owned by `auth.py` and created by
+`store.init_db` through `auth.ensure_schema` like the analysis log is.  One row
+is one identity: a `name` (unique, case-insensitive, at most
+`auth.MAX_USER_NAME` characters), a `role` from `auth.ROLES` (`viewer`,
+`analyst`, `admin`, whose permissions are `auth.ROLE_PERMISSIONS`), the
+`token_hash` (SHA-256 of the bearer token, written by `auth.hash_token`, the
+token itself never stored or returned again), `created_at` and a `disabled`
+flag that stops the token authenticating without deleting the row.  It is
+deliberately not a directory of trust: no password, no expiry, no attempt
+counter, because the credential is 256 bits of `secrets.token_urlsafe`
+randomness and every comparison goes through `hmac.compare_digest`.
+`auth.required()` decides whether the API gate is armed and is a configuration
+read; the table only answers *which* user a presented token names.  The user
+writes are journaled like every other write, so a create, a role change, a
+rotation and a delete are each revertible.

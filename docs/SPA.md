@@ -14,7 +14,8 @@ built UI is a follow-up.
 
 `src/main.tsx` mounts `QueryClientProvider` and `HashRouter` around
 `src/App.tsx`, the shell: a grouped sidebar (`NAV_GROUPS` in `src/router.ts`:
-Overview, Targets, Analysis, Agent, System), a topbar title and the health line.
+Overview, Targets, Analysis, Agent, System; the System group ends with Jobs,
+Journal, Components, Integrations and Users), a topbar title and the health line.
 Routing is react-router's: `App` holds one route table, `useRoutes` renders it,
 and the same table is matched against the location for the topbar title and the
 sidebar's active section, so no path is written down twice.  Every view is
@@ -22,7 +23,11 @@ composed from the primitives in `src/components.tsx` (Panel, Toolbar, Button,
 ConfirmButton, Badge, Field, EmptyState, Loading, ErrorNote, Note, CodeBlock,
 KeyValue, DataTable) over the token layer in `src/styles.css`.  `src/api.ts` is
 the typed fetch wrapper: JSON in and out, `FormData` for the binary upload, and
-an `ApiError` carrying `error`/`detail` from a non-2xx body.
+an `ApiError` carrying `error`/`detail` from a non-2xx body.  `api.ts` also
+owns the bearer token: `storedToken`/`storeToken` read and write
+`localStorage["reportal.token"]` (`TOKEN_STORAGE_KEY`) and every request carries
+`Authorization: Bearer <token>` when one is stored, so an authenticated install
+works from the browser without a cookie or a session.
 `src/useAsync.ts` is a view's query over react-query (a per-instance key plus
 the caller's dependencies) and `src/panelCache.ts` is the panels' shared one,
 keyed by request identity, so a panel loaded once is reused when a view unmounts
@@ -376,6 +381,17 @@ every tag), its members are a table whose Remove button posts `DELETE
 member through `POST /api/collections/<id>/binaries`, and Delete sits behind an
 inline confirm (`DELETE /api/collections/<id>`).  Every one of those writes is
 one journal action on the server, so the journal view can revert it.
+
+The Users view (`views/UsersView.tsx`, `#/users`, in the System group) renders
+the identity the API reports: `GET /api/iam/me` as a key/value block (the auth
+mode, who this browser is, the role and its permission badges) beside a bearer
+token field that saves or clears what this browser sends, and `GET /api/users`
+as the user table.  Creating a user takes a name and a role select and shows the
+returned token once in a `CodeBlock`, because that is the only time the server
+has it; each row's role select saves a `PATCH`, Disable/Enable flips the
+disabled flag, New token rotates and shows the replacement once, and Delete
+goes through the confirm pattern.  With auth off the page says so and the API is
+the local operator's, which is the honest reading of an empty user table.
 
 The Analyses view's log drawer (`views/AnalysesView.tsx`) opens with the
 lifecycle read for that analysis: its status badge, engine, created and finished

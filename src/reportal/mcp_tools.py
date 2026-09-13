@@ -28,6 +28,7 @@ from typing import Any
 
 from reportal import (
     analysis_log,
+    auth,
     auto_mode,
     auto_store,
     auto_workers,
@@ -3173,6 +3174,96 @@ def _tool_bulk_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach(result)
 
 
+def _tool_list_users(arguments: dict[str, Any]) -> dict[str, Any]:
+    with contextlib.closing(_open()) as conn:
+        users = auth.list_users(conn)
+    return {"users": users, "count": len(users), "auth_required": auth.required()}
+
+
+def _tool_add_user(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    role = _arg_optional_str(arguments, "role", auth.ROLE_ANALYST)
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        try:
+            user, token = auth.add_user(conn, name=name, role=role)
+        except auth.AuthError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        journal.journaled_create(
+            log,
+            table=auth.TABLE,
+            key=int(user["id"]),
+            description=f"created user {user['name']}",
+        )
+        return log.attach({**user, "token": token})
+
+
+def _tool_rotate_user_token(arguments: dict[str, Any]) -> dict[str, Any]:
+    user_id = _arg_int(arguments, "user_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"rotated the token of user {user_id}",
+            )
+            token = auth.rotate_token(conn, user_id)
+            return log.attach({"id": user_id, "token": token})
+
+
+def _tool_update_user(arguments: dict[str, Any]) -> dict[str, Any]:
+    user_id = _arg_int(arguments, "user_id")
+    role = _arg_optional_str(arguments, "role") or None
+    disabled = arguments.get("disabled")
+    if disabled is not None and not isinstance(disabled, bool):
+        raise ToolError("invalid params", "disabled must be a boolean")
+    if role is None and disabled is None:
+        raise ToolError("invalid user", "provide role or disabled")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"updated user {user_id}",
+            )
+            try:
+                updated = auth.update_user(conn, user_id, role=role, disabled=disabled)
+            except auth.AuthError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            assert updated is not None, "the row was just read"
+            return log.attach(updated)
+
+
+def _tool_delete_user(arguments: dict[str, Any]) -> dict[str, Any]:
+    user_id = _arg_int(arguments, "user_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TABLE,
+                where="id = ?",
+                params=(user_id,),
+                description=f"deleted user {user_id}",
+            )
+            auth.delete_user(conn, user_id)
+            return log.attach({"deleted": user_id})
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -5303,6 +5394,57 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_bulk_analyses,
+        ),
+        Tool(
+            "list_users",
+            "The local users with their roles and state, never their token digests; says whether"
+            " token auth is required on this install.",
+            _object({}),
+            _READ,
+            _tool_list_users,
+        ),
+        Tool(
+            "add_user",
+            "Create a user and return its bearer token once; only the token's digest is stored."
+            " Journaled and revertible.",
+            _object(
+                {
+                    "name": _str("User name."),
+                    "role": _enum("Role the user carries.", auth.ROLES),
+                },
+                ("name",),
+            ),
+            _WRITE,
+            _tool_add_user,
+        ),
+        Tool(
+            "rotate_user_token",
+            "Replace one user's bearer token and return the new one once; journaled and"
+            " revertible.",
+            _object({"user_id": _int("User id.")}, ("user_id",)),
+            _WRITE,
+            _tool_rotate_user_token,
+        ),
+        Tool(
+            "update_user",
+            "Set one user's role or disabled flag; journaled and revertible.",
+            _object(
+                {
+                    "user_id": _int("User id."),
+                    "role": _enum("New role.", auth.ROLES),
+                    "disabled": _bool("Whether the user's token stops authenticating."),
+                },
+                ("user_id",),
+            ),
+            _WRITE,
+            _tool_update_user,
+        ),
+        Tool(
+            "delete_user",
+            "Delete one user; journaled, so a revert puts the row back.",
+            _object({"user_id": _int("User id.")}, ("user_id",)),
+            _WRITE,
+            _tool_delete_user,
         ),
         Tool(
             "ingest_document",

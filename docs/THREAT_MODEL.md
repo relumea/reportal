@@ -8,11 +8,13 @@ the system-level posture.
 
 ## Posture
 
-reportal is a single-user, single-process, single-host application: one SQLite
-database (`store._SCHEMA`) and a `binaries/` plus `reports/` directory per
-workspace.  There is no identity, session or permission table.  It is designed
-to run on a loopback interface beside the rebrew checkout it drives, and the
-default bind is `127.0.0.1` (`cli.serve`, `server.LOOPBACK_HOSTS`).  It never
+reportal is a single-process, single-host application: one SQLite database
+(`store._SCHEMA`, the `users` table included) and a `binaries/` plus `reports/`
+directory per workspace.  It is designed to run on a loopback interface beside
+the rebrew checkout it drives, and the default bind is `127.0.0.1`
+(`cli.serve`, `server.LOOPBACK_HOSTS`).  On that bind it is a single-user tool
+with no identity in play; a bind another machine can reach refuses to start
+until token auth is on and a user exists (`cli._require_lan_auth`).  It never
 executes the binary it analyses: it reads bytes and parses engine JSON, and its
 own subprocess is the rebrew CLI at `engines.RebrewEngine._run`.  That design
 choice is a real boundary, and it is what the rest of this document qualifies.
@@ -23,11 +25,25 @@ choice is a real boundary, and it is what the rest of this document qualifies.
    reach every route in `api.py` and the static assets served by `ui.py`.  The
    server rejects a request whose Host header is not allowlisted
    (`server._validate_host`, `server.LOOPBACK_HOSTS`) and answers with fixed
-   security headers (`server._security_headers`).  There is no authentication:
-   the caller *is* the operator.  The loopback default is a deployment
-   safeguard, and `cli.serve` disables the Host guard outright when the bind is
-   not loopback (`server.configure_hosts(None)`); a non-loopback bind is an
-   unauthenticated control plane (see residual risks).
+   security headers (`server._security_headers`).  Authentication has two
+   modes, chosen once per install by `auth.required()` (`REPORTAL_AUTH=required`
+   or `[auth] required = true`):
+   - **off** (the default).  The caller *is* the operator.  The loopback bind is
+     the safeguard, and `cli.serve` refuses a non-loopback bind in this mode
+     (`cli._require_lan_auth`), so an exposed control plane cannot be reached by
+     forgetting a flag.
+   - **on**.  Every `/api` request needs `Authorization: Bearer <token>`
+     (`server.require_auth`, wired as a router dependency, so it cannot be
+     bypassed by a route added later).  `auth.authenticate` compares the digest
+     of the presented token with every user's in constant time
+     (`hmac.compare_digest`) and refuses a disabled user; the caller's role must
+     carry the permission the method and path imply (`auth.required_permission`:
+     `read` for a read, `write` for a write, `admin` for the user table).  Only
+     the token's SHA-256 digest is stored (`auth.hash_token`), the token is
+     shown once, and it is 256 bits of `secrets.token_urlsafe` randomness.
+   The static SPA shell and its assets stay public in both modes: they carry no
+   portal data, and a browser cannot attach a header to the initial document
+   request.  Every `/api` route, `/api/health` included, is behind the gate.
 2. **Application to durable local state.**  The database and workspace are
    written by the store, the journal and auto mode.  Filesystem permissions and
    host-user access therefore cross this boundary; there is no encryption.
@@ -78,6 +94,7 @@ choice is a real boundary, and it is what the rest of this document qualifies.
 | Binary upload | Network client; arbitrary bytes and filename | `api.upload_binary`, `api._stream_upload` |
 | Document upload and paste | Network client; untrusted text | `api.py` knowledge routes, `knowledge.ingest_document` |
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
+| Authenticated API client | Network client; bearer token header | `server.require_auth`, `auth.authenticate` |
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm._parse_json` |
 | MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
@@ -89,16 +106,19 @@ choice is a real boundary, and it is what the rest of this document qualifies.
   binary; analysis is delegated to rebrew subcommands that parse bytes
   (`engines.RebrewEngine`).  Malware containment, dynamic analysis and network
   isolation of a sample are the sandbox's problem, not reportal's.
-- **User accounts, authentication and authorization.**  There is no identity
-  model.  The comment `author` is free text kept in the browser
-  (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an attribution
-  convenience, not a security principal.
+- **Per-object authorization.**  Token auth answers *who* may call *which kind*
+  of route; it does not scope an object to a team or an owner.  Any user whose
+  role carries `write` may write any binary, function, collection or document in
+  the workspace (the per-object scoping and team model are still open, recorded
+  in `docs/PARITY.md` cluster F).  The comment `author` remains free text kept
+  in the browser (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an
+  attribution convenience, not a security principal.
 - **Multi-tenancy.**  One process owns one workspace and one database
   (`_paths.project_root`).  Concurrent independent users are outside the model,
   as is per-tenant isolation.
-- **A network-exposed deployment.**  Binding to a non-loopback interface is
-  supported but disables the Host guard and leaves every route unauthenticated;
-  a reverse proxy with its own auth is the operator's responsibility.
+- **A reverse-proxy deployment.**  reportal's own token gate is the only
+  authentication it implements; an operator who fronts it with a proxy owns
+  that layer's configuration (TLS, client certificates, rate limits).
 - **Engine and toolchain isolation.**  The rebrew CLI and its docker images run
   with the operator's privileges; reportal does not sandbox them.
 
@@ -114,16 +134,33 @@ choice is a real boundary, and it is what the rest of this document qualifies.
   (`secrets._add`, `secrets.redact`).  The raw value is stored in the scan
   payload, so a scan of a binary that contains a live credential puts that
   credential in the database (a residual risk below).
+- A user's bearer token is generated by `auth.new_token` and returned once, at
+  creation or rotation; only `auth.hash_token` (SHA-256) is stored, so the
+  database carries no usable credential and a stolen database copy cannot
+  authenticate.  The token is never logged: `server.require_auth` reports a fixed
+  detail that does not echo the header value.
 - No secret is passed through argv.
 
 ## Residual risks
 
-- **An unauthenticated non-loopback bind exposes the whole control plane.**  The
-  Host guard is disabled for such a bind and no route checks an identity, so a
-  reachable client can mutate or delete state, run engine work and revert the
-  journal.
-- **The journal is a revert tool, not an audit log.**  It records the write, not
-  who made it, and the revert route itself is unauthenticated.
+- **A token in the browser is only as safe as the origin.**  The SPA keeps the
+  bearer token in `localStorage` (`api.TOKEN_STORAGE_KEY`) and sends it on every
+  request, so a cross-site scripting flaw in the SPA or an extension with access
+  to the origin can read it.  There is no cookie, no session and no rotation on
+  a timer; `reportal user-token <id>` rotates one by hand.
+- **Authorization is per route kind, not per object.**  A caller whose role
+  carries `write` can write every object in the workspace, and any authenticated
+  user may revert the journal (`revert_journal_entry`).  Roles separate reading,
+  writing and user management, not ownership.
+- **The journal is a revert tool, not an audit log.**  It records the write and,
+  once the identity slice lands, no actor column: the authenticated user of a
+  request is not recorded beside the entry it caused (`journal._SCHEMA`).  Who
+  did what is therefore not answerable from the database yet.
+- **The user table is not a directory of trust.**  A name is free text and the
+  role is the only attribute; there is no password, second factor, expiry,
+  lockout after failed attempts or login attempt log.  That is a deliberate
+  trade: the credential is a 256-bit random token, which is not guessable, so
+  the missing controls defend against nothing an attacker can currently do.
 - **Remote-ingest TOCTOU is reduced, not eliminated.**  Validation and the
   connection are separate steps; the peer check withholds the body of a blocked
   connection but the request and (for HTTPS) handshake bytes have already left

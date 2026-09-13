@@ -37,6 +37,7 @@ under the hyphenated heading.
 - Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
 - Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
+- Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 
 ## Request shape
@@ -574,6 +575,41 @@ URL.
 
 `400`. A bulk transfer carried more entries than the route allows in one
 request. Split it.
+
+## Identity
+
+Token auth is off unless `REPORTAL_AUTH=required` (or the workspace
+`[auth] required = true`) turns it on, so a loopback install answers none of
+these.  See `docs/THREAT_MODEL.md` for what the modes promise.
+
+### unauthorized
+
+`401`. The request carried no `Authorization: Bearer <token>` header, the token
+does not match any user, or the user is disabled. Turn auth on deliberately and
+send the token `reportal user-add` or `reportal user-token` printed:
+`Authorization: Bearer reportal_...`.
+
+### forbidden
+
+`403`. The token is valid but its role does not carry the permission the request
+needs: a `viewer` may only read, an `analyst` may read and write, and the user
+table is `admin` only. Ask an operator for a role with `reportal user-edit
+<id> --role analyst`.
+
+### invalid-user
+
+`400`. A user request named a blank or oversized name, an unknown role, or an
+update with neither `role` nor `disabled`. Roles are `viewer`, `analyst` and
+`admin`.
+
+### user-exists
+
+`409`. Another user already carries that name (names compare case-insensitively).
+`reportal users` lists them.
+
+### user-not-found
+
+`404`. No user carries that id.
 
 ## Server
 
