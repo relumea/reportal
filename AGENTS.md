@@ -454,7 +454,9 @@ comment store and is read-only; `add_comment`, `update_comment` and
 `update_user` and `delete_user` write it and are destructive.  `list_teams`
 reads the team store and is read-only; `create_team`, `delete_team`,
 `add_team_member`, `remove_team_member`, `set_binary_scope` and
-`set_collection_scope` write it and are destructive.  `list_journal` reads the
+`set_collection_scope`, `set_team_member_role`, `create_organisation`,
+`delete_organisation` and `set_team_organisation` write it and are destructive;
+`list_organisations` reads the organisation store and is read-only.  `list_journal` reads the
 action-journal entries and is read-only; `revert_journal_entry` replays one
 action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
@@ -520,7 +522,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 228 built-in tools, 108 read-only and 120 destructive.
+declares 233 built-in tools, 109 read-only and 124 destructive.
 
 ## SPA
 
@@ -625,8 +627,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 228 built-in
-tools (108 read-only, 120 destructive).
+and `run_match` expose the same over MCP, and the counts stay 233 built-in
+tools (109 read-only, 124 destructive).
 
 ### Scaling
 

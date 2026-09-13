@@ -7,4 +7,4 @@ consumer and orchestrator of the sibling engines (rebrew, resembl,
 recoverage), never a reimplementation of them, and needs no network.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
