@@ -243,6 +243,28 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   filter, and move the filters into the route hash, the convention
   `AnalysesView` already uses.
 - Size: M.
+- **Status:** Closed.  A type row already carried a `source` (the structs scan,
+  a manual create, the symbol import, a bulk declaration); what was missing was
+  the vocabulary, the breakdown and the filter.
+  `data_types.source_label` maps every stored source onto the portal's four
+  labels through the explicit `SOURCE_MAP` (an undeclared source reads as
+  `User`, and an `ai` prefix as `AI`), `SOURCE_LABELS` is the closed order the
+  strip and the error details spell, and `source_totals` counts the whole model
+  per label so a filter never hides what it is hiding.  `filter_types(...,
+  source=...)` and `GET /api/binaries/<id>/data-types?source=` filter by it (an
+  unknown label is 400 `invalid source`), the payload always carries `sources`,
+  and `reportal types <binary-id> --source LABEL` and the `list_data_types` MCP
+  tool (with a `source` enum) expose the same.  The SPA's Data types panel opens
+  with a provenance strip (one button per label, carrying its count, each one a
+  toggle), adds a Source filter beside the kind and search filters, and renders
+  the list a page (`DATA_TYPE_PAGE`) at a time with a Load more control and a
+  shown-of-matching counter.  The filters live in the route hash
+  (`#/binaries/<id>?kind=&namespace=&search=&source=`), which is the convention
+  the Analyses view already uses, so a filtered model is a link that survives a
+  reload.  A sort-by-size control is the one part of the hosted panel not
+  ported: reportal's list is grouped by namespace, which is a better ordering
+  for the model it stores, and the hosted panel's size sort was not in the
+  crawl's evidence list.
 
 ### 10. Analyses list: per-row actions, bulk mode, richer filters
 

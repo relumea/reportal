@@ -38,7 +38,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from reportal import journal, pdb, store
+from reportal import data_types, journal, pdb, store
 
 # The table the ingested symbol files live in (created on first use).
 TABLE = "symbol_files"
@@ -1134,7 +1134,7 @@ def _apply_types(
                 int(existing["id"]),
                 members=[_with_offsets(member) for member in members],
                 size=int(entry.get("size") or 0),
-                source=SOURCE_DWARF,
+                source=data_types.SOURCE_SYMBOL,
             )
             written += 1
             continue
@@ -1145,7 +1145,7 @@ def _apply_types(
             size=int(entry.get("size") or 0),
             members=[_with_offsets(member) for member in members],
             kind=str(entry.get("kind") or "struct"),
-            source=SOURCE_DWARF,
+            source=data_types.SOURCE_SYMBOL,
         )
         journal.journaled_create(
             log,
@@ -1178,8 +1178,6 @@ def render_symbols(parsed: Mapping[str, Any], *, kind: str = "json") -> str:
     """
     if kind == "json":
         return json.dumps(dict(parsed), indent=2, sort_keys=True) + "\n"
-    from reportal import data_types
-
     types = _types_payload(parsed)
     rows = [
         {

@@ -24,6 +24,8 @@ import {
   DECOMPILER_BACKENDS,
   DEFAULT_DECOMPILER_BACKEND,
 } from "../constants";
+import { useNavigate } from "react-router";
+
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import { useAsync } from "../useAsync";
 import type {
@@ -94,15 +96,42 @@ function kindLabel(kind: DataTypeKind): string {
   return DATA_TYPE_KIND_LABELS[kind];
 }
 
-export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
+export function DataTypesPanel({
+  binaryId,
+  query = {},
+}: {
+  binaryId: number;
+  /** The route hash, whose keys are the filters this panel applies. */
+  query?: Record<string, string>;
+}): ReactNode {
   const structsKey = panelKey("binary", binaryId, "structs");
   const typesPath = `/binaries/${binaryId}/data-types`;
   const structsPath = `/binaries/${binaryId}/structs`;
   const structsEntry = usePanel(structsKey, () => api<StructResult>(structsPath));
 
-  const [kind, setKind] = useState("");
-  const [namespace, setNamespace] = useState("");
-  const [search, setSearch] = useState("");
+  const navigate = useNavigate();
+  // The filters are the route's, so the panel renders a link and a refresh
+  // keeps the filtered view.  `apply` is the only writer.
+  const kind = query.kind ?? "";
+  const namespace = query.namespace ?? "";
+  const search = query.search ?? "";
+  const source = query.source ?? "";
+  const apply = (patch: Record<string, string>): void => {
+    const next: Record<string, string> = { kind, namespace, search, source, ...patch };
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(next)) {
+      if (value !== "") params.set(key, value);
+    }
+    const search_ = params.toString();
+    navigate({ pathname: `/binaries/${binaryId}`, search: search_ });
+  };
+  const setKind = (value: string): void => apply({ kind: value });
+  const setNamespace = (value: string): void => apply({ namespace: value });
+  const setSearch = (value: string): void => apply({ search: value });
+  const setSource = (value: string): void => apply({ source: value });
+  // Progressive load: the model is fetched whole, and the list renders a page
+  // at a time so a binary with thousands of types does not block the view.
+  const [shown, setShown] = useState(DATA_TYPE_PAGE);
   const [backend, setBackend] = useState<string>(DEFAULT_DECOMPILER_BACKEND);
   const [limit, setLimit] = useState(String(DEFAULT_STRUCT_LIMIT));
   const [status, setStatus] = useState("");
@@ -124,11 +153,12 @@ export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
   // The list filter is the API's own: the query string names the kind, the
   // namespace path and the search needle, so one mechanism decides what a
   // filtered list means.  The panel's key carries the same string.
-  const query = new URLSearchParams();
-  if (kind) query.set("kind", kind);
-  if (namespace) query.set("namespace", namespace);
-  if (search.trim()) query.set("search", search.trim());
-  const queryString = query.toString();
+  const filterParams = new URLSearchParams();
+  if (kind) filterParams.set("kind", kind);
+  if (namespace) filterParams.set("namespace", namespace);
+  if (search.trim()) filterParams.set("search", search.trim());
+  if (source) filterParams.set("source", source);
+  const queryString = filterParams.toString();
   const listPath = queryString ? `${typesPath}?${queryString}` : typesPath;
   const typesKey = panelKey("binary", binaryId, "data-types", queryString);
   const loadTypes = (): Promise<DataTypeList> => api<DataTypeList>(listPath);
@@ -391,6 +421,16 @@ export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
             ))}
           </select>
         </Field>
+        <Field label="Source filter">
+          <select value={source} onChange={(event) => setSource(event.target.value)}>
+            <option value="">All sources</option>
+            {DATA_TYPE_SOURCES.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Filter">
           <input
             type="search"
@@ -411,17 +451,76 @@ export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
             selected={namespace}
             onSelect={setNamespace}
           />
+          <ProvenanceStrip
+            sources={entry.data.sources ?? {}}
+            selected={source}
+            onSelect={setSource}
+          />
           <TypeList
-            data={entry.data}
+            data={{ ...entry.data, types: entry.data.types.slice(0, shown) }}
             search={search}
             namespace={namespace}
             kind={kind}
             onChanged={() => refreshPanel(typesKey, loadTypes)}
             onNote={setStatus}
           />
+          {entry.data.types.length > shown ? (
+            <Toolbar>
+              <Button size="sm" onClick={() => setShown(shown + DATA_TYPE_PAGE)}>
+                Load more types
+              </Button>
+              <Muted>
+                Showing {Math.min(shown, entry.data.types.length)} of{" "}
+                {entry.data.types.length} matching type(s).
+              </Muted>
+            </Toolbar>
+          ) : null}
         </>
       )}
     </Panel>
+  );
+}
+
+/** How many types one page of the progressive list renders. */
+const DATA_TYPE_PAGE = 50;
+
+/** The four provenance labels the API reports, in its own order. */
+const DATA_TYPE_SOURCES = ["System", "User", "Auto Unstrip", "AI"] as const;
+
+/**
+ * The provenance strip: how many types came from each source, each count a
+ * filter control.
+ *
+ * The counts are over the whole model rather than the filtered page, so a
+ * reader can see that ticking `System` will leave something before ticking it.
+ */
+function ProvenanceStrip({
+  sources,
+  selected,
+  onSelect,
+}: {
+  sources: Record<string, number>;
+  selected: string;
+  onSelect: (source: string) => void;
+}): ReactNode {
+  return (
+    <Toolbar>
+      {DATA_TYPE_SOURCES.map((label) => (
+        <Button
+          key={label}
+          size="sm"
+          tone={selected === label ? "primary" : "ghost"}
+          onClick={() => onSelect(selected === label ? "" : label)}
+        >
+          {label}: {sources[label] ?? 0}
+        </Button>
+      ))}
+      {selected ? (
+        <Button size="sm" tone="ghost" onClick={() => onSelect("")}>
+          Clear source
+        </Button>
+      ) : null}
+    </Toolbar>
   );
 }
 

@@ -76,7 +76,10 @@ type AppRoute = RouteObject & { handle: RouteHandle };
 /** Route elements: each reads its own parameters and hands its view the props. */
 function BinaryRoute(): ReactNode {
   const { binaryId } = useParams();
-  return <BinaryDetail binaryId={Number(binaryId)} />;
+  const [params] = useSearchParams();
+  // The data-type filters live in the hash, so a filtered model is a link the
+  // convention the Analyses view already uses.
+  return <BinaryDetail binaryId={Number(binaryId)} query={Object.fromEntries(params)} />;
 }
 
 function FunctionsRoute({ onOpenMatches }: { onOpenMatches: (id: number) => void }): ReactNode {

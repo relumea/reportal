@@ -469,6 +469,8 @@ export interface DataTypeList {
   total: number;
   types: DataType[];
   namespaces: NamespaceNode[];
+  /** The count per provenance label over the whole model. */
+  sources: Record<string, number>;
 }
 
 /** One type that mentions another, with the relationship it carries. */

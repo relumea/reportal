@@ -146,6 +146,59 @@ KNOWN_KINDS: tuple[str, ...] = tuple(sorted(KINDS))
 SOURCE_SCAN = "scan"
 SOURCE_MANUAL = "manual"
 
+# Source recorded on a row that came from a debug symbol file, and on one the
+# hosted portal's own features would have produced (the local equivalents are
+# library identification and the AI bridge).
+SOURCE_SYMBOL = "symbol"
+SOURCE_UNSTRIP = "unstrip"
+SOURCE_AI = "ai"
+
+# The four provenance labels the hosted portal shows, and the one explicit table
+# mapping a stored source onto them.  A source nobody declared falls to ``User``
+# (a person's decision is the safest reading), and the ``ai`` prefix covers the
+# bridge's own source names.
+SOURCE_SYSTEM = "System"
+SOURCE_USER = "User"
+SOURCE_AUTO_UNSTRIP = "Auto Unstrip"
+SOURCE_AI_AGENT = "AI"
+SOURCE_LABELS: tuple[str, ...] = (
+    SOURCE_SYSTEM,
+    SOURCE_USER,
+    SOURCE_AUTO_UNSTRIP,
+    SOURCE_AI_AGENT,
+)
+SOURCE_MAP: dict[str, str] = {
+    SOURCE_SCAN: SOURCE_SYSTEM,
+    SOURCE_SYMBOL: SOURCE_SYSTEM,
+    SOURCE_MANUAL: SOURCE_USER,
+    SOURCE_UNSTRIP: SOURCE_AUTO_UNSTRIP,
+    SOURCE_AI: SOURCE_AI_AGENT,
+}
+SOURCE_AI_PREFIX = "ai"
+
+
+def source_label(source: Any) -> str:
+    """The provenance label of one stored ``source`` value."""
+    value = str(source or "").strip().lower()
+    if value in SOURCE_MAP:
+        return SOURCE_MAP[value]
+    if value.startswith(SOURCE_AI_PREFIX) and len(value) > len(SOURCE_AI_PREFIX):
+        return SOURCE_AI_AGENT
+    return SOURCE_USER
+
+
+def source_totals(types: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """The count per provenance label, in :data:`SOURCE_LABELS` order.
+
+    Every label is present, including a zero, so the strip a reader sees is
+    stable and a missing source reads as zero rather than as absent.
+    """
+    totals: dict[str, int] = dict.fromkeys(SOURCE_LABELS, 0)
+    for data_type in types:
+        totals[source_label(data_type.get("source"))] += 1
+    return totals
+
+
 # Source recorded on the history entry a revert appends, the way a rename
 # revert records itself in ``name_history``.
 SOURCE_REVERT = "revert"
@@ -1741,17 +1794,24 @@ def filter_types(
     namespace: str | None = None,
     kind: str | None = None,
     search: str | None = None,
+    source: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return the types that match every given filter.
 
     ``namespace`` matches the path exactly or any descendant (ticking a branch
     includes everything beneath it); ``PROGRAM_NAMESPACE`` selects the types
     with no namespace.  ``search`` is a case-insensitive substring over the
-    type name, its member names and its enum value names.
+    type name, its member names and its enum value names.  ``source`` is one of
+    :data:`SOURCE_LABELS` and matches the type's provenance, which
+    :func:`source_label` derives from its stored source.
     """
     result = list(types)
     if kind:
         result = [data_type for data_type in result if str(data_type["kind"]) == kind]
+    if source:
+        result = [
+            data_type for data_type in result if source_label(data_type.get("source")) == source
+        ]
     if namespace:
         result = [data_type for data_type in result if _in_namespace(data_type, namespace)]
     if search and search.strip():

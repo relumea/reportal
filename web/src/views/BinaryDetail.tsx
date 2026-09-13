@@ -44,7 +44,14 @@ import { panelKey, usePanel } from "../panelCache";
 import type { Binary } from "../types";
 import { ChatAboutButton } from "./ConversationsView";
 
-export function BinaryDetail({ binaryId }: { binaryId: number }): ReactNode {
+export function BinaryDetail({
+  binaryId,
+  query = {},
+}: {
+  binaryId: number;
+  /** The route hash, which carries the data-type filters. */
+  query?: Record<string, string>;
+}): ReactNode {
   const key = panelKey("binary", binaryId);
   const entry = usePanel(key, () => api<Binary>(`/binaries/${binaryId}`));
   return (
@@ -84,7 +91,7 @@ export function BinaryDetail({ binaryId }: { binaryId: number }): ReactNode {
           <ProtocolsPanel binaryId={binary.id} />
           <ThreatPanel binaryId={binary.id} />
           <RemediationPanel binaryId={binary.id} />
-          <DataTypesPanel binaryId={binary.id} />
+          <DataTypesPanel binaryId={binary.id} query={query} />
           <SymbolsPanel binaryId={binary.id} />
           <UnstripPanel binaryId={binary.id} />
           <Panel

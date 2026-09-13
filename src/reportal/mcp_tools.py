@@ -666,12 +666,23 @@ def _tool_get_structs(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_list_data_types(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
+    source = _arg_optional_str(arguments, "source")
+    if source and source not in data_types.SOURCE_LABELS:
+        raise ToolError(
+            "invalid source",
+            f"source must be one of {', '.join(data_types.SOURCE_LABELS)}",
+        )
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
-        model = [
-            data_types.encode_type(row) for row in data_types.list_types(conn, binary_id=binary_id)
-        ]
-    return {"binary_id": binary_id, "count": len(model), "types": model}
+        all_types = data_types.list_types(conn, binary_id=binary_id)
+    selected = data_types.filter_types(all_types, source=source or None)
+    return {
+        "binary_id": binary_id,
+        "count": len(selected),
+        "total": len(all_types),
+        "sources": data_types.source_totals(all_types),
+        "types": [data_types.encode_type(row) for row in selected],
+    }
 
 
 def _data_type_tool_error(exc: data_types.DataTypeError) -> ToolError:
@@ -5125,8 +5136,19 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "list_data_types",
-            "List a binary's editable type model with each type's size and members.",
-            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            "List a binary's editable type model with each type's size, members and provenance"
+            " (System, User, Auto Unstrip or AI), optionally filtered by that source.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "source": {
+                        "type": "string",
+                        "enum": list(data_types.SOURCE_LABELS),
+                        "description": "Keep only types with this provenance.",
+                    },
+                },
+                ("binary_id",),
+            ),
             _READ,
             _tool_list_data_types,
         ),

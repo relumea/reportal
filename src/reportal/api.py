@@ -1815,6 +1815,10 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
     Without a filter the answer is the whole model, as it always was.  The
     namespace tree is built over the whole model either way, so the panel can
     offer a branch that the active filter excludes.
+
+    ``?source=`` filters by provenance (`System`, `User`, `Auto Unstrip`, `AI`)
+    and the payload always carries ``sources``: the count per label over the
+    whole model, which is the strip the panel renders above the list.
     """
     kind = (request.query_params.get("kind") or "").strip()
     if kind:
@@ -1824,6 +1828,9 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
             return _data_type_failure(exc)
     namespace = (request.query_params.get("namespace") or "").strip()
     search = (request.query_params.get("search") or "").strip()
+    source = (request.query_params.get("source") or "").strip()
+    if source and source not in data_types.SOURCE_LABELS:
+        return _invalid_query("source", source, data_types.SOURCE_LABELS)
     with contextlib.closing(_open()) as conn:
         if store.get_binary(conn, binary_id) is None:
             return json_error(
@@ -1835,6 +1842,7 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
         namespace=namespace or None,
         kind=kind or None,
         search=search or None,
+        source=source or None,
     )
     return json_response(
         {
@@ -1843,6 +1851,7 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
             "total": len(types),
             "types": [data_types.encode_type(data_type) for data_type in selected],
             "namespaces": data_types.namespace_tree(types),
+            "sources": data_types.source_totals(types),
         }
     )
 

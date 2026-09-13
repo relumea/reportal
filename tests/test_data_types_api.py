@@ -8,8 +8,11 @@ from pathlib import Path
 
 import pytest
 from conftest import json_body, wsgi_request
+from typer.testing import CliRunner
 
-from reportal import data_types, store
+from reportal import cli, data_types, mcp_server, store
+
+runner = CliRunner()
 
 DEFINITION = (
     "typedef struct PlayerInfo_s {\n\tchar gap_0000[0x17];\n\tint field_C;\n} PlayerInfo;\n"
@@ -457,3 +460,109 @@ class TestReferencesRoute:
         status, headers, body = wsgi_request("GET", "/api/data-types/4242/references")
         assert status.startswith("404")
         assert json_body(body, headers)["error"] == "data-type-not-found"
+
+
+class TestProvenance:
+    def test_the_labels_map_every_stored_source(self) -> None:
+        assert data_types.source_label(data_types.SOURCE_SCAN) == data_types.SOURCE_SYSTEM
+        assert data_types.source_label(data_types.SOURCE_SYMBOL) == data_types.SOURCE_SYSTEM
+        assert data_types.source_label(data_types.SOURCE_MANUAL) == data_types.SOURCE_USER
+        assert data_types.source_label(data_types.SOURCE_UNSTRIP) == data_types.SOURCE_AUTO_UNSTRIP
+        assert data_types.source_label(data_types.SOURCE_AI) == data_types.SOURCE_AI_AGENT
+        assert data_types.source_label("ai-renames") == data_types.SOURCE_AI_AGENT
+        # A source nobody declared reads as a person's decision, never as absent.
+        assert data_types.source_label("") == data_types.SOURCE_USER
+        assert data_types.source_label("something-new") == data_types.SOURCE_USER
+
+    def test_the_totals_name_every_label_in_order(self) -> None:
+        totals = data_types.source_totals(
+            [
+                {"source": data_types.SOURCE_SCAN},
+                {"source": data_types.SOURCE_SCAN},
+                {"source": data_types.SOURCE_UNSTRIP},
+            ]
+        )
+        assert list(totals) == list(data_types.SOURCE_LABELS)
+        assert totals[data_types.SOURCE_SYSTEM] == 2
+        assert totals[data_types.SOURCE_AUTO_UNSTRIP] == 1
+        assert totals[data_types.SOURCE_AI_AGENT] == 0
+
+    def test_the_filter_keeps_one_label(self) -> None:
+        types = [
+            {"name": "a", "kind": "struct", "namespace": "", "size": 4, "source": "scan"},
+            {"name": "b", "kind": "struct", "namespace": "", "size": 4, "source": "manual"},
+        ]
+        kept = data_types.filter_types(types, source=data_types.SOURCE_SYSTEM)
+        assert [entry["name"] for entry in kept] == ["a"]
+        assert data_types.filter_types(types, source=None) == types
+
+    def test_the_route_reports_the_strip_and_filters(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        _seed_type(conn, binary_id)
+        store.add_data_type(
+            conn,
+            binary_id=binary_id,
+            name="HandMade",
+            size=4,
+            members=[],
+            source=data_types.SOURCE_MANUAL,
+        )
+        status, headers, body = wsgi_request("GET", f"/api/binaries/{binary_id}/data-types")
+        assert status.startswith("200"), body
+        payload = json_body(body, headers)
+        assert payload["sources"] == {
+            "System": 1,
+            "User": 1,
+            "Auto Unstrip": 0,
+            "AI": 0,
+        }
+
+        filtered, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{binary_id}/data-types?source=User"
+        )
+        assert filtered.startswith("200"), body
+        chosen = json_body(body, headers)
+        assert [entry["name"] for entry in chosen["types"]] == ["HandMade"]
+        assert chosen["count"] == 1 and chosen["total"] == 2
+        assert chosen["sources"]["System"] == 1
+
+    def test_an_unknown_label_is_400(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{binary_id}/data-types?source=Nonsense"
+        )
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid source"
+
+    def test_the_cli_and_the_tool_take_the_label(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        _seed_type(conn, binary_id)
+        store.add_data_type(
+            conn,
+            binary_id=binary_id,
+            name="HandMade",
+            size=4,
+            members=[],
+            source=data_types.SOURCE_MANUAL,
+        )
+        payload = json.loads(
+            runner.invoke(cli.app, ["types", str(binary_id), "--source", "User", "--json"]).output
+        )
+        assert [entry["name"] for entry in payload["types"]] == ["HandMade"]
+        assert payload["sources"]["System"] == 1
+
+        bad = runner.invoke(cli.app, ["types", str(binary_id), "--source", "Nope"])
+        assert bad.exit_code == 1
+        assert "invalid source" in bad.output
+
+        listed, failed = mcp_server.call_tool(
+            "list_data_types", {"binary_id": binary_id, "source": "User"}
+        )
+        assert not failed, listed
+        assert [entry["name"] for entry in listed["types"]] == ["HandMade"]
+
+        refused, failed = mcp_server.call_tool(
+            "list_data_types", {"binary_id": binary_id, "source": "Nope"}
+        )
+        assert failed
+        assert refused["error"] == "invalid source"

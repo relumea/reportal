@@ -224,6 +224,11 @@ reportal xrefs <function-id> [--kind NAME]... [--json]
 reportal structs <binary-id> [--decompiler kuna] [--limit N] [--json]
                                            # recover struct definitions and store the result
 reportal types <binary-id> [--json]        # list the editable type model with sizes and offsets
+reportal types <binary-id> [--source LABEL] [--json]
+                                           # the editable type model with each
+                                           #   type's provenance (System, User,
+                                           #   Auto Unstrip, AI) and the count per
+                                           #   label
 reportal types-import <binary-id> [--json]
                                            # seed the model from the stored structs scan
 reportal type-rename <type-id> <new-name> [--json]

@@ -14,7 +14,7 @@ AI artifact of a function's decompilation through the optional LLM bridge),
 renames for a stored decompilation, apply a subset of them with a journal and
 restore the journaled text),
 ``xrefs`` (list a function's cross-references), ``structs`` (recover struct
-definitions and store them), ``types``/``types-import``/``type-rename``/
+definitions and store them), ``types`` (with ``--source``)/``types-import``/``type-rename``/
 ``type-member``/``type-kind``/``type-namespace``/``type-size``/
 ``type-member-add``/``type-member-gap``/``type-member-ungap``/
 ``type-value-add``/``type-value-edit``/``type-value-remove``/``types-export``
@@ -7101,16 +7101,23 @@ def structs(
 @app.command()
 def types(
     binary_id: int = typer.Argument(..., help="Binary id whose type model to list"),
+    source: str = typer.Option("", "--source", help="System, User, Auto Unstrip or AI"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """List the binary's editable type model with sizes and offsets."""
+    """List the binary's editable type model with sizes, offsets and provenance."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if source and source not in data_types.SOURCE_LABELS:
+        _fail(
+            f"invalid source: source must be one of {', '.join(data_types.SOURCE_LABELS)}",
+            json_output,
+        )
     with contextlib.closing(store.connect(portal_db)) as conn:
         if store.get_binary(conn, binary_id) is None:
             _fail(f"no binary with id {binary_id}", json_output)
-        model = data_types.list_types(conn, binary_id=binary_id)
+        all_types = data_types.list_types(conn, binary_id=binary_id)
+    model = data_types.filter_types(all_types, source=source or None)
 
     if json_output:
         typer.echo(
@@ -7118,6 +7125,8 @@ def types(
                 {
                     "binary_id": binary_id,
                     "count": len(model),
+                    "total": len(all_types),
+                    "sources": data_types.source_totals(all_types),
                     "types": [data_types.encode_type(row) for row in model],
                 }
             )

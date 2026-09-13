@@ -405,7 +405,7 @@ reads `GET /api/secrets` and writes `PUT`/`DELETE /api/secrets/<name>`, and it
 never renders a value because no response carries one.  The signature panel carries a copy control: comma-separated target ids and
 Copy signature, posting to `POST /api/analyses/<id>/signatures/copy` with the
 panel's function as the source, and reporting how many targets took the copy.
-The data types panel carries a declaration box with Create from declarations and
+The Data types panel opens with a provenance strip (one toggle per label, carrying the count over the whole model), a Source filter beside the kind and search filters, and a page-at-a-time list with a Load more control; its four filters live in the route hash, so a filtered model is a link.  It also carries a declaration box with Create from declarations and
 Update from declarations, posting the pasted C to `POST` or `PUT
 /api/analyses/<id>/data-types` for the binary's latest analysis (the route is
 analysis-scoped) and rendering the created/updated/skipped counts.  The External view
