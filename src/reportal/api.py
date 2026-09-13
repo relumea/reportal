@@ -6897,6 +6897,34 @@ def _stream_file(path: Path, chunk_bytes: int = BINARY_DOWNLOAD_CHUNK_BYTES) -> 
             yield chunk
 
 
+def _streamed_binary(binary: Mapping[str, Any]) -> Response:
+    """The streaming download response for a stored binary row.
+
+    Shared by the binary download and the analysis ``bytes`` read, so both stream
+    the same file the same way.  The row's own file is read in
+    :data:`BINARY_DOWNLOAD_CHUNK_BYTES` chunks, named by
+    :func:`download_filename` and cacheable indefinitely because the stored bytes
+    are content-addressed.  A row whose file is gone is 404 `binary not on disk`.
+    """
+    binary_id = int(binary["id"])
+    path = Path(str(binary["path"]))
+    if not path.is_file():
+        return json_error(
+            404,
+            error="binary not on disk",
+            detail=f"binary {binary_id} has no file at {binary['path']!r}",
+        )
+    return StreamingResponse(
+        _stream_file(path),
+        media_type=_binary_content_type(path),
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_filename(binary)}"',
+            "Content-Length": str(path.stat().st_size),
+            "Cache-Control": BINARY_DOWNLOAD_CACHE_CONTROL,
+        },
+    )
+
+
 @router.get("/api/binaries/{binary_id}/download")
 def download_binary(binary_id: int) -> Response:
     """Stream the stored bytes of one binary as a named attachment.
@@ -6920,22 +6948,7 @@ def download_binary(binary_id: int) -> Response:
         binary = store.get_binary(conn, binary_id)
     if binary is None:
         return json_error(404, error="binary not found", detail=f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        return json_error(
-            404,
-            error="binary not on disk",
-            detail=f"binary {binary_id} has no file at {binary['path']!r}",
-        )
-    return StreamingResponse(
-        _stream_file(path),
-        media_type=_binary_content_type(path),
-        headers={
-            "Content-Disposition": f'attachment; filename="{download_filename(binary)}"',
-            "Content-Length": str(path.stat().st_size),
-            "Cache-Control": BINARY_DOWNLOAD_CACHE_CONTROL,
-        },
-    )
+    return _streamed_binary(binary)
 
 
 # ── Comments ───────────────────────────────────────────────────────
@@ -7306,6 +7319,58 @@ def get_analysis_func_maps(analysis_id: int) -> Response:
             "total": total,
         }
     )
+
+
+@router.get("/api/analyses/{analysis_id}/imported-functions")
+def get_analysis_imported_functions(analysis_id: int, request: Request) -> Response:
+    """The analysis's import stubs, each with the functions that mention it.
+
+    The hosted read groups the imported functions of an analysis and lists their
+    callers.  reportal stores no call graph, so a caller is a function whose
+    stored decompilation carries the stub's name and the payload names that
+    method (``caller_method``) instead of passing a text match off as an edge the
+    engine reported.  ``?limit=`` bounds the stubs returned; ``total`` is the
+    true count.
+    """
+    limit = _query_int(request, "limit")
+    limit = store.DEFAULT_IMPORTED_LIMIT if limit is None else limit
+    if not 1 <= limit <= store.MAX_IMPORTED_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {store.MAX_IMPORTED_LIMIT}",
+        )
+    with contextlib.closing(_open()) as conn:
+        payload = store.imported_functions(conn, analysis_id, limit=limit)
+    if payload is None:
+        return json_error(
+            404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+        )
+    return json_response(payload)
+
+
+@router.get("/api/analyses/{analysis_id}/bytes")
+def get_analysis_bytes(analysis_id: int) -> Response:
+    """The bytes of the analysis's binary, streamed exactly as its download is.
+
+    The hosted ``/bytes`` read is what the download route already serves for the
+    binary; this resolves the analysis to its binary first so a caller that has
+    only an analysis id does not need a second lookup.
+    """
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        binary = None if analysis is None else store.get_binary(conn, int(analysis["binary_id"]))
+    if analysis is None:
+        return json_error(
+            404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+        )
+    if binary is None:
+        return json_error(
+            404,
+            error="binary not found",
+            detail=f"analysis {analysis_id} names binary {analysis['binary_id']}",
+        )
+    return _streamed_binary(binary)
 
 
 @router.patch("/api/analyses/{analysis_id}")

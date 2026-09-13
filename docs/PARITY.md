@@ -19,7 +19,7 @@ Status vocabulary:
 
 | Capability | Status | Backing engine | Notes |
 |------------|--------|----------------|-------|
-| Upload / analysis lifecycle | Implemented | local + rebrew | `POST /api/binaries` accepts a `multipart/form-data` upload (`file` part, optional `name` field), streams it to `<workspace>/binaries/` while computing sha256, and publishes it as `<sha256><suffix>` (the client filename contributes only a suffix matching `^\.[A-Za-z0-9]{1,8}$`, never a path component). Dedupe is by sha256: a repeat upload returns the existing row with `"duplicate": true`. Uploads are capped at `MAX_UPLOAD_BYTES` (256 MiB), answered 413 `file-too-large`; a missing `file` part is 400 `no-file`, an empty one 400 `empty-file`. Repeating the `file` part (or adding a JSON `files` field, entry *i* describing part *i* with a `name`, `tags`, `collection_ids` and an explicit `format`/`arch`) makes the same route a batch: each part is streamed in order, an entry that fails answers the single-file code inside its own `error` object while the others still register, a duplicate is reported as `"duplicate": true` rather than as a failure, the body carries `{"files", "count", "duplicates", "errors"}` and the whole request is one journal action (a batch past `MAX_UPLOAD_FILES`, 64, is 400 `too-many-files`). Tags go through the existing `create_tag`/`add_binary_tag` helpers and the collection links through `add_collection_binary`, all inside that one action, so a revert takes back every binary, tag and link the request made. The hosted portal's Platform, ISA and File Format pickers map to reportal's stored `format`/`arch` (the explicit hint, else the suffix-derived value); a compiler hint, Visibility and the debug-symbol upload have no local column and are not stored. The SPA Binaries view carries the browser batch upload control: a multiple file input, a collection picker and one options row per file (name, tag chips, Format and ISA), with each result reported per file and a duplicate named as such. `reportal add-binary <path>` and `import-rebrew` remain the CLI paths, and `POST /api/analyses` plus the `binaries`/`analyses` tables back the lifecycle. The status is a real lifecycle: `store.ANALYSIS_STATUSES` (`pending`, `processing`, `done`, `failed`, `cancelled`, mapping onto the hosted portal's Queued, Processing, Complete and Error) is the source of truth, `store.set_scan` marks an analysis `done` when a scan is stored, `store.scan_span` logs a scan's start and marks the analysis `failed` with an error entry when the work raises, and every status change appends an entry. The log the hosted portal shows per row is `GET /api/analyses/<id>/logs` (newest first, bounded, with the log's true total, severity per entry) over the `analysis_log_entries` table, written only through `analysis_log.append_entry`; `reportal analysis-logs <id>` reads the same log. `GET /api/analyses` takes the filters the list view needs (`status`, `search`, `order`, `limit`), `DELETE /api/analyses/<id>` removes one analysis with its dependent rows and is journaled (refused 409 `last-analysis` for a binary's only analysis while it holds functions), and the SPA Analyses view (`#/analyses`) renders the table, filters, the on-demand log drawer and the per-row delete. A requeue route is deliberately not built: the stored scans record results, not the inputs they ran with, so a re-run cannot be reconstructed and a route would only reset a status with no work behind it. |
+| Upload / analysis lifecycle | Implemented | local + rebrew | `POST /api/binaries` accepts a `multipart/form-data` upload (`file` part, optional `name` field), streams it to `<workspace>/binaries/` while computing sha256, and publishes it as `<sha256><suffix>` (the client filename contributes only a suffix matching `^\.[A-Za-z0-9]{1,8}$`, never a path component). Dedupe is by sha256: a repeat upload returns the existing row with `"duplicate": true`. Uploads are capped at `MAX_UPLOAD_BYTES` (256 MiB), answered 413 `file-too-large`; a missing `file` part is 400 `no-file`, an empty one 400 `empty-file`. Repeating the `file` part (or adding a JSON `files` field, entry *i* describing part *i* with a `name`, `tags`, `collection_ids` and an explicit `format`/`arch`) makes the same route a batch: each part is streamed in order, an entry that fails answers the single-file code inside its own `error` object while the others still register, a duplicate is reported as `"duplicate": true` rather than as a failure, the body carries `{"files", "count", "duplicates", "errors"}` and the whole request is one journal action (a batch past `MAX_UPLOAD_FILES`, 64, is 400 `too-many-files`). Tags go through the existing `create_tag`/`add_binary_tag` helpers and the collection links through `add_collection_binary`, all inside that one action, so a revert takes back every binary, tag and link the request made. The hosted portal's Platform, ISA and File Format pickers map to reportal's stored `format`/`arch` (the explicit hint, else the suffix-derived value); a compiler hint, Visibility and the debug-symbol upload have no local column and are not stored. The SPA Binaries view carries the browser batch upload control: a multiple file input, a collection picker and one options row per file (name, tag chips, Format and ISA), with each result reported per file and a duplicate named as such. `reportal add-binary <path>` and `import-rebrew` remain the CLI paths, and `POST /api/analyses` plus the `binaries`/`analyses` tables back the lifecycle. The status is a real lifecycle: `store.ANALYSIS_STATUSES` (`pending`, `processing`, `done`, `failed`, `cancelled`, mapping onto the hosted portal's Queued, Processing, Complete and Error) is the source of truth, `store.set_scan` marks an analysis `done` when a scan is stored, `store.scan_span` logs a scan's start and marks the analysis `failed` with an error entry when the work raises, and every status change appends an entry. The log the hosted portal shows per row is `GET /api/analyses/<id>/logs` (newest first, bounded, with the log's true total, severity per entry) over the `analysis_log_entries` table, written only through `analysis_log.append_entry`; `reportal analysis-logs <id>` reads the same log. `GET /api/analyses` takes the filters the list view needs (`status`, `search`, `order`, `limit`), `DELETE /api/analyses/<id>` removes one analysis with its dependent rows and is journaled (refused 409 `last-analysis` for a binary's only analysis while it holds functions), and the SPA Analyses view (`#/analyses`) renders the table, filters, the on-demand log drawer and the per-row delete. The rest of the hosted lifecycle is in the cluster D inventory below: reading one analysis, its status, its recorded parameters, its function map, its import stubs with their callers, its raw bytes and its tags, a relabel, a log append and a requeue. A requeue moves the lifecycle row back to `pending` and logs the transition rather than replaying the engine calls: the stored scans record results, not the inputs they ran with, so a re-run is not reconstructable from the store. |
 | Binary metadata + hashes | Implemented | rebrew | sha256 (streamed at import or `add-binary`), size, path. md5, sha1, sha256, sha512, the four SHA-3 digests (`sha3_224`, `sha3_256`, `sha3_384`, `sha3_512`), crc32, format, arch, imphash, the export hash and section entropies come from `rebrew fingerprints` through `GET`/`POST /api/binaries/<id>/fingerprint` and `reportal enrich` (the export hash is SHA-256 over the sorted, lowercased `<ordinal>:<name>` export lines, or over the empty string when the image has no exports). The `format`/`arch` columns set at registration come from the file suffix and stay best effort; the stored fingerprint carries the header-derived values. The binary detail view renders the digest set as copyable mono rows, with Compute/Recompute. PE details are the second half: `reportal pe-info <binary-id>` and `GET`/`POST /api/binaries/<id>/pe-info` run `rebrew pe-info <binary> --json` (standalone, no project context) and store the identity (format, arch, bits, PE type, image base, entry point, subsystem, timestamp, checksum, size, resource count), the export table (name, absolute VA, ordinal, forwarder target; a forwarded export keeps its record), the section table with each section's entropy, full `IMAGE_SCN_*` characteristic names and read/write/execute flags, the security flags with their summary and raw `dll_characteristics`, the 11-item mitigation checklist (`aslr`, `dep`, `cfg`, `driver_model`, `app_container`, `terminal_server_aware`, `image_isolation`, `code_integrity`, `high_entropy`, `seh`, `bound_image`) with its `security_score` (`enabled` over the fixed total 11), the Authenticode state, the debug directory entries, the Rich header, and the presence/counts blocks; an item whose source value is unavailable reports unknown (`null`), never a false the file did not state. the POST stores and the GET is stored-only (404 `no-scan`), and the binary detail view is the portal's detail surface: a Binary details card (identity, import and export hashes, debug/Rich-header summary), a Hashes card, a Security mitigations card (`N/11` plus the checklist), an Imports card, an Exports card, a Sections card (entropy meter and full `IMAGE_SCN_*` list), a Code signature card, a Packer detection card, an Unpacked files card and a Strings card, each row list carrying a client-side filter with its filtered-of-total count. A binary whose format carries no PE metadata answers identity plus a note. File-type, packer and protector detection is bundled: `reportal filetype <binary-id>` and `GET`/`POST /api/binaries/<id>/filetype` match the same evidence (the PE sections, the entry point's own bytes, the section entropies, the imports and the strings) against the curated `SIGNATURES` table in `src/reportal/filetypes.py` (`packer`, `protector`, `installer`, `runtime` and `toolchain` categories: UPX, ASPack, MPRESS, PECompact, NsPack, Petite, tElock, FSG, PKLITE, LZEXE, Themida/WinLicense, VMProtect, Enigma, Obsidium, Armadillo, NSIS, Inno Setup, InstallShield, .NET, Visual Basic, Delphi, MSVC and MinGW GCC, plus a high-entropy-executable heuristic), deterministically and with no new dependency, no network call and no execution of the sample. Confidence is derived from the matched signal kinds: two independent kinds are `high`, a single section name, import or entry-point prefix is `medium`, and a lone string marker or entropy heuristic is `low`. The POST stores the `filetype` scan, the GET is stored-only (404 `no-scan`) and never runs the engine, a missing evidence piece is recorded as a note instead of failing the run, and the binary detail view folds the detection into the Packer detection card (verdict, peak-section-entropy meter with the packed range marked, section count, compiler string and the match table). The table is a curated subset, not the full DIE database, and a missing signature is not proof a binary is unpacked. |
 | Binary download | Implemented | local store | `GET /api/binaries/<id>/download` streams a stored binary back as an attachment, reading it in 1 MiB chunks rather than whole (an upload may be up to the API's 256 MiB cap), so a large binary is never held in memory whole. The filename comes from the sanitized stored name (one path component, everything outside `[A-Za-z0-9._-]` an underscore, the content-addressed file name as a fallback) and never from the request; `Content-Length` is the file's own byte count, the content type comes from its suffix (a PE suffix gets the portable-executable type, everything else `application/octet-stream`), and `Cache-Control` marks the answer immutable because the bytes are content-addressed. An unknown id is 404 `binary not found`; a row whose file is gone is 404 `binary not on disk` naming the path (the engine routes answer 400 for that condition, but a download is of a representation that is gone). `reportal download <binary-id> [--output PATH] [--force]` writes the same bytes to an explicit path in bounded chunks, and the Binaries view carries a per-row Download link. The hosted portal's per-row download is the comparison; this is a local file write with no upload or storage backend. |
 | Strings / imports | Implemented | rebrew | `GET /api/binaries/<id>/imports` is a live pass-through of `rebrew imports`; `GET /api/binaries/<id>/strings` runs `rebrew strings`, normalizes each entry to `{va, section, kind, size, text}` and sorts server-side by `sort=value\|length` and `order=asc\|desc` (`reportal strings <binary-id> [--sort value\|length] [--order asc\|desc]`), ties broken on the text then the address. The binary detail view loads both on demand (strings capped at 500 shown, with the true total), carries the sort controls and links a string's VA and text to the Functions view filtered to the functions that reference that address (`?refers_to=<hex>`), which resolves the address's cross-references through the same `rebrew xrefs` call the xrefs route makes. |
@@ -87,6 +87,13 @@ These hosted capabilities are out of scope for a local, offline tool:
   or team model. (The `Auth / teams` row above.)
 - **Threat intel / VirusTotal / MalwareBazaar**: no external feed is called;
   Detect is local family matching against a store the analyst curates.
+- **Example analyses** (`/v3/analyses/examples`): the hosted portal ships a
+  vendor-curated sample corpus for a hosted tenancy to browse before uploading
+  anything.  reportal registers only binaries the analyst supplied and bundles
+  none, so a "local example" would be a test fixture pretending to be product
+  content.  `reportal import-rebrew <project-dir>` and `reportal add-binary`
+  are the ways a first analysis is created, and the analyses view says so on an
+  empty store.
 
 ## Not built
 
@@ -97,13 +104,14 @@ Optional items that are not implemented:
   `filetypes.SIGNATURES` table over data reportal already fetches; the engine's
   own toolchain detection still uses an external `diec` when one is installed,
   and the local table is a curated subset, not the complete DIE database.
-- **A `POST /api/analyses/<id>/requeue` route.** The hosted portal can re-queue
-  an analysis; reportal stores each scan's *result*, not the inputs it ran
-  with, so a re-run cannot be reconstructed from the store (a scan's
+- **A reconstructed re-run from the stored rows.** The hosted portal can re-queue
+  an analysis; reportal stores each scan's *result*, not the inputs it ran with,
+  so the engine call behind a stored scan cannot be replayed exactly (a scan's
   `decompiler`, `min_severity` or `other_binary_id` is not recorded beside it).
-  The route would therefore only reset a status with no work behind it, which
-  is a stub rather than a requeue; the per-scan POSTs are the re-run entry
-  points instead.
+  `POST /api/analyses/<id>/requeue` therefore moves the lifecycle row back to
+  `pending`, clears the finish time and logs the transition, and the caller
+  queues the work it wants (`POST /api/jobs` with a scan kind); the per-scan
+  POSTs stay the entry points that re-run one scan with explicit parameters.
 
 ## Gap inventory
 
@@ -215,8 +223,8 @@ Windows-only and orthogonal; the local runner is the general case).
 
 ### D. Analysis lifecycle (hosted `Analyses - Core`, 32 operations)
 
-**Status:** In progress.  Closed in this slice, end to end over the tables that
-already existed (no new table):
+**Status:** In progress.  Closed end to end over the tables that already existed
+(no new table):
 
 - reading one analysis (`GET /api/analyses/<id>`), its lifecycle
   (`.../status`, with the scan and log counts by status and severity) and its
@@ -224,6 +232,15 @@ already existed (no new table):
   content hash, the rebrew project context and the scans already stored, which
   is what makes a re-run reproducible rather than guessed);
 - the function map (`.../func-maps`, ordered by address);
+- the import stubs with their callers
+  (`GET /api/analyses/<id>/imported-functions`): every function the importer
+  labelled `import` (`store.IMPORTED_NAME_SOURCE`), each with the functions
+  whose stored decompilation mentions its name, the true `caller_count` beside
+  the bounded list and `caller_method` naming the derivation, because reportal
+  stores no call graph and a text match is reported as one;
+- the raw bytes (`GET /api/analyses/<id>/bytes`), streamed by the same helper
+  the binary download uses, so a caller holding only an analysis id needs no
+  second lookup;
 - its tags (`GET|PATCH .../tags`), which locally are the owning binary's tags,
   the only scope reportal has, journaled link by link;
 - the engine relabel (`PATCH /api/analyses/<id>`), a log append
@@ -232,31 +249,22 @@ already existed (no new table):
   entry it added).
 
 `reportal analysis`/`analysis-update`/`analysis-log`/`analysis-requeue`/
-`analysis-tags`, the `get_analysis`, `get_analysis_params`,
-`get_analysis_func_maps`, `update_analysis`, `append_analysis_log`,
-`requeue_analysis` and `set_analysis_tags` MCP tools (154 tools: 73 read-only,
-81 destructive) and the analyses view's log drawer expose the same.
+`analysis-tags`/`imported-functions` and `reportal download --analysis`, the
+`get_analysis`, `get_analysis_params`, `get_analysis_func_maps`,
+`get_imported_functions`, `update_analysis`, `append_analysis_log`,
+`requeue_analysis` and `set_analysis_tags` MCP tools (155 tools: 74 read-only,
+81 destructive) and the analyses view's log drawer (lifecycle, imported
+functions, raw bytes) expose the same.
 
-Still open in this cluster: the example-analyses read (`/v3/analyses/examples`),
-the imported-function read with its callers (`/v3/analyses/{id}/imported-functions`;
-the rows exist, the importer labels them `THUNK_NAME_SOURCE`, but no route groups
-them yet), bulk delete and bulk tag over many analyses (`PATCH
-/v2/analyses/delete`, `PATCH /v2/analyses/tags/add`) and the raw-bytes route
-(`/v3/analyses/{id}/bytes`, which `GET /api/binaries/<id>/download` already
-serves for the analysis's binary).  `docs/TODO.md` records the crawl's view that
-example analyses, per-analysis tags and imported functions are already covered;
-the tags read is shipped here anyway, and the other two are the next slice.
+Still open in this cluster: bulk delete and bulk tag over many analyses
+(`PATCH /v2/analyses/delete`, `PATCH /v2/analyses/tags/add`).  The example
+analyses read is not applicable locally, with the reason in that section above;
+the raw-bytes route and the imported-function read are shipped here.
 
-reportal has list, create, delete, logs (read), scans.  Missing: read one
-analysis (`GET /v2|v3/analyses/{id}/basic`), update it (`PATCH
-/v2/analyses/{id}`), its status (`.../status`), its recorded parameters
-(`.../params`, which is what makes a re-run reproducible), requeue
-(`.../requeue`), the function map (`.../func_maps`), example analyses
-(`/v3/analyses/examples`), raw bytes (`/v3/analyses/{id}/bytes`), appending a
-log entry over HTTP (`POST /v2/analyses/{id}/logs`), analysis tags (`GET|PATCH
-/v2/analyses/{id}/tags`), bulk delete and bulk tag (`PATCH /v2/analyses/delete`,
-`PATCH /v2/analyses/tags/add`), and imported functions with their callers
-(`/v3/analyses/{id}/imported-functions[/{id}]`).
+reportal has list, create, delete, logs (read), scans and now the rest of the
+lifecycle: read one analysis, update it, its status, its recorded parameters,
+requeue, the function map, raw bytes, a log append over HTTP, analysis tags, and
+imported functions with their callers.  Remaining: bulk delete and bulk tag.
 
 ### E. Collections (hosted 16 operations)
 

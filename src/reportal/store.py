@@ -943,6 +943,98 @@ def analysis_status(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any
     }
 
 
+# ── Imported functions ─────────────────────────────────────────────
+
+# ``functions.name_source`` the rebrew importer labels an import stub with
+# (``cli.THUNK_NAME_SOURCE``, which reads this constant).
+IMPORTED_NAME_SOURCE = "import"
+
+# Imported rows one read returns when the caller names no limit, and the cap.
+DEFAULT_IMPORTED_LIMIT = 200
+MAX_IMPORTED_LIMIT = 1000
+
+# Callers one imported function carries in its answer, with the true total
+# beside them.
+IMPORTED_CALLER_LIMIT = 20
+
+
+def _import_callers(
+    conn: sqlite3.Connection, analysis_id: int, *, function_id: int, name: str
+) -> tuple[list[dict[str, Any]], int]:
+    """A bounded caller list for one import stub, and its true count.
+
+    reportal stores no call graph, so a caller is a function of the same
+    analysis whose stored decompilation carries the stub's name.  A stub with no
+    name has no callers rather than every function.
+    """
+    if not name:
+        return [], 0
+    where = (
+        "f.analysis_id = ? AND f.id != ? AND EXISTS (SELECT 1 FROM decompilations d"
+        " WHERE d.function_id = f.id AND d.code LIKE ? ESCAPE '\\')"
+    )
+    params: tuple[Any, ...] = (analysis_id, function_id, f"%{_escape_like(name)}%")
+    count = int(
+        conn.execute(f"SELECT COUNT(*) AS n FROM functions f WHERE {where}", params).fetchone()["n"]
+    )
+    rows = _rows(
+        conn.execute(
+            f"SELECT f.id, f.va, f.name FROM functions f WHERE {where}"
+            " ORDER BY f.va ASC, f.id ASC LIMIT ?",
+            (*params, IMPORTED_CALLER_LIMIT),
+        )
+    )
+    return rows, count
+
+
+def imported_functions(
+    conn: sqlite3.Connection, analysis_id: int, *, limit: int = DEFAULT_IMPORTED_LIMIT
+) -> dict[str, Any] | None:
+    """The import stubs of one analysis, each with the functions that mention it.
+
+    ``name_source`` is :data:`IMPORTED_NAME_SOURCE` for a stub the importer
+    created.  The callers are derived from the text reportal stores, not from an
+    engine-reported call graph, and the payload says so (``caller_method``)
+    rather than passing a text match off as an edge.  An analysis with no stubs
+    answers an empty list; an unknown id is ``None``.
+    """
+    analysis = get_analysis(conn, analysis_id)
+    if analysis is None:
+        return None
+    bounded = max(1, min(int(limit), MAX_IMPORTED_LIMIT))
+    rows = _rows(
+        conn.execute(
+            "SELECT * FROM functions WHERE analysis_id = ? AND name_source = ?"
+            " ORDER BY va ASC, id ASC LIMIT ?",
+            (analysis_id, IMPORTED_NAME_SOURCE, bounded),
+        )
+    )
+    total = int(
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM functions WHERE analysis_id = ? AND name_source = ?",
+            (analysis_id, IMPORTED_NAME_SOURCE),
+        ).fetchone()["n"]
+    )
+    functions: list[dict[str, Any]] = []
+    for row in rows:
+        callers, caller_count = _import_callers(
+            conn, analysis_id, function_id=int(row["id"]), name=str(row["name"])
+        )
+        entry = dict(row)
+        entry["callers"] = callers
+        entry["caller_count"] = caller_count
+        functions.append(entry)
+    return {
+        "analysis_id": analysis_id,
+        "binary_id": int(analysis["binary_id"]),
+        "functions": functions,
+        "count": len(functions),
+        "total": total,
+        "caller_method": "decompilation-text",
+        "caller_limit": IMPORTED_CALLER_LIMIT,
+    }
+
+
 def update_analysis(
     conn: sqlite3.Connection, analysis_id: int, *, engine: str | None = None
 ) -> dict[str, Any] | None:

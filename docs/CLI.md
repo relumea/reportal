@@ -9,12 +9,14 @@ reportal init [--dir PATH]                 # write reportal.toml + reportal.db
 reportal import-rebrew <project-dir>       # ingest a rebrew workspace (idempotent; stores its context)
                                            #   plus the target binary's import stubs as THUNK rows
 reportal add-binary <path> [--name TEXT]   # register a binary by sha256 (dedupe)
-reportal download <binary-id> [--output PATH] [--force] [--zip] [--password TEXT] [--json]
+reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--password TEXT] [--json]
                                            # write the stored binary's bytes to a path (default:
                                            #   the stored name in the current directory), copying
                                            #   in bounded chunks; --zip writes a zip whose member
                                            #   is password protected instead (default password
-                                           #   'infected', a shared convention, not a secret)
+                                           #   'infected', a shared convention, not a secret);
+                                           #   --analysis reads the id as an analysis id and
+                                           #   writes that analysis's binary
 reportal extract <binary-id> [--password TEXT] [--collection ID] [--json]
                                            # unpack a stored archive with the stdlib
                                            #   (zip/apk, tar/tar.gz/tgz/tar.bz2/tar.xz, gz),
@@ -373,6 +375,10 @@ reportal analysis-log <id> MESSAGE [--severity info|warn|error] [--json]
 reportal analysis-requeue <id> [--json]    # back to pending, finish time cleared, logged
 reportal analysis-tags <id> NAME... [--json]
                                            # replace the tags on the analysis's binary
+reportal imported-functions <id> [--limit N] [--json]
+                                           # the analysis's import stubs, each with the
+                                           #   functions whose stored decompilation
+                                           #   mentions it (text derived callers)
 reportal analyses [--status S] [--search TEXT] [--order newest|oldest]
              [--limit N] [--json]
                                            # list analyses with their binary, status,

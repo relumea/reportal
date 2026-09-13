@@ -3372,6 +3372,16 @@ def _tool_get_analysis_func_maps(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _tool_get_imported_functions(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    limit = _arg_optional_int(arguments, "limit", store.DEFAULT_IMPORTED_LIMIT)
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        payload = store.imported_functions(conn, analysis_id, limit=limit)
+    assert payload is not None, "the row was just read"
+    return payload
+
+
 def _tool_update_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
     analysis_id = _arg_int(arguments, "analysis_id")
     engine = _arg_str(arguments, "engine")
@@ -5369,6 +5379,20 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"analysis_id": _int("Analysis id.")}, ("analysis_id",)),
             _READ,
             _tool_get_analysis_func_maps,
+        ),
+        Tool(
+            "get_imported_functions",
+            "One analysis's import stubs with the functions whose stored decompilation mentions"
+            " each one; the callers are text derived, which the payload names.",
+            _object(
+                {
+                    "analysis_id": _int("Analysis id."),
+                    "limit": _int(f"Maximum stubs (default {store.DEFAULT_IMPORTED_LIMIT})."),
+                },
+                ("analysis_id",),
+            ),
+            _READ,
+            _tool_get_imported_functions,
         ),
         Tool(
             "update_analysis",

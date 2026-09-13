@@ -1881,6 +1881,38 @@ export interface AnalysisStatus {
   logs_by_severity: Record<string, number>;
 }
 
+/** One caller of an import stub: a function whose decompilation mentions it. */
+export interface ImportedCaller {
+  id: number;
+  va: number;
+  name: string;
+}
+
+/** One import stub of an analysis, with the functions its source mentions it in. */
+export interface ImportedFunction {
+  id: number;
+  va: number;
+  name: string;
+  size: number;
+  status: string;
+  name_source: string;
+  /** Bounded by the payload's `caller_limit`; `caller_count` is the true total. */
+  callers: ImportedCaller[];
+  caller_count: number;
+}
+
+/** The `GET /api/analyses/<id>/imported-functions` payload. */
+export interface ImportedFunctionsPayload {
+  analysis_id: number;
+  binary_id: number;
+  functions: ImportedFunction[];
+  count: number;
+  total: number;
+  /** How the callers were derived; reportal stores no call graph. */
+  caller_method: string;
+  caller_limit: number;
+}
+
 /** One item of the notification feed, derived from the journal or the log. */
 export interface NotificationItem {
   /** Stable per source row (or action); what a client keys its dismissal on. */

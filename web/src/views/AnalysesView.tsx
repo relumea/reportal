@@ -35,7 +35,13 @@ import {
   DEFAULT_ANALYSIS_LOG_LIMIT,
 } from "../constants";
 import { logSeverityLevel } from "../design";
-import type { AnalysisList, AnalysisLogPage, AnalysisRow, AnalysisStatus } from "../types";
+import type {
+  AnalysisList,
+  AnalysisLogPage,
+  AnalysisRow,
+  AnalysisStatus,
+  ImportedFunctionsPayload,
+} from "../types";
 import { useAsync } from "../useAsync";
 
 const ANALYSES_PATH = "/analyses";
@@ -148,7 +154,58 @@ function Lifecycle({ analysisId, onChanged }: { analysisId: number; onChanged: (
         <a className="btn btn-ghost" href={`/api/analyses/${analysisId}/params`}>
           Re-run parameters
         </a>
+        <a className="btn btn-ghost" href={`/api/analyses/${analysisId}/bytes`}>
+          Raw bytes
+        </a>
       </Toolbar>
+    </>
+  );
+}
+
+/** An analysis's import stubs, each with the functions its source mentions it in. */
+function ImportedFunctions({ analysisId }: { analysisId: number }): ReactNode {
+  const { data, error, reload } = useAsync(
+    () => api<ImportedFunctionsPayload>(`/analyses/${analysisId}/imported-functions`),
+    [analysisId],
+  );
+  if (error) return <ErrorNote error={error} onRetry={reload} />;
+  if (data === undefined) return <Loading label="Loading imported functions" />;
+  if (data.functions.length === 0) {
+    return <EmptyState>This analysis carries no imported function stubs.</EmptyState>;
+  }
+  return (
+    <>
+      <Muted>
+        Callers come from the stored decompilation text ({data.caller_method}); reportal stores no
+        call graph.
+      </Muted>
+      <DataTable
+        columns={[
+          { label: "Import", key: "name", mono: true },
+          {
+            label: "Address",
+            mono: true,
+            render: (row) => `0x${row.va.toString(16)}`,
+          },
+          {
+            label: "Callers",
+            render: (row) => (
+              <span className="toolbar">
+                {row.callers.map((caller) => (
+                  <Badge key={caller.id} mono>
+                    {caller.name || `0x${caller.va.toString(16)}`}
+                  </Badge>
+                ))}
+                {row.caller_count > row.callers.length ? (
+                  <Muted>+{row.caller_count - row.callers.length} more</Muted>
+                ) : null}
+              </span>
+            ),
+          },
+        ]}
+        rows={data.functions}
+        rowKey={(row) => row.id}
+      />
     </>
   );
 }
@@ -184,6 +241,7 @@ function LogDrawer({ analysisId, onClose }: { analysisId: number; onClose: () =>
       }
     >
       <Lifecycle analysisId={analysisId} onChanged={reload} />
+      <ImportedFunctions analysisId={analysisId} />
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}
       {data === undefined && !error ? (
         <Loading label="Loading the log" />

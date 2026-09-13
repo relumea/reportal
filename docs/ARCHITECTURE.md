@@ -208,6 +208,18 @@ stays the importer's summary sentence: one column cannot carry a severity, a
 timestamp or a bound per row, so the events live in their own table and cascade
 with their analysis.
 
+`store.imported_functions` reads the import stubs of one analysis
+(`functions.name_source` is `store.IMPORTED_NAME_SOURCE`, written by the
+importer) and derives each stub's callers from `decompilations.code`, because
+reportal stores no call graph: a caller is a function of the same analysis whose
+stored source carries the stub's name.  The heuristics are named in the payload
+(`caller_method`, `caller_limit`, and `caller_count` beside the bounded
+`callers` list) rather than implied, so a reader can tell a text match from an
+engine-reported edge.  `GET /api/analyses/<id>/bytes` resolves an analysis to its
+binary and returns the same streamed response
+`GET /api/binaries/<id>/download` builds, through the one
+`api._streamed_binary` helper.
+
 ## Engine contract
 
 `rebrew` is a base dependency, imported in process by `engines.py`. An install

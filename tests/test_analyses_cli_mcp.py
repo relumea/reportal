@@ -26,8 +26,15 @@ def _seed(tmp_path: Path, monkeypatch: Any) -> dict[str, Any]:
             conn, sha256="e" * 64, name="demo.exe", path="/tmp/demo.exe", size=64
         )
         analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
-        store.add_function(conn, analysis_id=analysis_id, va=0x1000, name="sub_1000", size=16)
-    return {"db": db, "binary": binary_id, "analysis": analysis_id}
+        function_id = store.add_function(
+            conn, analysis_id=analysis_id, va=0x1000, name="sub_1000", size=16
+        )
+    return {
+        "db": db,
+        "binary": binary_id,
+        "analysis": analysis_id,
+        "function": function_id,
+    }
 
 
 class TestCli:
@@ -174,10 +181,91 @@ class TestCli:
 
         assert runner.invoke(cli.app, ["analysis-tags", "4242", "pe"]).exit_code == 1
 
+    def test_the_imported_functions_listing(self, tmp_path: Path, monkeypatch: Any) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            store.add_function(
+                conn,
+                analysis_id=ids["analysis"],
+                va=0x3000,
+                name="malloc",
+                size=6,
+                status="THUNK",
+                name_source=store.IMPORTED_NAME_SOURCE,
+            )
+            store.set_decompilation(
+                conn, ids["function"], "void sub_1000(void) { malloc(4); }", "kuna"
+            )
+
+        result = runner.invoke(cli.app, ["imported-functions", str(ids["analysis"]), "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["total"] == 1
+        assert payload["caller_method"] == "decompilation-text"
+        assert payload["functions"][0]["name"] == "malloc"
+        assert payload["functions"][0]["caller_count"] == 1
+        human = runner.invoke(cli.app, ["imported-functions", str(ids["analysis"])])
+        assert human.exit_code == 0
+
+    def test_the_imported_functions_listing_of_an_unknown_analysis_exits_non_zero(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        _seed(tmp_path, monkeypatch)
+
+        assert runner.invoke(cli.app, ["imported-functions", "4242"]).exit_code == 1
+
+    def test_an_out_of_range_limit_exits_non_zero(self, tmp_path: Path, monkeypatch: Any) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(
+            cli.app, ["imported-functions", str(ids["analysis"]), "--limit", "0"]
+        )
+
+        assert result.exit_code == 1
+
+    def test_download_takes_an_analysis_id(self, tmp_path: Path, monkeypatch: Any) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        source = tmp_path / "demo.exe"
+        source.write_bytes(b"MZanalysis-bytes")
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            conn.execute("UPDATE binaries SET path = ? WHERE id = ?", (str(source), ids["binary"]))
+            conn.commit()
+
+        result = runner.invoke(
+            cli.app,
+            [
+                "download",
+                str(ids["analysis"]),
+                "--analysis",
+                "--output",
+                str(tmp_path / "out.bin"),
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["analysis_id"] == ids["analysis"]
+        assert payload["binary_id"] == ids["binary"]
+        assert (tmp_path / "out.bin").read_bytes() == b"MZanalysis-bytes"
+
+    def test_download_of_an_unknown_analysis_exits_non_zero(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        _seed(tmp_path, monkeypatch)
+
+        assert runner.invoke(cli.app, ["download", "4242", "--analysis"]).exit_code == 1
+
 
 class TestMcp:
     def test_the_read_tools_are_read_only(self) -> None:
-        for name in ("get_analysis", "get_analysis_params", "get_analysis_func_maps"):
+        for name in (
+            "get_analysis",
+            "get_analysis_params",
+            "get_analysis_func_maps",
+            "get_imported_functions",
+        ):
             tool = mcp_tools.get_tool(name)
             assert tool is not None
             assert tool.annotations.read_only_hint is True
@@ -241,6 +329,32 @@ class TestMcp:
         assert logged["severity"] == "warn"
         assert logged["journal_action"]
         assert requeue.handler({"analysis_id": analysis_id})["status"] == "pending"
+
+    def test_get_imported_functions(self, portal_db: Path, conn: sqlite3.Connection) -> None:
+        analysis_id = self._seed(conn)
+        stub = store.add_function(
+            conn,
+            analysis_id=analysis_id,
+            va=0x3000,
+            name="free",
+            size=6,
+            status="THUNK",
+            name_source=store.IMPORTED_NAME_SOURCE,
+        )
+        store.set_decompilation(
+            conn,
+            int(store.list_functions(conn, analysis_id=analysis_id)[0]["id"]),
+            "void f(void) { free(0); }",
+            "kuna",
+        )
+        tool = mcp_tools.get_tool("get_imported_functions")
+        assert tool is not None
+
+        payload = tool.handler({"analysis_id": analysis_id})
+
+        assert payload["total"] == 1
+        assert payload["functions"][0]["id"] == stub
+        assert payload["functions"][0]["callers"][0]["name"] == "sub_2000"
 
     def test_an_unknown_severity_is_a_tool_error(
         self, portal_db: Path, conn: sqlite3.Connection

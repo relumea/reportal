@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from conftest import json_body, wsgi_request
@@ -305,3 +306,114 @@ class TestTags:
     def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
         assert _get("/api/analyses/4242/tags")[0].startswith("404")
         assert _send("PATCH", "/api/analyses/4242/tags", {"tags": []})[0].startswith("404")
+
+
+def _seed_import(conn: sqlite3.Connection, ids: dict[str, int]) -> int:
+    """One import stub, with the matching text in the first function's source."""
+    stub = store.add_function(
+        conn,
+        analysis_id=ids["analysis"],
+        va=0x3000,
+        name="CreateFileW",
+        size=6,
+        status="THUNK",
+        name_source=store.IMPORTED_NAME_SOURCE,
+    )
+    store.set_decompilation(
+        conn, ids["first"], 'void sub_2000(void) { CreateFileW(L"x"); }', "kuna"
+    )
+    store.set_decompilation(conn, ids["second"], "void sub_1000(void) {}", "kuna")
+    return stub
+
+
+class TestImportedFunctions:
+    def test_it_lists_the_stubs_with_their_text_derived_callers(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = _seed(conn)
+        stub = _seed_import(conn, ids)
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/imported-functions")
+
+        assert status.startswith("200")
+        assert payload["analysis_id"] == ids["analysis"]
+        assert payload["binary_id"] == ids["binary"]
+        assert payload["caller_method"] == "decompilation-text"
+        assert payload["total"] == 1
+        assert payload["count"] == 1
+        stub_row = payload["functions"][0]
+        assert stub_row["id"] == stub
+        assert stub_row["name"] == "CreateFileW"
+        assert stub_row["name_source"] == store.IMPORTED_NAME_SOURCE
+        assert stub_row["caller_count"] == 1, "only sub_2000 mentions it"
+        assert [caller["id"] for caller in stub_row["callers"]] == [ids["first"]]
+
+    def test_an_analysis_with_no_stubs_answers_empty(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/imported-functions")
+
+        assert status.startswith("200")
+        assert payload["functions"] == []
+        assert payload["total"] == 0
+
+    def test_a_stub_with_no_name_has_no_callers(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.add_function(
+            conn,
+            analysis_id=ids["analysis"],
+            va=0x3000,
+            name="",
+            size=6,
+            name_source=store.IMPORTED_NAME_SOURCE,
+        )
+
+        _, payload = _get(f"/api/analyses/{ids['analysis']}/imported-functions")
+
+        assert payload["functions"][0]["callers"] == []
+        assert payload["functions"][0]["caller_count"] == 0
+
+    def test_a_limit_outside_its_bound_is_400(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/imported-functions?limit=0")
+
+        assert status.startswith("400")
+        assert payload["error"] == "invalid limit"
+
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        assert _get("/api/analyses/4242/imported-functions")[0].startswith("404")
+
+
+class TestBytes:
+    def test_it_streams_the_analysiss_binary_bytes(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        path = tmp_path / "demo.bin"
+        path.write_bytes(b"MZdemo-bytes")
+        binary_id = store.add_binary(
+            conn, sha256="d" * 64, name="demo.bin", path=str(path), size=12
+        )
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+
+        status, headers, body = wsgi_request("GET", f"/api/analyses/{analysis_id}/bytes")
+
+        assert status.startswith("200")
+        assert body == b"MZdemo-bytes"
+        assert headers["Content-Disposition"] == 'attachment; filename="demo.bin"'
+
+    def test_an_unknown_analysis_is_404(self) -> None:
+        assert wsgi_request("GET", "/api/analyses/4242/bytes")[0].startswith("404")
+
+    def test_a_binary_missing_from_disk_is_404(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = store.add_binary(
+            conn, sha256="e" * 64, name="gone.bin", path=str(tmp_path / "gone.bin"), size=4
+        )
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+
+        status, headers, payload = wsgi_request("GET", f"/api/analyses/{analysis_id}/bytes")
+
+        assert status.startswith("404")
+        assert json_body(payload, headers)["error"] == "binary not on disk"

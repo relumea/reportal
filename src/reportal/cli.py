@@ -173,7 +173,7 @@ _BINARY_SIGNATURES_WHERE = (
 # import-stub list.  An import thunk is `jmp dword ptr [iat]`, six bytes, and
 # the size is what lets the disassembly route list the stub.
 THUNK_STATUS = "THUNK"
-THUNK_NAME_SOURCE = "import"
+THUNK_NAME_SOURCE = store.IMPORTED_NAME_SOURCE
 THUNK_SIZE = 6
 
 # Matches shown by `reportal match` in human mode; the JSON payload carries
@@ -660,6 +660,50 @@ def analysis_tags_command(
         typer.echo(json.dumps(log.attach(payload)))
         return
     console.print(f"binary {binary_id} tags: {', '.join(tags) or 'none'}")
+
+
+@app.command("imported-functions")
+def imported_functions(
+    analysis_id: int = typer.Argument(..., help="Analysis id whose import stubs to list"),
+    limit: int = typer.Option(
+        store.DEFAULT_IMPORTED_LIMIT, "--limit", help="How many stubs to list"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List an analysis's import stubs with the functions whose source mentions them.
+
+    The callers come from the stored decompilation text, not from an
+    engine-reported call graph, and the payload names that method.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if limit < 1 or limit > store.MAX_IMPORTED_LIMIT:
+        _fail(f"limit must be between 1 and {store.MAX_IMPORTED_LIMIT}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        payload = store.imported_functions(conn, analysis_id, limit=limit)
+    if payload is None:
+        _fail(f"no analysis with id {analysis_id}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ID", style="magenta", justify="right")
+    table.add_column("Address", style="cyan")
+    table.add_column("Import")
+    table.add_column("Callers", justify="right")
+    for row in payload["functions"]:
+        table.add_row(
+            str(row["id"]),
+            hex(int(row["va"])),
+            str(row["name"]),
+            str(row["caller_count"]),
+        )
+    console.print(
+        f"\n[bold cyan]{payload['count']} of {payload['total']} imported functions"
+        "[/bold cyan] (callers from decompilation text)"
+    )
+    console.print(table)
 
 
 @app.command()
@@ -2484,6 +2528,9 @@ def _copy_stream(source: Path, target: Path) -> int:
 @app.command("download")
 def download(
     binary_id: int = typer.Argument(..., help="Binary id whose stored bytes to write"),
+    analysis: bool = typer.Option(
+        False, "--analysis", help="The id is an analysis id; write its binary's bytes"
+    ),
     output: Path | None = typer.Option(
         None,
         "--output",
@@ -2506,14 +2553,22 @@ def download(
     name, sanitized the same way the download route's header is.  ``--zip``
     writes a password-protected archive instead, the form a mail gateway or an
     upload form accepts; the password is a shared convention rather than a
-    secret (ZipCrypto authenticates nothing).
+    secret (ZipCrypto authenticates nothing).  ``--analysis`` resolves the id as
+    an analysis id first, which is the local form of the hosted
+    ``analyses/<id>/bytes`` read.
     """
     from reportal import api
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    analysis_id = binary_id if analysis else None
     with contextlib.closing(store.connect(portal_db)) as conn:
+        if analysis_id is not None:
+            row = store.get_analysis(conn, analysis_id)
+            if row is None:
+                _fail(f"no analysis with id {analysis_id}", json_output)
+            binary_id = int(row["binary_id"])
         binary = store.get_binary(conn, binary_id)
         if binary is None:
             _fail(f"no binary with id {binary_id}", json_output)
@@ -2545,6 +2600,8 @@ def download(
             payload["zip"] = True
             payload["member"] = f"{stored_name}.zip"
             payload["password"] = password
+        if analysis_id is not None:
+            payload["analysis_id"] = analysis_id
     if json_output:
         typer.echo(json.dumps(payload))
         return

@@ -380,8 +380,14 @@ one journal action on the server, so the journal view can revert it.
 The Analyses view's log drawer (`views/AnalysesView.tsx`) opens with the
 lifecycle read for that analysis: its status badge, engine, created and finished
 times and the scan and log counts by status and severity, beside an Add log
-entry control, a Requeue button and links to the function map and the re-run
-parameters.  The writes go through the same routes the CLI and MCP use.
+entry control, a Requeue button and links to the function map, the re-run
+parameters and the raw bytes.  The writes go through the same routes the CLI and
+MCP use.  Below the lifecycle block the drawer renders the analysis's imported
+functions (`GET /api/analyses/<id>/imported-functions`): one row per import stub
+with its address and the functions whose stored decompilation mentions it, the
+first `caller_limit` of them as name badges with a `+n more` count, and a line
+saying the callers come from the decompilation text because reportal stores no
+call graph.
 
 The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) lists each analysis's
 id, binary (linked to its detail page), platform badges, binary size, engine,

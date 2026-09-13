@@ -288,7 +288,7 @@ reportal/
     │                       #   collection-edit, collection-rm, collection-add,
     │                       #   collection-remove, collection-tags, apply-match,
     │                       #   analysis, analysis-update, analysis-log, analysis-requeue,
-    │                       #   analysis-tags,
+    │                       #   analysis-tags, imported-functions,
     │                       #   comments, comment-add, comment-rm, bulk-tag, bulk-delete,
     │                       #   bulk-prefix, diff, lineage, related, composition, families,
     │                       #   family-add, family-rm, detect,
@@ -309,7 +309,7 @@ reportal/
     │                       #   job, job-submit, job-run, job-cancel
     ├── mcp_tools.py        # MCP tool registry: Tool (name/description/input_schema/
     │                       #   annotations/handler), register_tool/tools/refresh_tools,
-    │                       #   the 154 built-in tools, `reportal.mcp_tools` entry-point group
+    │                       #   the 155 built-in tools, `reportal.mcp_tools` entry-point group
     ├── mcp_server.py       # stdio MCP server: newline-delimited JSON-RPC 2.0 over stdin/stdout
     │                       #   (initialize, notifications/initialized, tools/list, tools/call)
     └── assets/dist/        # generated Vite build (gitignored; served by ui.py)
@@ -358,7 +358,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.34%, 21826 statements with 1671 missed. `[tool.coverage.report] fail_under`
+92.37%, 21916 statements with 1673 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -638,7 +638,7 @@ action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 The registry
-declares 154 built-in tools, 73 read-only and 81 destructive.
+declares 155 built-in tools, 74 read-only and 81 destructive.
 
 ## SPA
 
@@ -743,8 +743,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 154 built-in
-tools (73 read-only, 81 destructive).
+and `run_match` expose the same over MCP, and the counts stay 155 built-in
+tools (74 read-only, 81 destructive).
 
 ### Scaling
 
