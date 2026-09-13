@@ -39,6 +39,7 @@ under the hyphenated heading.
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
+- Sandbox: [sandbox-disabled](#sandbox-disabled), [sandbox-unavailable](#sandbox-unavailable), [invalid-sandbox](#invalid-sandbox)
 - Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 
@@ -618,6 +619,26 @@ update with neither `role` nor `disabled`. Roles are `viewer`, `analyst` and
 `400`. A feedback note was blank or past `store.MAX_FEEDBACK_CHARS` (2000), or
 the request's `message` was not a string. Send the text `POST
 /api/users/feedback` (or `reportal feedback-add`) should store.
+
+### sandbox-disabled
+
+`403`. A detonation was asked for while the workspace has not opted in. Set
+`REPORTAL_SANDBOX=enabled` or `[sandbox] enabled = true`, which is the guard that
+keeps reportal from executing anything by default.
+
+### sandbox-unavailable
+
+`503`. The workspace opted in but no usable sandbox runner is installed (or the
+configured one, `REPORTAL_SANDBOX_RUNNER` or `[sandbox] runner`, is not). Install
+bubblewrap (`apt install bubblewrap`) or register a runner through the
+`reportal.sandbox_runners` entry-point group; reportal never runs a sample
+without one.
+
+### invalid-sandbox
+
+`400`. A detonation bound is outside its cap: `timeout` must be 1 to 60 seconds,
+`memory_mb` 64 to 4096, and both must be integers. Capturing less than the cap is
+allowed; raising it is not.
 
 ### invalid-team
 

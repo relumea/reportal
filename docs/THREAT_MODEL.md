@@ -14,10 +14,13 @@ directory per workspace.  It is designed to run on a loopback interface beside
 the rebrew checkout it drives, and the default bind is `127.0.0.1`
 (`cli.serve`, `server.LOOPBACK_HOSTS`).  On that bind it is a single-user tool
 with no identity in play; a bind another machine can reach refuses to start
-until token auth is on and a user exists (`cli._require_lan_auth`).  It never
-executes the binary it analyses: it reads bytes and parses engine JSON, and its
-own subprocess is the rebrew CLI at `engines.RebrewEngine._run`.  That design
-choice is a real boundary, and it is what the rest of this document qualifies.
+until token auth is on and a user exists (`cli._require_lan_auth`).  It does not
+execute the binary it analyses by default: it reads bytes and parses engine JSON,
+and its own subprocesses are the rebrew CLI at `engines.RebrewEngine._run` and,
+only when the workspace opts in, a sandbox runner (`sandbox.py`) that isolates a
+sample it was asked to detonate.  That boundary is what the rest of this document
+qualifies, and the sandbox is the one place it moves, so it is written out in
+full below.
 
 ## Trust boundaries
 
@@ -86,7 +89,27 @@ choice is a real boundary, and it is what the rest of this document qualifies.
    tool-call markup, and the artifact parsers require their fields, so a
    malformed answer raises `LlmError` rather than storing a partial artifact.
    The model's output is data; nothing in reportal evaluates it.
-7. **Firmware bytes to the carve.**  `firmware.py` reads the stored file and
+7. **Sample bytes to the sandbox (opt-in, bounded).**  `POST
+   /api/binaries/<id>/dynamic-execution` executes a stored sample, and it is the
+   only path in reportal that does.  Four guards hold before any process starts:
+   the workspace opts in (`REPORTAL_SANDBOX=enabled` or `[sandbox] enabled =
+   true`, `sandbox.require_enabled`), a runner is installed
+   (`sandbox.require_runner`, else 503 `sandbox-unavailable`), the row has a file
+   on disk, and the bounds are inside the caps (`sandbox.requested_caps`:
+   `DEFAULT_TIMEOUT_SECONDS` 10 / `MAX_TIMEOUT_SECONDS` 60, `DEFAULT_MEMORY_MB`
+   512 / `MAX_MEMORY_MB` 4096, and a CPU cap no larger than the wall clock).
+   `sandbox.BwrapRunner` runs `bwrap` with `--unshare-all` (network, PID, mount,
+   IPC and UTS namespaces), `--die-with-parent`, `--new-session`, `--clearenv`,
+   the host root bound read-only, fresh `/proc` and `/dev`, and exactly one
+   writable path (a directory reportal created and removes).  The sample is
+   bind-mounted read-only inside that directory and executed from there, never
+   from its stored path; the caps are applied by the shell's `ulimit` inside the
+   sandbox rather than by `preexec_fn`, which Python documents as unsafe in a
+   threaded server.  The run is recorded (`sandbox_runs`: the command, the caps,
+   the exit status, the duration, bounded stdout/stderr tails and the files the
+   sample wrote) and journaled, and a run that outlives its timeout is killed by
+   process group.
+8. **Firmware bytes to the carve.**  `firmware.py` reads the stored file and
    looks for magics; it writes nothing itself, and
    `api.firmware_extract_binary` writes carved regions into temporary files
    under the workspace's `binaries/` directory, which the same
@@ -94,7 +117,7 @@ choice is a real boundary, and it is what the rest of this document qualifies.
    or refuses.  Nothing is mounted, spawned or executed, so a firmware image is
    untrusted input to a byte scanner and to the stdlib archive readers, not to a
    loader.
-8. **Engine JSON to the store.**  `engines.RebrewEngine._run` spawns the rebrew
+9. **Engine JSON to the store.**  `engines.RebrewEngine._run` spawns the rebrew
    CLI with a fixed subcommand and decodes its stdout as JSON, raising
    `EngineError` for invalid JSON or a non-object; the bounded stderr tail is
    `engines.STDERR_TAIL_CHARS`.  The engine's output is trusted only as far as
@@ -111,6 +134,8 @@ choice is a real boundary, and it is what the rest of this document qualifies.
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
 | Authenticated API client | Network client; bearer token header | `server.require_auth`, `auth.authenticate` |
 | Team-scoped object request | Network client; object id in the path | `server._scoped_object`, `server._enforce_scope`, `auth.visible_clause` |
+| Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `api.sandbox_detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
+| Registered sandbox runner | Third-party package on the host | `sandbox.refresh_runners`, `reportal.sandbox_runners` |
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm._parse_json` |
 | MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
@@ -118,12 +143,19 @@ choice is a real boundary, and it is what the rest of this document qualifies.
 
 ## What is out of scope
 
-- **Executing the analysed sample.**  reportal has no route that runs the
-  binary; analysis is delegated to rebrew subcommands that parse bytes
-  (`engines.RebrewEngine`).  Malware containment, dynamic analysis and network
-  isolation of a sample are the sandbox's problem, not reportal's.  Firmware
-  carving follows the same rule: it reads bytes and writes region files, and it
-  never mounts an image or runs its contents.
+- **Unconditional static-only analysis.**  Detonation exists and is bounded
+  (boundary 7), so "reportal never runs a sample" is a default, not a guarantee:
+  it is off until an operator enables it and installs a runner, and it is capped,
+  unnetworked and read-only-rooted when it runs.  What remains out of scope is
+  *safe* execution: reportal ships no seccomp filter, no syscall tracing and no
+  kernel of its own, so a sample that escapes the runner's namespaces (a kernel
+  bug) is the host's problem, and running untrusted code is never risk-free.
+  Malware containment and full dynamic-analysis depth stay the operator's and
+  bubblewrap's, not reportal's.
+- **Mounting or parsing the sample's contents.**  Firmware carving reads bytes
+  and writes region files; it never mounts an image or runs what it holds, and
+  the analysis paths (filetype, capabilities, secrets, triage) are static.  Only
+  boundary 7 executes anything.
 - **Documents, comments and conversations have no scope of their own.**  The
   team scope lives on binaries and collections; a document, a comment or a
   conversation is reached through the binary or function it hangs off, so it
@@ -220,6 +252,24 @@ choice is a real boundary, and it is what the rest of this document qualifies.
 - **A stale auto run is treated as dead.**  There is no registry of live runs,
   so recovering a run another process is still working marks its live tasks
   `failed` (`auto_mode.recover_auto_run`).
+- **Detonation is one process boundary, not a second machine.**  The sandbox
+  shares the host kernel and its user namespace; there is no seccomp filter, no
+  syscall log and no VM.  `RLIMIT_AS` (the `ulimit -v` cap) bounds address space,
+  not resident memory, so a sample that maps sparsely can hold more RSS than the
+  cap suggests; the wall-clock timeout and the CPU cap are the backstops.  A
+  sample's own network attempts are contained by the unshared network namespace
+  (there is no route and only loopback), not enumerated: the report says the
+  network was unshared rather than listing what it tried.
+- **The runner is an external tool reportal does not audit.**  reportal builds
+  the argv and records it; it does not verify that `bwrap` is the real binary, and
+  a runner registered through the `reportal.sandbox_runners` group is trusted
+  code.  `REPORTAL_SANDBOX_RUNNER` or `[sandbox] runner` naming a plugin is the
+  same trust statement as installing it.
+- **A run is recorded, not reversible in its effects.**  The `sandbox_runs` row
+  is journaled, so a revert removes the record; what the sample did while it ran
+  (its writes in the removed directory, its process tree) is contained by the
+  sandbox rather than undone by the journal, which is the honest boundary of the
+  effect model here.
 - **No rate limiting or quota.**  Each request is bounded (upload size, body
   size, task counts, `auto_mode.MAX_CONCURRENCY`), but a client can repeat
   requests or start many runs.

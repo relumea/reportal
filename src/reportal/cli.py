@@ -415,6 +415,77 @@ def serve(
         _fail(f"Failed to start server on {url}: {exc.strerror or exc}", json_output=False)
 
 
+# ── sandbox ────────────────────────────────────────────────────────
+
+
+@app.command("sandbox")
+def sandbox_command(
+    binary_id: int = typer.Argument(..., help="Stored sample to detonate"),
+    timeout: int | None = typer.Option(None, "--timeout", help="Wall-clock seconds (1 to 60)"),
+    memory_mb: int | None = typer.Option(None, "--memory-mb", help="Address space in MiB"),
+    report: bool = typer.Option(
+        False, "--report", help="Print the stored report instead of running"
+    ),
+    status: bool = typer.Option(False, "--status", help="Print whether a run is possible here"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Detonate a stored sample under the sandbox runner and store the report.
+
+    Off by default: the workspace opts in with REPORTAL_SANDBOX=enabled or
+    `[sandbox] enabled = true`, a runner must be installed, and the run is
+    capped, given no network and a read-only root.  `--report` prints the last
+    stored report and `--status` says whether a run is possible here.
+    """
+    from reportal import api, sandbox
+
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id) or 0
+        if status:
+            payload = sandbox.status_payload(conn, analysis_id)
+        elif report:
+            stored = None if not analysis_id else sandbox.latest_run(conn, analysis_id)
+            if stored is None:
+                _fail(f"binary {binary_id} has no detonation report", json_output)
+            payload = stored
+        else:
+            try:
+                payload = api.sandbox_detonate_binary(
+                    conn, binary_id, timeout=timeout, memory_mb=memory_mb
+                )
+            except sandbox.SandboxError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if status:
+        console.print(
+            f"enabled: {payload['enabled']}, runner: {payload['runner'] or 'none'},"
+            f" runs: {payload['runs']}"
+        )
+        for entry in payload["runners"]:
+            console.print(f"  {entry['name']}: {'available' if entry['available'] else 'missing'}")
+        return
+    console.print(
+        f"[bold]{payload['status']}[/bold] runner {payload['runner']}"
+        f" exit {payload['exit_code']} in {payload['duration_ms']} ms"
+    )
+    if payload["stdout"]:
+        console.print("[dim]stdout:[/dim]")
+        console.print(escape(payload["stdout"].rstrip()))
+    if payload["stderr"]:
+        console.print("[dim]stderr:[/dim]")
+        console.print(escape(payload["stderr"].rstrip()))
+    for entry in payload["files"]:
+        console.print(f"  wrote {entry['path']} ({entry['size']} bytes)")
+    for note in payload["notes"]:
+        console.print(f"  [yellow]{note}[/yellow]")
+
+
 # ── activity and feedback ──────────────────────────────────────────
 
 

@@ -279,10 +279,23 @@ def snapshot_rows(
     """Return the rows *table* is about to lose, as plain dicts.
 
     *where* is a trusted SQL fragment authored by reportal; *params* are bound,
-    never interpolated.
+    never interpolated.  A table the schema has not created yet has no rows to
+    snapshot, and its absence is not an error: a snapshot list may name a table
+    that is created lazily on first use (`sandbox_runs` in a database where
+    nothing was detonated), and the delete it belongs to has nothing to lose.
     """
+    if not table_exists(conn, table):
+        return []
     cursor = conn.execute(f"SELECT * FROM {quote_identifier(table)} WHERE {where}", tuple(params))
     return [dict(row) for row in cursor.fetchall()]
+
+
+def table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    """Whether *table* exists in the open database."""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone()
+    return row is not None
 
 
 def row_restore_descriptor(table: str, rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -708,6 +721,7 @@ _FUNCTIONS_OF_ANALYSIS = "SELECT id FROM functions WHERE analysis_id = ?"
 # snapshotting them is what makes the delete revertible.  Children precede
 # parents, so the reversed replay inserts the analysis before its functions.
 ANALYSIS_DELETE_SNAPSHOTS: tuple[tuple[str, str], ...] = (
+    ("sandbox_runs", "analysis_id = ?"),
     ("scans", "analysis_id = ?"),
     (analysis_log.TABLE, "analysis_id = ?"),
     ("function_signatures", f"function_id IN ({_FUNCTIONS_OF_ANALYSIS})"),

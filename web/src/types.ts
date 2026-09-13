@@ -1887,6 +1887,61 @@ export interface TeamsPayload {
   count: number;
 }
 
+/** One registered sandbox runner and whether it is installed. */
+export interface SandboxRunnerInfo {
+  name: string;
+  available: boolean;
+  describe: string;
+}
+
+/** `GET /api/binaries/<id>/dynamic-execution/status`: can this install detonate? */
+export interface SandboxStatus {
+  analysis_id: number;
+  enabled: boolean;
+  available: boolean;
+  runner: string | null;
+  runners: SandboxRunnerInfo[];
+  caps: {
+    timeout_seconds: number;
+    max_timeout_seconds: number;
+    memory_mb: number;
+    max_memory_mb: number;
+  };
+  runs: number;
+  last: {
+    id: number;
+    status: string;
+    timed_out: boolean;
+    exit_code: number | null;
+    duration_ms: number;
+    created_at: string;
+  } | null;
+  note: string;
+}
+
+/** One stored detonation report. */
+export interface SandboxRun {
+  id: number;
+  analysis_id: number;
+  binary_id: number;
+  sha256: string;
+  status: string;
+  runner: string;
+  argv: string[];
+  caps: Record<string, string | number>;
+  exit_code: number | null;
+  timed_out: boolean;
+  duration_ms: number;
+  stdout: string;
+  stderr: string;
+  files: { path: string; size: number }[];
+  notes: string[];
+  created_at: string;
+  finished_at: string | null;
+  detonation?: SandboxStatus;
+  journal_action?: string;
+}
+
 /** One embedded region a firmware carve found. */
 export interface FirmwareRegion {
   index: number;

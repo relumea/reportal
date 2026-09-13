@@ -26,6 +26,9 @@ reportal/
 │   ├── cli.py                # Typer CLI (init, import-rebrew, add-binary, serve, ...)
 │   ├── server.py             # shared FastAPI app, JSON helpers, Host guard, db(),
 │   │                         #   the require_auth dependency (off unless configured)
+│   ├── sandbox.py            # guarded sample detonation: the opt-in and runner guards,
+│   │                         #   the bounded bwrap argv, the run ledger and the runner
+│   │                         #   registry; the one module that executes a sample
 │   ├── auth.py               # local identity: users, teams, roles, bearer tokens, the gate
 │   │                         #   and the object-visibility rule (visible_clause/may_write)
 │   ├── api.py                # every /api/* route (the JSON API)
@@ -259,6 +262,28 @@ predicate the scope setters and the collection membership route share.  A team
 delete resets its objects to public rather than orphaning them.  `docs/THREAT_MODEL.md` carries the residual
 risks, the largest of which is that authorization is per route kind rather than
 per object.
+
+## Sandbox detonation
+
+`sandbox.py` is the only module that executes a sample, and it is built so that
+the default install still never does.  `sandbox.enabled()` reads
+`REPORTAL_SANDBOX` / `[sandbox] enabled`; `require_runner()` resolves the runner
+from `REPORTAL_SANDBOX_RUNNER` / `[sandbox] runner` or the first installed entry
+in the in-tree `RUNNERS` list (bwrap, whose user namespaces must be enabled), and
+a third party adds one through the `reportal.sandbox_runners` entry-point group
+read by `plugins.load`.  `BwrapRunner.argv` is the whole safety story in one pure
+list: `--unshare-all`, `--die-with-parent`, `--new-session`, `--clearenv`, the
+host root bound read-only, fresh `/proc` and `/dev`, one writable directory bound
+at `/tmp`, the sample bound read-only inside it (the mount point has to live in a
+writable bind, because bwrap cannot create one on the read-only root) and a shell
+whose `ulimit` line applies the CPU, address-space, file-size and process caps
+before `exec`.  `sandbox.execute` writes the run row first, starts the process in
+its own session, kills the group on a wall-clock timeout, and records the exit
+status, the duration, bounded output tails and the files the sample left in the
+directory reportal then removes.  `api.sandbox_detonate_binary` is the shared
+orchestration the route, the CLI and the MCP tool call, so the four guards are
+checked once; `docs/THREAT_MODEL.md` records what the boundary does and does not
+promise.
 
 ## Firmware carving
 

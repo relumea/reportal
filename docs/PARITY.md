@@ -70,7 +70,7 @@ Status vocabulary:
 | Agent conversations | Implemented (optional) | local store + external LLM (OpenAI-compatible) | `reportal chat-new --function <id> \| --binary <id>` and `POST /api/conversations` open a chat scoped to one stored function or binary; `reportal chat <conversation-id> "message"` and `POST /api/conversations/<id>/messages` append the turn and call the configured chat-completions endpoint. The request is a fixed system prompt plus a context block assembled from stored local data only (the function row with its stored disassembly and decompilation, or the binary row with its stored triage summary and capability scan) and the last `HISTORY_TURN_LIMIT` turns. No engine runs, no tool is called and no MCP is involved. Conversations and their messages live in the `conversations` and `messages` tables (`GET /api/conversations?scope_kind=&scope_id=`, `GET`/`DELETE /api/conversations/<id>`), the SPA Conversations view lists, creates, opens, sends to and deletes threads, and the function and binary detail views carry a Chat about this action. A message without a configured endpoint answers 503 `llm-unavailable`; the whole feature is off by default. This is not the hosted portal's tool-calling agent: the model can only answer from the stored context. |
 | Integrations inventory | Implemented | local registries | The hosted portal's Integrations page lists the plugins, SDKs and the MCP endpoint it offers. reportal answers the same question about itself: `reportal integrations` and `GET /api/integrations` read the five registries a plugin enters through (`reportal.components`, `reportal.auto_workers`, `reportal.graph_backends`, `reportal.effect_handlers`, `reportal.mcp_tools`) and report, per seam, the entry-point group, the in-tree module declaring the built-ins and one row per part the registry holds with the fields that seam exposes (a component's origin, requires and provides; a backend's availability and whether it can be queried; a worker's write plan; a handler's descriptor kind and whether it is built-in; a tool's destructive annotation). The read-only `list_integrations` MCP tool and the SPA Integrations view render the same payload. Only the component registry tracks where a part was declared, so an empty origin means the registry does not record one, never that the part is built-in. This is reportal's own seam set, not the hosted platform's plugin catalogue. |
 | MCP tool server | Implemented | local + rebrew + optional LLM | The hosted portal's MCP server (`https://api.reveng.ai/mcp/`, Streamable HTTP with `Authorization: Bearer` and an `mcp-session-id`) is matched locally by `reportal mcp`, an stdio server on the official `mcp` SDK (newline-delimited JSON-RPC 2.0 on stdin/stdout) that serves `initialize`, `notifications/initialized`, `tools/list` and `tools/call` at the negotiated protocol version (currently `2025-06-18`) and reports `serverInfo` `{"name", "title", "version"}`. It exposes reportal's capabilities as 129 plugin tools declared in `src/reportal/mcp_tools.py`; a third party registers through the `reportal.mcp_tools` entry-point group. 61 tools are read-only and 68 are destructive (`destructiveHint: true`), the destructive ones covering the same engine runs and store mutations the HTTP routes do; handlers call reportal's internal functions directly and never make an HTTP request back into reportal. The read tools keep the stored-only routes stored-only. There is no auth (no OAuth, JWT or API key): the server is a local stdio process, so the pipe is the whole trust boundary; Streamable HTTP, sessions, SSE and server-side logging are not emulated. |
-| Dynamic execution | Planned | none | Planned 1.2: an off-by-default sandbox run (bubblewrap or firejail, no network namespace, wall-clock and memory caps, a recorded syscall and file-effect report) with the trust boundary written into docs/THREAT_MODEL.md. reportal never runs target binaries. rebrew's headless runners (wine, DOSBox) execute compilers, not samples. |
+| Dynamic execution (sandbox detonation) | Implemented (off by default) | bubblewrap (external runner) | `reportal sandbox <binary-id> [--timeout N] [--memory-mb N] [--report|--status]`, `POST /api/binaries/<id>/dynamic-execution`, the report read on the binary and its analysis, the status read (the hosted `dynamic-execution/report` and `/status` pair) and the `run_sandbox_detonation` / `get_sandbox_report` / `get_sandbox_status` MCP tools detonate a stored sample and record what it did.  Four guards hold before any process starts: the workspace opts in (`REPORTAL_SANDBOX=enabled` or `[sandbox] enabled = true`, else 403 `sandbox-disabled`), a runner is installed (else 503 `sandbox-unavailable`), the row has a file on disk, and the bounds are inside the caps (`timeout` 1-60s, `memory_mb` 64-4096, a CPU cap no larger than the wall clock; outside them 400 `invalid-sandbox`).  The shipped runner is `bwrap` invoked with `--unshare-all`, `--die-with-parent`, `--new-session`, `--clearenv`, the host root read-only, fresh `/proc` and `/dev` and exactly one writable directory; the sample is bind-mounted read-only inside it and never executed from its stored path, the caps are applied by the shell's `ulimit` (not `preexec_fn`, which Python documents as unsafe in a threaded server), and a run that outlives its timeout is killed by process group.  A third party registers another runner through the `reportal.sandbox_runners` entry-point group.  The report is the runner, the exact argv, the caps, the exit status, the duration, bounded stdout/stderr tails and the files the sample wrote, stored in `sandbox_runs` as one journaled action (revert removes the record).  This is *not* a safe-execution product: no seccomp filter, no syscall tracing, no VM, and `docs/THREAT_MODEL.md` states each residual in full; the guarantee is that reportal runs nothing until an operator says so, in a sandbox that is installed, capped and unnetworked. |
 | Auth / teams | Planned | none | Planned 1.2: bearer-token auth with users, roles and per-object team scoping, loopback-only by default so an existing install keeps working unauthenticated. Loopback-only, single-user tool. recoverage's `--token` pattern is the model if a LAN bind is ever needed. |
 | Firmware | Planned | none | Planned 1.2: firmware image handling (carving, filesystem extraction, per-region entropy, architecture guess from the extracted ELF/PE members) as a local capability of its own. The engine stack targets PE/x86-32 and ELF; no firmware formats. |
 
@@ -78,9 +78,13 @@ Status vocabulary:
 
 These hosted capabilities are out of scope for a local, offline tool:
 
-- **Sandbox / dynamic execution**: reportal never runs a sample, and running one
-  needs a VM or sandbox. rebrew's headless runners execute compilers, not
-  samples. (The `Dynamic execution` row above.)
+- **A VM-grade or hosted sandbox**: the local detonation runs a sample in a
+  sandbox *runner* installed on the host (bubblewrap namespaces, no network, a
+  read-only root, capped and timed), which is a shared kernel rather than a
+  virtual machine or a hosted detonation service. reportal ships no seccomp
+  filter and no syscall log, so syscall-level depth and containment stronger
+  than namespaces are the runner's and the operator's. (The `Dynamic execution`
+  row above states what the local run does promise.)
 - **Unpack**: static PE/ELF analysis needs no unpacking, `rebrew unpack-lzexe`
   covers DOS LZEXE, and dynamic unpacking needs a sandbox.
 - **Auth / teams**: reportal binds loopback for a single user, with no account
@@ -125,7 +129,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (174 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (177 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -207,8 +211,8 @@ prompts.
 
 ### C. Dynamic execution and sandbox detonation (hosted `Analyses - Core`)
 
-**Status:** In progress.  Shipped: firmware carving and extraction, the static
-half of the row above.
+**Status:** Closed.  Both halves shipped: firmware carving and extraction, and
+the opt-in sandbox detonation.
 
 `src/reportal/firmware.py` finds the embedded images in a stored blob by their
 magics (across read boundaries, with a fixed-offset ext superblock checked at
@@ -224,15 +228,20 @@ tools (171 tools: 77 read-only, 94 destructive) and the binary detail's Firmware
 panel expose it.  Nothing is executed, mounted or spawned, and no external tool
 is called: this is byte work over bytes reportal already stored.
 
-Still open in this cluster: the sandbox itself (`GET
-/v2/analyses/{id}/dynamic-execution/report` and `.../status`).  The local form
-stays what it was: a sandbox run with no network, a read-only root, separate
-PID and mount namespaces, a wall-clock and memory cap, a recorded report
-(process tree, opened files, writes, sockets attempted, exit status, a
-stdout/stderr tail), off by default, refused unless the workspace opts in and
-refused outright when no sandbox runner is installed.  That is the one change
-that moves the "reportal never runs a sample" guarantee in
-`docs/THREAT_MODEL.md`, so it lands on its own with the guard written first.
+The sandbox half is shipped too, and it is the one path in reportal that
+executes anything: `src/reportal/sandbox.py` plus `api.sandbox_detonate_binary`
+run a stored sample under `bwrap` with `--unshare-all` (network, PID, mount, IPC
+and UTS namespaces), a read-only root, one writable directory, `ulimit` caps and
+a wall-clock timeout, and record the report in `sandbox_runs` as one journaled
+action.  The four guards (opt-in, installed runner, file on disk, bounds inside
+the caps), the surfaces (`reportal sandbox`, the four routes, three MCP tools,
+the binary detail's Sandbox detonation panel) and the residuals
+(`docs/THREAT_MODEL.md`: a shared kernel, no seccomp, `RLIMIT_AS` is address
+space not RSS, an unaudited external runner, a run recorded rather than undone)
+are written out there.  A third party adds a runner through the
+`reportal.sandbox_runners` entry-point group.
+
+**Status:** Closed.
 
 `GET /v2/analyses/{id}/dynamic-execution/report` and `.../status`: the hosted
 portal detonates the sample and reports what it did.  reportal reads bytes and

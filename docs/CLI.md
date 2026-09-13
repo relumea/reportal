@@ -17,6 +17,12 @@ reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--
                                            #   'infected', a shared convention, not a secret);
                                            #   --analysis reads the id as an analysis id and
                                            #   writes that analysis's binary
+reportal sandbox <binary-id> [--timeout N] [--memory-mb N] [--report|--status] [--json]
+                                           # detonate a stored sample under the sandbox
+                                           #   runner (off by default: the workspace opts in
+                                           #   and a runner must be installed); --report
+                                           #   prints the stored one, --status says whether
+                                           #   a run is possible here
 reportal firmware <binary-id> [--json]       # carve a stored firmware image: its embedded
                                            #   regions, their entropy and confidence;
                                            #   offline byte work, nothing executed

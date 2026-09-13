@@ -354,9 +354,9 @@ description lives in that file.
 |---------|------------|--------|
 | A | Asynchronous operation workflow (jobs, status, cancel, progress, SSE) | Closed in PARITY.md |
 | B | AI decompilation as a first-class artifact (tokens, per-line comments, attributions, rating) | Planned |
-| C | Dynamic execution and sandbox detonation | Planned |
-| D | Analysis lifecycle (basic, params, requeue, examples, bytes, tags, bulk, imported functions) | In progress in PARITY.md: read, status, params, function map, tags, relabel, log append and requeue are closed; examples, imported functions and the bulk routes remain |
-| F | Users, auth and IAM (roles, permissions, activity, feedback) | Planned, extended by entry 2 |
+| C | Dynamic execution and sandbox detonation (the opt-in runner and the firmware carve) | Closed in PARITY.md |
+| D | Analysis lifecycle (basic, params, requeue, bytes, tags, bulk, imported functions) | Closed in PARITY.md (example analyses is not applicable locally) |
+| F | Users, auth and IAM (roles, permissions, teams, scope, activity, feedback) | Closed in PARITY.md |
 | G | Models (registry, model per artifact, upgrade) | Planned |
 | H | External sources (VirusTotal), now with the team key in entry 3 | Planned |
 | J | Function-level extras (indirect call sites, capabilities, strings, user strings) | Planned |
@@ -380,9 +380,14 @@ query kinds, the `?` cheatsheet, the analysis tag chips in the SPA.
 
 ## Deliberately not applicable locally
 
-Recorded so the list does not grow into a clone of a hosted service: malware
-sandbox and PCAP capture (cluster C, a trust-boundary change, not a feature
-gap), billing, credits and subscription tiers, single sign-on against an
-external OIDC identity provider with DNS domain verification, the hosted
-VirusTotal feed, firmware extraction (planned separately in PARITY.md),
+Recorded so the list does not grow into a clone of a hosted service: billing,
+credits and subscription tiers, single sign-on against an external OIDC identity
+provider with DNS domain verification, the hosted VirusTotal feed,
 cross-architecture matching and hosted model availability.
+
+Two entries that used to be here are now shipped and recorded in PARITY.md
+instead: the sandbox detonation (cluster C: off by default, a runner must be
+installed, capped, unnetworked and recorded) and firmware extraction (the carve
+and the region extraction; a squashfs or UBI inode reader is deliberately not
+written).  PCAP capture stays out of scope: reportal runs no network capture and
+its sandbox has no route at all.

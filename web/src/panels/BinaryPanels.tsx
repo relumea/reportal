@@ -97,6 +97,8 @@ import type {
   PeSecurityItem,
   ProtocolsResult,
   RelatedResult,
+  SandboxRun,
+  SandboxStatus,
   RemediationResult,
   ReportResult,
   SecretsResult,
@@ -189,6 +191,7 @@ const NO_SCAN_MESSAGES = {
     "No composition analysis yet. Run it to read how this binary's functions match the corpus.",
   firmware:
     "No firmware carve yet. Run it to find the images embedded in this file.",
+  sandbox: "No detonation report yet. Run the sample to record what it does.",
 } as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -2937,6 +2940,133 @@ export function FirmwarePanel({ binaryId }: { binaryId: number }): ReactNode {
         }}
       </PanelBody>
     </Panel>
+  );
+}
+
+export function SandboxPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "sandbox");
+  const statusPath = `/binaries/${binaryId}/dynamic-execution/status`;
+  const status = usePanel(key, () => api<SandboxStatus>(statusPath));
+  const reportPath = `/binaries/${binaryId}/dynamic-execution`;
+  const [report, setReport] = useState<SandboxRun | null>(null);
+  const [timeout, setTimeoutSeconds] = useState("10");
+  const [memory, setMemory] = useState("512");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const current: SandboxStatus | undefined = status?.state === "ready" ? status.data : undefined;
+  const detonate = (): void => {
+    setError(null);
+    setBusy(true);
+    void api<SandboxRun>(reportPath, {
+      method: "POST",
+      json: { timeout: Number(timeout), memory_mb: Number(memory) },
+    })
+      .then((run) => {
+        setReport(run);
+        refreshPanel(key, () => api<SandboxStatus>(statusPath));
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Panel
+      title="Sandbox detonation"
+      subtitle="Run the sample under bwrap: no network, a read-only root, capped memory and CPU, and a recorded report."
+      actions={
+        <>
+          <Field label="Seconds">
+            <input
+              size={4}
+              value={timeout}
+              onChange={(event) => setTimeoutSeconds(event.target.value)}
+            />
+          </Field>
+          <Field label="Memory (MiB)">
+            <input size={5} value={memory} onChange={(event) => setMemory(event.target.value)} />
+          </Field>
+          <Button
+            tone="primary"
+            pending={busy}
+            disabled={!current?.enabled || !current?.available}
+            onClick={detonate}
+          >
+            Detonate
+          </Button>
+        </>
+      }
+    >
+      {status?.state === "error" ? (
+        <ErrorNote
+          error={status.error}
+          onRetry={() => refreshPanel(key, () => api<SandboxStatus>(statusPath))}
+        />
+      ) : null}
+      {error ? <ErrorNote error={error} /> : null}
+      {current ? (
+        <KeyValue
+          rows={[
+            ["opt-in", current.enabled ? <Badge tone="warn">enabled</Badge> : <Badge>off</Badge>],
+            ["runner", current.runner ?? "none installed"],
+            ["runners", current.runners.map((entry) => `${entry.name}${entry.available ? "" : " (missing)"}`).join(", ") || NA],
+            ["runs", current.runs],
+            ["last", current.last ? `${current.last.status} (exit ${current.last.exit_code ?? "n/a"})` : NA],
+          ]}
+        />
+      ) : null}
+      {current && !current.enabled ? (
+        <Muted>
+          Detonation is off. Set <code>REPORTAL_SANDBOX=enabled</code> or{" "}
+          <code>[sandbox] enabled = true</code> to allow it.
+        </Muted>
+      ) : null}
+      {current && current.enabled && !current.available ? (
+        <Muted>No sandbox runner is installed: {current.runners.map((entry) => entry.name).join(", ") || "none declared"}.</Muted>
+      ) : null}
+      {report === null ? (
+        <EmptyState>{NO_SCAN_MESSAGES.sandbox}</EmptyState>
+      ) : (
+        <SandboxReport run={report} />
+      )}
+    </Panel>
+  );
+}
+
+/** One stored detonation report: the caps, the exit status, the output and the files. */
+function SandboxReport({ run }: { run: SandboxRun }): ReactNode {
+  const caps = Object.entries(run.caps)
+    .map(([name, value]) => `${name} ${value}`)
+    .join(", ");
+  return (
+    <>
+      <KeyValue
+        rows={[
+          [
+            "status",
+            run.timed_out ? (
+              <Badge tone="warn">timed out</Badge>
+            ) : (
+              <Badge tone="ok">{run.status}</Badge>
+            ),
+          ],
+          ["runner", run.runner],
+          ["exit", run.exit_code ?? NA],
+          ["duration", `${run.duration_ms} ms`],
+          ["caps", caps],
+          ["sha256", run.sha256],
+          [
+            "wrote",
+            run.files.length
+              ? run.files.map((entry) => `${entry.path} (${entry.size})`).join(", ")
+              : NA,
+          ],
+        ]}
+      />
+      {run.notes.map((note: string) => (
+        <Muted key={note}>{note}</Muted>
+      ))}
+      {run.stdout ? <CodeBlock text={run.stdout} title="stdout" /> : null}
+      {run.stderr ? <CodeBlock text={run.stderr} title="stderr" /> : null}
+    </>
   );
 }
 

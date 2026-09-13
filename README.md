@@ -53,10 +53,10 @@ Run it from a workspace directory (it resolves `reportal.toml` the same way ever
 }
 ```
 
-That is the shape Claude Desktop and other JSON-config clients use; a client that takes a shell command instead runs `cd /path/to/workspace && reportal mcp`. The server reports 174 tools: reads such as `list_binaries`, `get_function`, `get_disasm`, `diff_functions`, `get_lineage`, `get_related_binaries`, `get_composition`, `list_families`, `get_detect_scan`, `list_data_types`, `get_data_type_history`, `list_signatures`, `get_signature`, `get_signature_history`, `read_memory`, `get_pipeline`, `list_components`, `list_integrations`, `get_auto_run`, `list_documents`, `search`, `search_knowledge`, `retrieve_knowledge`, `get_graph`, `graph_neighbors`, `list_graph_backends`, `get_threat_report`, `get_remediation`, `get_secrets_scan`, `get_protocols_scan`, `get_behavior_scan`, `get_hardening_scan`, `get_function_triage`, `get_pe_info`, `get_die_info`, `get_additional_details`, `get_details_status`, `get_filetype`, `get_pdf_status`, `get_renames`, `list_journal`, `list_jobs`, `get_job`, `get_analysis`, `get_analysis_params`, `get_analysis_func_maps`, `get_imported_functions`, `list_notifications` and `list_comments`, and mutations such as `rename_function`, `run_triage`, `run_function_triage`, `run_lineage`, `run_related_binaries`, `run_composition`, `register_family`, `delete_family`, `run_detect`, `run_capabilities`, `run_pe_info`, `run_filetype`, `run_threat_report`, `run_remediation`, `run_secrets_scan`, `run_protocols_scan`, `run_behavior_scan`, `run_hardening_scan`, `import_data_types`, `edit_data_type`, `export_data_types`, `revert_data_type_history`, `run_signature_import`, `edit_signature`, `export_signatures`, `revert_signature_history`, `suggest_renames`, `apply_renames`, `revert_renames`, `run_pipeline`, `reload_components`, `deactivate_components`, `run_auto`, `revert_auto_run`, `recover_auto_run`, `build_graph`, `sync_graph_backend`, `generate_pdf_report`, `ingest_document`, `ingest_url`, `delete_document`, `extract_archive`, `add_comment`, `update_comment`, `delete_comment`, `bulk_binaries`, `bulk_functions`, `bulk_analyses`, `add_user`, `rotate_user_token`,
+That is the shape Claude Desktop and other JSON-config clients use; a client that takes a shell command instead runs `cd /path/to/workspace && reportal mcp`. The server reports 177 tools: reads such as `list_binaries`, `get_function`, `get_disasm`, `diff_functions`, `get_lineage`, `get_related_binaries`, `get_composition`, `list_families`, `get_detect_scan`, `list_data_types`, `get_data_type_history`, `list_signatures`, `get_signature`, `get_signature_history`, `read_memory`, `get_pipeline`, `list_components`, `list_integrations`, `get_auto_run`, `list_documents`, `search`, `search_knowledge`, `retrieve_knowledge`, `get_graph`, `graph_neighbors`, `list_graph_backends`, `get_threat_report`, `get_remediation`, `get_secrets_scan`, `get_protocols_scan`, `get_behavior_scan`, `get_hardening_scan`, `get_function_triage`, `get_pe_info`, `get_die_info`, `get_additional_details`, `get_details_status`, `get_filetype`, `get_pdf_status`, `get_renames`, `list_journal`, `list_jobs`, `get_job`, `get_analysis`, `get_analysis_params`, `get_analysis_func_maps`, `get_imported_functions`, `list_notifications` and `list_comments`, and mutations such as `rename_function`, `run_triage`, `run_function_triage`, `run_lineage`, `run_related_binaries`, `run_composition`, `register_family`, `delete_family`, `run_detect`, `run_capabilities`, `run_pe_info`, `run_filetype`, `run_threat_report`, `run_remediation`, `run_secrets_scan`, `run_protocols_scan`, `run_behavior_scan`, `run_hardening_scan`, `import_data_types`, `edit_data_type`, `export_data_types`, `revert_data_type_history`, `run_signature_import`, `edit_signature`, `export_signatures`, `revert_signature_history`, `suggest_renames`, `apply_renames`, `revert_renames`, `run_pipeline`, `reload_components`, `deactivate_components`, `run_auto`, `revert_auto_run`, `recover_auto_run`, `build_graph`, `sync_graph_backend`, `generate_pdf_report`, `ingest_document`, `ingest_url`, `delete_document`, `extract_archive`, `add_comment`, `update_comment`, `delete_comment`, `bulk_binaries`, `bulk_functions`, `bulk_analyses`, `add_user`, `rotate_user_token`,
 `update_user`, `delete_user`, `create_team`, `delete_team`, `add_team_member`,
 `remove_team_member`, `set_binary_scope`, `set_collection_scope`, `run_firmware_scan`, `extract_firmware_regions`,
-`add_feedback` and
+`add_feedback`, `run_sandbox_detonation` and
 `revert_journal_entry`. Mutations carry the MCP `destructiveHint` annotation, so a client can ask before running them, and a destructive tool that wrote rows returns a `journal_action` field in its JSON payload, the same id the routes carry, so an agent can revert it through `revert_journal_entry`. There is no auth: the server is a local, single-user pipe. Third parties can ship their own tools through the `reportal.mcp_tools` entry-point group.
 
 ### Custom agents (MCP)
@@ -372,7 +372,7 @@ Working:
   topbar bell) reads the action journal and the analysis log into one feed, one item
   per action and per log entry, newest first, with each item's stable id and the
   latest time, and stores nothing: dismissal lives in the browser.
-- Local MCP server: `reportal mcp` serves 174 tools over stdio (newline-delimited JSON-RPC 2.0) for any MCP client, on the official `mcp` SDK and with no auth. See [MCP server](#mcp-server).
+- Local MCP server: `reportal mcp` serves 177 tools over stdio (newline-delimited JSON-RPC 2.0) for any MCP client, on the official `mcp` SDK and with no auth. See [MCP server](#mcp-server).
 
 Not built yet (see `docs/PARITY.md` for the full map):
 
@@ -381,9 +381,13 @@ Not built yet (see `docs/PARITY.md` for the full map):
 - Snort and STIX outputs are a basic content rule and a minimal deterministic 2.1 bundle, neither schema-validated against an external validator.
 - Auth is unbuilt.
 
-Sandbox and unpacking are intentionally out of scope: reportal never runs a
-sample, and static PE/ELF analysis needs no unpacking. See `docs/PARITY.md` for
-the full map.
+Sandbox detonation is off by default: reportal runs nothing until the workspace
+opts in (`REPORTAL_SANDBOX=enabled` or `[sandbox] enabled = true`) and a runner
+such as bubblewrap is installed, and when it does run a sample it does so with no
+network, a read-only root, one writable directory, capped memory and CPU and a
+wall-clock timeout, recording the report. Static PE/ELF analysis needs no
+unpacking. See `docs/PARITY.md` for the full map and `docs/THREAT_MODEL.md` for
+what the sandbox does and does not promise.
 
 ## Development
 

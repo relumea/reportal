@@ -420,3 +420,19 @@ a write no request made.  An existing database gets the column through
 `journal.ensure_schema`, which adds it before creating its index, and the rows
 written before it read as an empty actor rather than an invented one.
 
+`sandbox_runs` is the detonation ledger, owned by `sandbox.py` and created
+lazily by its own `ensure_schema` (the same pattern `journal.py` uses, which
+keeps `store` from importing the sandbox module back).  One row is one run:
+the `analysis_id` and `binary_id` it belongs to, the `sha256` it was run from,
+the `runner` and the exact `argv_json`, the `caps_json` in force, the terminal
+`status` (`running`, `finished`, `timed_out`, `failed`), the `exit_code`, the
+`duration_ms`, the bounded `stdout`/`stderr` tails, `files_json` (what the
+sample wrote into its one writable directory), `notes_json` and the times.  The
+row is written as `running` before the sample starts and updated with the report
+after, so a reader sees a run in progress and a process that dies mid-run leaves
+the `running` row rather than a gap; the whole run is one journaled action, so a
+revert removes the record.  A binary or analysis delete snapshots the table with
+the rest of the cascade, and `journal.snapshot_rows` treats a table the schema
+has not created yet as empty rather than failing, which is what lets a database
+where nothing was ever detonated take the same path.
+

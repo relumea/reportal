@@ -79,6 +79,7 @@ from reportal import (
     remediation,
     remote_ingest,
     renames,
+    sandbox,
     secrets,
     signatures,
     similarity,
@@ -8393,3 +8394,164 @@ def add_feedback(request: Request, body: dict[str, Any] = Depends(json_body)) ->
     with contextlib.closing(_open()) as conn:
         stored = store.get_feedback(conn, feedback_id)
     return json_response(log.attach(stored or {"id": feedback_id}), status=201)
+
+
+# ── Guarded sandbox detonation ─────────────────────────────────────
+#
+# The one route that executes a sample, and it is off by default: the workspace
+# opts in, a runner must be installed, the run is capped and recorded, and the
+# sample is bind-mounted read-only rather than executed from its stored path.
+# Everything about the run (the command, the caps, the exit status, the output
+# tails and the files it wrote) is stored and journaled, so a revert removes the
+# record of a run whose effects the sandbox already contained.
+
+
+def sandbox_failure(exc: sandbox.SandboxError) -> Response:
+    """Map a sandbox refusal onto its status and error name."""
+    if exc.code == sandbox.ERROR_DISABLED:
+        return json_error(403, error=exc.code, detail=exc.detail)
+    if exc.code == sandbox.ERROR_UNAVAILABLE:
+        return json_error(503, error=exc.code, detail=exc.detail)
+    if exc.code == sandbox.ERROR_NO_RUN or exc.code.endswith("not found"):
+        return json_error(404, error=exc.code, detail=exc.detail)
+    return json_error(400, error=exc.code, detail=exc.detail)
+
+
+def sandbox_detonate_binary(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    *,
+    timeout: int | None = None,
+    memory_mb: int | None = None,
+) -> dict[str, Any]:
+    """Run one stored binary under the sandbox and store the report.
+
+    Shared by the HTTP route, the CLI and the MCP tool, so the four guards are
+    checked once: the workspace opt-in, an installed runner, a file on disk, and
+    bounds inside the caps.  The run row is written before the sample starts and
+    updated with the report after, so a reader sees a run in progress and a
+    process that dies mid-run leaves the `running` row behind.  Raises
+    :class:`reportal.sandbox.SandboxError` for every refusal.
+    """
+    sandbox.require_enabled()
+    runner = sandbox.require_runner()
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise sandbox.SandboxError("binary not found", f"no binary with id {binary_id}")
+    stored = Path(str(binary["path"]))
+    if not stored.is_file():
+        raise sandbox.SandboxError(
+            "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+        )
+    caps = sandbox.requested_caps(timeout=timeout, memory_mb=memory_mb)
+    analysis_before = store.latest_analysis_for_binary(conn, binary_id)
+    analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="sandbox")
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        if analysis_before is None:
+            journal.journaled_create(
+                log,
+                table="analyses",
+                key=analysis_id,
+                description=f"created analysis {analysis_id} for binary {binary_id}",
+            )
+        run_id = sandbox.start_run(
+            conn,
+            analysis_id=analysis_id,
+            binary_id=binary_id,
+            sha256=str(binary["sha256"] or ""),
+            runner=runner.name,
+            argv=runner.argv(stored, Path("/dev/null"), caps),
+            caps=caps,
+        )
+        journal.journaled_create(
+            log,
+            table=sandbox.TABLE,
+            key=run_id,
+            description=f"ran binary {binary_id} in the {runner.name} sandbox",
+        )
+        report = sandbox.execute(stored, caps=caps, runner=runner)
+        sandbox.finish_run(conn, run_id, report)
+        finished = sandbox.get_run(conn, run_id)
+    return log.attach(finished or {"id": run_id, **report})
+
+
+@router.post("/api/binaries/{binary_id}/dynamic-execution")
+def run_binary_sandbox(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Detonate a stored sample under the sandbox runner and store the report.
+
+    Body ``{"timeout": seconds, "memory_mb": megabytes}`` narrows the caps and
+    can never raise them.  The run is refused unless the workspace opted in (403
+    `sandbox-disabled`), a runner is installed (503 `sandbox-unavailable`) and
+    the bounds are inside the caps (400 `invalid-sandbox`); 404 `binary not
+    found`, 400 `binary not on disk`.  The report is one journaled row, so a
+    revert removes the record.
+    """
+    raw_timeout = body.get("timeout")
+    if raw_timeout is not None and (
+        isinstance(raw_timeout, bool) or not isinstance(raw_timeout, int)
+    ):
+        return json_error(400, error=sandbox.ERROR_INVALID, detail="timeout must be an integer")
+    raw_memory = body.get("memory_mb")
+    if raw_memory is not None and (isinstance(raw_memory, bool) or not isinstance(raw_memory, int)):
+        return json_error(400, error=sandbox.ERROR_INVALID, detail="memory_mb must be an integer")
+    with contextlib.closing(_open()) as conn:
+        try:
+            report = sandbox_detonate_binary(
+                conn, binary_id, timeout=raw_timeout, memory_mb=raw_memory
+            )
+        except sandbox.SandboxError as exc:
+            return sandbox_failure(exc)
+    return json_response(report, status=201)
+
+
+@router.get("/api/binaries/{binary_id}/dynamic-execution")
+def get_binary_sandbox(binary_id: int) -> Response:
+    """The newest detonation report of a binary's newest analysis; 404 `no-run`."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        report = None if analysis_id is None else sandbox.latest_run(conn, analysis_id)
+        status = sandbox.status_payload(conn, analysis_id or 0)
+    if report is None:
+        return json_error(
+            404,
+            error=sandbox.ERROR_NO_RUN,
+            detail=f"binary {binary_id} has no detonation report",
+        )
+    return json_response({**report, "detonation": status})
+
+
+@router.get("/api/analyses/{analysis_id}/dynamic-execution")
+def get_analysis_sandbox(analysis_id: int) -> Response:
+    """The newest detonation report of one analysis; the hosted report read."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        report = sandbox.latest_run(conn, analysis_id)
+        status = sandbox.status_payload(conn, analysis_id)
+    if report is None:
+        return json_error(
+            404,
+            error=sandbox.ERROR_NO_RUN,
+            detail=f"analysis {analysis_id} has no detonation report",
+        )
+    return json_response({**report, "detonation": status})
+
+
+@router.get("/api/analyses/{analysis_id}/dynamic-execution/status")
+def get_analysis_sandbox_status(analysis_id: int) -> Response:
+    """Whether this analysis can be detonated, by which runner, and its last run."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        return json_response(sandbox.status_payload(conn, analysis_id))

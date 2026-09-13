@@ -315,6 +315,12 @@ read as a claim:
     team create, update and delete, where a team delete journals its members and
     the binaries and collections that lose their scope; membership add and
     remove; and the object scope setter on a binary or a collection.
+  - **Sandbox runs.**  A detonation writes its `sandbox_runs` row as `running`
+    before the sample starts and updates it with the report after, and the whole
+    run is one action (`journal.journaled_create` on the row, the analysis it
+    created included), so a revert removes the record.  The sample's own effects
+    are *contained* by the sandbox rather than journaled: reportal records what
+    it observed, it does not claim to undo what the sample did.
   - **Feedback.**  A note is one journaled `feedback` row (`POST
     /api/users/feedback`, `reportal feedback-add`, the `add_feedback` MCP tool),
     deleted on revert.  The activity feed beside it stores nothing: it merges the

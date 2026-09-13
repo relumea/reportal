@@ -17,6 +17,12 @@ reimplementation:
 | `recoverage` | the coverage database format it also reads (`db/coverage.db`) |
 | RevEng.AI API | optional and remote; reportal never requires it and makes no network calls at runtime, with two opted-in exceptions: the optional AI bridge calls a chat-completions endpoint the user explicitly configures, and guarded URL ingestion (`remote_ingest.py`, off by default) fetches a URL the user names |
 
+reportal **does not execute a sample by default**.  The one path that can is the
+sandbox (`sandbox.py`), off until the workspace opts in and a runner is installed;
+`docs/THREAT_MODEL.md` boundary 7 states the guards and the residuals.  Static
+analysis (bytes, engine JSON, archive extraction, firmware carving) never runs
+anything.
+
 An optional OpenAI-compatible LLM bridge (`llm.py`) provides the portal's AI
 extras (a function summary, inline comments, type suggestions and identifier
 renames) over a decompilation reportal already stored.  It is disabled until an
@@ -75,7 +81,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 191 source files` is the finish line.
+`Success: no issues found in 193 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -89,7 +95,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.14%, 23554 statements with 1852 missed. `[tool.coverage.report] fail_under`
+92.12%, 23953 statements with 1887 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -232,6 +238,22 @@ and `collection-scope`; and the identity-side reads are `reportal activity
 SHA-256 digest is stored, the SPA keeps the bearer token in `localStorage`
 (`api.TOKEN_STORAGE_KEY`), and each journal entry records the `actor` the server
 set around the request (`server.authenticate` + `journal.acting_as`).
+
+### Sandbox configuration
+
+Detonation is off by default, and the second guard is a runner that is actually
+installed.  `reportal sandbox --status` reports both.
+
+| Setting | Env var | `reportal.toml` key | Default |
+|---------|---------|---------------------|---------|
+| Allow detonation | `REPORTAL_SANDBOX` (truthy: `1`, `true`, `yes`, `on`, `enabled`) | `[sandbox] enabled = true` | off |
+| Runner to use | `REPORTAL_SANDBOX_RUNNER` | `[sandbox] runner` | the first installed runner (`bwrap`) |
+
+A third party registers a runner through the `reportal.sandbox_runners`
+entry-point group, whose value is a `sandbox.Runner` or a zero-argument factory
+returning one.  The caps are `sandbox.DEFAULT_TIMEOUT_SECONDS` 10 /
+`MAX_TIMEOUT_SECONDS` 60, `DEFAULT_MEMORY_MB` 512 / `MAX_MEMORY_MB` 4096 and a
+CPU cap no larger than the wall clock.
 
 ### Graph backend configuration
 
@@ -397,9 +419,12 @@ assembles the evidence, detects and stores the matches, and is destructive.
 `run_firmware_scan` carves and stores one and `extract_firmware_regions` carves
 its regions out as binaries, so both are destructive.  `get_activity` reads the
 activity feed and `list_feedback` the stored notes, so both are read-only;
-`add_feedback` writes one and is destructive.
+`add_feedback` writes one and is destructive.  `get_sandbox_report` and
+`get_sandbox_status` read the detonation ledger and are read-only;
+`run_sandbox_detonation` executes a sample under the sandbox runner and is
+destructive (and refused unless the install opted in).
 The registry
-declares 174 built-in tools, 79 read-only and 95 destructive.
+declares 177 built-in tools, 81 read-only and 96 destructive.
 
 ## SPA
 
@@ -504,8 +529,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 174 built-in
-tools (79 read-only, 95 destructive).
+and `run_match` expose the same over MCP, and the counts stay 177 built-in
+tools (81 read-only, 96 destructive).
 
 ### Scaling
 

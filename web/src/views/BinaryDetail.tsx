@@ -21,6 +21,7 @@ import {
   PackerPanel,
   ProtocolsPanel,
   FirmwarePanel,
+  SandboxPanel,
   RelatedPanel,
   RemediationPanel,
   ReportPanel,
@@ -66,6 +67,7 @@ export function BinaryDetail({ binaryId }: { binaryId: number }): ReactNode {
           <CommentsPanel scopeKind="binary" scopeId={binary.id} />
           <LineagePanel binaryId={binary.id} />
           <FirmwarePanel binaryId={binary.id} />
+          <SandboxPanel binaryId={binary.id} />
           <RelatedPanel binaryId={binary.id} />
           <CompositionPanel binaryId={binary.id} />
           <TriagePanel binaryId={binary.id} />

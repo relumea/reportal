@@ -68,6 +68,7 @@ from reportal import (
     remediation,
     remote_ingest,
     renames,
+    sandbox,
     secrets,
     signatures,
     similarity,
@@ -3498,6 +3499,41 @@ def _tool_add_feedback(arguments: dict[str, Any]) -> dict[str, Any]:
     return log.attach(note or {"id": feedback_id})
 
 
+def _tool_run_sandbox_detonation(arguments: dict[str, Any]) -> dict[str, Any]:
+    from reportal import api, sandbox
+
+    binary_id = _arg_int(arguments, "binary_id")
+    timeout = _arg_optional_int(arguments, "timeout", 0) or None
+    memory_mb = _arg_optional_int(arguments, "memory_mb", 0) or None
+    with contextlib.closing(_open()) as conn:
+        try:
+            return api.sandbox_detonate_binary(
+                conn, binary_id, timeout=timeout, memory_mb=memory_mb
+            )
+        except sandbox.SandboxError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
+def _tool_get_sandbox_report(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        report = None if analysis_id is None else sandbox.latest_run(conn, analysis_id)
+        status = sandbox.status_payload(conn, analysis_id or 0)
+    if report is None:
+        raise ToolError(sandbox.ERROR_NO_RUN, f"binary {binary_id} has no detonation report")
+    return {**report, "detonation": status}
+
+
+def _tool_get_sandbox_status(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id) or 0
+        return sandbox.status_payload(conn, analysis_id)
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -5773,6 +5809,38 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_set_collection_scope,
+        ),
+        Tool(
+            "get_sandbox_report",
+            "The newest detonation report of a binary: the runner, the caps, the exit status,"
+            " the output tails and the files the sample wrote.  Read-only.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _READ,
+            _tool_get_sandbox_report,
+        ),
+        Tool(
+            "get_sandbox_status",
+            "Whether this install can detonate a binary (the opt-in and the installed runner)"
+            " and when it last did.  Read-only.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _READ,
+            _tool_get_sandbox_status,
+        ),
+        Tool(
+            "run_sandbox_detonation",
+            "Run a stored sample under the sandbox runner and store the report.  Off by default:"
+            " refused unless the workspace opts in and a runner is installed; the run has no"
+            " network, a read-only root, capped memory and CPU and a wall-clock timeout.",
+            _object(
+                {
+                    "binary_id": _int("Binary id."),
+                    "timeout": _int("Wall-clock seconds (1 to 60)."),
+                    "memory_mb": _int("Address space in MiB."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_run_sandbox_detonation,
         ),
         Tool(
             "get_activity",
