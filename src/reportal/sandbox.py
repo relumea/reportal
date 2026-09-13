@@ -268,9 +268,14 @@ class BwrapRunner(Runner):
         )
 
     def argv(self, sample: Path, work: Path, caps: Caps) -> list[str]:
-        path = self.path()
-        if path is None:  # pragma: no cover - the caller checks availability first
-            raise SandboxError(ERROR_UNAVAILABLE, f"{self.executable} is not installed")
+        """The command line that runs *sample* under *caps*, writing to *work*.
+
+        The command is the runner's own name when it cannot be resolved to a
+        path: availability is the caller's guard (``require_runner``), so this
+        stays a pure function of its arguments and the guards it builds can be
+        asserted on a host that does not have the tool installed.
+        """
+        path = self.path() or self.executable
         limits = (
             f"ulimit -t {caps.cpu_seconds} -v {caps.memory_mb * 1024}"
             f' -f {caps.file_mb * 1024} -u 64 -c 0; exec "$0"'

@@ -68,7 +68,8 @@ string). Wrap the payload in an object.
 the wrong type (`narrative must be a boolean`, `limit must be an integer`,
 `name must be a string`), a value outside its bound (`top must be positive`), or
 a value outside its closed vocabulary (`invalid params` for the auto-mode
-bounds, `invalid kind`, `invalid backend`, `invalid severity`, and the rest).
+bounds, `invalid override`, `invalid rating`, `invalid line-comment`,
+`invalid kind`, `invalid backend`, `invalid severity`, and the rest).
 `detail` names the field and the accepted values. Send a value inside the range
 or the set the route documents.
 
@@ -330,6 +331,11 @@ Run it first.
 
 `404`. The binary has no stored knowledge graph. Build it first.
 
+### no-line-comment
+
+`404`. The AI decompilation carries no inline comment at that line. Add one
+first, or read the artifact's `line_comments` to see which lines have one.
+
 ### no-report
 
 `404`. The generated report site does not exist yet. Run `reportal report` or
@@ -561,6 +567,12 @@ URL.
 ### unknown-collection
 
 `400`. A matching scope named a collection id that is not stored.
+
+### unknown-token
+
+`404`. An override named a placeholder token the stored AI decompilation does not
+carry. Read `GET /api/functions/<id>/ai-decompilation/tokens` and name one of
+its tokens exactly.
 
 ### candidate-has-no-name
 

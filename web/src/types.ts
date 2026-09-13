@@ -999,6 +999,64 @@ export interface AiArtifact<T> {
   created_at?: string;
 }
 
+/** One placeholder token of a stored AI decompilation. */
+export interface AiDecompilationToken {
+  token: string;
+  kind: string;
+  count: number;
+  lines: number[];
+  line_count: number;
+  name: string | null;
+}
+
+/** One rewritten line's attribution to the decompilation the model read. */
+export interface AiLineAttribution {
+  line: number;
+  origin: string;
+  source_lines: number[];
+}
+
+/** One inline comment stored at a line of a stored AI decompilation. */
+export interface AiLineComment {
+  line: number;
+  body: string;
+  author: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** One stored AI decompilation, as its routes serve it. */
+export interface AiDecompilation {
+  function_id: number;
+  kind: string;
+  model: string;
+  created_at: string;
+  code: string;
+  rewritten_code: string;
+  tokens: AiDecompilationToken[];
+  attributions: AiLineAttribution[];
+  overrides: Record<string, string>;
+  rating: string | null;
+  rating_note: string;
+  line_comments: AiLineComment[];
+  derivation: string;
+  journal_action?: string;
+}
+
+/** The AI decompilation's workflow state, without its text. */
+export interface AiDecompilationStatus {
+  function_id: number;
+  state: string;
+  model: string;
+  created_at: string;
+  line_count: number;
+  token_count: number;
+  overridden_count: number;
+  attribution_counts: Record<string, number>;
+  rating: string | null;
+  line_comment_count: number;
+}
+
 /** One LLM identifier rename suggestion. */
 export interface RenameSuggestion {
   from: string;

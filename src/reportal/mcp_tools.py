@@ -28,6 +28,7 @@ from typing import Any
 
 from reportal import (
     activity,
+    ai_decomp,
     analysis_log,
     auth,
     auto_mode,
@@ -2505,6 +2506,193 @@ def _tool_revert_renames(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach(result)
 
 
+# ── AI decompilation artifact ──────────────────────────────────────
+
+
+def _ai_decomp_error(exc: ai_decomp.AiDecompError) -> ToolError:
+    """Map one artifact failure onto the tool error the MCP server answers."""
+    if isinstance(exc, ai_decomp.NoAiDecompilationError):
+        return ToolError("no-artifact", str(exc))
+    if isinstance(exc, ai_decomp.UnknownTokenError):
+        return ToolError("unknown token", str(exc))
+    if isinstance(exc, ai_decomp.UnknownLineCommentError):
+        return ToolError("no-line-comment", str(exc))
+    if isinstance(exc, ai_decomp.InvalidOverrideError):
+        return ToolError("invalid override", str(exc))
+    if isinstance(exc, ai_decomp.InvalidRatingError):
+        return ToolError("invalid rating", str(exc))
+    return ToolError("invalid line-comment", str(exc))
+
+
+def _require_ai_decomp(conn: sqlite3.Connection, function_id: int) -> dict[str, Any]:
+    """Return the stored artifact, mapping its absence onto a tool error."""
+    try:
+        return ai_decomp.require(conn, function_id)
+    except ai_decomp.NoAiDecompilationError as exc:
+        raise _ai_decomp_error(exc) from exc
+
+
+def _ai_decomp_mutate(
+    function_id: int,
+    mutate: Callable[[sqlite3.Connection, int], tuple[dict[str, Any], dict[str, Any]]],
+    *,
+    description: str,
+) -> dict[str, Any]:
+    """Run one artifact mutation in a journaled action and return the new view."""
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload, extra = mutate(conn, function_id)
+            except ai_decomp.AiDecompError as exc:
+                raise _ai_decomp_error(exc) from exc
+            ai_decomp.write_artifact(conn, log, function_id, payload, description=description)
+            artifact = ai_decomp.require(conn, function_id)
+        return log.attach({"function_id": function_id, **ai_decomp.view(artifact), **extra})
+
+
+def _with_comment(
+    result: tuple[dict[str, Any], dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Report the line comment a mutation touched beside the artifact view."""
+    payload, entry = result
+    return payload, {"comment": entry}
+
+
+def _tool_run_ai_decompilation(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        client = llm.get_client()
+        if not client.available():
+            raise ToolError("llm-unavailable", llm.UNAVAILABLE_DETAIL)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = ai_decomp.rewrite(conn, function_id, client=client)
+            except renames.NoDecompilationError as exc:
+                raise ToolError("no-decompilation", str(exc)) from exc
+            except llm.LlmError as exc:
+                raise ToolError("llm-error", str(exc)) from exc
+            ai_decomp.write_artifact(
+                conn,
+                log,
+                function_id,
+                payload,
+                description=f"replaced the AI decompilation of function {function_id}",
+            )
+            artifact = ai_decomp.require(conn, function_id)
+        return log.attach({"function_id": function_id, **ai_decomp.view(artifact)})
+
+
+def _tool_get_ai_decompilation(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        artifact = _require_ai_decomp(conn, function_id)
+    return {"function_id": function_id, **ai_decomp.view(artifact)}
+
+
+def _tool_get_ai_decompilation_status(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        artifact = _require_ai_decomp(conn, function_id)
+    return {"function_id": function_id, **ai_decomp.status(artifact)}
+
+
+def _tool_list_ai_decompilation_tokens(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        tokens = ai_decomp.view(_require_ai_decomp(conn, function_id))["tokens"]
+    return {
+        "function_id": function_id,
+        "tokens": tokens,
+        "count": len(tokens),
+        "derivation": ai_decomp.DERIVATION,
+    }
+
+
+def _tool_get_ai_line_attributions(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        rows = ai_decomp.view(_require_ai_decomp(conn, function_id))["attributions"]
+    return {"function_id": function_id, "attributions": rows, "derivation": ai_decomp.DERIVATION}
+
+
+def _tool_set_ai_decompilation_overrides(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    raw = arguments.get("overrides")
+    return _ai_decomp_mutate(
+        function_id,
+        lambda conn, fid: ai_decomp.set_overrides(conn, fid, raw),
+        description=(
+            f"replaced the token overrides of the AI decompilation of function {function_id}"
+        ),
+    )
+
+
+def _tool_rate_ai_decompilation(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    raw = arguments.get("rating")
+    note = arguments.get("note")
+    if note is not None and not isinstance(note, str):
+        raise ToolError("invalid params", "note must be a string")
+    return _ai_decomp_mutate(
+        function_id,
+        lambda conn, fid: (ai_decomp.rate(conn, fid, rating=raw, note=note), {}),
+        description=f"rated the AI decompilation of function {function_id}",
+    )
+
+
+def _tool_list_ai_line_comments(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        rows = _require_ai_decomp(conn, function_id)["payload"].get("line_comments", [])
+    return {"function_id": function_id, "comments": rows, "count": len(rows)}
+
+
+def _tool_add_ai_line_comment(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    line = _arg_int(arguments, "line")
+    body = _arg_str(arguments, "body")
+    author = _arg_optional_str(arguments, "author") or None
+    return _ai_decomp_mutate(
+        function_id,
+        lambda conn, fid: _with_comment(
+            ai_decomp.add_line_comment(conn, fid, line=line, body=body, author=author)
+        ),
+        description=f"stored an inline comment on the AI decompilation of function {function_id}",
+    )
+
+
+def _tool_update_ai_line_comment(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    line = _arg_int(arguments, "line")
+    body = _arg_str(arguments, "body")
+    return _ai_decomp_mutate(
+        function_id,
+        lambda conn, fid: _with_comment(
+            ai_decomp.update_line_comment(conn, fid, line=line, body=body)
+        ),
+        description=f"edited an inline comment on the AI decompilation of function {function_id}",
+    )
+
+
+def _tool_delete_ai_line_comment(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    line = _arg_int(arguments, "line")
+    return _ai_decomp_mutate(
+        function_id,
+        lambda conn, fid: _with_comment(ai_decomp.delete_line_comment(conn, fid, line=line)),
+        description=f"removed an inline comment on the AI decompilation of function {function_id}",
+    )
+
+
 def _tool_create_conversation(arguments: dict[str, Any]) -> dict[str, Any]:
     scope_kind = _arg_str(arguments, "scope_kind")
     if scope_kind not in conversations.SCOPE_KINDS:
@@ -4117,6 +4305,15 @@ def _object(properties: dict[str, Any], required: Sequence[str] = ()) -> dict[st
     return schema
 
 
+def _string_map(description: str) -> dict[str, Any]:
+    """A free-form object of string keys to string or null values."""
+    return {
+        "type": "object",
+        "description": description,
+        "additionalProperties": {"type": ["string", "null"]},
+    }
+
+
 _READ = ToolAnnotations(read_only_hint=True, destructive_hint=False)
 _WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
@@ -5330,6 +5527,125 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"function_id": _FUNCTION_ID}, ("function_id",)),
             _WRITE,
             _tool_revert_renames,
+        ),
+        Tool(
+            "run_ai_decompilation",
+            "Rewrite a function's stored decompilation with the configured LLM and store the"
+            " artifact with its token map and per-line attributions.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _WRITE,
+            _tool_run_ai_decompilation,
+        ),
+        Tool(
+            "get_ai_decompilation",
+            "The stored AI decompilation rendered with its token overrides, token map,"
+            " attributions, rating and line comments.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_get_ai_decompilation,
+        ),
+        Tool(
+            "get_ai_decompilation_status",
+            "The stored AI decompilation's workflow state: line, token, override, attribution,"
+            " rating and comment counts, without its text.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_get_ai_decompilation_status,
+        ),
+        Tool(
+            "list_ai_decompilation_tokens",
+            "The placeholder tokens of the rewrite with the analyst name each one carries.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_list_ai_decompilation_tokens,
+        ),
+        Tool(
+            "get_ai_line_attributions",
+            "Attribute each line of the rewrite to the decompilation the model read: original,"
+            " rewritten or added, by a local line diff.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_get_ai_line_attributions,
+        ),
+        Tool(
+            "set_ai_decompilation_overrides",
+            "Set or clear analyst names for the rewrite's placeholder tokens; a null name clears"
+            " that token's override.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "overrides": _string_map(
+                        "Placeholder token to analyst name; a null clears the override."
+                    ),
+                },
+                ("function_id", "overrides"),
+            ),
+            _WRITE,
+            _tool_set_ai_decompilation_overrides,
+        ),
+        Tool(
+            "rate_ai_decompilation",
+            "Record analyst feedback on the rewrite: a rating of up or down, or null to clear it.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "rating": _enum("Analyst rating, or null to clear it.", ("up", "down")),
+                    "note": _str("Free-text note stored beside the rating."),
+                },
+                ("function_id",),
+            ),
+            _WRITE,
+            _tool_rate_ai_decompilation,
+        ),
+        Tool(
+            "list_ai_line_comments",
+            "The per-line inline comments stored beside the AI decompilation, ordered by line.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_list_ai_line_comments,
+        ),
+        Tool(
+            "add_ai_line_comment",
+            "Store one inline comment at a line of the rewrite, replacing any comment already"
+            " there.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "line": _int("1-based line of the rewrite to comment."),
+                    "body": _str("Comment body."),
+                    "author": _str("Author to record; defaults to 'analyst'."),
+                },
+                ("function_id", "line", "body"),
+            ),
+            _WRITE,
+            _tool_add_ai_line_comment,
+        ),
+        Tool(
+            "update_ai_line_comment",
+            "Replace the body of the inline comment stored at a line of the rewrite.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "line": _int("1-based line whose comment to replace."),
+                    "body": _str("New comment body."),
+                },
+                ("function_id", "line", "body"),
+            ),
+            _WRITE,
+            _tool_update_ai_line_comment,
+        ),
+        Tool(
+            "delete_ai_line_comment",
+            "Remove the inline comment stored at a line of the rewrite.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "line": _int("1-based line whose comment to remove."),
+                },
+                ("function_id", "line"),
+            ),
+            _WRITE,
+            _tool_delete_ai_line_comment,
         ),
         Tool(
             "create_conversation",

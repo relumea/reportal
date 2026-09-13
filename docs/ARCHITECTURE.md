@@ -53,6 +53,8 @@ reportal/
 │   ├── auto_mode.py          # auto orchestrator: decompose, fan out, accept, aggregate, persist,
 │   │                          #   revert/recover
 │   ├── llm.py                # optional OpenAI-compatible bridge: chat completions + embeddings
+│   ├── ai_decomp.py          # the AI decompilation artifact: the rewrite, its token map,
+│   │                         #   per-line attributions, overrides, rating and line comments
 │   ├── conversations.py      # scoped chats: stored context + retrieved documents, prompt assembly
 │   ├── comments.py           # analyst comments: scope/body validation over the comments table
 │   ├── bulk_actions.py       # bulk tag/delete over binaries and analyses, and prefix
@@ -663,13 +665,15 @@ None, `LlmClient.available()` is False, every AI route answers 503
 `llm-unavailable` and every AI command exits 1; the default install and the
 whole test suite run without one.
 
-`summarize`, `inline_comments`, `suggest_types`, `rename_suggestions` and
-`function_triage` build
+`summarize`, `inline_comments`, `suggest_types`, `rename_suggestions`,
+`rewrite_decompilation` and `function_triage` build
 the prompt, call the
 client, strip a markdown fence if the model added one, parse the JSON object or
 list, and return a normalized payload (`{"summary"}`, `{"comments"}`,
-`{"suggestions"}`). A response that is neither a JSON object nor a list, or
-that carries none of the expected fields, raises `LlmError`. `get_client` /
+`{"suggestions"}`, `{"code"}`). A response that is neither a JSON object nor a
+list, or that carries none of the expected fields, raises `LlmError`.
+`rewrite_decompilation` also accepts a bare C string, which is the requested
+value under a different envelope. `get_client` /
 `set_client` are the process-wide accessor, mirroring `engines.get_engine`, so
 tests inject a fake client and no test touches the network.
 
@@ -687,6 +691,47 @@ disclosure under the reply. Retrieved text is untrusted: it is quoted as data
 to reason about, never executed or spliced into a command, and the system
 prompt says so. This is not a tool-calling agent: the model sees the stored
 context, the retrieved documents and the history, nothing more.
+
+## AI decompilation artifact
+
+`ai_decomp.py` is the one rewritten-function artifact: the hosted portal's
+richest AI surface. It stores everything in one `ai_artifacts` row of kind
+`ai-decompilation` (the rewrite, the model, the token map, the per-line
+attributions, the analyst overrides, the rating and the per-line inline
+comments) rather than in a table of its own, so every write goes through the
+existing generic row-restore journal path and the delete plans that already
+snapshot `ai_artifacts` cover it with no new entry. `write_artifact` is the
+single write path the routes, the CLI and the MCP tools share, so all of them
+journal the row they replace identically.
+
+Three parts are derived locally and deterministically, and every response that
+carries one says so under `derivation`:
+
+- `tokens_of` scans the rewrite for the placeholder shapes the decompilers emit
+  (`local_8`, `param_1`, `uVar2`, `DAT_...`, `FUN_...`, `LAB_...`, `_UNK...`)
+  and reports each token's kind, use count and line numbers, bounded at
+  `MAX_TOKEN_LINES` with the true count kept;
+- `attributions_of` diffs the rewrite against the decompilation the model read
+  with `difflib.SequenceMatcher` and marks each rewritten line `original`,
+  `rewritten` or `added`, with the source line numbers each block paired with.
+  It is a derived attribution, not model-reported provenance;
+- `apply_overrides` renders the served code by rewriting each overridden token
+  through `renames.replace_identifier` (whole tokens only, string literals
+  skipped, keys in sorted order), so the stored rewrite is never mutated and
+  clearing an override restores the model's own words.
+
+An override must name a token the artifact carries (`unknown token`) and a C
+identifier that is not a keyword (`invalid override`); a property beyond
+`MAX_OVERRIDE_NAME` or a bad rating/line/body is the shared `invalid X`
+vocabulary. Line comments are keyed by line number, one per line, so the hosted
+`inline-comments/{line}` contract needs no id of its own.
+
+Two ceilings are deliberate. The workflow is one model call, so
+`GET .../ai-decompilation/events` reports the state it finds and its terminal
+marker rather than pretending to stream progress the call does not have, and a
+rewrite in flight cannot be cancelled. The token map is a scan plus the
+analyst's overrides, not the hosted portal's model-reported analysis of what
+each placeholder means.
 
 ## HTTP surface
 

@@ -136,8 +136,11 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   feedback on the result, and the Agents -> Custom tab shows the
   `claude mcp add` one-liner and the `~/.claude.json` snippet
   (`/documentation/analysis-agents`).
-- reportal: agent artifacts (triage, threat, capabilities, remediation) are
-  stored and served, but nothing records a rating, and the Integrations view
+- reportal: the AI decompilation artifact carries an analyst rating
+  (`PATCH /api/functions/<id>/ai-decompilation/rating`, `reportal ai-rate`, the
+  `rate_ai_decompilation` MCP tool and the function detail's panel), so the
+  rating primitive exists; the agent artifacts (triage, threat, capabilities,
+  remediation) are stored and served but not rated, and the Integrations view
   lists its own registries rather than showing a client how to connect.
 - Build: a rating on a stored agent artifact (one small table), and a "Connect
   an MCP client" card in `IntegrationsView` rendering the `reportal mcp`
@@ -353,7 +356,7 @@ description lives in that file.
 | Cluster | What it is | Status |
 |---------|------------|--------|
 | A | Asynchronous operation workflow (jobs, status, cancel, progress, SSE) | Closed in PARITY.md |
-| B | AI decompilation as a first-class artifact (tokens, per-line comments, attributions, rating) | Planned |
+| B | AI decompilation as a first-class artifact (tokens, per-line comments, attributions, rating) | Closed in PARITY.md |
 | C | Dynamic execution and sandbox detonation (the opt-in runner and the firmware carve) | Closed in PARITY.md |
 | D | Analysis lifecycle (basic, params, requeue, bytes, tags, bulk, imported functions) | Closed in PARITY.md (example analyses is not applicable locally) |
 | F | Users, auth and IAM (roles, permissions, teams, scope, activity, feedback) | Closed in PARITY.md |

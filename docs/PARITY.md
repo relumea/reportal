@@ -69,7 +69,7 @@ Status vocabulary:
 | Remediation: STIX bundles | Implemented | local | `reportal stix <binary-id> [--output PATH] [--json]` and `GET /api/binaries/<id>/remediation/stix` (also rebuilt by the remediation `POST`) serve a minimal STIX 2.1 bundle built by `build_stix_bundle` from the stored `threat` scan: a reportal `identity` object, one `indicator` per URL, domain, IPv4, email and hash IOC with a STIX pattern (`[url:value = ...]`, `[network-traffic:dst_ref.type = 'domain-name' AND network-traffic:dst_ref.value = ...]`, `[ipv4-addr:value = ...]`, `[email-addr:value = ...]`, `[file:hashes.'SHA-256' = ...]`), `pattern_type` `stix`, and `created`/`modified`/`valid_from` from the supplied date, plus a `note` object when there is no indicator or a category has no pattern (registry and file paths). Every id is a `uuid.uuid5` of the object's pattern (or a fixed key), so two builds of one input are byte-identical. It is a minimal bundle, not a full threat-intelligence export, and it is not validated against an external STIX validator. |
 | Agent conversations | Implemented (optional) | local store + external LLM (OpenAI-compatible) | `reportal chat-new --function <id> \| --binary <id>` and `POST /api/conversations` open a chat scoped to one stored function or binary; `reportal chat <conversation-id> "message"` and `POST /api/conversations/<id>/messages` append the turn and call the configured chat-completions endpoint. The request is a fixed system prompt plus a context block assembled from stored local data only (the function row with its stored disassembly and decompilation, or the binary row with its stored triage summary and capability scan) and the last `HISTORY_TURN_LIMIT` turns. No engine runs, no tool is called and no MCP is involved. Conversations and their messages live in the `conversations` and `messages` tables (`GET /api/conversations?scope_kind=&scope_id=`, `GET`/`DELETE /api/conversations/<id>`), the SPA Conversations view lists, creates, opens, sends to and deletes threads, and the function and binary detail views carry a Chat about this action. A message without a configured endpoint answers 503 `llm-unavailable`; the whole feature is off by default. This is not the hosted portal's tool-calling agent: the model can only answer from the stored context. |
 | Integrations inventory | Implemented | local registries | The hosted portal's Integrations page lists the plugins, SDKs and the MCP endpoint it offers. reportal answers the same question about itself: `reportal integrations` and `GET /api/integrations` read the five registries a plugin enters through (`reportal.components`, `reportal.auto_workers`, `reportal.graph_backends`, `reportal.effect_handlers`, `reportal.mcp_tools`) and report, per seam, the entry-point group, the in-tree module declaring the built-ins and one row per part the registry holds with the fields that seam exposes (a component's origin, requires and provides; a backend's availability and whether it can be queried; a worker's write plan; a handler's descriptor kind and whether it is built-in; a tool's destructive annotation). The read-only `list_integrations` MCP tool and the SPA Integrations view render the same payload. Only the component registry tracks where a part was declared, so an empty origin means the registry does not record one, never that the part is built-in. This is reportal's own seam set, not the hosted platform's plugin catalogue. |
-| MCP tool server | Implemented | local + rebrew + optional LLM | The hosted portal's MCP server (`https://api.reveng.ai/mcp/`, Streamable HTTP with `Authorization: Bearer` and an `mcp-session-id`) is matched locally by `reportal mcp`, an stdio server on the official `mcp` SDK (newline-delimited JSON-RPC 2.0 on stdin/stdout) that serves `initialize`, `notifications/initialized`, `tools/list` and `tools/call` at the negotiated protocol version (currently `2025-06-18`) and reports `serverInfo` `{"name", "title", "version"}`. It exposes reportal's capabilities as 129 plugin tools declared in `src/reportal/mcp_tools.py`; a third party registers through the `reportal.mcp_tools` entry-point group. 61 tools are read-only and 68 are destructive (`destructiveHint: true`), the destructive ones covering the same engine runs and store mutations the HTTP routes do; handlers call reportal's internal functions directly and never make an HTTP request back into reportal. The read tools keep the stored-only routes stored-only. There is no auth (no OAuth, JWT or API key): the server is a local stdio process, so the pipe is the whole trust boundary; Streamable HTTP, sessions, SSE and server-side logging are not emulated. |
+| MCP tool server | Implemented | local + rebrew + optional LLM | The hosted portal's MCP server (`https://api.reveng.ai/mcp/`, Streamable HTTP with `Authorization: Bearer` and an `mcp-session-id`) is matched locally by `reportal mcp`, an stdio server on the official `mcp` SDK (newline-delimited JSON-RPC 2.0 on stdin/stdout) that serves `initialize`, `notifications/initialized`, `tools/list` and `tools/call` at the negotiated protocol version (currently `2025-06-18`) and reports `serverInfo` `{"name", "title", "version"}`. It exposes reportal's capabilities as 188 plugin tools declared in `src/reportal/mcp_tools.py`; a third party registers through the `reportal.mcp_tools` entry-point group. 86 tools are read-only and 102 are destructive (`destructiveHint: true`), the destructive ones covering the same engine runs and store mutations the HTTP routes do; handlers call reportal's internal functions directly and never make an HTTP request back into reportal. The read tools keep the stored-only routes stored-only. There is no auth (no OAuth, JWT or API key): the server is a local stdio process, so the pipe is the whole trust boundary; Streamable HTTP, sessions, SSE and server-side logging are not emulated. |
 | Dynamic execution (sandbox detonation) | Implemented (off by default) | bubblewrap (external runner) | `reportal sandbox <binary-id> [--timeout N] [--memory-mb N] [--report|--status]`, `POST /api/binaries/<id>/dynamic-execution`, the report read on the binary and its analysis, the status read (the hosted `dynamic-execution/report` and `/status` pair) and the `run_sandbox_detonation` / `get_sandbox_report` / `get_sandbox_status` MCP tools detonate a stored sample and record what it did.  Four guards hold before any process starts: the workspace opts in (`REPORTAL_SANDBOX=enabled` or `[sandbox] enabled = true`, else 403 `sandbox-disabled`), a runner is installed (else 503 `sandbox-unavailable`), the row has a file on disk, and the bounds are inside the caps (`timeout` 1-60s, `memory_mb` 64-4096, a CPU cap no larger than the wall clock; outside them 400 `invalid-sandbox`).  The shipped runner is `bwrap` invoked with `--unshare-all`, `--die-with-parent`, `--new-session`, `--clearenv`, the host root read-only, fresh `/proc` and `/dev` and exactly one writable directory; the sample is bind-mounted read-only inside it and never executed from its stored path, the caps are applied by the shell's `ulimit` (not `preexec_fn`, which Python documents as unsafe in a threaded server), and a run that outlives its timeout is killed by process group.  A third party registers another runner through the `reportal.sandbox_runners` entry-point group.  The report is the runner, the exact argv, the caps, the exit status, the duration, bounded stdout/stderr tails and the files the sample wrote, stored in `sandbox_runs` as one journaled action (revert removes the record).  This is *not* a safe-execution product: no seccomp filter, no syscall tracing, no VM, and `docs/THREAT_MODEL.md` states each residual in full; the guarantee is that reportal runs nothing until an operator says so, in a sandbox that is installed, capped and unnetworked. |
 | Auth / teams | Planned | none | Planned 1.2: bearer-token auth with users, roles and per-object team scoping, loopback-only by default so an existing install keeps working unauthenticated. Loopback-only, single-user tool. recoverage's `--token` pattern is the model if a LAN bind is ever needed. |
 | Firmware | Planned | none | Planned 1.2: firmware image handling (carving, filesystem extraction, per-region entropy, architecture guess from the extracted ELF/PE members) as a local capability of its own. The engine stack targets PE/x86-32 and ELF; no firmware formats. |
@@ -128,8 +128,8 @@ sources, all re-runnable:
 | Hosted MCP server | 36 tools, 9 destructive | `https://api.reveng.ai/mcp/` (`tools/list`) |
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
-reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (177 tools).  Every row below is
+reportal's own surface for the comparison is its FastAPI schema (180
+paths, 251 operations) plus the MCP tool registry (188 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -186,28 +186,58 @@ per-scan POST routes growing a `queued` response form.  CLI: `reportal jobs`,
 
 ### B. AI decompilation as a first-class artifact (hosted 18 operations)
 
-**Status:** Planned. Nothing started.
+**Status:** Closed.  `src/reportal/ai_decomp.py` stores the whole artifact as one
+`ai_artifacts` row of kind `ai-decompilation`, so it is journaled and revertible
+through the same generic row-restore path the four flat artifacts use and is
+snapshotted by the binary and analysis delete plans that already name that
+table.
 
-reportal stores a summary, inline comments, type suggestions and rename
-suggestions over a decompilation that rebrew produced.  The hosted model is
-richer and is the public reference for per-line decompiler trust
-(`docs/REVENGAI.md` item 8): `POST /v3/functions/{id}/ai-decompilation` produces
-a rewritten function, `GET .../ai-decompilation` reads it, `.../status` reports
-the workflow, `.../events` streams it over SSE (`GET`, server-sent), and
-`.../line-attributions` gives per-line provenance.  `.../tokens` lists
-placeholder tokens with `PATCH .../overrides` applying analyst
-variable/function name overrides.  Inline comments are per line:
-`GET|POST|PATCH|DELETE /v3/functions/{id}/ai-decompilation/inline-comments[/{line}]`
-with their own `/status`.  `summary` and `type-suggestions` each have their own
-regeneration endpoint, and `GET|PATCH /v2/functions/{id}/ai-decompilation/rating`
-carries analyst feedback.
+`POST /api/functions/<id>/ai-decompilation` asks the configured bridge for a
+complete rewritten function over the decompilation reportal already stored (a
+function without one is the same 404 `no-decompilation` the other AI artifacts
+answer) and stores, beside the rewrite and the model, the placeholder token map,
+the per-line attributions, the analyst overrides, the rating and the line
+comments.  The read routes are `GET .../ai-decompilation` (the rewrite rendered
+with its overrides), `.../status` (counts, rating and model, without its text),
+`.../events` (server-sent events), `.../tokens`, `.../rating` and
+`.../inline-comments`; the write routes are `PATCH .../overrides` (a null name
+clears one), `PATCH .../rating` and the per-line `POST`/`PATCH`/`DELETE
+.../inline-comments[/<line>]`, which is the hosted `{line}` contract with no id
+of its own: one comment per line.
 
-Planned: an `ai_decompilations` artifact table holding the rewritten C, the
-token map with overrides, per-line attributions and the rating; routes for
-start/read/status/events/overrides/rating; per-line comment CRUD beside the
-existing artifact; a CLI `ai-decompile` plus `ai-override` and `ai-rate`; MCP
-tools; an SPA view rendering the rewrite with line attributions and the token
-prompts.
+Three derivations are local and deterministic rather than model-reported, and
+every response that carries one says so under `derivation`:
+
+- the token map is a regular-expression scan of the rewrite for the placeholder
+  shapes the decompilers emit (`local_8`, `param_1`, `uVar2`, `DAT_...`,
+  `FUN_...` and the rest), each token with its kind, its use count and its line
+  numbers (bounded at `MAX_TOKEN_LINES`, the true count kept);
+- an attribution is a `difflib` line diff of the rewrite against the
+  decompilation the model read: a line that matches one in the source is
+  `original`, an aligned line that differs is `rewritten`, and a line with no
+  counterpart is `added`, each block carrying the source line numbers it paired
+  with;
+- the served code applies the stored overrides at read time and never mutates
+  the model's rewrite, so clearing an override restores the model's own words by
+  construction.
+
+`reportal ai-decompile`, `ai-decompilation`, `ai-decompilation-status`,
+`ai-tokens`, `ai-lines`, `ai-override`, `ai-rate`, `ai-line-comments`,
+`ai-line-comment-add`, `ai-line-comment-edit` and `ai-line-comment-rm`; the
+`run_ai_decompilation`, `get_ai_decompilation`, `get_ai_decompilation_status`,
+`list_ai_decompilation_tokens`, `get_ai_line_attributions`,
+`set_ai_decompilation_overrides`, `rate_ai_decompilation`,
+`list_ai_line_comments`, `add_ai_line_comment`, `update_ai_line_comment` and
+`delete_ai_line_comment` MCP tools (188 tools: 86 read-only, 102 destructive);
+and the function detail's AI decompilation panel, which renders the rewrite line
+by line with its origin, edits an override per token, sets the rating and stores
+per-line comments.
+
+Two ceilings are stated rather than hidden.  The workflow is one model call, so
+`.../events` reports the state it finds and its terminal marker instead of
+narrating progress the call does not have, and a rewrite in flight cannot be
+cancelled.  The hosted tokens endpoint is a model-reported analysis of what each
+placeholder means; reportal's is a local scan plus the analyst's overrides.
 
 ### C. Dynamic execution and sandbox detonation (hosted `Analyses - Core`)
 
@@ -224,7 +254,7 @@ unpacked by `reportal.archive` and its members registered, every other region is
 stored as a binary of its own.  `reportal firmware`/`firmware-extract`,
 `POST|GET /api/binaries/<id>/firmware`, `POST .../firmware/extract`, the
 `get_firmware_scan`, `run_firmware_scan` and `extract_firmware_regions` MCP
-tools (171 tools: 77 read-only, 94 destructive) and the binary detail's Firmware
+tools and the binary detail's Firmware
 panel expose it.  Nothing is executed, mounted or spawned, and no external tool
 is called: this is byte work over bytes reportal already stored.
 
@@ -293,8 +323,7 @@ table):
 and `reportal download --analysis`, the `get_analysis`,
 `get_analysis_params`, `get_analysis_func_maps`, `get_imported_functions`,
 `update_analysis`, `append_analysis_log`, `requeue_analysis`,
-`set_analysis_tags` and `bulk_analyses` MCP tools (156 tools: 74 read-only,
-82 destructive) and the analyses view (the log drawer with the lifecycle, the
+`set_analysis_tags` and `bulk_analyses` MCP tools and the analyses view (the log drawer with the lifecycle, the
 imported functions and the raw bytes, plus the selection checkbox and the Bulk
 actions panel) expose the same.
 
@@ -363,7 +392,7 @@ the activity and feedback surfaces.
   `collection-scope`, the `list_users`, `add_user`, `rotate_user_token`,
   `update_user`, `delete_user`, `list_teams`, `create_team`, `delete_team`,
   `add_team_member`, `remove_team_member`, `set_binary_scope` and
-  `set_collection_scope` MCP tools (168 tools: 76 read-only, 92 destructive) and
+  `set_collection_scope` MCP tools and
   the SPA (the Users view with its identity block, the browser's bearer-token
   field, the user table and the Teams panel, plus the Binaries table's per-row
   scope select) expose the same.  `docs/THREAT_MODEL.md` records the moved
@@ -383,8 +412,7 @@ the activity and feedback surfaces.
   authenticated caller, bounded at `store.MAX_FEEDBACK_CHARS` (400
   `invalid feedback`), journaled and revertible.
 - `reportal activity`/`feedback`/`feedback-add`, the read-only `get_activity` and
-  `list_feedback` MCP tools plus the destructive `add_feedback` (174 tools: 79
-  read-only, 95 destructive) and the SPA Users view's Activity panel with its
+  `list_feedback` MCP tools plus the destructive `add_feedback` (  read-only, 95 destructive) and the SPA Users view's Activity panel with its
   actor select and feedback form expose the same.  Both new paths are
   self-service (`auth._SELF_PATHS`): an analyst reads its own activity and writes
   its own note without an admin role, while `/api/users` stays admin-only.
@@ -508,7 +536,7 @@ write (deflate member, 12-byte header with the CRC check byte, the three-key
 stream cipher, verified by reading the archive back with `zipfile` plus the
 password, and refusing a wrong one).  `GET /api/binaries/<id>/download-zipped`,
 `reportal download --zip [--password]`, the `export_zipped_binary` MCP tool
-(154 tools: 73 read-only, 81 destructive) and a Zipped link in the binaries
+and a Zipped link in the binaries
 table expose it; the archive is deflated into a spooled temporary file so a
 256 MiB binary is never held whole, and the password is documented as a shared
 convention rather than a security measure.
@@ -553,7 +581,7 @@ only announced.
 | 1 | **Malware unpacking** (their "Unpack" agent: "unpack encrypted malware") | a "Coming Soon" card with a disabled Generate button in the portal's upcoming-agents list, and no run, status or result endpoint in either spec (`portal.reveng.ai/_next/static/chunks/1hp6wi67r3bhm.js`; changelog PRO-3218) | a local unpack path: packer identification from the stored file-type scan, then UPX and the engine's own `lzexe` case, writing the unpacked image as a new binary with its provenance recorded |
 | 2 | **Cross-architecture symbol matching** | "We will be releasing a cross-architecture model to match symbols between architectures in Q3 2026" (`reveng.ai`) | match across architectures locally by scoring the stored listings instead of a shared model, with the ISA pair recorded on every row |
 | 3 | **Ventris architecture and language coverage** | "we are also planning to release a version of Ventris in the coming months that provides wider architecture support"; "expanding language coverage to Rust and Go, and supporting additional architectures such as MIPS, PowerPC, and RISC-V" (`reveng.ai/blog/introducing-wilbert-and-ventris`) | reportal already reads whatever the engine can decompile; the addition is recording the language and ISA per artifact so a coverage gap is visible instead of silent |
-| 4 | **MCP destructive annotations on every writer** | 27 of the hosted server's 36 tools mutate state but only 9 carry a destructive marker (`docs.reveng.ai/mcp`) | done: all 136 local tools carry `readOnlyHint` or `destructiveHint`, and a test pins the split |
+| 4 | **MCP destructive annotations on every writer** | 27 of the hosted server's 36 tools mutate state but only 9 carry a destructive marker (`docs.reveng.ai/mcp`) | done: all 188 local tools carry `readOnlyHint` or `destructiveHint`, and a test pins the split |
 | 5 | **Lineage, Obfuscation, Anti-Analysis and Detect agents** | all four are "Coming Soon" cards with no endpoint (`portal.reveng.ai/_next/static/chunks/1hp6wi67r3bhm.js`) | done locally already: `lineage.py`, `hardening.py` (anti-analysis and obfuscation domains), `families.py` (detect).  The addition is naming them as one agent surface with a run record, which cluster A's job queue provides |
 | 6 | **A public changelog for the API** | every error resolution points at `docs.reveng.ai/changelog`, which 404s, and `NOT_IMPLEMENTED` (501) tells the caller to check a page that does not exist (`docs.reveng.ai/errors`) | `docs/ERRORS.md` plus the release notes are the local equivalent, and a test asserts every code the API can answer has a documented section |
 | 7 | **A capability manifest generated from the code, with a drift check** | their plugins carry `.revengai/features.json` and a features-drift workflow; the portal publishes nothing equivalent | `GET /api/config` (cluster I) plus a gate step that regenerates the manifest and fails on drift |

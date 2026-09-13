@@ -338,8 +338,14 @@ diff view (`views/DiffView.tsx`) renders the two listings side by side with
 the changed lines marked (delete/insert styling), a `kind` select
 (`decomp`/`disasm`), a normalize checkbox, the similarity and the summary
 counts, loading through the diff route.  An AI
-section groups the Summary, AI comments, Type suggestions and Renames panels:
-each auto-loads its stored-only `GET` and never calls a model on render, a
+section groups the AI decompilation, Summary, AI comments, Type suggestions and
+Renames panels.  The AI decompilation panel is the whole-function rewrite: the
+lines with their origin (`original`/`rewritten`/`added`) in a table, a per-token
+override input beside its kind, uses and lines, a rating selector with its note,
+and a comment editor for the line the analyst picks, all over the
+`/functions/<id>/ai-decompilation` routes and each surfacing the route's own
+error in place.  The four flat artifacts each auto-load their stored-only `GET`
+and never call a model on render, a
 `no-artifact` answer shows a nothing-stored hint, and Generate (Suggest for
 Renames) posts to the AI route, surfacing 503 `llm-unavailable` in place.  The
 Renames panel lists each stored suggestion with a checkbox, its reason and

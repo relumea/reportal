@@ -292,8 +292,11 @@ read as a claim:
     exported header file; signature import, return type, calling convention,
     parameter add/edit/remove and delete plus the exported prototype file.
   - **AI artifacts.**  Summary, inline comments and type suggestions, rename
-    suggestions, and the `renames-applied` text an apply keeps and a revert
-    restores, on the routes, CLI and MCP.
+    suggestions, the `renames-applied` text an apply keeps and a revert
+    restores, and the AI decompilation artifact (the rewrite, its token map and
+    attributions, an override set, a rating and the per-line inline comments,
+    all in one `ai_artifacts` row written through one `ai_decomp.write_artifact`
+    path), on the routes, CLI and MCP.
   - **Graph and report files.**  The graph rebuild (see the caveat below) and
     the PDF report file.
   - **The analysis lifecycle.**  The engine relabel, the log append and the

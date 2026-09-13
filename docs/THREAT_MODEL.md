@@ -88,7 +88,11 @@ full below.
    before storing it.  `llm._strip_reasoning` removes leaked reasoning and
    tool-call markup, and the artifact parsers require their fields, so a
    malformed answer raises `LlmError` rather than storing a partial artifact.
-   The model's output is data; nothing in reportal evaluates it.
+   The model's output is data; nothing in reportal evaluates it.  A rewritten
+   function (`ai_decomp.py`) is the largest such artifact and the rule is the
+   same: it is stored as text and served as text, nothing compiles or runs it,
+   and an analyst override is a whole-token text substitution over that text
+   with the C keywords and the string literals left alone.
 7. **Sample bytes to the sandbox (opt-in, bounded).**  `POST
    /api/binaries/<id>/dynamic-execution` executes a stored sample, and it is the
    only path in reportal that does.  Four guards hold before any process starts:

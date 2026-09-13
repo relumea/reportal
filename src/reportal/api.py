@@ -22,7 +22,7 @@ import shutil
 import sqlite3
 import tempfile
 import threading
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path, PurePosixPath
@@ -38,6 +38,7 @@ from starlette.responses import Response, StreamingResponse
 from reportal import (
     __version__,
     activity,
+    ai_decomp,
     analysis_log,
     archive,
     auth,
@@ -5016,6 +5017,325 @@ def revert_function_renames(function_id: int) -> Response:
                     detail=f"no applied renames to revert for function {function_id}",
                 )
     return json_response(log.attach(result))
+
+
+# ── AI decompilation artifact ──────────────────────────────────────
+#
+# The hosted portal's richest AI artifact: one rewritten function, the
+# placeholder tokens it still carries with the analyst overrides that rename
+# them, per-line attribution against the decompilation the model read, an
+# analyst rating and per-line inline comments.  It is one `ai_artifacts` row of
+# kind `ai-decompilation`, so every write is journaled and revertible through
+# the same generic row-restore path the other four AI artifacts use.
+
+
+def _no_ai_decomp_artifact(function_id: int) -> Response:
+    """Return the stored-only 404 for a function with no AI decompilation."""
+    return json_error(
+        404,
+        error="no-artifact",
+        detail=(
+            f"no AI decompilation for function {function_id}; "
+            f"run POST /api/functions/{function_id}/ai-decompilation or "
+            f"'reportal ai-decompile {function_id}' first"
+        ),
+    )
+
+
+def _ai_decomp_error(function_id: int, exc: ai_decomp.AiDecompError) -> Response:
+    """Map one artifact failure onto the response the API answers with."""
+    if isinstance(exc, ai_decomp.NoAiDecompilationError):
+        return _no_ai_decomp_artifact(function_id)
+    if isinstance(exc, ai_decomp.UnknownTokenError):
+        return json_error(404, error="unknown token", detail=str(exc))
+    if isinstance(exc, ai_decomp.UnknownLineCommentError):
+        return json_error(404, error="no-line-comment", detail=str(exc))
+    if isinstance(exc, ai_decomp.InvalidOverrideError):
+        return json_error(400, error="invalid override", detail=str(exc))
+    if isinstance(exc, ai_decomp.InvalidRatingError):
+        return json_error(400, error="invalid rating", detail=str(exc))
+    return json_error(400, error="invalid line-comment", detail=str(exc))
+
+
+def _ai_decomp_view(conn: sqlite3.Connection, function_id: int) -> Response:
+    """Serve the stored artifact of one function, or its 404."""
+    try:
+        artifact = ai_decomp.require(conn, function_id)
+    except ai_decomp.NoAiDecompilationError:
+        return _no_ai_decomp_artifact(function_id)
+    return json_response({"function_id": function_id, **ai_decomp.view(artifact)})
+
+
+def _ai_decomp_mutation(
+    function_id: int,
+    mutate: Callable[[sqlite3.Connection, int], tuple[dict[str, Any], dict[str, Any]]],
+    *,
+    description: str,
+) -> Response:
+    """Run one artifact mutation in a journaled action and serve the new view.
+
+    *mutate* returns the new payload and the extra keys the route reports; the
+    shared write path snapshots and journals the row either way.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload, extra = mutate(conn, function_id)
+            except ai_decomp.AiDecompError as exc:
+                return _ai_decomp_error(function_id, exc)
+            ai_decomp.write_artifact(conn, log, function_id, payload, description=description)
+            artifact = ai_decomp.require(conn, function_id)
+    return json_response(
+        log.attach({"function_id": function_id, **ai_decomp.view(artifact), **extra})
+    )
+
+
+@router.post("/api/functions/{function_id}/ai-decompilation")
+def store_ai_decompilation(function_id: int) -> Response:
+    """Rewrite a function's stored decompilation with the configured LLM.
+
+    The model's input is the stored decompilation and never a generated one, so
+    a function without one is the same 404 the other AI artifacts answer.  The
+    token map and the per-line attributions in the response are derived locally
+    and the response says so in ``derivation``.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        client = _ai_client()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = ai_decomp.rewrite(conn, function_id, client=client)
+            except renames.NoDecompilationError:
+                return _no_ai_decompilation(function_id)
+            except llm.LlmUnavailable:
+                return json_error(503, error="llm-unavailable", detail=llm.UNAVAILABLE_DETAIL)
+            except llm.LlmError as exc:
+                return json_error(502, error="llm-error", detail=str(exc))
+            ai_decomp.write_artifact(
+                conn,
+                log,
+                function_id,
+                payload,
+                description=f"replaced the AI decompilation of function {function_id}",
+            )
+            artifact = ai_decomp.require(conn, function_id)
+    return json_response(log.attach({"function_id": function_id, **ai_decomp.view(artifact)}))
+
+
+@router.get("/api/functions/{function_id}/ai-decompilation")
+def get_ai_decompilation(function_id: int) -> Response:
+    """The stored AI decompilation rendered with its overrides; never calls the LLM."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        return _ai_decomp_view(conn, function_id)
+
+
+@router.get("/api/functions/{function_id}/ai-decompilation/status")
+def get_ai_decompilation_status(function_id: int) -> Response:
+    """The artifact's workflow state: counts, rating and model, without its text."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        try:
+            artifact = ai_decomp.require(conn, function_id)
+        except ai_decomp.NoAiDecompilationError:
+            return _no_ai_decomp_artifact(function_id)
+    return json_response({"function_id": function_id, **ai_decomp.status(artifact)})
+
+
+@router.get("/api/functions/{function_id}/ai-decompilation/events")
+def get_ai_decompilation_events(function_id: int) -> Response:
+    """The artifact's workflow as server-sent events.
+
+    The workflow is one model call and is already over by the time a client can
+    attach, so the stream reports the current state and its terminal marker
+    rather than narrating a call that has returned.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        try:
+            artifact = ai_decomp.require(conn, function_id)
+        except ai_decomp.NoAiDecompilationError:
+            return _no_ai_decomp_artifact(function_id)
+        frames = ai_decomp.events(artifact)
+
+    def stream() -> Any:
+        yield from frames
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/api/functions/{function_id}/ai-decompilation/tokens")
+def get_ai_decompilation_tokens(function_id: int) -> Response:
+    """The placeholder tokens of the rewrite with the name each one now carries."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        try:
+            artifact = ai_decomp.require(conn, function_id)
+        except ai_decomp.NoAiDecompilationError:
+            return _no_ai_decomp_artifact(function_id)
+    served = ai_decomp.view(artifact)
+    return json_response(
+        {
+            "function_id": function_id,
+            "tokens": served["tokens"],
+            "count": len(served["tokens"]),
+            "overridden_count": sum(1 for entry in served["tokens"] if entry["name"]),
+            "derivation": ai_decomp.DERIVATION,
+        }
+    )
+
+
+@router.patch("/api/functions/{function_id}/ai-decompilation/overrides")
+def set_ai_decompilation_overrides(
+    function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Set or clear analyst overrides for the artifact's placeholder tokens.
+
+    The body is ``{"overrides": {"<token>": "<name>"}}``; a null or empty name
+    clears that token's override.  The model's rewrite is never rewritten in
+    place, so a cleared override restores its own words.
+    """
+    raw = body.get("overrides")
+    return _ai_decomp_mutation(
+        function_id,
+        lambda conn, fid: ai_decomp.set_overrides(conn, fid, raw),
+        description=(
+            f"replaced the token overrides of the AI decompilation of function {function_id}"
+        ),
+    )
+
+
+@router.get("/api/functions/{function_id}/ai-decompilation/rating")
+def get_ai_decompilation_rating(function_id: int) -> Response:
+    """The analyst rating stored on the artifact, with its note."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        try:
+            artifact = ai_decomp.require(conn, function_id)
+        except ai_decomp.NoAiDecompilationError:
+            return _no_ai_decomp_artifact(function_id)
+        payload = artifact["payload"]
+    return json_response(
+        {
+            "function_id": function_id,
+            "rating": payload.get("rating"),
+            "note": payload.get("rating_note", ""),
+        }
+    )
+
+
+@router.patch("/api/functions/{function_id}/ai-decompilation/rating")
+def set_ai_decompilation_rating(
+    function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Record analyst feedback on the rewrite: ``{"rating": "up"|"down"|null, "note": str}``."""
+    note = body.get("note")
+    return _ai_decomp_mutation(
+        function_id,
+        lambda conn, fid: (
+            ai_decomp.rate(conn, fid, rating=body.get("rating"), note=note),
+            {},
+        ),
+        description=f"rated the AI decompilation of function {function_id}",
+    )
+
+
+@router.get("/api/functions/{function_id}/ai-decompilation/inline-comments")
+def list_ai_decompilation_comments(function_id: int) -> Response:
+    """The per-line inline comments stored beside the artifact, ordered by line."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        try:
+            artifact = ai_decomp.require(conn, function_id)
+        except ai_decomp.NoAiDecompilationError:
+            return _no_ai_decomp_artifact(function_id)
+        rows = artifact["payload"].get("line_comments", [])
+    return json_response({"function_id": function_id, "comments": rows, "count": len(rows)})
+
+
+def _comment_fields(body: dict[str, Any]) -> tuple[Any, Any]:
+    """Return the ``line`` and ``body`` a comment route reads from its request."""
+    return body.get("line"), body.get("body")
+
+
+def _with_comment(
+    result: tuple[dict[str, Any], dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Report the line comment a mutation touched beside the artifact view."""
+    payload, entry = result
+    return payload, {"comment": entry}
+
+
+@router.post("/api/functions/{function_id}/ai-decompilation/inline-comments")
+def add_ai_decompilation_comment(
+    function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Store one inline comment at a line, replacing any comment already there."""
+    line, text = _comment_fields(body)
+    author = body.get("author")
+    return _ai_decomp_mutation(
+        function_id,
+        lambda conn, fid: _with_comment(
+            ai_decomp.add_line_comment(conn, fid, line=line, body=text, author=author)
+        ),
+        description=f"stored an inline comment on the AI decompilation of function {function_id}",
+    )
+
+
+@router.patch("/api/functions/{function_id}/ai-decompilation/inline-comments/{line}")
+def update_ai_decompilation_comment(
+    function_id: int, line: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Replace the body of the inline comment stored at *line*."""
+    text = body.get("body")
+    return _ai_decomp_mutation(
+        function_id,
+        lambda conn, fid: _with_comment(
+            ai_decomp.update_line_comment(conn, fid, line=line, body=text)
+        ),
+        description=f"edited an inline comment on the AI decompilation of function {function_id}",
+    )
+
+
+@router.delete("/api/functions/{function_id}/ai-decompilation/inline-comments/{line}")
+def delete_ai_decompilation_comment(function_id: int, line: int) -> Response:
+    """Remove the inline comment stored at *line*."""
+    return _ai_decomp_mutation(
+        function_id,
+        lambda conn, fid: _with_comment(ai_decomp.delete_line_comment(conn, fid, line=line)),
+        description=f"removed an inline comment on the AI decompilation of function {function_id}",
+    )
 
 
 # ── AI decompilation pipeline ──────────────────────────────────────

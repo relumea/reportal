@@ -71,6 +71,28 @@ reportal apply-renames <function-id> [--all|--from NAME --to NAME] [--rename-fun
                                            #   also renames the function row
 reportal revert-renames <function-id> [--json]
                                            # restore the decompilation text the last apply journaled
+reportal ai-decompile <function-id> [--json]
+                                           # ask the configured LLM for a whole rewritten function
+                                           #   over the stored decompilation and store the artifact
+                                           #   with its token map and per-line attributions
+reportal ai-decompilation <function-id> [--json]
+                                           # the stored rewrite rendered with its token overrides
+reportal ai-decompilation-status <function-id> [--json]
+                                           # the artifact's counts, model, rating and times
+reportal ai-tokens <function-id> [--json]  # the placeholder tokens and the name each one carries
+reportal ai-lines <function-id> [--json]   # each rewritten line's attribution (original/rewritten/
+                                           #   added) and the source lines it paired with
+reportal ai-override <function-id> <token> [<name>] [--clear] [--json]
+                                           # set or clear an analyst name for one placeholder token;
+                                           #   the stored rewrite itself is never changed
+reportal ai-rate <function-id> [<rating>] [--note TEXT] [--json]
+                                           # record analyst feedback (up/down, empty to clear)
+reportal ai-line-comments <function-id> [--json]
+                                           # the per-line inline comments stored beside the artifact
+reportal ai-line-comment-add <function-id> <line> <body> [--author NAME] [--json]
+reportal ai-line-comment-edit <function-id> <line> <body> [--json]
+reportal ai-line-comment-rm <function-id> <line> [--json]
+                                           # add, edit or remove the comment stored at a line
 reportal pipeline <function-id> [--json]   # run the component AI decompilation pipeline over one
                                            #   function, storing the run and its artifacts
 reportal pipeline-revert <run-id> [--json] # undo exactly what one stored run wrote

@@ -94,6 +94,7 @@ from rich.table import Table
 from reportal import (
     __version__,
     activity,
+    ai_decomp,
     analysis_log,
     auth,
     auto_mode,
@@ -4121,6 +4122,357 @@ def revert_renames(
         return
     _print_journal_action(log, json_output)
     console.print(f"[green]Restored[/green] the decompilation of function {function_id}")
+
+
+# ── AI decompilation artifact ──────────────────────────────────────
+
+
+def _stored_ai_decomp(
+    conn: sqlite3.Connection, function_id: int, json_output: bool
+) -> dict[str, Any]:
+    """Return the stored AI decompilation of *function_id*, or fail like the routes."""
+    if store.get_function(conn, function_id) is None:
+        _fail(f"no function with id {function_id}", json_output)
+    try:
+        return ai_decomp.require(conn, function_id)
+    except ai_decomp.NoAiDecompilationError:
+        _fail(
+            f"no AI decompilation for function {function_id}"
+            f" (run 'reportal ai-decompile {function_id}')",
+            json_output,
+        )
+
+
+def _ai_decomp_mutate(
+    function_id: int,
+    json_output: bool,
+    mutate: Callable[[sqlite3.Connection, int], tuple[dict[str, Any], dict[str, Any]]],
+    *,
+    description: str,
+) -> None:
+    """Run one artifact mutation in a journaled action and report it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload, extra = mutate(conn, function_id)
+            except ai_decomp.AiDecompError as exc:
+                _fail(str(exc), json_output)
+            ai_decomp.write_artifact(conn, log, function_id, payload, description=description)
+            artifact = ai_decomp.require(conn, function_id)
+    payload_out = {"function_id": function_id, **ai_decomp.view(artifact), **extra}
+    if json_output:
+        typer.echo(json.dumps(log.attach(payload_out)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"[green]Updated[/green] the AI decompilation of function {function_id}")
+
+
+@app.command("ai-decompile")
+def ai_decompile(
+    function_id: int = typer.Argument(..., help="Function id to rewrite with the model"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rewrite a function's stored decompilation with the configured LLM."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    client = llm.get_client()
+    if not client.available():
+        _fail(f"llm-unavailable: {llm.UNAVAILABLE_DETAIL}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = ai_decomp.rewrite(conn, function_id, client=client)
+            except renames.NoDecompilationError:
+                _fail(
+                    f"function {function_id} has no stored decompilation"
+                    f" (run 'reportal decompile {function_id}')",
+                    json_output,
+                )
+            except llm.LlmUnavailable:
+                _fail(f"llm-unavailable: {llm.UNAVAILABLE_DETAIL}", json_output)
+            except llm.LlmError as exc:
+                _fail(f"llm-error: {exc}", json_output)
+            ai_decomp.write_artifact(
+                conn,
+                log,
+                function_id,
+                payload,
+                description=f"replaced the AI decompilation of function {function_id}",
+            )
+            artifact = ai_decomp.require(conn, function_id)
+    served = ai_decomp.view(artifact)
+    if json_output:
+        typer.echo(json.dumps(log.attach({"function_id": function_id, **served})))
+        return
+    _print_journal_action(log, json_output)
+    console.print(
+        f"\n[bold cyan]function {function_id}[/bold cyan] (rewritten, model {served['model']})"
+    )
+    console.print(str(served["code"]), markup=False)
+
+
+@app.command("ai-decompilation")
+def ai_decompilation(
+    function_id: int = typer.Argument(..., help="Function id whose rewrite to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The stored AI decompilation rendered with its overrides; never calls the model."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        served = ai_decomp.view(_stored_ai_decomp(conn, function_id, json_output))
+    if json_output:
+        typer.echo(json.dumps({"function_id": function_id, **served}))
+        return
+    console.print(
+        f"\n[bold cyan]function {function_id}[/bold cyan]"
+        f" (model {served['model']}, {served['rating'] or 'unrated'})"
+    )
+    console.print(str(served["code"]), markup=False)
+
+
+@app.command("ai-decompilation-status")
+def ai_decompilation_status(
+    function_id: int = typer.Argument(..., help="Function id whose workflow state to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The artifact's workflow state: counts, rating and model, without its text."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        state = ai_decomp.status(_stored_ai_decomp(conn, function_id, json_output))
+    payload = {"function_id": function_id, **state}
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=False, title=f"AI decompilation of function {function_id}")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    for key in (
+        "state",
+        "model",
+        "created_at",
+        "line_count",
+        "token_count",
+        "overridden_count",
+        "rating",
+        "line_comment_count",
+    ):
+        table.add_row(key, str(payload[key]))
+    console.print(table)
+
+
+@app.command("ai-tokens")
+def ai_tokens(
+    function_id: int = typer.Argument(..., help="Function id whose tokens to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the rewrite's placeholder tokens and the names they now carry."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        tokens = ai_decomp.view(_stored_ai_decomp(conn, function_id, json_output))["tokens"]
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "function_id": function_id,
+                    "tokens": tokens,
+                    "count": len(tokens),
+                    "derivation": ai_decomp.DERIVATION,
+                }
+            )
+        )
+        return
+    if not tokens:
+        console.print("[yellow]The rewrite carries no placeholder tokens.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Token", style="cyan")
+    table.add_column("Kind")
+    table.add_column("Name", style="green")
+    table.add_column("Uses", justify="right")
+    table.add_column("Lines")
+    for entry in tokens:
+        table.add_row(
+            str(entry["token"]),
+            str(entry["kind"]),
+            str(entry["name"] or ""),
+            str(entry["count"]),
+            ", ".join(str(number) for number in entry["lines"]),
+        )
+    console.print(table)
+
+
+@app.command("ai-lines")
+def ai_lines(
+    function_id: int = typer.Argument(..., help="Function id whose attribution to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Attribute each rewritten line to the decompilation the model read."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        served = ai_decomp.view(_stored_ai_decomp(conn, function_id, json_output))
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "function_id": function_id,
+                    "attributions": served["attributions"],
+                    "derivation": ai_decomp.DERIVATION,
+                }
+            )
+        )
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Line", justify="right", style="magenta")
+    table.add_column("Origin")
+    table.add_column("Source lines")
+    for entry in served["attributions"]:
+        table.add_row(
+            str(entry["line"]),
+            str(entry["origin"]),
+            ", ".join(str(number) for number in entry["source_lines"]),
+        )
+    console.print(table)
+
+
+@app.command("ai-override")
+def ai_override(
+    function_id: int = typer.Argument(..., help="Function id whose token to rename"),
+    token: str = typer.Argument(..., help="Placeholder token as the rewrite writes it"),
+    name: str = typer.Argument("", help="Analyst name for the token"),
+    clear: bool = typer.Option(False, "--clear", help="Drop the token's override"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Set or clear an analyst name for one placeholder token of the rewrite."""
+    overrides: dict[str, Any] = {token: None if clear else name}
+    _ai_decomp_mutate(
+        function_id,
+        json_output,
+        lambda conn, fid: ai_decomp.set_overrides(conn, fid, overrides),
+        description=(
+            f"replaced the token overrides of the AI decompilation of function {function_id}"
+        ),
+    )
+
+
+@app.command("ai-rate")
+def ai_rate(
+    function_id: int = typer.Argument(..., help="Function id to rate"),
+    rating: str = typer.Argument("", help="up, down, or empty to clear the rating"),
+    note: str = typer.Option("", "--note", help="Free-text note stored beside the rating"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Record analyst feedback on the rewrite."""
+    _ai_decomp_mutate(
+        function_id,
+        json_output,
+        lambda conn, fid: (ai_decomp.rate(conn, fid, rating=rating, note=note), {}),
+        description=f"rated the AI decompilation of function {function_id}",
+    )
+
+
+def _comment_mutation(
+    result: tuple[dict[str, Any], dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Report the line comment a mutation touched beside the artifact view."""
+    payload, entry = result
+    return payload, {"comment": entry}
+
+
+@app.command("ai-line-comments")
+def ai_line_comments(
+    function_id: int = typer.Argument(..., help="Function id whose line comments to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the per-line inline comments stored beside the artifact."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        artifact = _stored_ai_decomp(conn, function_id, json_output)
+    rows = artifact["payload"].get("line_comments", [])
+    if json_output:
+        typer.echo(json.dumps({"function_id": function_id, "comments": rows, "count": len(rows)}))
+        return
+    if not rows:
+        console.print("[yellow]No line comments stored.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Line", justify="right", style="magenta")
+    table.add_column("Author")
+    table.add_column("Body")
+    for row in rows:
+        table.add_row(str(row["line"]), str(row["author"]), str(row["body"]))
+    console.print(table)
+
+
+@app.command("ai-line-comment-add")
+def ai_line_comment_add(
+    function_id: int = typer.Argument(..., help="Function id to comment on"),
+    line: int = typer.Argument(..., help="1-based line of the rewrite to comment"),
+    body: str = typer.Argument(..., help="Comment body"),
+    author: str = typer.Option("", "--author", help="Author to record; defaults to 'analyst'"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Store one inline comment at a line, replacing any comment already there."""
+    _ai_decomp_mutate(
+        function_id,
+        json_output,
+        lambda conn, fid: _comment_mutation(
+            ai_decomp.add_line_comment(conn, fid, line=line, body=body, author=author or None)
+        ),
+        description=f"stored an inline comment on the AI decompilation of function {function_id}",
+    )
+
+
+@app.command("ai-line-comment-edit")
+def ai_line_comment_edit(
+    function_id: int = typer.Argument(..., help="Function id whose comment to edit"),
+    line: int = typer.Argument(..., help="1-based line whose comment to replace"),
+    body: str = typer.Argument(..., help="New comment body"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Replace the body of the inline comment stored at a line."""
+    _ai_decomp_mutate(
+        function_id,
+        json_output,
+        lambda conn, fid: _comment_mutation(
+            ai_decomp.update_line_comment(conn, fid, line=line, body=body)
+        ),
+        description=f"edited an inline comment on the AI decompilation of function {function_id}",
+    )
+
+
+@app.command("ai-line-comment-rm")
+def ai_line_comment_rm(
+    function_id: int = typer.Argument(..., help="Function id whose comment to remove"),
+    line: int = typer.Argument(..., help="1-based line whose comment to remove"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Remove the inline comment stored at a line."""
+    _ai_decomp_mutate(
+        function_id,
+        json_output,
+        lambda conn, fid: _comment_mutation(ai_decomp.delete_line_comment(conn, fid, line=line)),
+        description=f"removed an inline comment on the AI decompilation of function {function_id}",
+    )
 
 
 # ── AI decompilation pipeline ──────────────────────────────────────

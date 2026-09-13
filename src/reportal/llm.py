@@ -438,6 +438,19 @@ def types_messages(code: str, context: str = "") -> list[dict[str, str]]:
     )
 
 
+def rewrite_messages(code: str, context: str = "") -> list[dict[str, str]]:
+    """Messages asking for a complete, more readable rewrite of *code*."""
+    return _messages(
+        "Rewrite this function as readable C: give every unclear local, parameter,"
+        " helper function and global a meaningful name, and keep the control flow"
+        " and the semantics exactly as they are. Rename the declarations and every"
+        " use of them together, add no comments and no prose, and return the whole"
+        ' function. Return {"code": "<the complete rewritten function>"}.',
+        code,
+        context,
+    )
+
+
 def renames_messages(code: str, context: str = "") -> list[dict[str, str]]:
     """Messages asking for clearer names for the code's unknown identifiers."""
     return _messages(
@@ -645,6 +658,26 @@ def summarize(code: str, *, client: LlmClient | None = None, context: str = "") 
     if not isinstance(data, dict):
         raise LlmError("LLM summary response was not a JSON object")
     return {"summary": _required_str(data, "summary", what="summary")}
+
+
+def rewrite_decompilation(
+    code: str, *, client: LlmClient | None = None, context: str = ""
+) -> dict[str, Any]:
+    """Ask the LLM for a rewritten rendition of *code*; returns ``{"code": str}``.
+
+    A model that answers a bare C string instead of the requested JSON object is
+    accepted, since that is the same value under a different envelope.  An empty
+    answer, a JSON value that is neither object nor string, or an object with no
+    non-empty ``code`` raises :class:`LlmError` naming ``code``.
+    """
+    data = _parse_json(_complete(rewrite_messages(code, context), client))
+    if isinstance(data, str):
+        if not data.strip():
+            raise LlmError("LLM rewrite response was empty")
+        return {"code": data}
+    if not isinstance(data, dict):
+        raise LlmError("LLM rewrite response was not a JSON object")
+    return {"code": _required_str(data, "code", what="rewrite")}
 
 
 def threat_narrative(context: str, *, client: LlmClient | None = None) -> dict[str, Any]:

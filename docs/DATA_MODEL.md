@@ -43,14 +43,21 @@ and `POST /api/functions/<id>/decompilation`; `GET` on that route recomputes
 live without storing when no row exists.
 `ai_artifacts` stores the optional LLM results, one row per
 `(function_id, kind)` with `kind` in `summary`, `comments` and
-`type-suggestions` (plus `renames`, the identifier rename suggestions, and
-`function-triage`, one triage row per function), the
+`type-suggestions` (plus `renames`, the identifier rename suggestions,
+`function-triage`, one triage row per function, and `ai-decompilation`, the
+whole-function rewrite with its token map, per-line attributions, overrides,
+rating and line comments), the
 payload as JSON and the model that produced it; the
 composite primary key makes `set_ai_artifact` an upsert, so a re-run refreshes
 the artifact.  `GET /api/functions/<id>/summary`, `/type-suggestions` and
 `/renames` serve their kind, and `GET /api/functions/<id>/ai-comments` serves
 the inline-comments kind since the analyst comment routes own `/comments`; each
-answers 404 `no-artifact` when nothing is stored.  The AI decompilation pipeline also stores its predicted
+answers 404 `no-artifact` when nothing is stored.  The AI decompilation artifact
+is served and mutated by the `/api/functions/<id>/ai-decompilation` routes,
+which write it through one shared `ai_decomp.write_artifact` path so every write
+journals the row it replaces, and which never add a second table: the token map,
+attributions, overrides, rating and line comments are payload fields of that one
+row, and a line comment is keyed by its line number rather than by an id.  The AI decompilation pipeline also stores its predicted
 name there under kind `predicted-name` (same table, same upsert), so a run's
 prediction survives the run that produced it.  An apply of rename suggestions
 writes a journal row of kind `renames-applied` whose payload carries the

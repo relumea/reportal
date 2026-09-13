@@ -24,8 +24,9 @@ analysis (bytes, engine JSON, archive extraction, firmware carving) never runs
 anything.
 
 An optional OpenAI-compatible LLM bridge (`llm.py`) provides the portal's AI
-extras (a function summary, inline comments, type suggestions and identifier
-renames) over a decompilation reportal already stored.  It is disabled until an
+extras (a whole-function rewrite with its token map and line attributions, a
+function summary, inline comments, type suggestions and identifier renames)
+over a decompilation reportal already stored.  It is disabled until an
 endpoint is configured; without one every AI route answers 503
 `llm-unavailable` and no network call is made.
 
@@ -81,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 193 source files` is the finish line.
+`Success: no issues found in 195 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -95,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.12%, 23953 statements with 1887 missed. `[tool.coverage.report] fail_under`
+92.20%, 24603 statements with 1919 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -128,7 +129,7 @@ cd web && bun run typecheck # tsc --noEmit
 cd web && bun run test:ui   # Playwright over a seeded workspace (see tests/)
 
 # Run
-# The command reference (`reportal init` through `reportal ai-comments`)
+# The command reference (`reportal init` through `reportal ai-line-comment-rm`)
 # is docs/CLI.md; `reportal --help` prints the same list.
 # Serve: `make run` builds the SPA from web/ and then serves the portal;
 # `make serve` serves the current build without rebuilding.
@@ -419,12 +420,20 @@ assembles the evidence, detects and stores the matches, and is destructive.
 `run_firmware_scan` carves and stores one and `extract_firmware_regions` carves
 its regions out as binaries, so both are destructive.  `get_activity` reads the
 activity feed and `list_feedback` the stored notes, so both are read-only;
-`add_feedback` writes one and is destructive.  `get_sandbox_report` and
+`add_feedback` writes one and is destructive.  `get_ai_decompilation`,
+`get_ai_decompilation_status`, `list_ai_decompilation_tokens`,
+`get_ai_line_attributions` and `list_ai_line_comments` read the stored AI
+decompilation artifact and are read-only; `run_ai_decompilation` asks the
+configured LLM for a whole rewritten function and stores it,
+`set_ai_decompilation_overrides` sets or clears the analyst names of its
+placeholder tokens, `rate_ai_decompilation` records feedback and
+`add_ai_line_comment`, `update_ai_line_comment` and `delete_ai_line_comment`
+write its per-line comments, so all six are destructive.  `get_sandbox_report` and
 `get_sandbox_status` read the detonation ledger and are read-only;
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 177 built-in tools, 81 read-only and 96 destructive.
+declares 188 built-in tools, 86 read-only and 102 destructive.
 
 ## SPA
 
@@ -529,8 +538,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 177 built-in
-tools (81 read-only, 96 destructive).
+and `run_match` expose the same over MCP, and the counts stay 188 built-in
+tools (86 read-only, 102 destructive).
 
 ### Scaling
 

@@ -42,6 +42,8 @@ import { CfgPanel } from "./CfgPanel";
 import type {
   AiArtifact,
   AiCommentsPayload,
+  AiDecompilation,
+  AiDecompilationToken,
   AiSummaryPayload,
   AiTypeSuggestionsPayload,
   DecompilationResult,
@@ -978,6 +980,244 @@ export function AiRenamesPanel({
   );
 }
 
+/** One row of the rewrite table: a line, its origin and the comment stored on it. */
+interface AiCodeRow {
+  line: number;
+  text: string;
+  origin: string;
+  comment: string;
+}
+
+/** One stored AI decompilation: the rewrite, its token overrides and the analyst's feedback. */
+export function AiDecompilationPanel({ functionId }: { functionId: number }): ReactNode {
+  const key = panelKey("fn", functionId, "ai", "ai-decompilation");
+  const loader = (): Promise<AiDecompilation> =>
+    api<AiDecompilation>(`/functions/${functionId}/ai-decompilation`);
+  const entry = usePanel(key, loader);
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+  const [note, setNote] = useState("");
+  const [ratingNote, setRatingNote] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [openLine, setOpenLine] = useState<number | null>(null);
+  const [commentDraft, setCommentDraft] = useState("");
+
+  const data = entry?.state === "ready" ? entry.data : undefined;
+
+  const run = async (
+    busyKey: string,
+    message: string,
+    action: () => Promise<unknown>,
+  ): Promise<void> => {
+    setActionError(null);
+    setNote("");
+    setBusy(busyKey);
+    try {
+      await action();
+      refreshPanel(key, loader);
+      setNote(message);
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const generate = (): Promise<void> =>
+    run("generate", "Rewrite stored.", () =>
+      api(`/functions/${functionId}/ai-decompilation`, { method: "POST" }),
+    );
+
+  const setOverride = (token: string, name: string | null): Promise<void> =>
+    run(`override:${token}`, name === null ? `Override cleared for ${token}.` : `Override set for ${token}.`, () =>
+      api(`/functions/${functionId}/ai-decompilation/overrides`, {
+        method: "PATCH",
+        json: { overrides: { [token]: name } },
+      }),
+    );
+
+  const rate = (rating: string | null): Promise<void> =>
+    run(`rate:${rating ?? "clear"}`, "Rating stored.", () =>
+      api(`/functions/${functionId}/ai-decompilation/rating`, {
+        method: "PATCH",
+        json: { rating, note: ratingNote },
+      }),
+    );
+
+  const saveComment = (line: number): Promise<void> =>
+    run(`comment:${line}`, `Comment saved on line ${line}.`, () =>
+      api(`/functions/${functionId}/ai-decompilation/inline-comments`, {
+        method: "POST",
+        json: { line, body: commentDraft },
+      }),
+    );
+
+  const removeComment = (line: number): Promise<void> =>
+    run(`drop:${line}`, `Comment removed from line ${line}.`, () =>
+      api(`/functions/${functionId}/ai-decompilation/inline-comments/${line}`, {
+        method: "DELETE",
+      }),
+    );
+
+  let body: ReactNode;
+  if (!entry || entry.state === "loading") body = <Loading label="Loading the AI decompilation" />;
+  else if (entry.state === "error") {
+    body = isApiErrorCode(entry.error, AI_NO_ARTIFACT) ? (
+      <EmptyState>
+        No AI decompilation stored for this function. Generate one to have a model rewrite the
+        stored decompilation and name its placeholders.
+      </EmptyState>
+    ) : (
+      <ErrorNote error={entry.error} />
+    );
+  } else if (!data) body = <Muted>No AI decompilation stored.</Muted>;
+  else {
+    const lines = data.code.split("\n");
+    const originByLine = new Map(data.attributions.map((row) => [row.line, row.origin]));
+    const commentByLine = new Map(data.line_comments.map((row) => [row.line, row]));
+    body = (
+      <>
+        <Muted>
+          model: {data.model}, {lines.length} lines, {data.tokens.length} placeholder tokens,{" "}
+          {data.line_comments.length} line comments
+        </Muted>
+        <p className="muted">{data.derivation}</p>
+        <Toolbar>
+          <Field label="Rating">
+            <select
+              value={data.rating ?? ""}
+              onChange={(event) => void rate(event.target.value || null)}
+              disabled={busy !== ""}
+            >
+              <option value="">unrated</option>
+              <option value="up">up</option>
+              <option value="down">down</option>
+            </select>
+          </Field>
+          <Field label="Rating note">
+            <input
+              type="text"
+              value={ratingNote}
+              placeholder={data.rating_note}
+              onChange={(event) => setRatingNote(event.target.value)}
+            />
+          </Field>
+        </Toolbar>
+        <DataTable<AiCodeRow>
+          columns={[
+            { label: "Line", numeric: true, mono: true, render: (row) => String(row.line) },
+            {
+              label: "Origin",
+              render: (row) => (
+                <Badge tone={row.origin === "added" ? "warn" : "neutral"}>{row.origin}</Badge>
+              ),
+            },
+            { label: "Code", mono: true, render: (row) => row.text },
+            {
+              label: "Comment",
+              render: (row) => (commentByLine.has(row.line) ? row.comment : ""),
+            },
+          ]}
+          rows={lines.map((text, index) => ({
+            line: index + 1,
+            text,
+            origin: originByLine.get(index + 1) ?? "modified",
+            comment: commentByLine.get(index + 1)?.body ?? "",
+          }))}
+          rowKey={(row) => row.line}
+          onRowClick={(row) => {
+            setOpenLine(row.line);
+            setCommentDraft(commentByLine.get(row.line)?.body ?? "");
+          }}
+        />
+        {openLine === null ? (
+          <Muted>Select a line to add or edit its inline comment.</Muted>
+        ) : (
+          <Toolbar>
+            <Field label={`Comment on line ${openLine}`}>
+              <input
+                type="text"
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+              />
+            </Field>
+            <Button tone="primary" pending={busy === `comment:${openLine}`} onClick={() => void saveComment(openLine)}>
+              Save
+            </Button>
+            {commentByLine.has(openLine) ? (
+              <Button pending={busy === `drop:${openLine}`} onClick={() => void removeComment(openLine)}>
+                Remove
+              </Button>
+            ) : null}
+          </Toolbar>
+        )}
+        {data.tokens.length ? (
+          <DataTable<AiDecompilationToken>
+            columns={[
+              { label: "Token", mono: true, key: "token" },
+              { label: "Kind", key: "kind" },
+              { label: "Uses", numeric: true, render: (row) => String(row.count) },
+              {
+                label: "Lines",
+                render: (row) => row.lines.join(", "),
+              },
+              {
+                label: "Override",
+                render: (row) => (
+                  <>
+                    <input
+                      type="text"
+                      aria-label={`override for ${row.token}`}
+                      value={drafts[row.token] ?? row.name ?? ""}
+                      onChange={(event) =>
+                        setDrafts((current) => ({ ...current, [row.token]: event.target.value }))
+                      }
+                    />
+                    <Button
+                      size="sm"
+                      pending={busy === `override:${row.token}`}
+                      onClick={() =>
+                        void setOverride(row.token, drafts[row.token] ?? row.name ?? "")
+                      }
+                    >
+                      Set
+                    </Button>
+                    {row.name ? (
+                      <Button size="sm" onClick={() => void setOverride(row.token, null)}>
+                        Clear
+                      </Button>
+                    ) : null}
+                  </>
+                ),
+              },
+            ]}
+            rows={data.tokens}
+            rowKey={(row) => row.token}
+          />
+        ) : (
+          <Muted>The rewrite carries no placeholder tokens.</Muted>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <Panel
+      title="AI decompilation"
+      subtitle="A whole-function rewrite, the placeholders it still carries and the overrides that name them."
+      actions={
+        <Button tone="primary" pending={busy === "generate"} onClick={() => void generate()}>
+          {entry?.state === "ready" ? "Rewrite again" : "Rewrite"}
+        </Button>
+      }
+    >
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      {note ? <Note>{note}</Note> : null}
+      {body}
+    </Panel>
+  );
+}
+
 /** The AI extras of one function, grouped under a section heading. */
 export function AiSection({
   functionId,
@@ -989,6 +1229,7 @@ export function AiSection({
   return (
     <section>
       <h3>AI</h3>
+      <AiDecompilationPanel functionId={functionId} />
       <AiSummaryPanel functionId={functionId} />
       <AiCommentsPanel functionId={functionId} />
       <AiTypeSuggestionsPanel functionId={functionId} />

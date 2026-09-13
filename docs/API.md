@@ -187,6 +187,18 @@ their pages by the same rule.
 | `/api/functions/<id>/renames` | POST | ask the configured LLM for identifier renames on the stored decompilation and store them |
 | `/api/functions/<id>/renames/apply` | POST | rewrite whole-token identifiers in the stored decompilation (refusing keywords and short names), journaling the previous text; body `{"applied": [...], "rename_function": bool}`, both optional and an omitted `applied` applies every stored suggestion |
 | `/api/functions/<id>/renames/revert` | POST | restore the decompilation text the last apply journaled and drop the journal |
+| `/api/functions/<id>/ai-decompilation` | GET | the stored AI decompilation rendered with its overrides, plus its token map, per-line attributions, rating and line comments; 404 `no-artifact` without one; never calls the LLM |
+| `/api/functions/<id>/ai-decompilation` | POST | ask the configured LLM for a complete rewritten function over the stored decompilation and store the artifact; 404 `no-decompilation` without one, 503 `llm-unavailable`, 502 `llm-error` |
+| `/api/functions/<id>/ai-decompilation/status` | GET | the artifact's workflow state (line, token, override, attribution, rating and comment counts, with the model and its time) without its text |
+| `/api/functions/<id>/ai-decompilation/events` | GET | the workflow as server-sent events: the current state and its terminal marker, because the one model call is already over when a client can attach |
+| `/api/functions/<id>/ai-decompilation/tokens` | GET | the rewrite's placeholder tokens with the analyst name each one carries |
+| `/api/functions/<id>/ai-decompilation/overrides` | PATCH | set or clear analyst names for the rewrite's tokens; body `{"overrides": {"<token>": "<name>"}}`, a null or blank name clears one; 400 `invalid override`, 404 `unknown token` |
+| `/api/functions/<id>/ai-decompilation/rating` | GET | the stored analyst rating and its note |
+| `/api/functions/<id>/ai-decompilation/rating` | PATCH | record analyst feedback; body `{"rating": "up"|"down"|null, "note": str}`; 400 `invalid rating` |
+| `/api/functions/<id>/ai-decompilation/inline-comments` | GET | the per-line inline comments stored beside the artifact, ordered by line |
+| `/api/functions/<id>/ai-decompilation/inline-comments` | POST | store one comment at a line; body `{"line": int, "body": str, "author": str}`; 400 `invalid line-comment` |
+| `/api/functions/<id>/ai-decompilation/inline-comments/<line>` | PATCH | replace the body of the comment at `<line>`; 400 `invalid line-comment`, 404 `no-line-comment` |
+| `/api/functions/<id>/ai-decompilation/inline-comments/<line>` | DELETE | remove the comment at `<line>`; 400 `invalid line-comment`, 404 `no-line-comment` |
 | `/api/functions/<id>/pipeline` | POST | run the AI decompilation component composition; body `{"disabled": [...]}` optional; 404 unknown function, 503 `pipeline-unavailable` only when the composition cannot be assembled (a skipped or failed stage is a step on the run) |
 | `/api/functions/<id>/pipeline` | GET | stored latest run with its steps and the function's durable artifacts; 404 `no-run` before the first run |
 | `/api/pipeline/runs/<id>` | GET | one pipeline run with its steps; 404 `run not found` |
@@ -591,6 +603,25 @@ stored-only: they resolve neither the engine nor the LLM, serve the stored
 artifact with its `created_at`, and answer 404
 `{"error": "no-artifact", "detail": ...}` when there is none.  An unknown
 function is 404 on both methods.
+
+The AI decompilation artifact (`ai_decomp.py`) reuses the same error shape with
+its own additions.  `POST /api/functions/<id>/ai-decompilation` needs the stored
+decompilation (404 `no-decompilation`), a configured endpoint (503
+`llm-unavailable`) and an usable model response (502 `llm-error`), and returns
+the served artifact: the rendered `code`, the model's `rewritten_code`, the
+`tokens` with their `name`, the `attributions`, the `overrides`, the `rating`
+and its note, the `line_comments`, the `model`, the `created_at` and a
+`derivation` string stating which parts are locally derived rather than
+model-reported.  Every `GET` is stored-only and answers 404 `no-artifact` with
+the `reportal ai-decompile` hint.  `PATCH .../overrides` bodies are
+`{"overrides": {"<token>": "<name>"}}` with a null or blank name clearing one:
+400 `invalid override` for a non-object mapping or a name that is not a C
+identifier or is a keyword, 404 `unknown token` for a token the artifact does
+not carry.  `PATCH .../rating` takes `{"rating": "up"|"down"|null, "note": str}`
+and answers 400 `invalid rating` outside that vocabulary.  The per-line comment
+routes take `{"line", "body", "author"}` on `POST` and `{"body"}` on `PATCH`,
+answer 400 `invalid line-comment` for a bad line or an empty body and 404
+`no-line-comment` when no comment is stored at the line.
 
 The rename routes (`renames.py`) reuse that shape.  `POST
 /api/functions/<id>/renames` needs the stored decompilation (404
