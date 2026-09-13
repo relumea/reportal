@@ -337,7 +337,18 @@ the panels they changed and the function header, so the new name shows.  The
 diff view (`views/DiffView.tsx`) renders the two listings side by side with
 the changed lines marked (delete/insert styling), a `kind` select
 (`decomp`/`disasm`), a normalize checkbox, the similarity and the summary
-counts, loading through the diff route.  The per-function extras render between the references tables and the matches
+counts, loading through the diff route.  The conversation detail carries the Agent run panel: the question box
+(`Run agent`), the run's status with its tool-call count, the event list (each
+tool call, a confirmation request, a rejection, the answer or a failure), the
+pending call with its exact arguments and `Approve call`/`Reject call`, a
+`Cancel run` control while the run is live and the model's answer.  It reads
+`GET /api/conversations/<id>/runs`, posts to `POST .../runs`, `.../confirm` and
+`.../cancel`, and refreshes after every action; a client that wants live updates
+follows the run's state stream at `GET /api/conversations/<id>/events`.  The
+panel is explicit that a tool which changes the workspace waits for the
+analyst's approval and that a rejection is answered another way.
+
+The per-function extras render between the references tables and the matches
 panel: indirect call sites (the cached listing's register and memory calls, each
 with its line, mnemonic and operand, with the nothing-cached hint when the
 function has no listing and a Refresh control); capabilities (the rules the

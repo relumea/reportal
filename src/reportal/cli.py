@@ -56,7 +56,12 @@ for the full-file hex view with a stated gap where the section map backs none,
 ``references`` lists a function's globals, callers and callees, ``strings``
 lists a binary's strings sorted by value or length, and ``section-coverage``
 reports per-section byte coverage over the stored functions.
-``conversations`` lists the stored chats, ``chat-new`` opens one scoped to a
+``conversation-run`` works a conversation with the local MCP tools (a destructive
+call pauses the run), ``conversation-confirm`` approves or rejects that call,
+``conversation-cancel`` stops a live run, ``conversation-runs`` and
+``conversation-run-status`` read them and ``conversation-events`` follows a run's
+state as server-sent events.  ``conversations`` lists the stored chats,
+``chat-new`` opens one scoped to a
 function or binary, and ``chat`` sends one message through the optional LLM
 bridge.  ``pipeline`` runs the AI decompilation component composition over one
 function and stores the run, and ``pipeline-revert`` undoes what one stored run
@@ -102,6 +107,7 @@ from rich.table import Table
 from reportal import (
     __version__,
     activity,
+    agent,
     ai_decomp,
     analysis_log,
     auth,
@@ -5945,6 +5951,212 @@ def chat(
     console.print(message, markup=False)
     console.print("[bold green]assistant[/bold green]")
     console.print(str(result["assistant"]["content"]), markup=False)
+
+
+@app.command("conversation-run")
+def conversation_run(
+    conversation_id: int = typer.Argument(..., help="Conversation to run the agent in"),
+    message: str = typer.Argument(..., help="The question to ask"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Run one agent turn: the model may call local tools and then answer.
+
+    A read-only tool runs at once; a tool that changes the workspace pauses the
+    run, and `conversation-confirm` decides it.  The run row and the messages it
+    wrote are one journaled action; a tool call the run made carries its own.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    client = llm.get_client()
+    if not client.available():
+        _fail(f"llm-unavailable: {llm.UNAVAILABLE_DETAIL}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            _fail(f"no conversation with id {conversation_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = agent.start(
+                    conn, log, conversation_id=conversation_id, content=message, client=client
+                )
+            except llm.LlmUnavailable:
+                _fail(f"llm-unavailable: {llm.UNAVAILABLE_DETAIL}", json_output)
+            except llm.LlmError as exc:
+                _fail(f"llm-error: {exc}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    _print_run(result)
+
+
+def _print_run(run: dict[str, Any]) -> None:
+    """Print one agent run: its status, what it did and its answer."""
+    console.print(
+        f"run {run['run_id']}: [bold]{run['status']}[/bold] ({run['tool_calls']} tool call(s))"
+    )
+    for event in run["events"]:
+        kind = str(event.get("kind") or "")
+        if kind == agent.EVENT_TOOL_CALL:
+            failed = " [red]failed[/red]" if event.get("failed") else ""
+            console.print(f"  [cyan]{event.get('tool')}[/cyan]{failed}")
+        elif kind == agent.EVENT_CONFIRMATION_REQUIRED:
+            console.print(
+                f"  [yellow]confirmation required[/yellow]: {event.get('name')}"
+                f" {json.dumps(event.get('arguments'))}"
+            )
+        elif kind == agent.EVENT_TOOL_REJECTED:
+            console.print(f"  [yellow]rejected[/yellow]: {event.get('tool')}")
+        elif kind in (agent.EVENT_FAILED, agent.EVENT_LIMIT):
+            console.print(f"  [red]{event.get('detail') or event.get('limit')}[/red]")
+    if run["content"]:
+        console.print("[bold green]assistant[/bold green]")
+        console.print(str(run["content"]), markup=False)
+    if run["pending"]:
+        console.print(
+            "[yellow]Waiting for confirmation; run 'reportal conversation-confirm'.[/yellow]"
+        )
+    if run["error"]:
+        console.print(f"[red]{run['error']}[/red]")
+
+
+@app.command("conversation-runs")
+def conversation_runs(
+    conversation_id: int = typer.Argument(..., help="Conversation whose runs to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Every agent run of one conversation, newest first."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            _fail(f"no conversation with id {conversation_id}", json_output)
+        rows = agent.list_runs(conn, conversation_id)
+    if json_output:
+        typer.echo(json.dumps({"runs": rows, "count": len(rows)}))
+        return
+    if not rows:
+        console.print("[yellow]No agent runs for this conversation.[/yellow]")
+        return
+    table = Table(title=f"agent runs of conversation {conversation_id}")
+    table.add_column("Run", justify="right", style="magenta")
+    table.add_column("Status")
+    table.add_column("Tool calls", justify="right")
+    table.add_column("Started")
+    for row in rows:
+        table.add_row(
+            str(row["id"]), str(row["status"]), str(row["tool_calls"]), str(row["created_at"])
+        )
+    console.print(table)
+
+
+@app.command("conversation-run-status")
+def conversation_run_status(
+    conversation_id: int = typer.Argument(..., help="Conversation the run belongs to"),
+    run_id: int = typer.Option(None, "--run-id", help="Run id; the newest without one"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """One agent run with its events, its pending call and its answer."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            _fail(f"no conversation with id {conversation_id}", json_output)
+        try:
+            run = agent.payload(agent.resolve_run(conn, conversation_id, run_id))
+        except agent.UnknownRunError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(run))
+        return
+    _print_run(run)
+
+
+@app.command("conversation-confirm")
+def conversation_confirm(
+    conversation_id: int = typer.Argument(..., help="Conversation the run belongs to"),
+    reject: bool = typer.Option(False, "--reject", help="Refuse the pending call"),
+    run_id: int = typer.Option(None, "--run-id", help="Run id; the newest without one"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Approve or reject the tool call a paused run named, then continue it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    client = llm.get_client()
+    if not client.available():
+        _fail(f"llm-unavailable: {llm.UNAVAILABLE_DETAIL}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            _fail(f"no conversation with id {conversation_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = agent.confirm(
+                    conn,
+                    log,
+                    conversation_id=conversation_id,
+                    approve=not reject,
+                    run_id=run_id,
+                    client=client,
+                )
+            except (agent.UnknownRunError, agent.NotWaitingError) as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+            except llm.LlmUnavailable:
+                _fail(f"llm-unavailable: {llm.UNAVAILABLE_DETAIL}", json_output)
+            except llm.LlmError as exc:
+                _fail(f"llm-error: {exc}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    _print_run(result)
+
+
+@app.command("conversation-cancel")
+def conversation_cancel(
+    conversation_id: int = typer.Argument(..., help="Conversation the run belongs to"),
+    run_id: int = typer.Option(None, "--run-id", help="Run id; the newest without one"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Cancel a live agent run; a run that already finished is refused."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            _fail(f"no conversation with id {conversation_id}", json_output)
+        try:
+            result = agent.cancel(conn, conversation_id=conversation_id, run_id=run_id)
+        except (agent.UnknownRunError, agent.NotCancellableError) as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    console.print(f"run {result['run_id']}: [bold]{result['status']}[/bold]")
+
+
+@app.command("conversation-events")
+def conversation_events(
+    conversation_id: int = typer.Argument(..., help="Conversation the run belongs to"),
+    run_id: int = typer.Option(None, "--run-id", help="Run id; the newest without one"),
+) -> None:
+    """Follow a run's state as server-sent event frames until it is terminal."""
+    portal_db = _db_path(False)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", False)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            _fail(f"no conversation with id {conversation_id}", False)
+        try:
+            run = agent.resolve_run(conn, conversation_id, run_id)
+        except agent.UnknownRunError as exc:
+            _fail(f"{exc.code}: {exc.detail}", False)
+        for frame in agent.events(conn, int(run["id"])):
+            console.print(frame, markup=False, end="")
 
 
 # ── knowledge ──────────────────────────────────────────────────────

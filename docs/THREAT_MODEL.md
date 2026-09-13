@@ -93,6 +93,17 @@ full below.
    same: it is stored as text and served as text, nothing compiles or runs it,
    and an analyst override is a whole-token text substitution over that text
    with the C keywords and the string literals left alone.
+   An **agent run** (`agent.py`) is the one place the model can ask for an
+   action rather than only produce text.  Its answer is a tool call, and the
+   call is not executed on the model's word: a tool whose `Tool.annotations` do
+   not say `readOnlyHint` and do say `destructiveHint` pauses the run, and only
+   an explicit `POST /api/conversations/<id>/confirm` with `approve: true` runs
+   it.  An unknown tool name counts as destructive, arguments are validated
+   against the tool's own input schema by the registry, and every call's
+   arguments and bounded result are recorded on the run.  A tool the model
+   chooses is still a tool the *analyst* approved; that is the whole gate, so an
+   operator who does not want a model to be able to reach a tool should not
+   enable the bridge (the feature is off without an endpoint).
 7. **Sample bytes to the sandbox (opt-in, bounded).**  `POST
    /api/binaries/<id>/dynamic-execution` executes a stored sample, and it is the
    only path in reportal that does.  Four guards hold before any process starts:
@@ -143,7 +154,8 @@ full below.
 | Secret read and write | Network client; a credential name, scope and value | `api.py` secret routes, `secret_store.normalize_*`, `secret_store.journaled_set` / `journaled_delete` |
 | Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `api.sandbox_detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
 | Registered sandbox runner | Third-party package on the host | `sandbox.refresh_runners`, `reportal.sandbox_runners` |
-| LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm._parse_json` |
+| LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm.LlmClient.chat`, `llm._parse_json` |
+| Agent tool calls | LLM endpoint response, gated by an analyst's confirmation | `agent._drive`, `agent.confirm`, `mcp_server.call_tool` |
 | MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
 | Workspace `reportal.toml` and database files | Local filesystem | `_paths`, `store`, `journal` |
@@ -260,6 +272,16 @@ full below.
   whole.  The gate is off by default, a URL a caller controls is impossible (one
   fixed host, the path built from the hash), a redirect is not followed, and the
   body is capped; what cannot be undone is the disclosure the request makes.
+- **An agent run is a model with hands, behind one confirmation.**  A
+  destructive tool is gated on the analyst's approval, but a read-only tool is
+  not, and the model chooses which read-only tool to call, how often (bounded by
+  `agent.MAX_TOOL_CALLS`) and with which arguments (validated against the tool's
+  schema but not against the analyst's intent).  Reads disclose whatever the
+  caller may read, a tool result is fed back into the model's context (so
+  workspace data leaves to the configured endpoint), and the run's own journal
+  action does not cover a tool's writes: reverting the conversation removes the
+  run and its messages, not what a tool changed, which carries its own action.
+  Cancel is honoured at a step boundary, so a call in flight completes.
 - **A stored credential is only as safe as the database file.**  The secret
   store keeps values in plaintext in the workspace SQLite file and reports the
   last four characters of any value long enough to hint, so a stolen database

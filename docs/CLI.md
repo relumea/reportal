@@ -161,6 +161,22 @@ reportal analysis-upgrade <analysis-id> --model NAME [--function ID]... [--limit
                                            # re-run the analysis's stored AI artifacts under a
                                            #   different llm model, journaling every replacement;
                                            #   reportal never re-analyses the binary
+reportal conversation-run <conversation-id> <message> [--json]
+                                           # run one agent turn: the model may call
+                                           #   the local MCP tools and then answer;
+                                           #   a destructive call pauses the run
+reportal conversation-runs <conversation-id> [--json]
+                                           # every agent run of one conversation
+reportal conversation-run-status <conversation-id> [--run-id N] [--json]
+                                           # one run's status, events, pending call
+                                           #   and answer
+reportal conversation-confirm <conversation-id> [--reject] [--run-id N] [--json]
+                                           # approve or reject the pending tool call
+                                           #   and continue the run
+reportal conversation-cancel <conversation-id> [--run-id N] [--json]
+                                           # stop a live run at its next step
+reportal conversation-events <conversation-id> [--run-id N]
+                                           # follow the run's state as SSE frames
 reportal pipeline <function-id> [--json]   # run the component AI decompilation pipeline over one
                                            #   function, storing the run and its artifacts
 reportal pipeline-revert <run-id> [--json] # undo exactly what one stored run wrote

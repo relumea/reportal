@@ -28,6 +28,7 @@ from typing import Any
 
 from reportal import (
     activity,
+    agent,
     ai_decomp,
     analysis_log,
     auth,
@@ -2826,6 +2827,87 @@ def _bounded_function_ids(arguments: dict[str, Any], key: str) -> list[int]:
     return ids
 
 
+def _tool_list_conversation_runs(arguments: dict[str, Any]) -> dict[str, Any]:
+    conversation_id = _arg_int(arguments, "conversation_id")
+    with contextlib.closing(_open()) as conn:
+        _conversation_or_error(conn, conversation_id)
+        rows = agent.list_runs(conn, conversation_id)
+    return {"conversation_id": conversation_id, "runs": rows, "count": len(rows)}
+
+
+def _tool_get_conversation_run(arguments: dict[str, Any]) -> dict[str, Any]:
+    conversation_id = _arg_int(arguments, "conversation_id")
+    run_id = _arg_optional_int(arguments, "run_id", 0)
+    with contextlib.closing(_open()) as conn:
+        _conversation_or_error(conn, conversation_id)
+        try:
+            resolved = agent.resolve_run(conn, conversation_id, run_id or None)
+        except agent.UnknownRunError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+    return resolved
+
+
+def _tool_run_conversation_agent(arguments: dict[str, Any]) -> dict[str, Any]:
+    conversation_id = _arg_int(arguments, "conversation_id")
+    content = _arg_str(arguments, "content")
+    with contextlib.closing(_open()) as conn:
+        _conversation_or_error(conn, conversation_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                payload = agent.start(
+                    conn,
+                    log,
+                    conversation_id=conversation_id,
+                    content=content,
+                    client=_ai_client_or_error(),
+                )
+            except llm.LlmUnavailable as exc:
+                raise ToolError("llm-unavailable", llm.UNAVAILABLE_DETAIL) from exc
+            except llm.LlmError as exc:
+                raise ToolError("llm-error", str(exc)) from exc
+            return log.attach(payload)
+
+
+def _tool_confirm_conversation_run(arguments: dict[str, Any]) -> dict[str, Any]:
+    conversation_id = _arg_int(arguments, "conversation_id")
+    run_id = _arg_optional_int(arguments, "run_id", 0)
+    approve = _arg_optional_bool(arguments, "approve", True)
+    with contextlib.closing(_open()) as conn:
+        _conversation_or_error(conn, conversation_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                payload = agent.confirm(
+                    conn,
+                    log,
+                    conversation_id=conversation_id,
+                    approve=approve,
+                    run_id=run_id or None,
+                    client=_ai_client_or_error(),
+                )
+            except agent.UnknownRunError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            except agent.NotWaitingError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            except llm.LlmUnavailable as exc:
+                raise ToolError("llm-unavailable", llm.UNAVAILABLE_DETAIL) from exc
+            except llm.LlmError as exc:
+                raise ToolError("llm-error", str(exc)) from exc
+            return log.attach(payload)
+
+
+def _tool_cancel_conversation_run(arguments: dict[str, Any]) -> dict[str, Any]:
+    conversation_id = _arg_int(arguments, "conversation_id")
+    run_id = _arg_optional_int(arguments, "run_id", 0)
+    with contextlib.closing(_open()) as conn:
+        _conversation_or_error(conn, conversation_id)
+        try:
+            return agent.cancel(conn, conversation_id=conversation_id, run_id=run_id or None)
+        except agent.UnknownRunError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        except agent.NotCancellableError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
 def _tool_get_indirect_call_sites(arguments: dict[str, Any]) -> dict[str, Any]:
     function_id = _arg_int(arguments, "function_id")
     with contextlib.closing(_open()) as conn:
@@ -4340,6 +4422,22 @@ def _tool_list_notifications(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError("invalid notification query", str(exc)) from exc
         payload["latest"] = notifications.latest(conn)
     return payload
+
+
+def _conversation_or_error(conn: sqlite3.Connection, conversation_id: int) -> dict[str, Any]:
+    """The conversation row, or a tool error naming the id."""
+    conversation = store.get_conversation(conn, conversation_id)
+    if conversation is None:
+        raise ToolError("conversation not found", f"no conversation with id {conversation_id}")
+    return conversation
+
+
+def _ai_client_or_error() -> llm.LlmClient:
+    """The configured bridge, or the tool error every AI path answers."""
+    client = llm.get_client()
+    if not client.available():
+        raise ToolError("llm-unavailable", llm.UNAVAILABLE_DETAIL)
+    return client
 
 
 def _analysis_or_error(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any]:
@@ -6914,6 +7012,72 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_import_type_definitions,
+        ),
+        Tool(
+            "list_conversation_runs",
+            "Every agent run of one conversation, newest first, with each run's status, tool"
+            " calls and events.",
+            _object({"conversation_id": _int("Conversation id.")}, ("conversation_id",)),
+            _READ,
+            _tool_list_conversation_runs,
+        ),
+        Tool(
+            "get_conversation_run",
+            "One agent run with its events, the tool call awaiting confirmation and the model's"
+            " answer; without a run id, the conversation's newest run.",
+            _object(
+                {
+                    "conversation_id": _int("Conversation id."),
+                    "run_id": _int("Run id; the newest without one."),
+                },
+                ("conversation_id",),
+            ),
+            _READ,
+            _tool_get_conversation_run,
+        ),
+        Tool(
+            "run_conversation_agent",
+            "Run one agent turn in a conversation: the model may call the local MCP tools and"
+            " then answer.  A read-only tool runs at once; a destructive one pauses the run for"
+            " confirm_conversation_run.",
+            _object(
+                {
+                    "conversation_id": _int("Conversation id."),
+                    "content": _str("The question to ask."),
+                },
+                ("conversation_id", "content"),
+            ),
+            _WRITE,
+            _tool_run_conversation_agent,
+        ),
+        Tool(
+            "confirm_conversation_run",
+            "Approve or reject the tool call a paused agent run named and continue it; a"
+            " rejection is fed back to the model as a refused call.",
+            _object(
+                {
+                    "conversation_id": _int("Conversation id."),
+                    "run_id": _int("Run id; the newest without one."),
+                    "approve": _bool("False rejects the call."),
+                },
+                ("conversation_id",),
+            ),
+            _WRITE,
+            _tool_confirm_conversation_run,
+        ),
+        Tool(
+            "cancel_conversation_run",
+            "Cancel a live agent run at its next step boundary; a run that already finished is"
+            " refused.",
+            _object(
+                {
+                    "conversation_id": _int("Conversation id."),
+                    "run_id": _int("Run id; the newest without one."),
+                },
+                ("conversation_id",),
+            ),
+            _WRITE,
+            _tool_cancel_conversation_run,
         ),
         Tool(
             "get_indirect_call_sites",

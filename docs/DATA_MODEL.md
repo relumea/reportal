@@ -452,6 +452,18 @@ a write no request made.  An existing database gets the column through
 `journal.ensure_schema`, which adds it before creating its index, and the rows
 written before it read as an empty actor rather than an invented one.
 
+`conversation_runs` is the agent half of a conversation, owned by `agent.py` and
+created by its own lazy `ensure_schema`.  One row is one run: the
+`conversation_id`, the terminal or live `status` (`running`,
+`waiting_confirmation`, `completed`, `cancelled`, `failed`), the `tool_calls`
+count, `events_json` (the bounded list of what happened), `messages_json` (the
+message list sent to the model, kept so a run paused for confirmation resumes in
+whichever process takes the confirmation), `pending_json` (the exact call
+awaiting an analyst's decision, empty otherwise), the final `content` or the
+`error`, the `actor` and the times.  The row and the messages a turn wrote are one
+journaled action, so a revert removes both; a tool the run called carries its own
+journal action, which the run's does not cover.
+
 `function_edges` and `user_strings` are the two per-function extras that carry
 rows of their own, each owned by its module (`function_extras.py`,
 `user_strings.py`) and created lazily by its own `ensure_schema`, the pattern

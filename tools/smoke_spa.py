@@ -776,7 +776,13 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
     (
         "conversation detail",
         "#/conversations/{conversation_id}",
-        (("Conversations",), (CONVERSATION_MESSAGE,)),
+        (
+            ("Conversations",),
+            (CONVERSATION_MESSAGE,),
+            # The agent half: one tool loop per run over the local MCP registry.
+            ("Agent run",),
+            ("Run agent",),
+        ),
     ),
     (
         "matches",

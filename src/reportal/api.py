@@ -38,6 +38,7 @@ from starlette.responses import Response, StreamingResponse
 from reportal import (
     __version__,
     activity,
+    agent,
     ai_decomp,
     analysis_log,
     archive,
@@ -5916,6 +5917,164 @@ def post_conversation_message(
                 return json_error(502, error="llm-error", detail=str(exc))
             journal.journaled_messages(conn, log, conversation_id, before)
     return json_response(log.attach(result))
+
+
+@router.post("/api/conversations/{conversation_id}/runs")
+def start_conversation_run(
+    conversation_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Run one agent turn: the model may call local MCP tools and answer.
+
+    A read-only tool runs immediately; a tool that changes the workspace pauses
+    the run with the exact call it wants to make, and `POST .../confirm` decides
+    it.  The run row is journaled, and the messages the turn wrote with it, so a
+    revert of the returned action removes both; a tool call the run made carries
+    its own journal action, which this one does not cover.
+    """
+    content = _require_str(body, "content")
+    with contextlib.closing(_open()) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            return _no_conversation(conversation_id)
+        client = _ai_client()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = agent.start(
+                    conn, log, conversation_id=conversation_id, content=content, client=client
+                )
+            except llm.LlmUnavailable:
+                return json_error(503, error="llm-unavailable", detail=llm.UNAVAILABLE_DETAIL)
+            except llm.LlmError as exc:
+                return json_error(502, error="llm-error", detail=str(exc))
+    return json_response(log.attach(result))
+
+
+@router.get("/api/conversations/{conversation_id}/runs")
+def list_conversation_runs(conversation_id: int) -> Response:
+    """Every agent run of one conversation, newest first."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            return _no_conversation(conversation_id)
+        rows = agent.list_runs(conn, conversation_id)
+    return json_response({"runs": rows, "count": len(rows)})
+
+
+@router.get("/api/conversations/{conversation_id}/runs/{run_id}")
+def get_conversation_run(conversation_id: int, run_id: int) -> Response:
+    """One agent run with its events, its pending call and its answer."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            return _no_conversation(conversation_id)
+        try:
+            return json_response(agent.payload(agent.get_run(conn, run_id)))
+        except agent.UnknownRunError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+
+
+@router.post("/api/conversations/{conversation_id}/confirm")
+def confirm_conversation_run(
+    conversation_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Approve or reject the tool call a paused run named, then continue it.
+
+    The body is ``{"approve": bool, "run_id"?: int}``; without a run id the
+    conversation's newest run is the one decided.  A rejection is fed back to
+    the model as a refused tool result, so the run continues rather than
+    failing, and the run's own messages are journaled with the returned action.
+    """
+    approve = body.get("approve")
+    if not isinstance(approve, bool):
+        return json_error(400, error="invalid approval", detail="approve must be a boolean")
+    run_id = body.get("run_id")
+    if run_id is not None and (isinstance(run_id, bool) or not isinstance(run_id, int)):
+        return json_error(400, error="invalid run", detail="run_id must be an integer")
+    with contextlib.closing(_open()) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            return _no_conversation(conversation_id)
+        client = _ai_client()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = agent.confirm(
+                    conn,
+                    log,
+                    conversation_id=conversation_id,
+                    approve=approve,
+                    run_id=int(run_id) if run_id is not None else None,
+                    client=client,
+                )
+            except agent.UnknownRunError as exc:
+                return json_error(404, error=exc.code, detail=exc.detail)
+            except agent.NotWaitingError as exc:
+                return json_error(409, error=exc.code, detail=exc.detail)
+            except llm.LlmUnavailable:
+                return json_error(503, error="llm-unavailable", detail=llm.UNAVAILABLE_DETAIL)
+            except llm.LlmError as exc:
+                return json_error(502, error="llm-error", detail=str(exc))
+    return json_response(log.attach(result))
+
+
+@router.post("/api/conversations/{conversation_id}/cancel")
+def cancel_conversation_run(
+    conversation_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Cancel a live agent run; a run that already finished is refused.
+
+    ``{"run_id"?: int}`` names one; without it the conversation's newest run is
+    cancelled.  The run's loop re-reads its own status at each step boundary, so
+    a call already in flight completes rather than being half-reported.
+    """
+    run_id = body.get("run_id")
+    if run_id is not None and (isinstance(run_id, bool) or not isinstance(run_id, int)):
+        return json_error(400, error="invalid run", detail="run_id must be an integer")
+    with contextlib.closing(_open()) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            return _no_conversation(conversation_id)
+        try:
+            result = agent.cancel(
+                conn,
+                conversation_id=conversation_id,
+                run_id=int(run_id) if run_id is not None else None,
+            )
+        except agent.UnknownRunError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+        except agent.NotCancellableError as exc:
+            return json_error(409, error=exc.code, detail=exc.detail)
+    return json_response(result)
+
+
+@router.get("/api/conversations/{conversation_id}/events")
+def conversation_run_events(conversation_id: int, request: Request) -> Response:
+    """The newest (or ``?run_id=``) run's state as server-sent events.
+
+    The stream carries the run's state, not the model's tokens: a frame per
+    observed change, the current state first, and a ``timeout`` frame at the
+    cap so a client reconnects and reads the state again.
+    """
+    raw_run = request.query_params.get("run_id")
+    run_id: int | None = None
+    if raw_run is not None:
+        try:
+            run_id = int(raw_run)
+        except ValueError:
+            return json_error(400, error="invalid run", detail="run_id must be an integer")
+    with contextlib.closing(_open()) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            return _no_conversation(conversation_id)
+        try:
+            resolved = agent.resolve_run(conn, conversation_id, run_id)
+        except agent.UnknownRunError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+
+    def stream() -> Any:
+        with contextlib.closing(_open()) as conn:
+            yield from agent.events(conn, int(resolved["id"]))
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── Analyses ───────────────────────────────────────────────────────

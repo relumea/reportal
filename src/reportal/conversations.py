@@ -217,6 +217,38 @@ def send_message(
     }
 
 
+def agent_messages(
+    conn: sqlite3.Connection,
+    *,
+    conversation_id: int,
+    content: str,
+    extra_system: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """The system, history and new-message turns an agent run starts from.
+
+    The stored-context assembly is :func:`send_message`'s, so an agent turn and
+    a plain turn cannot disagree about what the model is shown; *extra_system*
+    appends the agent's own instructions (the tool rules and the confirmation
+    gate) to the system prompt.  Returns the messages and the retrieved hits.
+    """
+    conversation = store.get_conversation(conn, conversation_id)
+    if conversation is None:
+        raise KeyError(f"no conversation with id {conversation_id}")
+    context, sources = _context_and_sources(
+        conn,
+        scope_kind=str(conversation["scope_kind"]),
+        scope_id=int(conversation["scope_id"]),
+        message=content,
+    )
+    system = _system_content(context)
+    if extra_system:
+        system = f"{system}\n\n{extra_system}"
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    messages.extend(_history(conn, conversation_id))
+    messages.append({"role": ROLE_USER, "content": content})
+    return messages, sources
+
+
 def _system_content(context: str) -> str:
     """Return the system prompt, with the stored context appended when there is one."""
     if not context:

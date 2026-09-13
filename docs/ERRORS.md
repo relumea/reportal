@@ -41,6 +41,7 @@ under the hyphenated heading.
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
 - Sandbox: [sandbox-disabled](#sandbox-disabled), [sandbox-unavailable](#sandbox-unavailable), [invalid-sandbox](#invalid-sandbox)
 - Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
+- Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 
 ## Request shape
@@ -151,6 +152,24 @@ on another function reads the same way.
 `404`. No analyst string carries the requested id at that scope. A string
 belongs to the function or analysis it was recorded against, so an id that
 exists at another scope reads the same way.
+
+### run-not-found
+
+`404`. A conversation has no agent run with the requested id (or has none at
+all, which the reads report the same way). A run id that belongs to another
+conversation reads the same, so one conversation cannot probe another's runs.
+
+### run-not-cancellable
+
+`409`. The run already finished, failed or was cancelled, so there is nothing to
+stop. Cancelling is refused rather than reported as done, because a run whose
+work is over cannot be un-run.
+
+### no-pending-confirmation
+
+`409`. The run is not waiting on a tool call, so there is nothing to approve or
+reject. A run pauses only when the model asks for a tool that changes the
+workspace, and only while it is waiting is a confirmation meaningful.
 
 ### no-file
 

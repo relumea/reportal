@@ -58,6 +58,8 @@ reportal/
 │   ├── ai_decomp.py          # the AI decompilation artifact: the rewrite, its token map,
 │   │                         #   per-line attributions, overrides, rating and line comments
 │   ├── conversations.py      # scoped chats: stored context + retrieved documents, prompt assembly
+│   ├── agent.py              # agent runs: the tool loop over the MCP registry, the
+│   │                         #   confirmation gate, cancel and the state stream
 │   ├── comments.py           # analyst comments: scope/body validation over the comments table
 │   ├── bulk_actions.py       # bulk tag/delete over binaries and analyses, and prefix
 │   │                         #   rename/clear over functions
@@ -887,6 +889,46 @@ the rotation undoable and is stated in `docs/THREAT_MODEL.md` along with the
 plaintext-at-rest boundary.  Authorization is two rules: a workspace secret
 needs an admin, a team secret needs that team's membership (or an admin), and
 with auth off the install is the single local operator.
+
+## Agent runs
+
+`agent.py` turns a conversation from one model call into a tool loop over the
+local MCP registry.  A run is one row in `conversation_runs` holding its status,
+its events, the message list sent to the model and the call it paused on.
+
+`tool_definitions` offers every registered tool with its own `input_schema`, so
+the model sees exactly the arguments the registry validates and a plugin tool is
+offered without a second list to keep in step.  The gate is
+`Tool.annotations`: a read-only tool runs at once through the same
+`mcp_server.call_tool` the stdio server uses, and a tool that changes the
+workspace pauses the run at `waiting_confirmation` with the call it wants to
+make.  An unknown tool counts as destructive, so a name the registry does not
+declare is never run unconfirmed.
+
+`llm.LlmClient.chat` is the tool-calling half of the bridge: it returns the
+assistant turn normalized to `{"content", "tool_calls", "finish_reason"}`, where
+each call's `arguments` stay the raw JSON text the endpoint sent.  Parsing them
+is reportal's job, because an unparsable argument list is a result the model can
+correct: it is fed back as a refused tool result and the loop continues rather
+than failing the run.
+
+The loop re-reads its own row before every step, so a cancel from another
+request or process stops it at the next step boundary; a model or tool call
+already in flight completes, which the payload states rather than pretending
+otherwise.  A run is bounded by `MAX_TOOL_CALLS`, a tool's answer by
+`MAX_TOOL_RESULT_CHARS` and one argument object by `MAX_ARGUMENT_CHARS`, and the
+events list is capped at `MAX_EVENTS`.
+
+`conversations.agent_messages` assembles the system prompt, the stored context
+and the history through the same helpers a plain turn uses, so the two cannot
+disagree about what the model is shown; only `AGENT_SYSTEM_SUFFIX` is added,
+naming the tools and the confirmation rule.  A tool's result is quoted as data to
+reason about, never spliced into a command or an instruction.
+
+The run row and the messages a turn wrote are one journaled action
+(`journal.journaled_create` for the row, `journal.journaled_messages` for the
+messages).  A tool the run called carries its own journal action, which the run's
+action does not cover: reverting a conversation does not undo a tool's write.
 
 ## HTTP surface
 

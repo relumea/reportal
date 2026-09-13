@@ -380,7 +380,7 @@ description lives in that file.
 | H | External sources (VirusTotal), now with the team key in entry 3 | Closed in PARITY.md |
 | J | Function-level extras (indirect call sites, capabilities, strings, user strings) | Closed in PARITY.md |
 | K | Data types and signatures bulk operations | Closed in PARITY.md |
-| L | Agentic conversations (tool loop, SSE, cancel, confirm) | Planned |
+| L | Agentic conversations (tool loop, SSE, cancel, confirm) | Closed in PARITY.md |
 | M | Reports as an asynchronous job | Closed in PARITY.md |
 
 Closed in PARITY.md and not reopened here: E (collections), I (config), N

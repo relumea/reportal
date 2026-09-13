@@ -222,6 +222,12 @@ their pages by the same rule.
 | `/api/analyses/<id>/strings` | GET | every analyst string recorded at analysis scope; 404 `analysis not found` |
 | `/api/analyses/<id>/strings` | POST | record one analyst string at analysis scope, journaled; 400 `invalid string` |
 | `/api/analyses/<id>/strings` | PUT | replace the analysis's whole analyst string list in one journaled action, so one revert puts the previous list back; body `{"strings": [...]}`; every value is validated before anything is written; 400 `invalid string` |
+| `/api/conversations/<id>/runs` | POST | run one agent turn: the model is offered every local MCP tool and may call them until it answers in text; body `{"content"}`; a read-only tool runs at once and a destructive one pauses the run; journaled (the run row and the messages it wrote), 503 `llm-unavailable`, 502 `llm-error`, 404 `conversation not found` |
+| `/api/conversations/<id>/runs` | GET | every agent run of one conversation, newest first, each with its status, tool-call count and events |
+| `/api/conversations/<id>/runs/<run_id>` | GET | one run with its events, the call it paused on and its answer; 404 `run not found` for an unknown id or one of another conversation |
+| `/api/conversations/<id>/confirm` | POST | approve or reject the tool call a paused run named and continue it; body `{"approve", "run_id"?}`; a rejection is fed back to the model as a refused call; 400 `invalid approval`, 409 `no-pending-confirmation`, 404 `run not found` |
+| `/api/conversations/<id>/cancel` | POST | cancel a live run at its next step boundary; body `{"run_id"?}`; 409 `run-not-cancellable` for a run that already finished, 404 `run not found` |
+| `/api/conversations/<id>/events` | GET | the newest (or `?run_id=`) run's state as server-sent events: one `event: run` frame per observed change, the current state first, ending on a terminal status with a `timeout` frame at the cap; it is a state stream, not a token stream |
 | `/api/external/sources` | GET | the external-source registry: each source's name, kind, availability and reason, plus whether the remote gate is on and a VirusTotal key resolves |
 | `/api/analyses/<id>/external/<source>` | POST | run one source for the analysis and store its answer as the `external:<source>` scan; 403 `external-disabled`, 503 `external-unavailable`, 400 `no-content-hash`, 502 `external-fetch-failed`, 404 `unknown source`; journaled |
 | `/api/analyses/<id>/external/<source>` | GET | the stored answer of one source; 404 `no-scan` before the first pull |
@@ -435,6 +441,18 @@ the last value or a kind without values.  Every type payload carries
 `size_check`: the declared size, the extent the members imply, `match`, and a
 `warning` naming both numbers when they disagree; the check is read-only and
 rewrites neither number.
+An agent run goes one step past a plain turn: `POST
+/api/conversations/<id>/runs` offers the model every tool the local MCP registry
+declares, runs the read-only ones it asks for through the same handler the stdio
+server calls and feeds each result back as a tool turn, until the model answers
+in text or the run reaches `agent.MAX_TOOL_CALLS`.  A tool that changes the
+workspace pauses the run instead: the run row stores the pending call and the
+message list, `POST .../confirm` decides it (a rejection is fed back as a
+refused tool result, so the run continues), `POST .../cancel` stops a live run at
+its next step boundary, and `GET .../events` streams the run's state rather than
+the model's tokens.  The run row and the messages it wrote are one journaled
+action; a tool the run called carries its own, so reverting a conversation does
+not undo a tool's write.
 The function-level extras are derived from rows the workspace already holds and
 say so in every payload: the indirect call sites come from `disasm_cache` (a
 function with no cached listing reports `has_disassembly: false` and no sites

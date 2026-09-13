@@ -2678,3 +2678,46 @@ export interface FunctionCallees {
   has_decompilation: boolean;
   derivation: string;
 }
+
+/** One event an agent run recorded. */
+export interface AgentRunEvent {
+  at: string;
+  kind: string;
+  tool?: string;
+  name?: string;
+  failed?: boolean;
+  arguments?: Record<string, unknown>;
+  result?: string;
+  error?: string;
+  detail?: string;
+  approved?: boolean;
+  content?: string;
+}
+
+/** The tool call an agent run paused on, awaiting confirmation. */
+export interface AgentPendingCall {
+  name: string;
+  arguments: Record<string, unknown>;
+  id: string;
+}
+
+/** `POST /api/conversations/<id>/runs` and the run reads. */
+export interface AgentRun {
+  conversation_id: number;
+  run_id: number;
+  status: string;
+  tool_calls: number;
+  pending: AgentPendingCall | null;
+  content: string;
+  error: string;
+  events: AgentRunEvent[];
+  live: boolean;
+  sources?: KnowledgeHit[];
+}
+
+/** `GET /api/conversations/<id>/runs`. */
+export interface AgentRunList {
+  conversation_id: number;
+  runs: AgentRun[];
+  count: number;
+}

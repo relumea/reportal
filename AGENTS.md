@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 208 source files` is the finish line.
+`Success: no issues found in 210 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.31%, 27089 statements with 2083 missed. `[tool.coverage.report] fail_under`
+92.13%, 27724 statements with 2182 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -476,6 +476,12 @@ signatures in one call and `get_data_type_functions` reads the functions using
 one type, so both are read-only; `copy_signature` copies one function's
 signature onto others in its analysis and `import_type_definitions` creates or
 updates an analysis's types from C declarations, so both are destructive.
+`list_conversation_runs` and `get_conversation_run` read an agent conversation's runs
+(the status, the tool-call count, the events, the call awaiting confirmation and the
+answer) and are read-only; `run_conversation_agent` runs one tool loop over the local
+MCP registry (a read-only tool runs at once, a destructive one pauses the run),
+`confirm_conversation_run` approves or rejects the pending call and continues the run,
+and `cancel_conversation_run` stops a live one, so all three are destructive.
 `get_indirect_call_sites`,
 `get_function_capabilities`, `get_function_strings`, `list_analysis_strings`,
 `list_function_edges`, `get_functions_callees_callers` and `get_function_matches`
@@ -501,7 +507,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 214 built-in tools, 100 read-only and 114 destructive.
+declares 219 built-in tools, 102 read-only and 117 destructive.
 
 ## SPA
 
@@ -606,8 +612,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 214 built-in
-tools (100 read-only, 114 destructive).
+and `run_match` expose the same over MCP, and the counts stay 219 built-in
+tools (102 read-only, 117 destructive).
 
 ### Scaling
 

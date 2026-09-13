@@ -281,6 +281,46 @@ def _content_text(data: Any) -> str:
     raise LlmError("LLM response carried no text content")
 
 
+def _tool_calls(data: Any) -> list[dict[str, str]]:
+    """Return the assistant's tool calls, normalized and in the order given.
+
+    Each entry is ``{"id", "name", "arguments"}`` where *arguments* is the raw
+    JSON text the endpoint sent; parsing it is the caller's job, because an
+    unparsable argument list is a result the model can correct rather than a
+    transport failure.
+    """
+    choices = _field(data, "choices")
+    if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)) or not choices:
+        return []
+    calls = _field(_field(choices[0], "message"), "tool_calls")
+    if not isinstance(calls, Sequence) or isinstance(calls, (str, bytes)):
+        return []
+    resolved: list[dict[str, str]] = []
+    for call in calls:
+        function = _field(call, "function")
+        name = _field(function, "name")
+        if not isinstance(name, str) or not name:
+            continue
+        arguments = _field(function, "arguments")
+        resolved.append(
+            {
+                "id": str(_field(call, "id") or ""),
+                "name": name,
+                "arguments": arguments if isinstance(arguments, str) else "",
+            }
+        )
+    return resolved
+
+
+def _finish_reason(data: Any) -> str:
+    """Return the first choice's finish reason, empty when it carries none."""
+    choices = _field(data, "choices")
+    if not isinstance(choices, Sequence) or isinstance(choices, (str, bytes)) or not choices:
+        return ""
+    reason = _field(choices[0], "finish_reason")
+    return reason if isinstance(reason, str) else ""
+
+
 class LlmClient:
     """OpenAI-compatible chat-completions and embeddings client.
 
@@ -330,6 +370,50 @@ class LlmClient:
         except (OpenAIError, ValueError) as exc:
             raise LlmError(f"LLM request failed: {exc}") from exc
         return _content_text(completion)
+
+    def chat(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = DEFAULT_TEMPERATURE,
+    ) -> dict[str, Any]:
+        """Send *messages* and return the assistant turn, tools included.
+
+        Returns ``{"content", "tool_calls", "finish_reason"}``: the text (empty
+        when the turn is a tool call), the normalized calls and the endpoint's
+        finish reason.  *tools* is the OpenAI tool-schema list; without it the
+        request carries no tool declaration, which is what a caller that only
+        wants text does.  Raises :class:`LlmUnavailable` without an endpoint and
+        :class:`LlmError` for a transport failure.
+        """
+        config = self.config
+        if config is None or not self.available():
+            raise LlmUnavailable(UNAVAILABLE_DETAIL)
+        request: dict[str, Any] = {
+            "model": config.model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if tools:
+            request["tools"] = tools
+            request["tool_choice"] = "auto"
+        try:
+            completion = self._sdk().chat.completions.create(**request)
+        except (OpenAIError, ValueError) as exc:
+            raise LlmError(f"LLM request failed: {exc}") from exc
+        try:
+            content = _content_text(completion)
+        except LlmError:
+            content = ""
+        calls = _tool_calls(completion)
+        if not content and not calls:
+            raise LlmError("LLM response carried neither text nor a tool call")
+        return {
+            "content": content,
+            "tool_calls": calls,
+            "finish_reason": _finish_reason(completion),
+        }
 
     def embeddings(self, texts: list[str]) -> list[list[float]] | None:
         """Embed *texts* and return one vector per input, or None when unconfigured.

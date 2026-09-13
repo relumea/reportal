@@ -18,6 +18,8 @@ import {
 import { CONVERSATION_SCOPE_KINDS } from "../constants";
 import type { ConversationScopeKind } from "../constants";
 import type {
+  AgentRunEvent,
+  AgentRunList,
   Conversation,
   ConversationMessage,
   ConversationReply,
@@ -25,6 +27,190 @@ import type {
   KnowledgeHit,
 } from "../types";
 import { useAsync } from "../useAsync";
+
+const AGENT_TERMINAL = ["completed", "cancelled", "failed"];
+
+/** One agent run's event as a single line of text. */
+function eventLabel(event: AgentRunEvent): string {
+  switch (event.kind) {
+    case "run-started":
+      return "started";
+    case "tool-call":
+      return `tool ${event.tool ?? ""}${event.failed ? " (failed)" : ""}`;
+    case "tool-rejected":
+      return `rejected ${event.tool ?? ""}`;
+    case "confirmation-required":
+      return `confirmation required: ${event.name ?? ""}`;
+    case "assistant-message":
+      return "answered";
+    case "run-cancelled":
+      return "cancelled";
+    case "run-failed":
+      return `failed: ${event.detail ?? ""}`;
+    case "tool-limit":
+      return "tool-call limit reached";
+    default:
+      return event.kind;
+  }
+}
+
+/**
+ * The agent half of a conversation: one tool loop per run.
+ *
+ * A read-only tool runs during the request; a destructive one pauses the run,
+ * and the analyst approves or rejects the exact call here.  The run's state
+ * streams over `GET /api/conversations/<id>/events` for a client that wants
+ * live updates; this panel refreshes on demand and after every action.
+ */
+function AgentPanel({ conversationId }: { conversationId: number }): ReactNode {
+  const { data, error, reload } = useAsync(
+    () =>
+      api<AgentRunList>(`/conversations/${conversationId}/runs`).catch(() => ({
+        conversation_id: conversationId,
+        runs: [],
+        count: 0,
+      })),
+    [conversationId],
+  );
+  const [draft, setDraft] = useState("");
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+
+  const run = data?.runs[0];
+
+  const act = async (path: string, body: Record<string, unknown>, tag: string): Promise<void> => {
+    setBusy(tag);
+    setActionError(null);
+    try {
+      await api(path, { method: "POST", json: body });
+      reload();
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const start = async (): Promise<void> => {
+    const content = draft.trim();
+    if (!content) return;
+    await act(`/conversations/${conversationId}/runs`, { content }, "start");
+    setDraft("");
+  };
+
+  return (
+    <Panel
+      title="Agent run"
+      subtitle="The model may call this portal's own tools. A read-only tool runs at once; a tool that changes the workspace waits for your approval."
+      actions={
+        <Button size="sm" tone="ghost" onClick={reload}>
+          Refresh
+        </Button>
+      }
+    >
+      <form
+        className="toolbar"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void start();
+        }}
+      >
+        <textarea
+          className="chat-input"
+          aria-label="Agent question"
+          placeholder="Ask the agent to work with this context"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <Button tone="primary" type="submit" pending={busy === "start"} disabled={!draft.trim()}>
+          Run agent
+        </Button>
+      </form>
+      {error ? <ErrorNote error={error} onRetry={reload} /> : null}
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      {!run ? (
+        <EmptyState>No agent run yet. Ask a question in the box above.</EmptyState>
+      ) : (
+        <>
+          <Muted>
+            run {run.run_id}: {run.status} ({run.tool_calls} tool call(s))
+            {run.live ? ", live" : ""}
+          </Muted>
+          <ol className="list">
+            {run.events.map((event, index) => (
+              <li key={`${event.at}-${index}`}>
+                <span className="mono">{event.at}</span> {eventLabel(event)}
+              </li>
+            ))}
+          </ol>
+          {run.pending ? (
+            <div className="stack">
+              <Muted>
+                Pending call: <span className="mono">{run.pending.name}</span>{" "}
+                {JSON.stringify(run.pending.arguments)}
+              </Muted>
+              <Toolbar>
+                <Button
+                  tone="primary"
+                  pending={busy === "approve"}
+                  onClick={() =>
+                    void act(
+                      `/conversations/${conversationId}/confirm`,
+                      { approve: true, run_id: run.run_id },
+                      "approve",
+                    )
+                  }
+                >
+                  Approve call
+                </Button>
+                <Button
+                  pending={busy === "reject"}
+                  onClick={() =>
+                    void act(
+                      `/conversations/${conversationId}/confirm`,
+                      { approve: false, run_id: run.run_id },
+                      "reject",
+                    )
+                  }
+                >
+                  Reject call
+                </Button>
+              </Toolbar>
+            </div>
+          ) : null}
+          {run.live ? (
+            <Toolbar>
+              <Button
+                size="sm"
+                tone="ghost"
+                pending={busy === "cancel"}
+                onClick={() =>
+                  void act(
+                    `/conversations/${conversationId}/cancel`,
+                    { run_id: run.run_id },
+                    "cancel",
+                  )
+                }
+              >
+                Cancel run
+              </Button>
+            </Toolbar>
+          ) : null}
+          {run.content ? (
+            <div className="message">
+              <div className="message-role">agent</div>
+              <p className="message-body">{run.content}</p>
+            </div>
+          ) : null}
+          {run.error ? <ErrorNote error={new Error(run.error)} /> : null}
+          {AGENT_TERMINAL.includes(run.status) && !run.content && !run.error ? (
+            <Muted>The run finished without an answer.</Muted>
+          ) : null}
+        </>
+      )}
+    </Panel>
+  );
+}
 
 const SCOPE_HINTS: Record<ConversationScopeKind, string> = {
   function: "Function id",
@@ -289,6 +475,7 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
       }
     >
       <MessageList messages={data.messages} sources={sources} replyId={replyId} />
+      <AgentPanel conversationId={conversationId} />
       <form
         className="toolbar"
         onSubmit={(event) => {
