@@ -188,7 +188,15 @@ detection and never runs the engine on render; a `no-scan` response shows the
 nothing-stored message with a Run detector control, which posts and renders the
 packer verdict, a peak-section-entropy meter with the packed range marked, the
 section count, the toolchain compiler string and the match table with each
-match's category, name, confidence and signal list); unpacked files (the honest
+match's category, name, confidence and signal list); detail coverage (three
+stored-only reads: the source list from
+`/binaries/<id>/additional-details/status` with a ready/missing badge and the
+`Fills the gap:` command line, which always answers so an uninspected binary
+reports what is missing rather than an empty panel; the overlay size and
+offset, the Rich header's entry count and build ids, the debug entry count and
+the section-table packer hint from `/binaries/<id>/additional-details`; and the
+Detect-It-Easy identity with the by-category match counts and the packed
+verdict from `/binaries/<id>/die-info`); unpacked files (the honest
 local statement that reportal never unpacks a sample and the engine's only
 unpack path is `rebrew unpack-lzexe` for DOS LZEXE); strings (loaded on demand,
 a client-side filter with the filtered-of-total count, capped at

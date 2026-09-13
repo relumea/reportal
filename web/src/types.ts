@@ -1794,6 +1794,76 @@ export interface PeInfo {
   note?: string;
 }
 
+/** One composed source of a detail read: whether it is stored, and the command
+ *  that fills it in. */
+export interface DetailSource {
+  present: boolean;
+  command: string;
+}
+
+/** The `GET /api/binaries/<id>/additional-details/status` payload.  Always
+ *  answers once the binary exists, so it reports a gap instead of refusing. */
+export interface DetailsStatus {
+  binary_id: number;
+  status: "ready" | "incomplete";
+  missing: string[];
+  hint: string;
+  sources: Record<string, DetailSource>;
+}
+
+/** The `GET /api/binaries/<id>/additional-details` payload, composed from the
+ *  stored pe-info scan.  404 `no-scan` without one. */
+export interface AdditionalDetails {
+  binary_id: number;
+  available: boolean;
+  format?: string;
+  arch?: string;
+  bits?: number;
+  size?: number;
+  overlay: { present: boolean; bytes: number; offset: number | null };
+  rich_header: {
+    present: boolean;
+    entries: number;
+    build_ids: number[];
+    tool_ids: number[];
+  };
+  sections: { count: number; names: string[]; executable: string[]; writable: string[] };
+  debug: Array<Record<string, unknown>>;
+  presence: Record<string, boolean>;
+  counts: Record<string, number>;
+  authenticode: Record<string, unknown>;
+  packer_section_hint: string[];
+  sources: Record<string, DetailSource>;
+}
+
+/** The `GET /api/binaries/<id>/die-info` payload: the Detect-It-Easy shaped
+ *  identity and category matches, composed from the stored scans. */
+export interface DieInfo {
+  binary_id: number;
+  available: boolean;
+  identity: {
+    format?: string;
+    arch?: string;
+    bits?: number;
+    mode?: string;
+    entry_point?: number;
+    image_base?: number;
+    size?: number;
+  };
+  file_type?: string;
+  packer: FileTypeMatch[];
+  protector: FileTypeMatch[];
+  installer: FileTypeMatch[];
+  runtime: FileTypeMatch[];
+  toolchain: FileTypeMatch[];
+  by_category: Record<string, number>;
+  entropy: { sections: Array<{ name?: string; entropy?: number }>; packed: boolean };
+  sections: { count: number; names: string[] };
+  packer_section_hint: string[];
+  notes: string[];
+  sources: Record<string, DetailSource>;
+}
+
 /** The portal security checklist, keyed by item name in portal order. */
 export interface PeSecurity {
   aslr?: PeSecurityItem;

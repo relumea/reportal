@@ -49,6 +49,7 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    details,
     diffview,
     effects,
     engines,
@@ -3737,6 +3738,62 @@ def get_binary_filetype(binary_id: int) -> Response:
             if stored is not None:
                 return json_response(stored)
     return _no_scan(binary_id, store.SCAN_KIND_FILETYPE)
+
+
+@router.get("/api/binaries/{binary_id}/die-info")
+def get_binary_die_info(binary_id: int) -> Response:
+    """Detect-It-Easy shaped identity, composed from the stored scans.
+
+    The hosted portal answers this with a live detector; locally it is a read of
+    the stored ``pe-info`` and ``filetype`` scans, so it runs no engine and
+    writes nothing.  Each category lists what matched and why, and ``sources``
+    names every input with the command that produces it, so an empty category is
+    visibly "nothing matched" rather than "nothing ran".  A binary with neither
+    source stored is 404 `no-scan`.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        payload = details.die_info(conn, binary_id)
+    if not payload["available"]:
+        return _no_scan(binary_id, store.SCAN_KIND_FILETYPE, command="filetype")
+    return json_response(payload)
+
+
+@router.get("/api/binaries/{binary_id}/additional-details")
+def get_binary_additional_details(binary_id: int) -> Response:
+    """The overlay, Rich header, debug, presence and section shape of one binary.
+
+    A read of the stored ``pe-info`` scan: the hosted portal fills the same
+    fields in asynchronously, so its status route is here too, and both compose
+    rather than run the engine.  404 `no-scan` without a stored ``pe-info``.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if not details.source_present(conn, binary_id, store.SCAN_KIND_PE_INFO):
+            return _no_scan(binary_id, store.SCAN_KIND_PE_INFO, command="pe-info")
+        return json_response(details.additional_details(conn, binary_id))
+
+
+@router.get("/api/binaries/{binary_id}/additional-details/status")
+def get_binary_additional_details_status(binary_id: int) -> Response:
+    """Which sources the detail reads have, and which command fills a gap.
+
+    Always answers 200 once the binary exists: the point of a status read is to
+    report what is missing rather than to refuse, which is what the hosted
+    portal's asynchronous status route is for.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        return json_response(details.status(conn, binary_id))
 
 
 # ── Functions ──────────────────────────────────────────────────────

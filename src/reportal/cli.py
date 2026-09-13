@@ -105,6 +105,7 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    details,
     diffview,
     effects,
     engines,
@@ -5434,6 +5435,97 @@ def crypto_scan(
 # Section flags `_print_pe_info` renders, in display order; an absent flag
 # renders as a dash.
 _SECTION_ACCESS = (("read", "R"), ("write", "W"), ("execute", "X"))
+
+
+@app.command()
+def die_info(
+    binary_id: int = typer.Argument(..., help="Binary id to identify"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Identify a binary the way Detect-It-Easy does, from the stored scans.
+
+    Reads the stored `filetype` and `pe-info` scans and the stored fingerprint,
+    so it runs no engine: run those first when a category comes back empty, and
+    the payload's `sources` names each one.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        payload = details.die_info(conn, binary_id)
+    if not payload["available"]:
+        _fail(f"binary {binary_id} has no stored filetype or pe-info scan", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    identity = payload["identity"]
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("format", str(identity["format"]))
+    table.add_row("architecture", str(identity["arch"]))
+    table.add_row("bits", str(identity["bits"]))
+    table.add_row("mode", str(identity["mode"]))
+    for category in ("packer", "protector", "installer", "runtime", "toolchain"):
+        found = payload[category]
+        table.add_row(category, ", ".join(str(row["name"]) for row in found) or "none")
+    if payload["packer_section_hint"]:
+        table.add_row("section hint", ", ".join(payload["packer_section_hint"]))
+    console.print(table)
+
+
+@app.command()
+def additional_details(
+    binary_id: int = typer.Argument(..., help="Binary id to describe"),
+    status: bool = typer.Option(False, "--status", help="Report which sources exist instead"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Show a binary's overlay, Rich header, debug and directory presence.
+
+    A read of the stored `pe-info` scan; `--status` reports which sources exist
+    without needing one, so it never fails on a binary that has not been
+    inspected yet.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        if status:
+            payload = details.status(conn, binary_id)
+        else:
+            if not details.source_present(conn, binary_id, store.SCAN_KIND_PE_INFO):
+                _fail(
+                    f"binary {binary_id} has no stored pe-info scan"
+                    f" (run 'reportal pe-info {binary_id}')",
+                    json_output,
+                )
+            payload = details.additional_details(conn, binary_id)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if status:
+        console.print(f"status: {payload['status']}")
+        if payload["hint"]:
+            console.print(f"hint: {payload['hint']}")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("format", str(payload["format"]))
+    table.add_row("size", str(payload["size"]))
+    overlay = payload["overlay"]
+    table.add_row("overlay", f"{overlay['bytes']} bytes" if overlay["present"] else "none")
+    rich = payload["rich_header"]
+    table.add_row("rich header", f"{rich['entries']} entries" if rich["present"] else "absent")
+    table.add_row("debug entries", str(len(payload["debug"])))
+    table.add_row("sections", ", ".join(payload["sections"]["names"]))
+    present = [name for name, found in payload["presence"].items() if found]
+    table.add_row("directories", ", ".join(present) or "none")
+    console.print(table)
 
 
 @app.command("pe-info")

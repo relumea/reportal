@@ -82,6 +82,9 @@ _READ_ONLY_TOOLS = frozenset(
         "get_signature_history",
         "get_crypto_scan",
         "get_pe_info",
+        "get_die_info",
+        "get_additional_details",
+        "get_details_status",
         "get_filetype",
         "get_security_scan",
         "get_capabilities",
@@ -364,8 +367,8 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 138
-        assert len(_READ_ONLY_TOOLS) == 64
+        assert len(names) == 141
+        assert len(_READ_ONLY_TOOLS) == 67
         assert len(_DESTRUCTIVE_TOOLS) == 74
 
     def test_every_tool_is_well_formed(self) -> None:

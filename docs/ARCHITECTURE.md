@@ -84,6 +84,12 @@ reportal/
 │   │                         #   render/export, filters, namespace tree and reverse indices
 │   ├── signatures.py         # editable function signatures: declaration parse, head/parameter
 │   │                         #   edits, prototype render/export
+│   ├── details.py            # composed binary-detail reads over the stored scans: the
+│   │                         #   Detect-It-Easy identity (die_info) and the asynchronous
+│   │                         #   details (additional_details, status), each reporting the
+│   │                         #   sources it used and the command that fills a missing one
+│   ├── zipcrypto.py          # the password-protected zip writer (PKWARE ZipCrypto)
+│   ├── instance.py           # what this install can do: versions, features, limits, counts
 │   ├── pdf.py                # PDF report writer: layout here, serialized by reportlab
 │   │                         #   (PdfLayout, wrap_text, render_report, write_report)
 │   ├── _paths.py             # workspace resolution (reportal.toml walk-up)
@@ -675,7 +681,7 @@ value, and answers `count` and `total` so a filter is distinguishable from a
 small binary),
 `.../fingerprint`, `.../imports`, `.../strings`, `.../tags`, `.../triage`,
 `.../function-triage`,
-`.../report`, `.../report/pdf`, `.../structs`, `.../crypto-scan`, `.../pe-info`, `.../filetype`, `.../capabilities`,
+`.../report`, `.../report/pdf`, `.../structs`, `.../crypto-scan`, `.../pe-info`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../filetype`, `.../capabilities`,
 `.../secrets`, `.../protocols`,
 `.../behavior` (all three domains) and `.../behavior/<domain>`,
 `.../hardening` (both domains) and `.../hardening/<domain>`,
@@ -689,7 +695,7 @@ the graph node route is `GET /api/graph/nodes/<node_id>`, and
 | Group | Routes |
 |-------|--------|
 | Health | `GET /api/health` |
-| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
+| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
 | Families | `GET`/`POST /api/families`, `GET`/`DELETE /api/families/<id>` |
 | Data types | `GET`/`POST /api/binaries/<id>/data-types[/import\|/export]` (the GET takes `?kind=&namespace=&search=`), `PATCH`/`DELETE /api/data-types/<id>`, `POST`/`DELETE /api/data-types/<id>/members[/<member>]`, `POST /api/data-types/<id>/members/<member>/gap`, `POST /api/data-types/<id>/members/<member>/ungap`, `POST`/`PATCH`/`DELETE /api/data-types/<id>/values[/<value>]`, `GET /api/data-types/<id>/references`, `GET /api/data-types/<id>/history`, `POST /api/data-types/<id>/history/<history_id>/revert` |
 | Signatures | `GET`/`POST /api/binaries/<id>/signatures[/import\|/export]`, `GET`/`PATCH`/`DELETE /api/functions/<id>/signature`, `POST`/`PATCH`/`DELETE /api/functions/<id>/signature/parameters[/<index>]`, `GET /api/functions/<id>/signature/history`, `POST /api/functions/<id>/signature/history/<history_id>/revert` |
@@ -1052,6 +1058,39 @@ instead of failing the run, and the payload always states the scope, the
 confidence rule and the entry-point-bytes gap.  The result is stored as the
 `filetype` scan, served stored-only by its `GET` (404 `no-scan` before the
 first run).
+
+## Composed detail reads
+
+`details.py` serves the two hosted `Binaries` reads that are derivations rather
+than engine calls, so both are stored-only and run nothing: `die_info` and
+`additional_details`, plus the `status` read the hosted asynchronous workflow
+exposes. Each composes the scans already in the store through
+`store.latest_analysis_for_binary` and `store.get_scan` (the fingerprint through
+its own table), which is why neither needs a new table and neither writes.
+
+`die_info` groups the stored `filetype` scan's matches by category (packer,
+protector, installer, runtime, toolchain) and keeps each match's confidence and
+signal list beside the identity from the `pe-info` scan, plus the fingerprint's
+section entropies and a section-name packer hint. It reports `sources`, so an
+empty `packer` list beside a present `filetype` source is a signature miss, and
+the bundled table is visibly smaller than Detect-It-Easy's database rather than
+presented as an equivalent. `additional_details` measures the overlay from the
+binary's file size against the last section's end (falling back to the stored
+row's size when the file is gone), and summarizes the Rich header, the debug
+entries, the directory presence flags, the counts, the Authenticode block and
+the section table's shape.
+
+`status` is the same source report on its own and always answers once the
+binary exists, naming each missing input with the command that fills it, which
+is what the hosted `/status` route is for. The three are served by their `GET`
+routes (`die-info` 404 `no-scan` without a stored `pe-info` or `filetype` scan;
+`additional-details` 404 `no-scan` without a stored `pe-info` scan; `status`
+200 or 404 `binary not found`), by `reportal die-info` and `reportal
+additional-details [--status]`, by the read-only `get_die_info`,
+`get_additional_details` and `get_details_status` MCP tools, and in the SPA by
+one `DetailCoveragePanel` that renders the coverage report beside the overlay
+and Rich-header facts the existing identity, packer and section panels do not
+show.
 
 ## Secrets scan
 

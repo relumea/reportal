@@ -116,8 +116,8 @@ sources, all re-runnable:
 | Hosted MCP server | 36 tools, 9 destructive | `https://api.reveng.ai/mcp/` (`tools/list`) |
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
-reportal's own surface for the comparison is its FastAPI schema (182
-method/path pairs) plus the MCP tool registry (136 tools).  Every row below is
+reportal's own surface for the comparison is its FastAPI schema (193
+method/path pairs) plus the MCP tool registry (141 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -321,19 +321,44 @@ report-analysis agent result beside it.
 
 ### N. Binary extras (hosted `Binaries`, 11 operations)
 
-**Status:** In progress.  The password-protected download is closed end to end:
+**Status:** Closed.  The password-protected download is closed end to end:
 `zipcrypto.py` writes the traditional PKWARE scheme the stdlib reads but cannot
 write (deflate member, 12-byte header with the CRC check byte, the three-key
 stream cipher, verified by reading the archive back with `zipfile` plus the
 password, and refusing a wrong one).  `GET /api/binaries/<id>/download-zipped`,
 `reportal download --zip [--password]`, the `export_zipped_binary` MCP tool
-(138 tools: 64 read-only, 74 destructive) and a Zipped link in the binaries
+(141 tools: 67 read-only, 74 destructive) and a Zipped link in the binaries
 table expose it; the archive is deflated into a spooled temporary file so a
 256 MiB binary is never held whole, and the password is documented as a shared
-convention rather than a security measure.  What is left in this cluster is
-`GET /api/binaries/<id>/die-info` (Detect-It-Easy style identity, richer than
-the signature table in `filetypes.py`) and `additional-details` with its status
-read (rich header, PDB path, overlay, version resources).
+convention rather than a security measure.
+
+The other two reads are closed the same way, as compositions of scans reportal
+already stores rather than as engine calls (`details.py`):
+
+- `GET /api/binaries/<id>/die-info` (the Detect-It-Easy shaped identity) with
+  `reportal die-info` and the read-only `get_die_info` MCP tool.  The identity
+  sits beside the packer, protector, installer, runtime and toolchain matches,
+  each carrying the file-type scan's confidence and the signals that matched,
+  plus the stored fingerprint's section entropy and the section-table packer
+  hint.  `sources` names every input with the command that fills it, so an
+  empty category reads as "nothing matched" rather than "nothing ran".  The
+  bundled `filetypes.SIGNATURES` table is far smaller than DIE's database, and
+  the payload states its own inputs rather than implying a detector it has not
+  got.
+- `GET /api/binaries/<id>/additional-details` and its
+  `/additional-details/status` sibling, with `reportal additional-details
+  [--status]` and the read-only `get_additional_details` and
+  `get_details_status` MCP tools.  The first reports the overlay measured from
+  the file against the stored section table, the Rich header's entry count and
+  its build and tool ids, the debug entries, the directory presence flags, the
+  counts, the Authenticode summary and the section table's shape; the second
+  reports which sources exist and the command that fills a gap, and always
+  answers once the binary exists, which is what the hosted asynchronous status
+  route is for.
+
+The SPA reads all three from one `DetailCoveragePanel` instead of duplicating
+the identity, packer and section panels it already renders, so what is new on
+screen is the overlay, the Rich header's shape and the coverage report.
 
 ### Beyond parity
 

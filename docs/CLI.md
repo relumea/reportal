@@ -183,6 +183,18 @@ reportal crypto-scan <binary-id> [--json]  # detect crypto constants and APIs, s
 reportal pe-info <binary-id> [--json]      # inspect a binary's PE identity, sections, security
                                            #   flags, signature, debug and Rich-header metadata,
                                            #   store the result
+reportal die-info <binary-id> [--json]     # the Detect-It-Easy shaped identity (format, arch,
+                                           #   bits, mode, entry point) beside the packer,
+                                           #   protector, installer, runtime and toolchain
+                                           #   matches, each with its confidence and signals,
+                                           #   plus the fingerprint entropy; a read of the
+                                           #   stored scans, so it runs no engine
+reportal additional-details <binary-id> [--status] [--json]
+                                           # the overlay past the last section, the Rich
+                                           #   header, the debug entries, the directory
+                                           #   presence and the section shape; --status
+                                           #   reports which sources are stored instead,
+                                           #   and never fails on an uninspected binary
 reportal filetype <binary-id> [--json]     # detect file type, packer and protector signatures
                                            #   over the pe-info sections and entry point, the
                                            #   section entropies, the imports and the strings,

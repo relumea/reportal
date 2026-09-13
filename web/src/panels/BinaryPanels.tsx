@@ -66,6 +66,7 @@ import {
   type StringSort,
 } from "../constants";
 import type {
+  AdditionalDetails,
   BehaviorScan,
   Binary,
   CapabilitiesResult,
@@ -73,6 +74,8 @@ import type {
   CompositionResult,
   CryptoResult,
   DetectResult,
+  DetailsStatus,
+  DieInfo,
   FileTypeMatch,
   FileTypeResult,
   Fingerprint,
@@ -779,6 +782,93 @@ function PackerBody({ result, peInfo }: { result: FileTypeResult; peInfo?: PeInf
 function signalSummary(match: FileTypeMatch): string {
   if (!match.signals.length) return NA;
   return match.signals.map((signal) => `${signal.kind}: ${signal.value}`).join(", ");
+}
+
+/** The composed detail reads: which stored scans back them, and what the
+ *  pe-info-derived fields say that no other panel shows (the overlay and the
+ *  Rich header's shape).  The status read always answers, so a binary whose
+ *  scans are missing reports the gap with the command that fills it rather
+ *  than rendering an empty panel. */
+export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNode {
+  const statusKey = panelKey("binary", binaryId, "details-status");
+  const status = usePanel(statusKey, () =>
+    api<DetailsStatus>(`/binaries/${binaryId}/additional-details/status`),
+  );
+  const detailPath = `/binaries/${binaryId}/additional-details`;
+  const detailKey = panelKey("binary", binaryId, "additional-details");
+  const entry = usePanel(detailKey, () => api<AdditionalDetails>(detailPath));
+  const dieKey = panelKey("binary", binaryId, "die-info");
+  const die = usePanel(dieKey, () => api<DieInfo>(`/binaries/${binaryId}/die-info`));
+  return (
+    <Panel
+      title="Detail coverage"
+      subtitle="Which stored scans back the detail reads, the overlay past the last section and the Rich header."
+    >
+      <PanelBody entry={status} hint="Loading the detail coverage">
+        {(data) => (
+          <>
+            <KeyValue
+              rows={[
+                [
+                  "status",
+                  data.status === "ready" ? (
+                    <Badge tone="ok">ready</Badge>
+                  ) : (
+                    <Badge tone="warn">{`missing ${data.missing.length}`}</Badge>
+                  ),
+                ],
+                [
+                  "sources",
+                  Object.entries(data.sources)
+                    .map(([kind, source]) => `${kind} ${source.present ? "yes" : "no"}`)
+                    .join(", "),
+                ],
+              ]}
+            />
+            {data.hint ? <Muted>{`Fills the gap: ${data.hint}`}</Muted> : null}
+          </>
+        )}
+      </PanelBody>
+      <PanelBody entry={entry} hint="Loading the overlay and Rich header">
+        {(data) => (
+          <KeyValue
+            rows={[
+              [
+                "overlay",
+                data.overlay.present ? `${data.overlay.bytes} bytes` : "none",
+              ],
+              ["overlay offset", data.overlay.offset === null ? NA : hex(data.overlay.offset)],
+              [
+                "rich header",
+                data.rich_header.present
+                  ? `${data.rich_header.entries} entries, builds ${data.rich_header.build_ids.join(", ") || NA}`
+                  : "absent",
+              ],
+              ["debug entries", data.debug.length],
+              ["packer hint", data.packer_section_hint.join(", ") || NA],
+            ]}
+          />
+        )}
+      </PanelBody>
+      <PanelBody entry={die} hint="Loading the Detect-It-Easy identity">
+        {(data) => (
+          <KeyValue
+            rows={[
+              ["format", data.identity.format ?? NA],
+              ["architecture", data.identity.arch ?? NA],
+              [
+                "categories",
+                Object.entries(data.by_category)
+                  .map(([category, count]) => `${category} ${count}`)
+                  .join(", ") || NA,
+              ],
+              ["entropy", data.entropy.packed ? "packed" : NA],
+            ]}
+          />
+        )}
+      </PanelBody>
+    </Panel>
+  );
 }
 
 export function UnpackedFilesPanel(): ReactNode {

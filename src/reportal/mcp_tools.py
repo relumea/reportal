@@ -38,6 +38,7 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    details,
     diffview,
     effects,
     engines,
@@ -2852,6 +2853,39 @@ def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
             )
 
 
+def _tool_get_die_info(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        payload = details.die_info(conn, binary_id)
+    if not payload["available"]:
+        raise ToolError(
+            "no-scan",
+            f"binary {binary_id} has no stored filetype or pe-info scan;"
+            f" call run_filetype or run_pe_info first",
+        )
+    return payload
+
+
+def _tool_get_additional_details(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        if not details.source_present(conn, binary_id, store.SCAN_KIND_PE_INFO):
+            raise ToolError(
+                "no-scan",
+                f"binary {binary_id} has no stored pe-info scan; call run_pe_info first",
+            )
+        return details.additional_details(conn, binary_id)
+
+
+def _tool_get_details_status(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        return details.status(conn, binary_id)
+
+
 def _tool_get_config(_arguments: dict[str, Any]) -> dict[str, Any]:
     return instance.describe()
 
@@ -4794,6 +4828,27 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_export_zipped_binary,
+        ),
+        Tool(
+            "get_die_info",
+            "Identify a binary the way Detect-It-Easy does, from the stored scans.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_die_info,
+        ),
+        Tool(
+            "get_additional_details",
+            "Read a binary's overlay, Rich header, debug entries and directory presence.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_additional_details,
+        ),
+        Tool(
+            "get_details_status",
+            "Report which scans the binary-detail reads have, and what fills a gap.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_details_status,
         ),
         Tool(
             "get_config",

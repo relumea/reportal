@@ -9,6 +9,7 @@ import {
   CodeSignaturePanel,
   CompositionPanel,
   CryptoPanel,
+  DetailCoveragePanel,
   DetectPanel,
   ExportsPanel,
   FunctionTriagePanel,
@@ -56,6 +57,7 @@ export function BinaryDetail({ binaryId }: { binaryId: number }): ReactNode {
           <SectionsPanel binaryId={binary.id} />
           <MemoryPanel binaryId={binary.id} />
           <CodeSignaturePanel binaryId={binary.id} />
+          <DetailCoveragePanel binaryId={binary.id} />
           <PackerPanel binaryId={binary.id} />
           <UnpackedFilesPanel />
           <StringsPanel binaryId={binary.id} />
