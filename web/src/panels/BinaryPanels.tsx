@@ -76,6 +76,7 @@ import type {
   Binary,
   CapabilitiesResult,
   CompositionFunctionRow,
+  CompositionCategory,
   CompositionResult,
   CryptoResult,
   DetectResult,
@@ -3200,6 +3201,18 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
   const path = `/binaries/${binaryId}/composition`;
   const entry = usePanel(key, () => api<CompositionResult>(path));
   const [busy, setBusy] = useState(false);
+  // The candidate scope, in the same vocabulary the Match Settings sheet uses:
+  // a comma-separated id list each, empty meaning the whole register.
+  const [binaryScope, setBinaryScope] = useState("");
+  const [collectionScope, setCollectionScope] = useState("");
+  const scopeBody = (): Record<string, number[]> => {
+    const ids = (value: string): number[] =>
+      value
+        .split(",")
+        .map((part) => Number(part.trim()))
+        .filter((id) => Number.isFinite(id) && id > 0);
+    return { binary_ids: ids(binaryScope), collection_ids: ids(collectionScope) };
+  };
   return (
     <Panel
       title="Composition analysis"
@@ -3211,7 +3224,9 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
           onClick={() => {
             setBusy(true);
             refreshPanel(key, () =>
-              api<CompositionResult>(path, { method: "POST" }).finally(() => setBusy(false)),
+              api<CompositionResult>(path, { method: "POST", json: scopeBody() }).finally(() =>
+                setBusy(false),
+              ),
             );
           }}
         >
@@ -3219,6 +3234,26 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
         </Button>
       }
     >
+      <Toolbar>
+        <Field label="Scope to binaries">
+          <input
+            placeholder="ids, comma separated"
+            value={binaryScope}
+            onChange={(event) => setBinaryScope(event.target.value)}
+          />
+        </Field>
+        <Field label="Scope to collections">
+          <input
+            placeholder="ids, comma separated"
+            value={collectionScope}
+            onChange={(event) => setCollectionScope(event.target.value)}
+          />
+        </Field>
+        <Muted>
+          Empty means the whole register. Only the stored edges are read either way, so a scope
+          narrows the reading, never the matching.
+        </Muted>
+      </Toolbar>
       <PanelBody
         entry={entry}
         hint="Loading the composition analysis"
@@ -3228,6 +3263,40 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
         {(data) => <CompositionBody result={data} />}
       </PanelBody>
     </Panel>
+  );
+}
+
+/** The hosted composition categories, each with the binaries it most matched. */
+function CompositionCategories({
+  categories,
+}: {
+  categories: CompositionCategory[];
+}): ReactNode {
+  if (!categories?.length) return null;
+  return (
+    <>
+      <h3>Categories</h3>
+      <DataTable
+        columns={[
+          { label: "Category", key: "label" },
+          { label: "Functions", numeric: true, render: (row) => row.count },
+          {
+            label: "Percent",
+            numeric: true,
+            render: (row) => (row.percent === null ? NA : `${row.percent}%`),
+          },
+          {
+            label: "Top binaries",
+            render: (row) =>
+              row.binaries.length
+                ? row.binaries.map((entry) => `${entry.name} (${entry.count})`).join(", ")
+                : NA,
+          },
+        ]}
+        rows={categories}
+        rowKey={(row) => row.category}
+      />
+    </>
   );
 }
 
@@ -3296,6 +3365,7 @@ function CompositionBody({ result }: { result: CompositionResult }): ReactNode {
         entries={result.match_quality}
         hueFor={qualityHue}
       />
+      <CompositionCategories categories={result.categories} />
       <h3>Composition</h3>
       <DataTable
         columns={[

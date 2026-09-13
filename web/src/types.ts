@@ -1734,6 +1734,23 @@ export interface CompositionFunctionRow {
 }
 
 /** The payload `GET`/`POST /api/binaries/<id>/composition` returns. */
+/** One hosted composition category: its count and the binaries it matched. */
+export interface CompositionCategory {
+  category: string;
+  label: string;
+  count: number;
+  percent: number | null;
+  binaries: Array<{ binary_id: number; name: string; count: number }>;
+}
+
+/** The scope a composition was built under, empty for the whole register. */
+export interface CompositionScope {
+  binary_ids: number[];
+  collection_ids: number[];
+  /** How many candidate binaries the scope resolved to, 0 for the register. */
+  binaries: number;
+}
+
 export interface CompositionResult {
   binary_id: number;
   binary_name: string;
@@ -1744,6 +1761,9 @@ export interface CompositionResult {
   refined: boolean;
   name_sources: CompositionNameSource[];
   match_quality: CompositionQualityBand[];
+  categories: CompositionCategory[];
+  category_notes: string[];
+  scope: CompositionScope;
   composition: CompositionBinary[];
   functions: CompositionFunctionRow[];
   notes: string[];

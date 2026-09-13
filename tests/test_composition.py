@@ -11,7 +11,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, composition, store
+from reportal import cli, composition, matching, store
 
 runner = CliRunner()
 
@@ -389,3 +389,187 @@ class TestCompositionRoutes:
         status, headers, body = wsgi_request("GET", "/api/binaries/999/composition")
         assert status.startswith("404")
         assert json_body(body, headers)["error"] == "binary not found"
+
+
+class TestCategories:
+    """The hosted categories: a second grouping beside the buckets (entry 15)."""
+
+    def test_every_category_is_present_even_when_empty(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
+        payload = composition.compute_composition(conn, binary_id=binary_id)
+        assert [entry["category"] for entry in payload["categories"]] == list(
+            composition.CATEGORIES
+        )
+        assert all(entry["count"] == 0 for entry in payload["categories"])
+        assert payload["category_notes"]
+
+    def test_a_library_name_is_a_library_function(self) -> None:
+        assert composition.category_of("import", matched=True) == composition.CATEGORY_LIBRARY
+        assert composition.category_of("symbol", matched=False) == composition.CATEGORY_LIBRARY
+
+    def test_an_unmatched_function_is_unique_and_a_matched_one_malware(self) -> None:
+        assert composition.category_of("user", matched=False) == composition.CATEGORY_UNIQUE
+        assert composition.category_of("user", matched=True) == composition.CATEGORY_MALWARE
+
+    def test_the_top_binaries_are_the_categorys_own_matches(self, conn: sqlite3.Connection) -> None:
+        left = store.add_binary(conn, sha256="aa" * 32, name="left.exe")
+        right = store.add_binary(conn, sha256="bb" * 32, name="right.exe")
+        analysis = store.create_analysis(conn, binary_id=left, engine="manual")
+        source = store.add_function(
+            conn, analysis_id=analysis, va=0x1000, name="sub_1000", size=16, status="STUB"
+        )
+        other = store.create_analysis(conn, binary_id=right, engine="manual")
+        candidate = store.add_function(
+            conn, analysis_id=other, va=0x1000, name="sub_1000", size=16, status="STUB"
+        )
+        store.record_match(
+            conn,
+            function_id=source,
+            candidate_function_id=candidate,
+            similarity=99.0,
+            confidence=0.9,
+        )
+        payload = composition.compute_composition(conn, binary_id=left)
+        categories = {entry["category"]: entry for entry in payload["categories"]}
+        assert categories[composition.CATEGORY_MALWARE]["count"] == 1
+        assert categories[composition.CATEGORY_MALWARE]["binaries"] == [
+            {"binary_id": right, "name": "right.exe", "count": 1}
+        ]
+
+
+class TestCompositionScope:
+    """The candidate scope the hosted settings sheet offers (entry 15)."""
+
+    def _pair(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
+        """Left with one function matched to right's, returning (left, right, source)."""
+        left = store.add_binary(conn, sha256="aa" * 32, name="left.exe")
+        right = store.add_binary(conn, sha256="bb" * 32, name="right.exe")
+        analysis = store.create_analysis(conn, binary_id=left, engine="manual")
+        source = store.add_function(
+            conn, analysis_id=analysis, va=0x1000, name="sub_1000", size=16, status="STUB"
+        )
+        other = store.create_analysis(conn, binary_id=right, engine="manual")
+        candidate = store.add_function(
+            conn, analysis_id=other, va=0x1000, name="sub_1000", size=16, status="STUB"
+        )
+        store.record_match(
+            conn,
+            function_id=source,
+            candidate_function_id=candidate,
+            similarity=99.0,
+            confidence=0.9,
+        )
+        return left, right, source
+
+    def test_a_scoped_run_keeps_only_the_named_candidates(self, conn: sqlite3.Connection) -> None:
+        left, right, _source = self._pair(conn)
+        scoped = composition.compute_composition(conn, binary_id=left, binary_ids=[right])
+        assert scoped["matched_functions"] == 1
+        assert scoped["scope"] == {"binary_ids": [right], "collection_ids": [], "binaries": 1}
+        assert any("scoped to" in note for note in scoped["notes"])
+
+        # A scope that names nobody the binary matched reads as no matches.
+        empty = composition.compute_composition(conn, binary_id=left, binary_ids=[left])
+        assert empty["matched_functions"] == 0
+
+    def test_a_collection_scope_resolves_to_its_members(self, conn: sqlite3.Connection) -> None:
+        left, right, _source = self._pair(conn)
+        collection_id = store.create_collection(conn, name="corpus")
+        store.add_collection_binary(conn, collection_id, right)
+        scoped = composition.compute_composition(
+            conn, binary_id=left, collection_ids=[collection_id]
+        )
+        assert scoped["matched_functions"] == 1
+        assert scoped["scope"]["binaries"] == 1
+
+    def test_an_unknown_scope_id_is_refused(self, conn: sqlite3.Connection) -> None:
+        left, _right, _source = self._pair(conn)
+        with pytest.raises(matching.InvalidSettingsError):
+            composition.compute_composition(conn, binary_id=left, binary_ids=[999])
+        with pytest.raises(matching.InvalidSettingsError):
+            composition.compute_composition(conn, binary_id=left, collection_ids=[999])
+
+    def test_the_scan_stores_the_scope_it_ran_under(self, conn: sqlite3.Connection) -> None:
+        left, right, _source = self._pair(conn)
+        payload = composition.run_composition(conn, binary_id=left, binary_ids=[right])
+        stored = composition.stored_composition(conn, left)
+        assert stored is not None
+        assert stored["scope"]["binary_ids"] == [right]
+        assert payload["scope"] == stored["scope"]
+
+
+class TestCompositionScopeSurfaces:
+    """The scope reaches the route, the CLI and the tool."""
+
+    def _pair(self, conn: sqlite3.Connection) -> tuple[int, int]:
+        left = store.add_binary(conn, sha256="aa" * 32, name="left.exe")
+        right = store.add_binary(conn, sha256="bb" * 32, name="right.exe")
+        analysis = store.create_analysis(conn, binary_id=left, engine="manual")
+        source = store.add_function(
+            conn, analysis_id=analysis, va=0x1000, name="sub_1000", size=16, status="STUB"
+        )
+        other = store.create_analysis(conn, binary_id=right, engine="manual")
+        candidate = store.add_function(
+            conn, analysis_id=other, va=0x1000, name="sub_1000", size=16, status="STUB"
+        )
+        store.record_match(
+            conn,
+            function_id=source,
+            candidate_function_id=candidate,
+            similarity=99.0,
+            confidence=0.9,
+        )
+        return left, right
+
+    def test_the_route_takes_the_scope(self, conn: sqlite3.Connection) -> None:
+        left, right = self._pair(conn)
+        status, headers, body = wsgi_request(
+            "POST",
+            f"/api/binaries/{left}/composition",
+            body=json.dumps({"binary_ids": [right]}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert status.startswith("200"), body
+        payload = json_body(body, headers)
+        assert payload["scope"]["binary_ids"] == [right]
+        assert payload["categories"]
+
+    def test_the_route_refuses_an_unknown_scope_id(self, conn: sqlite3.Connection) -> None:
+        left, _right = self._pair(conn)
+        status, headers, body = wsgi_request(
+            "POST",
+            f"/api/binaries/{left}/composition",
+            body=json.dumps({"binary_ids": [999]}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert status.startswith("400"), body
+        assert json_body(body, headers)["error"] == "unknown binary"
+
+    def test_the_route_rejects_a_bad_id_list(self, conn: sqlite3.Connection) -> None:
+        left, _right = self._pair(conn)
+        status, _headers, body = wsgi_request(
+            "POST",
+            f"/api/binaries/{left}/composition",
+            body=json.dumps({"binary_ids": "all"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert status.startswith("400"), body
+
+    def test_the_cli_takes_the_scope(self, portal_db: Path, conn: sqlite3.Connection) -> None:
+        left, right = self._pair(conn)
+        conn.commit()
+        result = runner.invoke(
+            cli.app, ["composition", str(left), "--binary-id", str(right), "--json"]
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["scope"]["binary_ids"] == [right]
+
+    def test_an_unknown_scope_id_fails_the_command(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        left, _right = self._pair(conn)
+        conn.commit()
+        result = runner.invoke(cli.app, ["composition", str(left), "--binary-id", "999", "--json"])
+        assert result.exit_code == 1, result.output
+        assert "unknown binary" in result.output

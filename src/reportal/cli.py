@@ -4075,6 +4075,27 @@ def _print_composition_breakdown(title: str, rows: list[dict[str, Any]]) -> None
     console.print(table)
 
 
+def _print_composition_categories(rows: list[dict[str, Any]]) -> None:
+    """Print the hosted categories, each with the binaries it most matched."""
+    if not rows:
+        return
+    table = Table(title="Categories", show_header=True, header_style="bold")
+    table.add_column("Category")
+    table.add_column("Count", justify="right")
+    table.add_column("Percent", justify="right")
+    table.add_column("Top binaries")
+    for row in rows:
+        percent = row.get("percent")
+        top = ", ".join(f"{entry['name']} ({entry['count']})" for entry in row.get("binaries", []))
+        table.add_row(
+            escape(str(row.get("label"))),
+            str(row.get("count", 0)),
+            "n/a" if percent is None else f"{percent}%",
+            escape(top) or "n/a",
+        )
+    console.print(table)
+
+
 def _print_composition(payload: dict[str, Any]) -> None:
     """Print the headline counts, both breakdowns, the rollup and the rows."""
     total = int(payload["total_functions"])
@@ -4088,6 +4109,7 @@ def _print_composition(payload: dict[str, Any]) -> None:
     console.print(f"refined: {'yes' if payload.get('refined') else 'no'}")
     _print_composition_breakdown("Function name sources", payload.get("name_sources", []))
     _print_composition_breakdown("Match quality", payload.get("match_quality", []))
+    _print_composition_categories(payload.get("categories", []))
 
     table = Table(title="Composition", show_header=True, header_style="bold")
     table.add_column("Binary")
@@ -4134,9 +4156,21 @@ def _print_composition(payload: dict[str, Any]) -> None:
 @app.command("composition")
 def composition_command(
     binary_id: int = typer.Argument(..., help="Binary id to summarise"),
+    binary_ids: list[int] = typer.Option(
+        [], "--binary-id", help="Scope the candidates to these binaries; repeatable"
+    ),
+    collection_ids: list[int] = typer.Option(
+        [], "--collection-id", help="Scope the candidates to these collections; repeatable"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Summarize how the binary's functions match the rest of the corpus."""
+    """Summarize how the binary's functions match the rest of the corpus.
+
+    ``--binary-id`` and ``--collection-id`` narrow the candidate corpus the way
+    the hosted Match Settings sheet does, so a scoped summary reads exactly the
+    edges a scoped match would have written; the stored scan records the scope
+    it was built under.
+    """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
@@ -4146,10 +4180,17 @@ def composition_command(
                 conn,
                 binary_id,
                 store.SCAN_KIND_COMPOSITION,
-                lambda: composition.run_composition(conn, binary_id=binary_id),
+                lambda: composition.run_composition(
+                    conn,
+                    binary_id=binary_id,
+                    binary_ids=tuple(binary_ids),
+                    collection_ids=tuple(collection_ids),
+                ),
             )
         except KeyError as exc:
             _fail(str(exc.args[0]), json_output)
+        except matching.InvalidSettingsError as exc:
+            _fail(f"{exc.error}: {exc.detail}", json_output)
 
     if json_output:
         typer.echo(json.dumps(log.attach(payload)))

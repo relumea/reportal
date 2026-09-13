@@ -433,10 +433,13 @@ reportal related <binary-id> [--limit N] [--all] [--json]
                                            # rank the other stored binaries by their
                                            #   relationship to this one (hashes, imports,
                                            #   capabilities, size); --all keeps the unrelated
-reportal composition <binary-id> [--json]  # summarize how this binary's functions match the
+reportal composition <binary-id> [--binary-id N]... [--collection-id N]... [--json]
+                                           # summarize how this binary's functions match the
                                            #   stored corpus (matched counts, name sources,
-                                           #   quality bands, per-binary rollup) from the
-                                           #   matches table only; no engine, no matching
+                                           #   quality bands, the hosted categories, the
+                                           #   per-binary rollup) from the matches table only;
+                                           #   the scope options narrow the candidates like
+                                           #   the match settings sheet; no engine, no matching
 reportal families [--json]                 # list the locally registered malware families
 reportal family-add <reference-binary-id> <name> [--alias TEXT]... [--notes TEXT] [--json]
                                            # derive a reference binary's signature bundle and

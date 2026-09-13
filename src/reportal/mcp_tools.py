@@ -1592,14 +1592,24 @@ def _tool_get_composition(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_run_composition(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
+    binary_ids = _arg_optional_int_list(arguments, "binary_ids") or []
+    collection_ids = _arg_optional_int_list(arguments, "collection_ids") or []
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
-        return _journaled_scan_run(
-            conn,
-            binary_id,
-            store.SCAN_KIND_COMPOSITION,
-            lambda: composition.run_composition(conn, binary_id=binary_id),
-        )
+        try:
+            return _journaled_scan_run(
+                conn,
+                binary_id,
+                store.SCAN_KIND_COMPOSITION,
+                lambda: composition.run_composition(
+                    conn,
+                    binary_id=binary_id,
+                    binary_ids=binary_ids,
+                    collection_ids=collection_ids,
+                ),
+            )
+        except matching.InvalidSettingsError as exc:
+            raise ToolError(exc.error, exc.detail) from exc
 
 
 def _tool_run_lineage(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5786,9 +5796,20 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "run_composition",
             "Build a binary's composition analysis from the stored matches (matched"
-            " counts, name-source and quality breakdowns, per-binary rollup) and store it."
-            "  Stored-only: it runs no matching and no engine.",
-            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            " counts, name-source and quality breakdowns, the hosted categories and the"
+            " per-binary rollup) and store it.  Stored-only: it runs no matching and no"
+            " engine.  binary_ids/collection_ids narrow the candidate corpus the same way"
+            " the match settings sheet does.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "binary_ids": _array("Candidate binaries to scope to.", _int("A binary id.")),
+                    "collection_ids": _array(
+                        "Collections to scope the candidates to.", _int("A collection id.")
+                    ),
+                },
+                ("binary_id",),
+            ),
             _WRITE,
             _tool_run_composition,
         ),

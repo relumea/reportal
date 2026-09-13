@@ -37,6 +37,7 @@ functions; every summary count stays exact when the list is capped.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from typing import Any
 
 from reportal import lineage, matching, renames, store, unstrip
@@ -97,6 +98,49 @@ QUALITY_BANDS = (
     BAND_WEAK_MATCH,
     BAND_NO_MATCH,
 )
+
+# The hosted portal's composition categories, a second grouping beside the
+# name-source buckets and the quality bands.  A function lands in exactly one:
+# a name that says the toolchain produced it is ``library``, a function with no
+# stored match is ``unique``, a function whose name came only from debug
+# information is ``debug``, and every other function matched something, which is
+# the malware signal this local corpus can support.  ``reportal`` matches by
+# assembly similarity and holds no family feed, so ``malware`` is a matched
+# function rather than a verdict, and the payload says so in ``category_notes``.
+CATEGORY_MALWARE = "malware"
+CATEGORY_DEBUG = "debug"
+CATEGORY_UNIQUE = "unique"
+CATEGORY_LIBRARY = "library"
+CATEGORIES: tuple[str, ...] = (
+    CATEGORY_MALWARE,
+    CATEGORY_DEBUG,
+    CATEGORY_UNIQUE,
+    CATEGORY_LIBRARY,
+)
+CATEGORY_LABELS: dict[str, str] = {
+    CATEGORY_MALWARE: "Malware",
+    CATEGORY_DEBUG: "Debug",
+    CATEGORY_UNIQUE: "Unique",
+    CATEGORY_LIBRARY: "Library",
+}
+CATEGORY_NOTES: tuple[str, ...] = (
+    (
+        "a category is derived from the stored name source and the stored match edges;"
+        " reportal matches by assembly similarity and holds no family feed, so"
+        " 'malware' means a function matched another binary, not a verdict"
+    ),
+)
+
+# The scope note a scoped payload carries in place of the whole-register one.
+SCOPED_NOTE = "scoped to {}"
+
+# Other binaries one category's top list names.
+CATEGORY_TOP_BINARIES = 5
+
+# Stored ``name_source`` values that mean the name came from a symbol file or
+# the engine's own identification, which is what the hosted ``library`` category
+# reads: an import stub, a rebrew-supplied name or an ingested symbol.
+LIBRARY_NAME_SOURCES: frozenset[str] = frozenset({"import", "rebrew", "symbol"})
 
 # Function rows the payload returns.  A binary can hold tens of thousands of
 # functions; the summary counts stay exact and the note states the cap.
@@ -188,7 +232,7 @@ def _candidate_binary(
 
 
 def _best_matches(
-    conn: sqlite3.Connection, *, binary_id: int
+    conn: sqlite3.Connection, *, binary_id: int, scope: frozenset[int] = frozenset()
 ) -> tuple[dict[int, dict[str, Any]], int, bool]:
     """The best other-binary match of each function, plus self-match and edge counts.
 
@@ -206,6 +250,8 @@ def _best_matches(
         source_id = int(edge["source_function_id"])
         candidate = _candidate_binary(conn, int(edge["candidate_function_id"]), cache)
         if candidate is None:
+            continue
+        if scope and int(candidate["binary_id"]) not in scope:
             continue
         if int(candidate["binary_id"]) == binary_id:
             self_seen.add(source_id)
@@ -265,6 +311,68 @@ def _count_rows(
     ]
 
 
+def category_of(name_source: str, matched: bool) -> str:
+    """The hosted category one function falls into.
+
+    Library wins over a match: a function whose name a symbol file or the engine
+    supplied is a library function whatever else it looks like, which is the
+    reading the hosted page takes.  A function with no stored match is debug,
+    which is where a name the toolchain could not resolve belongs, and one that
+    matched another binary is the local malware bucket.  ``unique`` is the two
+    counts together: a function with no name and no match is the absence of
+    evidence, and it is neither debug information nor a library.
+    """
+    if name_source in LIBRARY_NAME_SOURCES:
+        return CATEGORY_LIBRARY
+    if not matched:
+        return CATEGORY_UNIQUE
+    return CATEGORY_MALWARE
+
+
+def _category_rows(
+    functions: list[dict[str, Any]], rows: list[dict[str, Any]], total: int
+) -> list[dict[str, Any]]:
+    """One entry per hosted category, with its count, percent and top binaries.
+
+    The top-binary list is the same per-other-binary rollup the payload carries,
+    narrowed to the functions of this category, so the category view and the
+    composition table cannot disagree about who a match came from.
+    """
+    sources = {int(function["id"]): function for function in functions}
+    buckets: dict[str, list[dict[str, Any]]] = {label: [] for label in CATEGORIES}
+    for row in rows:
+        function = sources.get(int(row["function_id"]), {})
+        source = str(function.get("name_source") or "").strip().lower()
+        matched = row["matched_binary_id"] is not None
+        # A placeholder name is the absence of debug information, so it is the
+        # debug bucket's own reading of "the toolchain could not name this".
+        if not matched and lineage.is_placeholder_name(str(row["name"])):
+            buckets[CATEGORY_DEBUG].append(row)
+            continue
+        buckets[category_of(source, matched)].append(row)
+    entries: list[dict[str, Any]] = []
+    for category in CATEGORIES:
+        members = buckets[category]
+        rollup = _composition_rows(members, total)
+        entries.append(
+            {
+                "category": category,
+                "label": CATEGORY_LABELS[category],
+                "count": len(members),
+                "percent": _percent(len(members), total),
+                "binaries": [
+                    {
+                        "binary_id": entry["binary_id"],
+                        "name": entry["name"],
+                        "count": entry["count"],
+                    }
+                    for entry in rollup[:CATEGORY_TOP_BINARIES]
+                ],
+            }
+        )
+    return entries
+
+
 def _composition_rows(rows: list[dict[str, Any]], total: int) -> list[dict[str, Any]]:
     """Per other-binary rollup, count descending then binary id, with percentages."""
     rollup: dict[int, dict[str, Any]] = {}
@@ -298,17 +406,31 @@ def _binary_sha256(conn: sqlite3.Connection, binary_id: int) -> str | None:
     return str(value) if value else None
 
 
-def compute_composition(conn: sqlite3.Connection, *, binary_id: int) -> dict[str, Any]:
+def compute_composition(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int,
+    binary_ids: Sequence[int] = (),
+    collection_ids: Sequence[int] = (),
+) -> dict[str, Any]:
     """Build one binary's composition payload from the store, without storing it.
 
     The payload carries the headline counts (``total_functions``,
     ``matched_functions``, ``matched_percent``), the five name-source buckets,
-    the five quality bands, one row per other binary this binary matched to, and
-    one row per function capped at :data:`MAX_ROWS`.  ``refined`` is false when
-    the store holds no match edge for the binary, and the notes name the command
-    that fills the table.  ``matched_percent`` and every percent is None when
-    the binary has no functions at all, since a zero against no functions is not
-    a reading the source gave.
+    the five quality bands, the four hosted ``categories``, one row per other
+    binary this binary matched to, and one row per function capped at
+    :data:`MAX_ROWS`.  ``refined`` is false when the store holds no match edge
+    for the binary, and the notes name the command that fills the table.
+    ``matched_percent`` and every percent is None when the binary has no
+    functions at all, since a zero against no functions is not a reading the
+    source gave.
+
+    *binary_ids* and *collection_ids* narrow the candidates through
+    :func:`reportal.matching.resolve_scope`, the same vocabulary the match
+    settings sheet validates, so a scoped composition reads exactly the edges a
+    scoped ``reportal match`` would have written.  An id no row carries raises
+    :class:`reportal.matching.InvalidSettingsError`, which every surface maps to
+    its own 400.
 
     Raises :class:`NoCompositionError` for an unknown binary.
     """
@@ -316,9 +438,13 @@ def compute_composition(conn: sqlite3.Connection, *, binary_id: int) -> dict[str
     if binary is None:
         raise NoCompositionError(f"no binary with id {binary_id}")
 
+    scope = matching.resolve_scope(
+        conn,
+        matching.MatchSettings(binary_ids=tuple(binary_ids), collection_ids=tuple(collection_ids)),
+    )
     functions = store.list_functions(conn, binary_id=binary_id)
     total = len(functions)
-    best, self_only, has_edges = _best_matches(conn, binary_id=binary_id)
+    best, self_only, has_edges = _best_matches(conn, binary_id=binary_id, scope=scope)
     rows = _function_rows(functions, best)
     matched = sum(1 for row in rows if row["matched_binary_id"] is not None)
 
@@ -332,8 +458,21 @@ def compute_composition(conn: sqlite3.Connection, *, binary_id: int) -> dict[str
     composition = _composition_rows(rows, total)
     for entry in composition:
         entry["sha256"] = _binary_sha256(conn, int(entry["binary_id"]))
+    categories = _category_rows(functions, rows, total)
 
     notes = [SCOPE_NOTE]
+    scope_payload = {
+        "binary_ids": sorted(binary_ids),
+        "collection_ids": sorted(collection_ids),
+        "binaries": len(scope),
+    }
+    if scope:
+        notes.append(
+            SCOPED_NOTE.format(
+                f"{len(scope)} candidate binaries"
+                f" ({len(binary_ids)} named binary id(s), {len(collection_ids)} collection(s))"
+            )
+        )
     if not has_edges:
         notes.append(NO_MATCHES_NOTE)
     elif self_only:
@@ -351,20 +490,35 @@ def compute_composition(conn: sqlite3.Connection, *, binary_id: int) -> dict[str
         "refined": has_edges,
         "name_sources": _count_rows(NAME_SOURCE_LABELS, name_counts, total),
         "match_quality": _count_rows(QUALITY_BANDS, band_counts, total),
+        "categories": categories,
+        "category_notes": list(CATEGORY_NOTES),
+        "scope": scope_payload,
         "composition": composition,
         "functions": rows[:MAX_ROWS],
         "notes": notes,
     }
 
 
-def run_composition(conn: sqlite3.Connection, *, binary_id: int) -> dict[str, Any]:
+def run_composition(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int,
+    binary_ids: Sequence[int] = (),
+    collection_ids: Sequence[int] = (),
+) -> dict[str, Any]:
     """Compute one binary's composition and store it as the ``composition`` scan.
 
     The scan hangs off the binary's newest analysis, created when it has none,
-    and replaces any earlier composition.  Raises :class:`NoCompositionError`
-    for an unknown binary.
+    and replaces any earlier composition.  *binary_ids* and *collection_ids*
+    narrow the candidates exactly as they do for
+    :func:`compute_composition`, and the stored payload records the scope it was
+    built under, so a later reader can tell a scoped scan from a whole-register
+    one.  Raises :class:`NoCompositionError` for an unknown binary and
+    :class:`reportal.matching.InvalidSettingsError` for an unknown scope id.
     """
-    payload = compute_composition(conn, binary_id=binary_id)
+    payload = compute_composition(
+        conn, binary_id=binary_id, binary_ids=binary_ids, collection_ids=collection_ids
+    )
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
     store.set_scan(conn, analysis_id, store.SCAN_KIND_COMPOSITION, payload)
     return payload

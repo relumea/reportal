@@ -554,6 +554,30 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   `composition` scan, and add the hosted categories as a second grouping beside
   the existing buckets with a per-category top-binary list.
 - Size: M.
+- **Status:** Closed.  `composition.compute_composition` and `run_composition`
+  take `binary_ids` and `collection_ids`, resolved through
+  `matching.resolve_scope`, so a scoped composition reads exactly the edges a
+  scoped `reportal match` would have written; an id no row carries raises
+  `InvalidSettingsError`, which the route answers 400 (`unknown binary` /
+  `unknown collection`), the CLI fails on and the `run_composition` tool returns
+  as a tool error.  The payload carries a `scope` block (the named ids and how
+  many candidate binaries they resolved to) and the stored scan records it, so a
+  later reader can tell a scoped scan from a whole-register one.  The hosted
+  categories are a second grouping beside the name-source buckets and the
+  quality bands: `malware` (matched another binary), `debug` (no match and a
+  placeholder name), `unique` (no match and a real name) and `library` (a name
+  an import stub, the engine or an ingested symbol file supplied), each with its
+  count, percent and top five binaries, plus a `category_notes` line stating
+  that reportal matches by assembly similarity and holds no family feed, so
+  `malware` is a match rather than a verdict.  `POST
+  /api/binaries/<id>/composition` takes the scope in its body, `reportal
+  composition <id> --binary-id/--collection-id` takes it as options, the
+  `run_composition` tool takes it as arguments, and the SPA panel has the two
+  comma-separated scope fields beside Run analysis and a Categories table.
+  Ceiling: the categories are derived from stored rows only, so a function whose
+  name came from a symbol file and also matched another binary counts as
+  library, which is the hosted reading.  Covered by `TestCategories`,
+  `TestCompositionScope` and `TestCompositionScopeSurfaces`.
 
 ### 16. An assistant that answers questions about reportal itself
 

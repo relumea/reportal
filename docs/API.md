@@ -71,7 +71,7 @@ their pages by the same rule.
 | `/api/binaries/<id>/detect` | GET | stored family detection; 404 `no-scan` without one; stored-only, never runs the engine |
 | `/api/binaries/<id>/related` | POST | rank the other stored binaries against this one by its hashes, imports, capabilities and size, then store the ranking; optional body `{"limit": N, "include_unrelated": bool}`; 400 `invalid limit`, 404 unknown binary |
 | `/api/binaries/<id>/related` | GET | stored relationship ranking; 404 `no-scan` without one; stored-only, never runs the engine |
-| `/api/binaries/<id>/composition` | POST | build the binary's composition analysis from the stored functions and `matches` rows and store it; no body; 404 unknown binary; stored-only, never runs matching or the engine |
+| `/api/binaries/<id>/composition` | POST | build the binary's composition analysis from the stored functions and `matches` rows and store it; the optional body `{"binary_ids", "collection_ids"}` narrows the candidate corpus through `matching.resolve_scope` and the stored payload records the scope; 400 `unknown binary`/`unknown collection` for an id no row carries, 404 unknown binary; stored-only, never runs matching or the engine |
 | `/api/binaries/<id>/composition` | GET | stored composition analysis; 404 `no-scan` without one; stored-only, never runs matching or the engine |
 | `/api/binaries/<id>/tags` | GET | tags applied to one binary |
 | `/api/binaries/<id>/tags` | POST | link a tag; body `{"name": ...}` (created if needed) or `{"tag_id": ...}` |

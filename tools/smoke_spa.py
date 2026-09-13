@@ -708,6 +708,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # addresses, which link into the continuous dump.
             ("Whole binary",),
             ("Virtual address",),
+            # The composition scope fields (entry 15).
+            ("Scope to binaries",),
+            ("Scope to collections",),
             # Analyst feedback on the stored agent artifacts.
             ("Agent feedback",),
             ("Function triage",),

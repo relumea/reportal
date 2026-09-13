@@ -95,6 +95,10 @@ entry.
 - A conversation about reportal itself: the `docs` scope ingests the shipped
   manual on the first question and answers from it, with a per-scope canned
   prompt list in the Conversations view.
+- Composition scoping and the hosted categories: a summary can be limited to
+  chosen binaries or collections (the match-settings vocabulary), the stored
+  scan records the scope it ran under, and the payload groups functions into
+  malware, debug, unique and library with each category's top binaries.
 - The keyboard layer's shell half: a collapsible sidebar (`Cmd/Ctrl+B`), a
   per-tab view history on `Alt+Left`/`Alt+Right`, `[`/`]` section cycling and
   `Space` to switch a function's Disassembly and Control flow view.  Fixed with

@@ -2286,6 +2286,22 @@ list is capped at `MAX_ROWS` (500) while every summary count stays exact. Both
 the journal, and `GET /api/binaries/<id>/composition` serves it stored-only
 (404 `no-scan`).
 
+A run can be scoped: `binary_ids` and `collection_ids` go through
+`matching.resolve_scope`, the same validation the match settings sheet uses, so
+a scoped composition reads exactly the edges a scoped `reportal match` would
+have written and an id no row carries is refused rather than ignored. The
+payload's `scope` block carries the named ids and the candidate count they
+resolved to, and the stored scan keeps it, which is what lets a later reader
+tell a scoped reading from a whole-register one. The hosted categories are a
+second grouping beside the name-source buckets and the quality bands:
+`malware` is a function with a stored match, `unique` one with neither a match
+nor a library name, `debug` one whose name is a placeholder, and `library` one
+whose name an import stub, the engine or an ingested symbol file supplied. Each
+category carries its count, percent and top five binaries from the same rollup,
+so the category view and the table cannot disagree, and `category_notes` states
+that the local `malware` bucket is a match rather than a family verdict, because
+reportal matches by assembly similarity and holds no threat feed.
+
 ## Detect
 
 `families.py` is local malware-family matching, behind the Detect panel, the

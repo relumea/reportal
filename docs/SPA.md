@@ -511,6 +511,14 @@ and selects that row; the smoke's `check_memory_dump` and
 `web/tests/memory-page.spec.ts` assert the landing, the reading and the `G`
 binding.
 
+The binary detail's Composition panel (`panels/BinaryPanels.tsx`) reads
+`GET /api/binaries/<id>/composition` and runs it over `POST`, whose body is the
+panel's two scope fields: a comma-separated binary id list and a collection id
+list, empty meaning the whole register.  The panel renders the headline match
+meter, the name-source and quality breakdowns, the hosted category table (each
+category's count, percent and top binaries) and the per-binary rollup, so the
+scope narrows what the run reads rather than what the matching did.
+
 The binary detail's Sandbox detonation panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/dynamic-execution/status` for the opt-in state, the
 runner in use and the runs so far, carries a Detonate button with the two

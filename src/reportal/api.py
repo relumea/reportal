@@ -4005,13 +4005,32 @@ def get_binary_related(binary_id: int) -> Response:
 
 
 @router.post("/api/binaries/{binary_id}/composition")
-def store_binary_composition(binary_id: int) -> Response:
-    """Build the binary's composition analysis from the store and store it."""
+def store_binary_composition(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Build the binary's composition analysis from the store and store it.
+
+    The body narrows the candidate corpus exactly as the match settings sheet
+    does: ``{"binary_ids": [...], "collection_ids": [...]}`` goes through
+    ``matching.resolve_scope``, so a scoped composition reads the edges a
+    scoped match would have written, and the stored payload records the scope it
+    was built under.  An id no row carries answers 400 with the scope module's
+    own code (``unknown binary`` / ``unknown collection``).
+    """
+    binary_ids = _optional_int_list(body, "binary_ids") or []
+    collection_ids = _optional_int_list(body, "collection_ids") or []
     with contextlib.closing(_open()) as conn:
         try:
-            result = composition.compute_composition(conn, binary_id=binary_id)
+            result = composition.compute_composition(
+                conn,
+                binary_id=binary_id,
+                binary_ids=binary_ids,
+                collection_ids=collection_ids,
+            )
         except composition.NoCompositionError as exc:
             return json_error(404, error="binary not found", detail=str(exc.args[0]))
+        except matching.InvalidSettingsError as exc:
+            return json_error(400, error=exc.error, detail=exc.detail)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_COMPOSITION, result)
