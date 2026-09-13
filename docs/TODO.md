@@ -262,6 +262,22 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   over a `CHANGELOG.md`.  The SPA has no markdown renderer and no CDN, so the
   renderer is a small subset converter or a build-time step.
 - Size: M.
+- **Status:** Closed.  `docs.py` resolves the documents (`REPORTAL_DOCS`, then
+  the workspace's `docs/`, then the checkout beside the package) and answers a
+  page as blocks rather than markup: `GET /api/docs` for the index,
+  `GET /api/docs/<slug>` for one page's title, its on-this-page headings and its
+  blocks (headings, paragraphs, lists with each item's depth, fenced code,
+  quotes and tables).  `reportal docs [<slug>]` and `reportal changelog` print
+  the same, `list_docs` and `get_doc` are the two read-only MCP tools, and the
+  SPA's Documentation view (`#/docs`, `#/docs/:slug`, `#/changelog`) renders the
+  blocks with its own inline pass for links, code spans and emphasis, so no
+  document text is injected as HTML and no markdown dependency is added.  The
+  subset is the deliberate ceiling: a construct outside it becomes a paragraph,
+  which is readable rather than lost.  `CHANGELOG.md` is new and holds 1.2.0
+  (this backlog, closed) and 1.1.0.  A wheel with neither a workspace nor a
+  checkout answers 404 `no-docs` rather than an empty page.  Gap: the hosted
+  portal's per-page previous/next navigation is not built; the on-this-page
+  list and the index cards cover the same need.
 
 ### 8. Continuous whole-binary hex viewer (Memory)
 

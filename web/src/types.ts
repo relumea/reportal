@@ -2826,3 +2826,51 @@ export interface ArtifactRatings {
   rated: number;
   kinds: string[];
 }
+
+/** One entry of the documentation index (`GET /api/docs`). */
+export interface DocPage {
+  slug: string;
+  title: string;
+}
+
+/** `GET /api/docs`. */
+export interface DocIndex {
+  pages: DocPage[];
+  count: number;
+}
+
+/** One sub-heading of a page, with the anchor the reader scrolls to. */
+export interface DocHeading {
+  text: string;
+  level: string;
+  id: string;
+}
+
+/** One item of a parsed list; `depth` is its nesting, zero at the top. */
+export interface DocListItem {
+  text: string;
+  depth: number;
+}
+
+/** One parsed block of a page; the reader renders it, so the API sends no
+ * markup.  Which fields are present depends on `kind`. */
+export interface DocBlock {
+  kind: string;
+  text?: string;
+  level?: number;
+  lang?: string;
+  ordered?: boolean;
+  items?: DocListItem[];
+  header?: string[];
+  rows?: string[][];
+}
+
+/** `GET /api/docs/<slug>`. */
+export interface DocPageBody {
+  slug: string;
+  title: string;
+  headings: DocHeading[];
+  blocks: DocBlock[];
+  source: string;
+  version: string;
+}

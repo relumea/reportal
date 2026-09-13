@@ -6,6 +6,7 @@
 // unit, and a `webServer` would start before or independently of the seed.
 
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 
 import { writeE2eState } from "./e2e-state";
 import { seedWorkspace } from "./seed";
@@ -17,6 +18,7 @@ import {
   port,
   pythonPath,
   rebrewPath,
+  repoRoot,
   workspacePath,
 } from "./workspace";
 
@@ -33,7 +35,14 @@ export default async function globalSetup(): Promise<void> {
     port: port(),
     baseUrl: url,
     cwd: seed.workspace,
-    env: { ...process.env, REPORTAL_DB: databasePath(), REPORTAL_REBREW: rebrew },
+    env: {
+      ...process.env,
+      REPORTAL_DB: databasePath(),
+      REPORTAL_REBREW: rebrew,
+      // The seeded workspace carries no docs/ of its own, so the documentation
+      // view reads this checkout's documents.
+      REPORTAL_DOCS: join(repoRoot(), "docs"),
+    },
   });
   writeE2eState({
     baseUrl: url,

@@ -15,7 +15,7 @@ built UI is a follow-up.
 `src/main.tsx` mounts `QueryClientProvider` and `HashRouter` around
 `src/App.tsx`, the shell: a grouped sidebar (`NAV_GROUPS` in `src/router.ts`:
 Overview, Targets, Analysis, Agent, System; the System group ends with Jobs,
-Journal, Components, Integrations and Users), a topbar title and the health line.
+Journal, Components, Integrations, Users and Docs), a topbar title and the health line.
 Routing is react-router's: `App` holds one route table, `useRoutes` renders it,
 and the same table is matched against the location for the topbar title and the
 sidebar's active section, so no path is written down twice.  Every view is
@@ -518,6 +518,27 @@ The Binaries view (`views/BinariesView.tsx`) carries the scope of each row as a
 select in the table: `public` for the whole workspace, or a team that owns it
 (`PATCH /api/binaries/<id>/scope`).  The options come from `GET /api/teams`, so
 the control lists exactly the teams that exist.
+
+The Documentation view (`views/DocumentationView.tsx`, `#/docs`, `#/docs/:slug`
+and `#/changelog`, in the System group) is the portal's own manual, read from
+the workspace rather than from a checkout: `GET /api/docs` answers the index the
+view renders as cards and `GET /api/docs/<slug>` answers one page's title, its
+on-this-page headings and its blocks.  The server sends structure, never markup,
+so the view carries its own renderer: `renderInline` is one pass over code
+spans, links, bold and italics (in that order, which is what keeps `**bold**`
+from reading as two italics) and `DocBlockView` is one element per block kind
+(heading, paragraph, list with each item's indent, fenced code, quote, table)
+with an unknown kind falling back to its text rather than being dropped.  An
+internal `[label](/docs/<slug>)` link becomes a react-router `Link` and an
+external one opens in a new tab with `rel="noreferrer noopener"`, so a document
+cannot navigate the app somewhere unexpected.  The reading column is sticky
+beside the body and becomes a wrapping strip above it at phone width, the
+current section is marked by an `IntersectionObserver` over the heading anchors,
+and the page list is the same view with no slug.  `#/changelog` renders
+`CHANGELOG.md` through the same reader, so the release notes ship with the
+release.  A deployment with neither a workspace `docs/` directory nor a checkout
+beside the package answers 404 `no-docs`, which the view shows as an error note
+rather than an empty page.
 
 The Analyses view's log drawer (`views/AnalysesView.tsx`) opens with the
 lifecycle read for that analysis: its status badge, engine, created and finished

@@ -172,6 +172,9 @@ from reportal import (
     user_strings,
     zipcrypto,
 )
+from reportal import (
+    docs as docs_mod,
+)
 from reportal._paths import (
     DB_NAME,
     MARKER,
@@ -6072,6 +6075,79 @@ def symbols_export(
         console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
         return
     typer.echo(text, nl=False)
+
+
+# ── documentation ──────────────────────────────────────────────────
+
+
+@app.command("docs")
+def docs_command(
+    slug: str = typer.Argument("", help="A page's slug; list every page without it"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the shipped documentation pages, or print one of them.
+
+    The same material the portal's documentation view serves: the repository's
+    `docs/*.md` and `CHANGELOG.md`, read from the workspace, this checkout or an
+    explicit `REPORTAL_DOCS` override.
+    """
+    if not slug:
+        try:
+            listing = docs_mod.pages()
+        except docs_mod.NoDocsError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+        if json_output:
+            typer.echo(json.dumps({"pages": listing, "count": len(listing)}))
+            return
+        table = Table(title="documentation")
+        table.add_column("Slug", style="magenta")
+        table.add_column("Title")
+        for entry in listing:
+            table.add_row(entry["slug"], entry["title"])
+        console.print(table)
+        return
+    try:
+        payload = docs_mod.page(slug)
+    except docs_mod.DocsError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[bold]{payload['title']}[/bold] ({payload['source']})")
+    for block in payload["blocks"]:
+        _print_doc_block(block)
+
+
+def _print_doc_block(block: dict[str, Any]) -> None:
+    """Print one parsed documentation block as plain terminal text."""
+    kind = block.get("kind")
+    if kind == "heading":
+        console.print(f"\n[bold]{'#' * int(block.get('level') or 2)} {block.get('text')}[/bold]")
+    elif kind == "code":
+        for line in str(block.get("text") or "").splitlines():
+            console.print(f"  [dim]{line}[/dim]")
+    elif kind == "list":
+        for entry in block.get("items") or []:
+            bullet = "1." if block.get("ordered") else "-"
+            console.print(f"{'  ' * int(entry.get('depth') or 0)}{bullet} {entry.get('text')}")
+    elif kind == "table":
+        header = block.get("header") or []
+        if header:
+            console.print("  [bold]" + " | ".join(str(cell) for cell in header) + "[/bold]")
+        for row in block.get("rows") or []:
+            console.print("  " + " | ".join(str(cell) for cell in row))
+    elif kind == "quote":
+        console.print(f"[italic]{block.get('text')}[/italic]")
+    else:
+        console.print(str(block.get("text") or ""))
+
+
+@app.command("changelog")
+def changelog_command(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Print the changelog the portal's release view serves."""
+    docs_command("changelog", json_output)
 
 
 # ── artifact ratings ───────────────────────────────────────────────

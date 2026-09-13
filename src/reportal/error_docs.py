@@ -107,6 +107,8 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "model not found": "model-not-found",
     "no-artifact": "no-artifact",
     "no-decompilation": "no-decompilation",
+    "no-doc": "no-doc",
+    "no-docs": "no-docs",
     "no-engine-context": "no-engine-context",
     "no-file": "no-file",
     "no-graph": "no-graph",

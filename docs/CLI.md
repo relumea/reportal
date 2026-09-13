@@ -513,6 +513,11 @@ reportal stats [--series] [--days N] [--json]
                                            #   series with --series: analyses,
                                            #   auto runs, journaled actions and
                                            #   software types per day
+reportal docs [<slug>] [--json]            # the shipped documentation pages,
+                                           #   or one of them parsed into
+                                           #   headings, paragraphs, lists,
+                                           #   code, quotes and tables
+reportal changelog [--json]                # the changelog (CHANGELOG.md)
 
 reportal activity [--actor NAME] [--since ISO] [--limit N] [--json]
                                            # what was done here and by whom: the journaled

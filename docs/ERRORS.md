@@ -45,6 +45,7 @@ under the hyphenated heading.
 - Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
 - Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
+- Documentation: [no-docs](#no-docs), [no-doc](#no-doc)
 
 ## Request shape
 
@@ -72,7 +73,8 @@ the wrong type (`narrative must be a boolean`, `limit must be an integer`,
 `name must be a string`), a value outside its bound (`top must be positive`), or
 a value outside its closed vocabulary (`invalid params` for the auto-mode
 bounds, `invalid override`, `invalid rating`, `invalid line-comment`,
-`invalid kind`, `invalid backend`, `invalid severity`, `invalid regex`
+`invalid kind`, `invalid backend`, `invalid severity`, `invalid doc`
+(a documentation slug that is not a page's), `invalid regex`
 (a search pattern that does not compile or is too long), and the rest).
 `detail` names the field and the accepted values. Send a value inside the range
 or the set the route documents.
@@ -198,6 +200,21 @@ came from the engine has no symbol file and needs none.
 ### no-file
 
 `400`. A multipart upload carried no `file` part. Send the file.
+
+### no-docs
+
+`404`. `GET /api/docs` found no documentation directory to serve: no
+`REPORTAL_DOCS` override that is a directory, no `docs/` in the workspace, and
+no checkout beside the installed package. Set `REPORTAL_DOCS` to a directory of
+markdown files, or run the portal from a checkout. It is a deployment answer,
+not an empty manual: the page list would otherwise have to be invented.
+
+### no-doc
+
+`404`. No documentation page carries the requested slug (or the slug is empty,
+carries a separator, or starts a hidden name, which is refused for the same
+reason). `GET /api/docs` lists the slugs that do exist; a page's slug is its
+filename stem, lowercased.
 
 ### empty-file
 

@@ -46,6 +46,7 @@ from reportal import (
     data_types,
     details,
     diffview,
+    docs,
     effects,
     engines,
     external,
@@ -3202,6 +3203,22 @@ def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
     except OSError as exc:
         raise ToolError("write-failed", f"cannot write {path}: {exc}") from exc
     return {"path": path, "format": kind, "bytes": len(text)}
+
+
+def _tool_list_docs(arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        listing = docs.pages()
+    except docs.DocsError as exc:
+        raise ToolError(exc.code, exc.detail) from exc
+    return {"pages": listing, "count": len(listing)}
+
+
+def _tool_get_doc(arguments: dict[str, Any]) -> dict[str, Any]:
+    slug = _arg_str(arguments, "slug")
+    try:
+        return docs.page(slug)
+    except docs.DocsError as exc:
+        raise ToolError(exc.code, exc.detail) from exc
 
 
 def _tool_list_external_sources(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -7371,6 +7388,22 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_export_symbols,
+        ),
+        Tool(
+            "list_docs",
+            "Every documentation page the portal ships (the repository's docs/*.md and"
+            " CHANGELOG.md), as a slug and title each.",
+            _object({}, ()),
+            _READ,
+            _tool_list_docs,
+        ),
+        Tool(
+            "get_doc",
+            "One documentation page parsed into blocks (headings, paragraphs, lists, code, quotes"
+            " and tables); the slug is the file's stem, such as errors or cli.",
+            _object({"slug": _str("A page slug from list_docs.")}, ("slug",)),
+            _READ,
+            _tool_get_doc,
         ),
         Tool(
             "get_indirect_call_sites",

@@ -99,6 +99,10 @@ reportal/
 │   ├── threat.py             # local threat report: IOC extraction, ATT&CK mapping, narrative,
 │   │                         #   software-type classification and the 0-100 threat score
 │   ├── error_docs.py         # the error-code catalogue and the doc_url every error body carries
+│   ├── docs.py               # the in-app manual: resolve REPORTAL_DOCS/workspace/checkout,
+│   │                         #   the page index and the markdown-to-blocks reader
+│   ├── analytics.py          # the dashboard's bounded time series over stored rows
+│   ├── ratings.py            # the analyst's verdict on a stored agent artifact
 │   ├── remediation.py        # remediation artifacts: YARA rule render, Snort rules, STIX bundle
 │   ├── knowledge.py          # ingestion, chunk search and retrieval: retrieve, as_context, TF-IDF
 │   ├── remote_ingest.py      # guarded URL ingestion, off by default: validate_target guards,
@@ -893,6 +897,34 @@ the rotation undoable and is stated in `docs/THREAT_MODEL.md` along with the
 plaintext-at-rest boundary.  Authorization is two rules: a workspace secret
 needs an admin, a team secret needs that team's membership (or an admin), and
 with auth off the install is the single local operator.
+
+## Documentation
+
+`docs.py` is the in-app manual, and its one design decision is that the server
+sends structure rather than markup.  `GET /api/docs/<slug>` answers a title, the
+sub-headings with their anchors and a flat list of blocks (heading, paragraph,
+list with each item's depth, fenced code, quote, table), and the SPA's
+Documentation view renders them with its own small inline pass.  That is what
+keeps `dangerouslySetInnerHTML` and a markdown dependency out of the bundle: a
+document is data, and the only markup in the app is the app's own.
+
+The subset is the ceiling.  A heading, fence, list, quote or table the reader
+recognizes becomes that block; anything else is folded into a paragraph, so a
+construct the reader does not know is shown rather than dropped, and a document
+that grows a new syntax degrades to readable text instead of an empty page.  The
+fence marker is matched by its own character (` ``` ` closes ` ``` ` and `~~~`
+closes `~~~`), a table needs its dashed separator row to be one at all, and a
+list item's depth is its indent, which is what the view uses to indent it.
+
+Where the documents live resolves once per request, first match wins: an
+explicit `REPORTAL_DOCS` directory, then the workspace's own `docs/`, then the
+checkout beside the installed package.  None of the three is a real error (a
+wheel installed on a host with neither), so it answers 404 `no-docs` with that
+reason rather than an empty manual, and a slug that is not a page is 404
+`no-doc`.  `MAX_DOC_BYTES` bounds one read, so a stray huge file cannot turn a
+page load into a slow parse; the truncation is silent, which is the one
+deliberate residual here because the alternative (refusing to show a document
+that is merely long) is worse for a reader.
 
 ## Analytics
 

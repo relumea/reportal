@@ -27,6 +27,7 @@ import { ComponentsView } from "./views/ComponentsView";
 import { IntegrationsView } from "./views/IntegrationsView";
 import { ConversationDetail, ConversationsView } from "./views/ConversationsView";
 import { DashboardView } from "./views/DashboardView";
+import { ChangelogView, DocumentationView } from "./views/DocumentationView";
 import { DiffView } from "./views/DiffView";
 import { FunctionDetail } from "./views/FunctionDetail";
 import { FunctionsView } from "./views/FunctionsView";
@@ -62,6 +63,7 @@ const NAV_JUMPS: ReadonlyArray<readonly [string, NavView]> = [
   ["j", "journal"],
   ["p", "components"],
   ["i", "integrations"],
+  ["h", "docs"],
 ];
 
 /** What a matched route contributes to the shell: the sidebar section it
@@ -307,6 +309,21 @@ export function App(): ReactNode {
       path: "/users",
       element: <UsersView />,
       handle: { view: "users", title: "Users" },
+    },
+    {
+      path: "/docs",
+      element: <DocumentationView />,
+      handle: { view: "docs", title: "Documentation" },
+    },
+    {
+      path: "/docs/:slug",
+      element: <DocumentationView />,
+      handle: { view: "docs", title: (params) => `Docs \u00b7 ${params.slug}` },
+    },
+    {
+      path: "/changelog",
+      element: <ChangelogView />,
+      handle: { view: "docs", title: "Changelog" },
     },
     {
       path: "*",

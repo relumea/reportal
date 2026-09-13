@@ -881,6 +881,32 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         (("Journal",), (JOURNAL_ACTION,), (JOURNAL_DESCRIPTION,), ("Revert entry",)),
     ),
     ("search", "#/search", (("Search binaries, functions and collections.",),)),
+    (
+        "docs",
+        "#/docs",
+        (
+            ("Documentation",),
+            # One index card per shipped page, and the reader's own page.
+            ("architecture",),
+            ("errors",),
+        ),
+    ),
+    (
+        "docs page",
+        "#/docs/errors",
+        (
+            ("reportal error codes",),
+            # The on-this-page list and a rendered table from the document.
+            ("On this page",),
+            ("invalid-params",),
+            ("no-docs",),
+        ),
+    ),
+    (
+        "changelog",
+        "#/changelog",
+        (("Changelog",), ("1.2.0",), ("1.1.0",)),
+    ),
 )
 
 # Stored struct-recovery scan seeded on the smoke analysis.  The Data types
@@ -1703,6 +1729,11 @@ def main() -> int:
         **os.environ,
         "REPORTAL_DB": str(workspace / "reportal.db"),
         "REPORTAL_REBREW": str(rebrew_bin),
+        # The seeded workspace has no docs/ of its own, so point the
+        # documentation reader at the parent of this checkout's docs/, the way
+        # an install whose documents live outside its workspace would.  The
+        # directory is where `docs/` and `CHANGELOG.md` both resolve from.
+        "REPORTAL_DOCS": str(repo_root() / "docs"),
     }
     emit(f"browser: {browser}")
     failures = run_smoke(workspace, env, browser, ids)

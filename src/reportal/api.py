@@ -100,6 +100,9 @@ from reportal import (
     user_strings,
     zipcrypto,
 )
+from reportal import (
+    docs as docs_mod,
+)
 from reportal._paths import binaries_dir, db_path, reports_dir
 from reportal.server import db, json_body, json_error, json_response, optional_json_body
 from reportal.surface import classified as _classified
@@ -9023,6 +9026,34 @@ def export_symbols(binary_id: int, request: Request) -> Response:
         media_type="application/json" if kind == "json" else "text/plain",
         headers={"Content-Disposition": f'inline; filename="symbols.{kind}"'},
     )
+
+
+# ── Documentation ──────────────────────────────────────────────────
+#
+# The portal ships its own manual: `docs/*.md` and `CHANGELOG.md` are read from
+# the workspace, the checkout or an explicit `REPORTAL_DOCS` override and served
+# as structured blocks, which the SPA renders without any markup injection.  A
+# page's slug is its filename stem, so `GET /api/docs/errors` is `docs/ERRORS.md`.
+
+
+@router.get("/api/docs")
+def list_docs() -> Response:
+    """Every shipped documentation page, in reading order."""
+    try:
+        listing = docs_mod.pages()
+    except docs_mod.NoDocsError as exc:
+        return json_error(404, error=exc.code, detail=exc.detail)
+    return json_response({"pages": listing, "count": len(listing)})
+
+
+@router.get("/api/docs/{slug}")
+def get_doc(slug: str) -> Response:
+    """One page's title, its on-this-page headings and its blocks."""
+    try:
+        payload = docs_mod.page(slug)
+    except docs_mod.DocsError as exc:
+        return json_error(404, error=exc.code, detail=exc.detail)
+    return json_response(payload)
 
 
 # ── Models ─────────────────────────────────────────────────────────

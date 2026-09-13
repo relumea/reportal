@@ -128,8 +128,8 @@ sources, all re-runnable:
 | Hosted MCP server | 36 tools, 9 destructive | `https://api.reveng.ai/mcp/` (`tools/list`) |
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
-reportal's own surface for the comparison is its FastAPI schema (207
-paths, 289 operations) plus the MCP tool registry (226 tools).  Every row below is
+reportal's own surface for the comparison is its FastAPI schema (209
+paths, 291 operations) plus the MCP tool registry (228 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -646,7 +646,7 @@ The editable model, its history and its revert existed; this is the bulk half.
 `reportal signature-copy`, `data-types-import` (with `--definition`, `--file`
 and `--update-only`), `signatures-batch` and `data-type-functions`; the
 `copy_signature`, `import_type_definitions`, `get_signature_batch` and
-`get_data_type_functions` MCP tools (226 tools: 106 read-only, 120 destructive);
+`get_data_type_functions` MCP tools (228 tools: 108 read-only, 120 destructive);
 and the signature panel's copy control plus the data types panel's declaration
 box (create or update) expose the same.
 
@@ -700,7 +700,7 @@ write, and the payload says so.
 `conversation-confirm`/`conversation-cancel`/`conversation-events`; the
 `run_conversation_agent`, `confirm_conversation_run` and
 `cancel_conversation_run` destructive MCP tools with the read-only
-`list_conversation_runs` and `get_conversation_run` (226 tools: 106 read-only,
+`list_conversation_runs` and `get_conversation_run` (228 tools: 108 read-only,
 120 destructive); and the conversation detail's Agent run panel (the question
 box, the event list, the pending call with Approve and Reject, the cancel
 control and the answer) expose the same.
