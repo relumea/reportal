@@ -27,14 +27,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openjdk-17-jre-headless shellcheck chromium
 
-      # `bun install -g` writes its shims into bun's global bin directory,
-      # which the runner does not have on PATH and `$GITHUB_PATH` did not
-      # reliably add; the gate runs `vnu` by name, so link it where the runner
-      # already looks and prove it in this step rather than failing later.
+      # The gate runs `vnu` by name.  `bun install -g` writes its shim into
+      # bun's global bin directory, which the runner does not have on PATH and
+      # `bun pm bin -g` did not report, so install it with npm instead: its
+      # global prefix is /usr/local, which is already on PATH.
       - name: Install the VNU HTML/CSS validator
         run: |
-          bun install -g vnu
-          sudo ln -sf "$(bun pm bin -g)/vnu" /usr/local/bin/vnu
+          sudo npm install -g vnu
           vnu --version
 
       # `rebrew` is a base dependency and `resembl` backs the optional
