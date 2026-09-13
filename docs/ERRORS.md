@@ -366,6 +366,13 @@ Decompile it first.
 `404`. A scan needed the binary's string table and the engine returned none.
 Nothing was stored over an existing result.
 
+### secret-not-found
+
+`404`. No stored credential carries the requested name at the requested scope. A
+name is a lowercase dotted path (`virustotal.api_key`) and a scope is `local`
+(the workspace) or `team` (with a team id), so read `GET /api/secrets` or run
+`reportal secrets-list` and name one of its rows exactly.
+
 ### no-such-match
 
 `400`. A match transfer named a stored match edge that does not exist. List the
@@ -615,7 +622,9 @@ send the token `reportal user-add` or `reportal user-token` printed:
 `403`. The token is valid but its role does not carry the permission the request
 needs: a `viewer` may only read, an `analyst` may read and write, and the user
 table is `admin` only. Ask an operator for a role with `reportal user-edit
-<id> --role analyst`.
+<id> --role analyst`. The secret store reports the same status as `secret
+forbidden` when the role is not enough: a workspace secret needs an admin, and a
+team secret needs that team's membership (or an admin).
 
 ### invalid-user
 

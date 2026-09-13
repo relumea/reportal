@@ -91,6 +91,22 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   cluster H adds, plus `reportal secrets-set` / `secrets-list`.  Values are
   local state: document them in [THREAT_MODEL.md](THREAT_MODEL.md).
 - Size: M.
+- **Status:** Closed.  `src/reportal/secret_store.py` is the store: one row per
+  `(name, scope, team_id)` at workspace or team scope, a read that never returns
+  the value (name, scope, byte length and a last-four hint, and no hint at all
+  for a value shorter than `MIN_HINT_LENGTH`), `PUT`/`GET`/`DELETE
+  /api/secrets[/<name>]`, `reportal secrets-list` / `secrets-set` (with
+  `--stdin`) / `secrets-rm`, the `list_secrets`, `set_secret` and `delete_secret`
+  MCP tools and the Secrets panel on the SPA's Users view.  Every write is
+  journaled, so a rotation is revertible.  :func:`secret_store.value_of` is the
+  one read that returns a credential, and it is internal only: `llm.LlmConfig`
+  resolves the bridge key from the environment, then `reportal.toml`, then the
+  store, so an existing install is unchanged and cluster H's external source
+  reads the same way.  A workspace secret needs an admin and a team secret that
+  team's members; with auth off the install is the single local operator and
+  everything is allowed.  The trust boundary and its residual (the journal keeps
+  the value a rotation replaced) are written out in
+  [THREAT_MODEL.md](THREAT_MODEL.md).
 
 ### 4. Dashboard analytics (time series and usage)
 

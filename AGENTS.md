@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 198 source files` is the finish line.
+`Success: no issues found in 200 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.27%, 24917 statements with 1927 missed. `[tool.coverage.report] fail_under`
+92.32%, 25246 statements with 1939 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -238,6 +238,28 @@ and `collection-scope`; and the identity-side reads are `reportal activity
 SHA-256 digest is stored, the SPA keeps the bearer token in `localStorage`
 (`api.TOKEN_STORAGE_KEY`), and each journal entry records the `actor` the server
 set around the request (`server.authenticate` + `journal.acting_as`).
+
+### Secret-store configuration
+
+The optional LLM bridge resolves its API key first match wins: the environment,
+then the workspace `reportal.toml` `[llm]` table, then the store under
+`llm.api_key`.  Nothing else in reportal reads a stored credential today; an
+external source added later reads the same way through
+`secret_store.resolve_from_workspace`.
+
+| Where | Spelling | Notes |
+|-------|----------|-------|
+| Store name | `llm.api_key` | set with `reportal secrets-set llm.api_key --stdin`, or the API/SPA/MCP |
+
+The store itself is `reportal secrets-list` / `secrets-set` / `secrets-rm` and
+`GET`/`PUT`/`DELETE /api/secrets[/<name>]`: one credential per `(name, scope,
+team_id)`, at workspace scope or a team's.  A read reports the name, scope, byte
+length and a last-four hint (nothing for a value shorter than
+`secret_store.MIN_HINT_LENGTH`) and never the value; `value_of` is the internal
+read.  A workspace secret needs an admin to write and a team secret that team's
+membership, and every write is journaled, so a rotation is revertible.
+`docs/THREAT_MODEL.md` states the plaintext-at-rest boundary and the journal
+residual.
 
 ### Sandbox configuration
 
@@ -427,7 +449,10 @@ configured LLM for a whole rewritten function and stores it,
 `set_ai_decompilation_overrides` sets or clears the analyst names of its
 placeholder tokens, `rate_ai_decompilation` records feedback and
 `add_ai_line_comment`, `update_ai_line_comment` and `delete_ai_line_comment`
-write its per-line comments, so all six are destructive.  `list_models` reads the model
+write its per-line comments, so all six are destructive.  `list_secrets` reads the
+secret store, redacted to its name, scope, byte length and a last-four hint, and
+is read-only; `set_secret` and `delete_secret` write it and are destructive, and
+neither ever returns the value.  `list_models` reads the model
 registry and is read-only; `upgrade_analysis_model` re-runs an analysis's stored
 LLM artifacts under a named `llm` model, journaling every artifact it replaces,
 and is destructive.  `get_sandbox_report` and
@@ -435,7 +460,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 190 built-in tools, 87 read-only and 103 destructive.
+declares 193 built-in tools, 88 read-only and 105 destructive.
 
 ## SPA
 
@@ -540,8 +565,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 190 built-in
-tools (87 read-only, 103 destructive).
+and `run_match` expose the same over MCP, and the counts stay 193 built-in
+tools (88 read-only, 105 destructive).
 
 ### Scaling
 

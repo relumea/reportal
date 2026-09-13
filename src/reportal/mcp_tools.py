@@ -71,6 +71,7 @@ from reportal import (
     remote_ingest,
     renames,
     sandbox,
+    secret_store,
     secrets,
     signatures,
     similarity,
@@ -2692,6 +2693,73 @@ def _tool_delete_ai_line_comment(arguments: dict[str, Any]) -> dict[str, Any]:
         lambda conn, fid: _with_comment(ai_decomp.delete_line_comment(conn, fid, line=line)),
         description=f"removed an inline comment on the AI decompilation of function {function_id}",
     )
+
+
+def _tool_list_secrets(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Every stored secret, redacted: the value is never in a tool payload."""
+    scope = _arg_optional_str(arguments, "scope") or None
+    team_id = _arg_optional_int(arguments, "team_id", 0) or None
+    try:
+        with contextlib.closing(_open()) as conn:
+            rows = secret_store.list_secrets(conn, scope=scope, team_id=team_id)
+    except secret_store.SecretError as exc:
+        raise ToolError(exc.code, exc.detail) from exc
+    return {"secrets": rows, "count": len(rows)}
+
+
+def _secret_scope(arguments: dict[str, Any]) -> tuple[str, int | None]:
+    """The scope a secret tool named, validated."""
+    scope = _arg_optional_str(arguments, "scope") or None
+    team_id = _arg_optional_int(arguments, "team_id", 0) or None
+    try:
+        resolved_scope, resolved_team = secret_store.normalize_scope(scope, team_id)
+    except secret_store.SecretError as exc:
+        raise ToolError("invalid params", exc.detail) from exc
+    return resolved_scope, resolved_team or None
+
+
+def _tool_set_secret(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    value = _arg_str(arguments, "value")
+    scope, team_id = _secret_scope(arguments)
+    with contextlib.closing(_open()) as conn:
+        if team_id is not None and auth.get_team(conn, team_id) is None:
+            raise ToolError("team not found", f"no team with id {team_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                row = secret_store.journaled_set(
+                    conn,
+                    log,
+                    name=name,
+                    value=value,
+                    scope=scope,
+                    team_id=team_id,
+                    description=f"stored the secret {name}",
+                )
+            except secret_store.SecretError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(row)
+
+
+def _tool_delete_secret(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    scope, team_id = _secret_scope(arguments)
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        try:
+            row = secret_store.journaled_delete(
+                conn,
+                log,
+                name=name,
+                scope=scope,
+                team_id=team_id,
+                description=f"deleted the secret {name}",
+            )
+        except secret_store.SecretError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        return log.attach(row)
 
 
 def _tool_create_conversation(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6410,6 +6478,51 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_append_analysis_log,
+        ),
+        Tool(
+            "list_secrets",
+            "Every stored credential the workspace or a team holds, redacted to its name,"
+            " scope, byte length and a last-four hint; the value is never returned.",
+            _object(
+                {
+                    "scope": _enum(
+                        "Scope to list, or every scope when omitted.", secret_store.SCOPES
+                    ),
+                    "team_id": _int("Team id to filter a team scope."),
+                }
+            ),
+            _READ,
+            _tool_list_secrets,
+        ),
+        Tool(
+            "set_secret",
+            "Store or replace one named credential at workspace or team scope; journaled, so a"
+            " revert restores the previous value.",
+            _object(
+                {
+                    "name": _str("Secret name, e.g. virustotal.api_key."),
+                    "value": _str("The credential value; it is never returned by a read."),
+                    "scope": _enum("Scope to store at.", secret_store.SCOPES),
+                    "team_id": _int("Team id for a team scope."),
+                },
+                ("name", "value"),
+            ),
+            _WRITE,
+            _tool_set_secret,
+        ),
+        Tool(
+            "delete_secret",
+            "Remove one named credential; journaled, so a revert restores the row.",
+            _object(
+                {
+                    "name": _str("Secret name to remove."),
+                    "scope": _enum("Scope the secret lives at.", secret_store.SCOPES),
+                    "team_id": _int("Team id for a team scope."),
+                },
+                ("name",),
+            ),
+            _WRITE,
+            _tool_delete_secret,
         ),
         Tool(
             "list_models",

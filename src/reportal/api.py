@@ -82,6 +82,7 @@ from reportal import (
     remote_ingest,
     renames,
     sandbox,
+    secret_store,
     secrets,
     signatures,
     similarity,
@@ -8418,6 +8419,144 @@ def delete_user(user_id: int) -> Response:
             )
             auth.delete_user(conn, user_id)
     return json_response(log.attach({"deleted": user_id}))
+
+
+# ── Secret store ───────────────────────────────────────────────────
+#
+# Named credentials at workspace or team scope.  A read never returns the value:
+# the routes serve the name, scope, byte length and a last-four hint, and the
+# value itself is reachable only through `secret_store.value_of`, which an
+# internal consumer calls on the caller's behalf.  A write is journaled, so a
+# rotation is revertible and the previous value is what a revert restores.
+
+
+def _secret_failure(exc: secret_store.SecretError) -> Response:
+    """Map a secret-store failure onto its JSON status and error name."""
+    if isinstance(exc, secret_store.UnknownSecretError):
+        status = 404
+    elif isinstance(exc, secret_store.ForbiddenSecretError):
+        status = 403
+    else:
+        status = 400
+    return json_error(status, error=exc.code, detail=exc.detail)
+
+
+def _secret_scope(body: dict[str, Any]) -> tuple[str, int | None]:
+    """Validate the scope a write names, and that the caller may use it."""
+    scope = _optional_str(body, "scope") or None
+    raw_team = body.get("team_id")
+    if raw_team is not None and (isinstance(raw_team, bool) or not isinstance(raw_team, int)):
+        raise secret_store.InvalidSecretError("team_id must be an integer")
+    resolved_scope, resolved_team = secret_store.normalize_scope(scope, raw_team)
+    return resolved_scope, resolved_team or None
+
+
+@router.get("/api/secrets")
+def list_secrets(request: Request) -> Response:
+    """Every secret the caller may see, redacted; `?scope=`/`?team_id=` filter.
+
+    The value is never in the payload: a row carries the name, the scope, the
+    team, the byte length and a last-four hint.
+    """
+    scope = request.query_params.get("scope") or None
+    raw_team = request.query_params.get("team_id") or None
+    if raw_team is not None and not raw_team.isdigit():
+        return json_error(
+            400, error=secret_store.ERROR_INVALID, detail="team_id must be an integer"
+        )
+    try:
+        with contextlib.closing(_open()) as conn:
+            rows = secret_store.list_secrets(
+                conn,
+                scope=scope,
+                team_id=int(raw_team) if raw_team else None,
+            )
+            user = _caller(request)
+            team_ids = _caller_team_ids(conn, request)
+    except secret_store.SecretError as exc:
+        return _secret_failure(exc)
+    visible = [row for row in rows if secret_store.may_read(user, row, team_ids=team_ids)]
+    return json_response({"secrets": visible, "count": len(visible)})
+
+
+@router.put("/api/secrets/{name}")
+def set_secret(name: str, request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Store or replace one secret; journaled and revertible.
+
+    The body is ``{"value": "...", "scope": "local"|"team", "team_id": int}``
+    with the scope defaulting to `team` when a team id is given and to `local`
+    otherwise.  A local secret needs an admin; a team secret needs that team's
+    membership.  The response carries the redacted row, never the value.
+    """
+    try:
+        value = secret_store.normalize_value(body.get("value"))
+        with contextlib.closing(_open()) as conn:
+            scope, team_id = _secret_scope(body)
+            if team_id is not None and auth.get_team(conn, team_id) is None:
+                return json_error(
+                    404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+                )
+            user = _caller(request)
+            if not secret_store.may_write(
+                user,
+                team_ids=_caller_team_ids(conn, request),
+                scope=scope,
+                team_id=team_id,
+            ):
+                return json_error(
+                    403,
+                    error=secret_store.ERROR_FORBIDDEN,
+                    detail="a workspace secret needs an admin, a team secret its members",
+                )
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                row = secret_store.journaled_set(
+                    conn,
+                    log,
+                    name=name,
+                    value=value,
+                    scope=scope,
+                    team_id=team_id,
+                    description=f"stored the secret {name}",
+                )
+    except secret_store.SecretError as exc:
+        return _secret_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.delete("/api/secrets/{name}")
+def delete_secret(name: str, request: Request) -> Response:
+    """Remove one secret; journaled and revertible (the row is restored on revert)."""
+    team_id = _query_int(request, "team_id")
+    scope = request.query_params.get("scope") or None
+    try:
+        with contextlib.closing(_open()) as conn:
+            resolved_scope, resolved_team = secret_store.normalize_scope(scope, team_id)
+            user = _caller(request)
+            if not secret_store.may_write(
+                user,
+                team_ids=_caller_team_ids(conn, request),
+                scope=resolved_scope,
+                team_id=resolved_team or None,
+            ):
+                return json_error(
+                    403,
+                    error=secret_store.ERROR_FORBIDDEN,
+                    detail="a workspace secret needs an admin, a team secret its members",
+                )
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                row = secret_store.journaled_delete(
+                    conn,
+                    log,
+                    name=name,
+                    scope=resolved_scope,
+                    team_id=resolved_team or None,
+                    description=f"deleted the secret {name}",
+                )
+    except secret_store.SecretError as exc:
+        return _secret_failure(exc)
+    return json_response(log.attach(row))
 
 
 # ── Teams and object scope ─────────────────────────────────────────

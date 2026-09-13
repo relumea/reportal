@@ -999,6 +999,23 @@ export interface AiArtifact<T> {
   created_at?: string;
 }
 
+/** One stored credential, redacted: the value is never part of a payload. */
+export interface SecretRow {
+  name: string;
+  scope: string;
+  team_id: number | null;
+  length: number;
+  hint: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** The secret store as its route serves it. */
+export interface SecretsPayload {
+  secrets: SecretRow[];
+  count: number;
+}
+
 /** One entry of the model registry. */
 export interface ModelEntry {
   name: string;

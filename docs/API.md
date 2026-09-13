@@ -202,6 +202,9 @@ their pages by the same rule.
 | `/api/functions/<id>/pipeline` | POST | run the AI decompilation component composition; body `{"disabled": [...]}` optional; 404 unknown function, 503 `pipeline-unavailable` only when the composition cannot be assembled (a skipped or failed stage is a step on the run) |
 | `/api/functions/<id>/pipeline` | GET | stored latest run with its steps and the function's durable artifacts; 404 `no-run` before the first run |
 | `/api/pipeline/runs/<id>` | GET | one pipeline run with its steps; 404 `run not found` |
+| `/api/secrets` | GET | every stored credential the caller may see, redacted to its name, scope, team, byte length and a last-four hint; `?scope=`/`?team_id=` filter; the value is never in a payload |
+| `/api/secrets/<name>` | PUT | store or replace one credential; body `{"value", "scope"?, "team_id"?}`; a workspace secret needs an admin, a team secret that team's membership; 400 `invalid secret`, 403 `secret forbidden`, 404 `team not found`; journaled |
+| `/api/secrets/<name>` | DELETE | remove one credential, journaled (a revert restores the row); `?scope=`/`?team_id=` name it; 404 `secret not found` |
 | `/api/models` | GET | the local model registry: the engine, every decompiler backend, the configured bridge model (or the single `unconfigured` entry) and the optional similarity extra, each with its kind, version, availability and reason |
 | `/api/analyses/<id>/upgrade` | POST | re-run one analysis's stored AI artifacts under a named `llm` model, journaling every artifact replaced; body `{"model", "functions"?, "limit"?}`; 400 `invalid model`, 404 `analysis not found` / `model not found`, 503 `llm-unavailable` |
 | `/api/pipeline/runs/<id>/revert` | POST | replay the run's undo plan newest-first and return what was undone; 404 `run not found` |
@@ -605,6 +608,15 @@ stored-only: they resolve neither the engine nor the LLM, serve the stored
 artifact with its `created_at`, and answer 404
 `{"error": "no-artifact", "detail": ...}` when there is none.  An unknown
 function is 404 on both methods.
+
+The secret-store routes follow the same envelope with a vocabulary of their own.
+A read is redacted by construction: `GET /api/secrets` and the `PUT` response
+carry the name, the scope, the team, the byte length and a last-four hint, and
+never the value.  A name is a lowercase dotted path and a value is bounded at
+`secret_store.MAX_VALUE_BYTES`, so an unusable one is 400 `invalid secret`; a
+name at a scope with no row is 404 `secret not found`; and a caller whose role
+is not enough (a workspace secret needs an admin, a team secret that team's
+membership) is 403 `secret forbidden`, the same status and page as `forbidden`.
 
 The AI decompilation artifact (`ai_decomp.py`) reuses the same error shape with
 its own additions.  `POST /api/functions/<id>/ai-decompilation` needs the stored

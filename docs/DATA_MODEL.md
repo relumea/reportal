@@ -11,6 +11,17 @@ its import analysis is reused by engine label, and functions are refreshed by VA
 each stub becomes a `THUNK` function at its VA with `name_source` `import` and
 the 6-byte `jmp dword ptr [iat]` size, and a coverage-db row wins at the same VA.
 
+`secrets` holds the local credential store (`secret_store.py`), one row per
+`(name, scope, team_id)` with the value in plaintext and the times it was
+created and last written.  The table is created on first use, so an existing
+database needs no migration, and the unique index is over the three key columns
+with `team_id` 0 rather than NULL for a workspace secret (SQLite treats NULLs as
+distinct, which would allow a second local row of one name).  Reads are redacted
+by construction: `secret_store._row` builds the payload, which carries the byte
+length and a last-four hint and never the value, and `value_of` is the one
+function that returns a credential.  A write is journaled, so a rotation leaves
+the previous value in `journal_entries` until that action is reverted.
+
 `analyses.model` names the registry entry (`models.py`) that last produced the
 analysis's stored AI artifacts; a row that predates the column is empty, which
 reads as "no model recorded" rather than an invented one.  The per-artifact

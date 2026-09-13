@@ -80,6 +80,8 @@ reportal/
 │   ├── hardening.py          # anti-analysis and obfuscation scans over fingerprints, imports, strings and triage
 │   ├── filetypes.py          # bundled file-type, packer and protector detection (the `filetype` scan)
 │   ├── secrets.py            # secrets scan: credential patterns, Shannon entropy, redaction
+│   ├── secret_store.py       # named credentials: workspace/team scope, redacted
+│   │                         #   reads and journaled writes
 │   ├── protocols.py          # protocol inference from imports, schemes, literals and ports
 │   ├── threat.py             # local threat report: IOC extraction, ATT&CK mapping, narrative,
 │   │                         #   software-type classification and the 0-100 threat score
@@ -771,6 +773,32 @@ changes only the request's model field.
 The registry caches its built-ins at first use like every other registry here,
 so a process that configures an endpoint after that read calls
 `models.refresh_models()` to pick the new model name up.
+
+## Secret store
+
+`secret_store.py` owns named credentials.  A row is one name at one scope
+(`local` for the workspace, `team` plus a team id), and the table is created on
+first use so an existing database needs no migration.  The module's one
+invariant is that a read never returns a value: `_row` builds every read payload
+(name, scope, team, byte length, last-four hint) and `journaled_set` returns it,
+while `value_of` is the single function that returns a credential and is called
+only by an internal consumer on the caller's behalf (`llm` resolves the bridge
+key as environment, then `reportal.toml`, then the store under `llm.api_key`).
+
+Resolution order is deliberate: an operator who exported a variable or wrote the
+table keeps what they set, and a stored value is the fallback.  A team-scoped
+value wins over the local one for a caller that names the team, so a team's own
+key overrides the workspace default, and a caller that names no team reads only
+the workspace value.
+
+`journaled_set` and `journaled_delete` are the one write path the routes, the
+CLI and the MCP tools share, so all three journal the row they replace or create
+identically and a rotation is revertible.  The previous value therefore lives in
+`journal_entries` until that action is reverted or pruned, which is what makes
+the rotation undoable and is stated in `docs/THREAT_MODEL.md` along with the
+plaintext-at-rest boundary.  Authorization is two rules: a workspace secret
+needs an admin, a team secret needs that team's membership (or an admin), and
+with auth off the install is the single local operator.
 
 ## HTTP surface
 

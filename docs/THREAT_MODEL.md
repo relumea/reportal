@@ -138,6 +138,7 @@ full below.
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
 | Authenticated API client | Network client; bearer token header | `server.require_auth`, `auth.authenticate` |
 | Team-scoped object request | Network client; object id in the path | `server._scoped_object`, `server._enforce_scope`, `auth.visible_clause` |
+| Secret read and write | Network client; a credential name, scope and value | `api.py` secret routes, `secret_store.normalize_*`, `secret_store.journaled_set` / `journaled_delete` |
 | Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `api.sandbox_detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
 | Registered sandbox runner | Third-party package on the host | `sandbox.refresh_runners`, `reportal.sandbox_runners` |
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm._parse_json` |
@@ -190,10 +191,28 @@ full below.
 ## Secrets
 
 - The optional LLM API key resolves from `REPORTAL_LLM_API_KEY`, else
-  `[llm] api_key` in `reportal.toml` (`llm.LlmConfig.resolve`).  It is excluded
+  `[llm] api_key` in `reportal.toml`, else the secret store under
+  `llm.api_key` (`llm.LlmConfig.resolve`).  It is excluded
   from the config's `repr` and is never logged or returned; a request carries it
   only as a bearer header (`llm.LlmClient._headers`).  Environment variables are
-  preferred over the workspace file.
+  preferred over the workspace file, and both are preferred over the store.
+- **The secret store holds credentials in plaintext at rest.**
+  `secret_store.py` keeps one row per `(name, scope, team_id)` in the workspace
+  SQLite file, so the file's own permissions are the boundary: anyone who can
+  read `reportal.db` can read every stored credential.  What the module does
+  enforce is that no *read path* returns a value: `list_secrets`, `get_secret`
+  and `journaled_set` report the name, scope, byte length and a last-four hint
+  (and no hint at all for a value shorter than `MIN_HINT_LENGTH`), the API, CLI
+  and MCP surfaces serve only that, and `secret_store.value_of` is the single
+  function that returns a credential, called by an internal consumer on the
+  caller's behalf (`llm` for the bridge, an external source for its own key).
+  A workspace secret needs an admin to write, a team secret that team's
+  membership; with auth off the install is the single local operator.  A write
+  is journaled, so a rotation is revertible and the *previous* value stays in
+  `journal_entries` until that action is reverted or pruned: that is the one
+  residual worth naming, and it is what makes a rotation undoable.  The value
+  is never passed through argv unless an operator types it as a command
+  argument, which `reportal secrets-set --stdin` avoids.
 - `secrets.py` is a scanner, not a credential store: it finds secret-shaped
   strings in a binary's strings and records both the value and a `redacted` form
   (`secrets._add`, `secrets.redact`).  The raw value is stored in the scan
@@ -231,6 +250,13 @@ full below.
   lockout after failed attempts or login attempt log.  That is a deliberate
   trade: the credential is a 256-bit random token, which is not guessable, so
   the missing controls defend against nothing an attacker can currently do.
+- **A stored credential is only as safe as the database file.**  The secret
+  store keeps values in plaintext in the workspace SQLite file and reports the
+  last four characters of any value long enough to hint, so a stolen database
+  copy loses every stored credential; there is no encryption at rest, no key
+  derivation and no per-row access control beyond the admin/team rule the
+  routes apply.  The rotation path also leaves the replaced value in
+  `journal_entries` until that action is reverted or pruned.
 - **Remote-ingest TOCTOU is reduced, not eliminated.**  Validation and the
   connection are separate steps; the peer check withholds the body of a blocked
   connection but the request and (for HTTPS) handshake bytes have already left

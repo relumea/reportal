@@ -57,6 +57,10 @@ ENDPOINT_ENV = "REPORTAL_LLM_ENDPOINT"
 API_KEY_ENV = "REPORTAL_LLM_API_KEY"
 MODEL_ENV = "REPORTAL_LLM_MODEL"
 
+# The secret-store name this bridge reads its key from when neither the
+# environment nor the workspace table carries one.
+API_KEY_SECRET = "llm.api_key"
+
 # Model sent when neither the environment nor reportal.toml names one.  Most
 # OpenAI-compatible endpoints ignore the field for a local model.
 DEFAULT_MODEL = "gpt-4o-mini"
@@ -152,9 +156,24 @@ class LlmConfig:
         endpoint = os.environ.get(ENDPOINT_ENV, "").strip() or table.get("endpoint", "")
         if not endpoint:
             return None
-        api_key = os.environ.get(API_KEY_ENV, "").strip() or table.get("api_key", "")
+        api_key = (
+            os.environ.get(API_KEY_ENV, "").strip() or table.get("api_key", "") or _stored_api_key()
+        )
         model = os.environ.get(MODEL_ENV, "").strip() or table.get("model", "") or DEFAULT_MODEL
         return cls(endpoint=endpoint, api_key=api_key, model=model)
+
+
+def _stored_api_key() -> str:
+    """The key from the workspace secret store, or "" when there is none.
+
+    The store is the last place the key is looked for: an operator who exported
+    a variable or wrote the table keeps what they set, and a key held in the
+    store is the fallback.  The read is local and bounded, and a workspace
+    without a database answers "" rather than raising.
+    """
+    from reportal import secret_store
+
+    return (secret_store.resolve_from_workspace(API_KEY_SECRET) or "").strip()
 
 
 def _workspace_llm_table() -> dict[str, str]:

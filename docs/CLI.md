@@ -93,6 +93,16 @@ reportal ai-line-comment-add <function-id> <line> <body> [--author NAME] [--json
 reportal ai-line-comment-edit <function-id> <line> <body> [--json]
 reportal ai-line-comment-rm <function-id> <line> [--json]
                                            # add, edit or remove the comment stored at a line
+reportal secrets-list [--scope local|team] [--team-id N] [--json]
+                                           # the stored credentials, redacted: the value is
+                                           #   never printed, only the name, scope, byte
+                                           #   length and a last-four hint
+reportal secrets-set <name> [<value>] [--stdin] [--scope local|team] [--team-id N] [--json]
+                                           # store or replace one credential, journaled so a
+                                           #   rotation reverts; --stdin reads the value from
+                                           #   stdin, which keeps it out of the shell history
+reportal secrets-rm <name> [--scope local|team] [--team-id N] [--json]
+                                           # remove one credential; a revert restores it
 reportal models [--json]                  # the model registry: what can produce a stored
                                            #   result, with its kind, version and availability
 reportal analysis-upgrade <analysis-id> --model NAME [--function ID]... [--limit N] [--json]

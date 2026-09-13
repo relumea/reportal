@@ -77,6 +77,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
 import webbrowser
@@ -135,6 +136,7 @@ from reportal import (
     remediation,
     remote_ingest,
     renames,
+    secret_store,
     secrets,
     signatures,
     similarity,
@@ -1166,6 +1168,126 @@ def analysis_update_command(
         typer.echo(json.dumps(log.attach(updated)))
         return
     console.print(f"analysis {analysis_id}: engine {updated.get('engine')}")
+
+
+@app.command("secrets-list")
+def secrets_list_command(
+    scope: str = typer.Option("", "--scope", help="local or team; empty lists every scope"),
+    team_id: int = typer.Option(0, "--team-id", help="Team id to filter a team scope"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the stored secrets, redacted: the value is never printed."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    try:
+        with contextlib.closing(store.connect(portal_db)) as conn:
+            rows = secret_store.list_secrets(conn, scope=scope or None, team_id=team_id or None)
+    except secret_store.SecretError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps({"secrets": rows, "count": len(rows)}))
+        return
+    if not rows:
+        console.print("[yellow]No secrets stored.[/yellow]")
+        return
+    table = Table(title="secrets", show_header=True, header_style="bold")
+    table.add_column("Name", style="cyan")
+    table.add_column("Scope")
+    table.add_column("Team", justify="right")
+    table.add_column("Bytes", justify="right")
+    table.add_column("Hint")
+    table.add_column("Updated")
+    for row in rows:
+        table.add_row(
+            str(row["name"]),
+            str(row["scope"]),
+            str(row["team_id"] or ""),
+            str(row["length"]),
+            str(row["hint"]),
+            str(row["updated_at"]),
+        )
+    console.print(table)
+
+
+@app.command("secrets-set")
+def secrets_set_command(
+    name: str = typer.Argument(..., help="Secret name, e.g. virustotal.api_key"),
+    value: str = typer.Argument("", help="The value; omit it to read one line from stdin"),
+    scope: str = typer.Option("", "--scope", help="local (default) or team"),
+    team_id: int = typer.Option(0, "--team-id", help="Team id for a team scope"),
+    stdin: bool = typer.Option(
+        False, "--stdin", help="Read the value from stdin instead of the argument"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Store or replace one secret, journaled and revertible.
+
+    A value passed as an argument lands in the shell history; `--stdin` reads
+    one line from stdin instead, which is what a script should use.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if stdin:
+        value = sys.stdin.readline().rstrip("\n")
+    try:
+        with contextlib.closing(store.connect(portal_db)) as conn:
+            resolved_scope, resolved_team = secret_store.normalize_scope(
+                scope or None, team_id or None
+            )
+            if resolved_team and auth.get_team(conn, resolved_team) is None:
+                _fail(f"no team with id {resolved_team}", json_output)
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                row = secret_store.journaled_set(
+                    conn,
+                    log,
+                    name=name,
+                    value=value,
+                    scope=resolved_scope,
+                    team_id=resolved_team or None,
+                    description=f"stored the secret {name}",
+                )
+    except secret_store.SecretError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(row)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"[green]Stored[/green] {row['name']} at scope {row['scope']}")
+
+
+@app.command("secrets-rm")
+def secrets_rm_command(
+    name: str = typer.Argument(..., help="Secret name to remove"),
+    scope: str = typer.Option("", "--scope", help="local (default) or team"),
+    team_id: int = typer.Option(0, "--team-id", help="Team id for a team scope"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Remove one secret; journaled, so a revert restores the row."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    try:
+        with contextlib.closing(store.connect(portal_db)) as conn:
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                row = secret_store.journaled_delete(
+                    conn,
+                    log,
+                    name=name,
+                    scope=scope or None,
+                    team_id=team_id or None,
+                    description=f"deleted the secret {name}",
+                )
+    except secret_store.SecretError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(row)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"[green]Removed[/green] {row['name']} at scope {row['scope']}")
 
 
 @app.command("models")

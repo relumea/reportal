@@ -25,6 +25,7 @@ import {
   Loading,
   Muted,
   NA,
+  Note,
   Panel,
   Toolbar,
 } from "../components";
@@ -34,6 +35,8 @@ import type {
   ActivityPayload,
   FeedbackPayload,
   Me,
+  SecretRow,
+  SecretsPayload,
   TeamRow,
   TeamsPayload,
   UserRow,
@@ -340,6 +343,130 @@ function ActivityPanel(): ReactNode {
   );
 }
 
+/** The stored credentials: names, scope and a last-four hint, never a value. */
+function SecretsPanel(): ReactNode {
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [scope, setScope] = useState("local");
+  const [teamId, setTeamId] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [note, setNote] = useState("");
+  const query = useAsync(() => api<SecretsPayload>("/secrets"), []);
+  const rows = query.data?.secrets ?? [];
+
+  const act = (key: string, message: string, work: () => Promise<unknown>): void => {
+    setError(null);
+    setNote("");
+    setBusy(key);
+    void work()
+      .then(() => {
+        setNote(message);
+        setValue("");
+        setName("");
+        query.reload();
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(""));
+  };
+
+  const store = (): void => {
+    if (!name || !value) return;
+    act("set", `Stored ${name}.`, () =>
+      api(`/secrets/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        json: { value, scope, team_id: teamId ? Number(teamId) : undefined },
+      }),
+    );
+  };
+
+  const remove = (row: SecretRow): void =>
+    act(`rm:${row.name}`, `Removed ${row.name}.`, () =>
+      api(
+        `/secrets/${encodeURIComponent(row.name)}?scope=${row.scope}` +
+          (row.team_id ? `&team_id=${row.team_id}` : ""),
+        { method: "DELETE" },
+      ),
+    );
+
+  return (
+    <Panel
+      title="Secrets"
+      subtitle="Named credentials the workspace or a team holds. A read never returns the value."
+      actions={
+        <Button tone="ghost" onClick={query.reload}>
+          Reload
+        </Button>
+      }
+    >
+      {error ? <ErrorNote error={error} /> : null}
+      {note ? <Note>{note}</Note> : null}
+      <Toolbar>
+        <Field label="Name" hint="A lowercase dotted path, e.g. virustotal.api_key.">
+          <input value={name} onChange={(event) => setName(event.target.value)} />
+        </Field>
+        <Field label="Value">
+          <input
+            type="password"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </Field>
+        <Field label="Scope">
+          <select value={scope} onChange={(event) => setScope(event.target.value)}>
+            <option value="local">local</option>
+            <option value="team">team</option>
+          </select>
+        </Field>
+        <Field label="Team">
+          <input
+            placeholder="team id"
+            value={teamId}
+            onChange={(event) => setTeamId(event.target.value)}
+          />
+        </Field>
+        <Button tone="primary" pending={busy === "set"} disabled={!name || !value} onClick={store}>
+          Store
+        </Button>
+      </Toolbar>
+      {query.error ? <ErrorNote error={query.error} onRetry={query.reload} /> : null}
+      {query.data === undefined ? (
+        <Loading label="Loading the secret store" />
+      ) : rows.length === 0 ? (
+        <EmptyState>
+          No credentials stored. A value set here is what an external source reads; only its
+          name, scope, length and last four characters are ever shown again.
+        </EmptyState>
+      ) : (
+        <DataTable
+          columns={[
+            { label: "Name", mono: true, key: "name" },
+            { label: "Scope", key: "scope" },
+            { label: "Team", numeric: true, render: (row) => (row.team_id ? String(row.team_id) : "") },
+            { label: "Bytes", numeric: true, render: (row) => String(row.length) },
+            { label: "Hint", mono: true, render: (row) => row.hint || "n/a" },
+            { label: "Updated", mono: true, key: "updated_at" },
+            {
+              label: "",
+              render: (row) => (
+                <Button
+                  size="sm"
+                  pending={busy === `rm:${row.name}`}
+                  onClick={() => remove(row)}
+                >
+                  Remove
+                </Button>
+              ),
+            },
+          ]}
+          rows={rows}
+          rowKey={(row) => `${row.name}:${row.scope}:${row.team_id ?? 0}`}
+        />
+      )}
+    </Panel>
+  );
+}
+
 export function UsersView(): ReactNode {
   const me = useAsync(() => api<Me>("/iam/me"), []);
   const users = useAsync(() => api<UsersPayload>("/users"), []);
@@ -507,6 +634,7 @@ export function UsersView(): ReactNode {
         ) : null}
       </Panel>
       <TeamsPanel users={rows} onChanged={reload} />
+      <SecretsPanel />
       <ActivityPanel />
     </>
   );
