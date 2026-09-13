@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +62,7 @@ REASON_NOT_FOUND = "not found"
 REASON_NO_TAG = "tag not found"
 REASON_UNCHANGED = "unchanged"
 REASON_LAST_ANALYSIS = "only analysis with functions"
+REASON_FORBIDDEN = "not permitted"
 
 # The functions of one binary, as a subquery binding the binary id once.
 _FUNCTIONS_OF_BINARY = (
@@ -256,24 +257,37 @@ def apply_binary_action(
     ids: Sequence[int],
     tag: str = "",
     log: journal.Journal | None = None,
+    allowed: Collection[int] | None = None,
 ) -> dict[str, Any]:
-    """Apply one bulk action to binaries and return its per-id result."""
+    """Apply one bulk action to binaries and return its per-id result.
+
+    *allowed* is the set of ids the caller may reach (a team-scoped install
+    passes the binaries it can see); an id outside it is skipped with
+    :data:`REASON_FORBIDDEN` rather than acted on.  None means every id.
+    """
     if action not in BINARY_ACTIONS:
         raise BulkError(f"unsupported action: {action}")
     resolved = resolve_ids(ids)
+    if allowed is not None:
+        permitted = [binary_id for binary_id in resolved if binary_id in set(allowed)]
+        blocked = [binary_id for binary_id in resolved if binary_id not in set(allowed)]
+    else:
+        permitted, blocked = resolved, []
     tag_name = (tag or "").strip()
     if action != "delete" and not tag_name:
         raise BulkError(f"tag is required for action {action}")
     result = _result(action, len(resolved))
+    for binary_id in blocked:
+        _skip(result, binary_id, REASON_FORBIDDEN)
     if action == "delete":
-        for binary_id in resolved:
+        for binary_id in permitted:
             if not _remove_binary(conn, log, binary_id):
                 _skip(result, binary_id, REASON_NOT_FOUND)
             else:
                 result["applied"] += 1
         return result
     tag_id = _resolve_tag(conn, log, action=action, tag_name=tag_name)
-    for binary_id in resolved:
+    for binary_id in permitted:
         if store.get_binary(conn, binary_id) is None:
             _skip(result, binary_id, REASON_NOT_FOUND)
         elif not tag_id:

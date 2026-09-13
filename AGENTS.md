@@ -281,9 +281,10 @@ reportal/
     │                       #   the error envelope as a response and an exception, the
     │                       #   json_body/optional_json_body dependencies, db(), and the
     │                       #   require_auth dependency a router mounts for the API gate
-    ├── auth.py             # local identity: the users table, roles and their permission
-    │                       #   sets, bearer tokens (digest only), the constant-time
-    │                       #   authenticate, and required() from REPORTAL_AUTH or
+    ├── auth.py             # local identity: the users and teams tables, roles and their
+    │                       #   permission sets, bearer tokens (digest only), the
+    │                       #   constant-time authenticate, the object-visibility clause and
+    │                       #   write predicate, and required() from REPORTAL_AUTH or
     │                       #   [auth] required; off by default
     ├── api.py              # router: every /api/* route (the JSON API)
     ├── ui.py               # router: the built SPA, /static assets and the
@@ -296,7 +297,8 @@ reportal/
     │                       #   analysis, analysis-update, analysis-log, analysis-requeue,
     │                       #   analysis-tags, imported-functions, analysis-bulk-tag,
     │                       #   analysis-bulk-delete, users, user-add, user-token,
-    │                       #   user-edit, user-rm,
+    │                       #   user-edit, user-rm, teams, team-add, team-rm, team-member,
+    │                       #   binary-scope, collection-scope,
     │                       #   comments, comment-add, comment-rm, bulk-tag, bulk-delete,
     │                       #   bulk-prefix, diff, lineage, related, composition, families,
     │                       #   family-add, family-rm, detect,
@@ -317,7 +319,7 @@ reportal/
     │                       #   job, job-submit, job-run, job-cancel
     ├── mcp_tools.py        # MCP tool registry: Tool (name/description/input_schema/
     │                       #   annotations/handler), register_tool/tools/refresh_tools,
-    │                       #   the 161 built-in tools, `reportal.mcp_tools` entry-point group
+    │                       #   the 168 built-in tools, `reportal.mcp_tools` entry-point group
     ├── mcp_server.py       # stdio MCP server: newline-delimited JSON-RPC 2.0 over stdin/stdout
     │                       #   (initialize, notifications/initialized, tools/list, tools/call)
     └── assets/dist/        # generated Vite build (gitignored; served by ui.py)
@@ -352,7 +354,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 186 source files` is the finish line.
+`Success: no issues found in 187 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -366,7 +368,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.23%, 22430 statements with 1742 missed. `[tool.coverage.report] fail_under`
+92.11%, 22944 statements with 1810 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -658,13 +660,16 @@ comment store and is read-only; `add_comment`, `update_comment` and
 `bulk_functions` and `bulk_analyses` apply one action to a bounded id list through
 `bulk_actions`, so all three are destructive.  `list_users` reads the user table
 (never a digest) and is read-only; `add_user`, `rotate_user_token`,
-`update_user` and `delete_user` write it and are destructive.  `list_journal` reads the
+`update_user` and `delete_user` write it and are destructive.  `list_teams`
+reads the team store and is read-only; `create_team`, `delete_team`,
+`add_team_member`, `remove_team_member`, `set_binary_scope` and
+`set_collection_scope` write it and are destructive.  `list_journal` reads the
 action-journal entries and is read-only; `revert_journal_entry` replays one
 action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 The registry
-declares 161 built-in tools, 75 read-only and 86 destructive.
+declares 168 built-in tools, 76 read-only and 92 destructive.
 
 ## SPA
 
@@ -769,8 +774,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 161 built-in
-tools (75 read-only, 86 destructive).
+and `run_match` expose the same over MCP, and the counts stay 168 built-in
+tools (76 read-only, 92 destructive).
 
 ### Scaling
 
@@ -815,6 +820,11 @@ thousand functions.
   permission sets (`ROLE_PERMISSIONS`), the digest-only token storage and the
   constant-time comparison; `cli.serve` refuses a non-loopback bind while the gate is
   off or no enabled user exists, and `docs/THREAT_MODEL.md` records the boundary.
+  Object authorization is the same dependency: a binary or a collection carries a
+  `visibility` (`public`/`team`) and an `owner_team_id`, `server._enforce_scope`
+  resolves the object a path names (a function or analysis through its binary) and
+  `auth.visible_clause` is the SQL rule the listings, the search and the bulk guard
+  share, so a new route is scoped by construction too.
 - SPA is Vite + React + TypeScript in `web/`, built with bun into
   `src/reportal/assets/dist/` (generated, gitignored).  Routing is
   react-router and every fetch is `@tanstack/react-query`; no CDN.

@@ -29,7 +29,7 @@ import {
   Toolbar,
 } from "../components";
 import { ROLES } from "../constants";
-import type { Me, UserRow, UsersPayload } from "../types";
+import type { Me, TeamRow, TeamsPayload, UserRow, UsersPayload } from "../types";
 import { useAsync } from "../useAsync";
 
 /** The token this browser sends, with the control that sets or clears it. */
@@ -118,6 +118,121 @@ function NewUser({ onCreated }: { onCreated: () => void }): ReactNode {
         </>
       ) : null}
     </>
+  );
+}
+
+/** The teams, their membership and the create/delete controls. */
+function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => void }): ReactNode {
+  const teams = useAsync(() => api<TeamsPayload>("/teams"), []);
+  const [name, setName] = useState("");
+  const [member, setMember] = useState<Record<number, string>>({});
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+
+  const act = (key: string, work: () => Promise<unknown>): void => {
+    setError(null);
+    setBusy(key);
+    void work()
+      .then(() => {
+        teams.reload();
+        onChanged();
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(""));
+  };
+
+  const rows = teams.data?.teams ?? [];
+  return (
+    <Panel
+      title="Teams"
+      subtitle="A team scopes the binaries and collections that carry its visibility."
+      actions={
+        <Button tone="ghost" onClick={teams.reload}>
+          Reload
+        </Button>
+      }
+    >
+      {teams.error ? <ErrorNote error={teams.error} onRetry={teams.reload} /> : null}
+      {error ? <ErrorNote error={error} /> : null}
+      <Toolbar>
+        <Field label="New team">
+          <input
+            placeholder="team name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Button
+          tone="primary"
+          pending={busy === "create"}
+          disabled={!name.trim()}
+          onClick={() =>
+            act("create", () =>
+              api("/teams", { method: "POST", json: { name: name.trim() } }).then(() => setName("")),
+            )
+          }
+        >
+          Create team
+        </Button>
+      </Toolbar>
+      {teams.data === undefined ? (
+        <Loading label="Loading teams" />
+      ) : rows.length === 0 ? (
+        <EmptyState>No teams. A workspace-wide install does not need one.</EmptyState>
+      ) : (
+        <DataTable
+          columns={[
+            { label: "ID", key: "id", numeric: true },
+            { label: "Name", key: "name" },
+            { label: "Members", key: "member_count", numeric: true },
+            { label: "Description", key: "description" },
+            {
+              label: "Add member",
+              render: (row: TeamRow) => (
+                <select
+                  aria-label={`add a member to ${row.name}`}
+                  value={member[row.id] ?? ""}
+                  onChange={(event) => {
+                    const userId = event.target.value;
+                    setMember((current) => ({ ...current, [row.id]: userId }));
+                    if (userId) {
+                      act(`member-${row.id}`, () =>
+                        api(`/teams/${row.id}/members`, {
+                          method: "POST",
+                          json: { user_id: Number(userId) },
+                        }).then(() => setMember((current) => ({ ...current, [row.id]: "" }))),
+                      );
+                    }
+                  }}
+                >
+                  <option value="">pick a user</option>
+                  {users.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name}
+                    </option>
+                  ))}
+                </select>
+              ),
+            },
+            {
+              label: "Actions",
+              render: (row: TeamRow) => (
+                <div className="actions-cell">
+                  <ConfirmButton
+                    label="Delete"
+                    message={`Delete team ${row.name}? The objects it owns return to the workspace.`}
+                    pending={busy === `delete-${row.id}`}
+                    onConfirm={() => act(`delete-${row.id}`, () => api(`/teams/${row.id}`, { method: "DELETE" }))}
+                  />
+                </div>
+              ),
+            },
+          ]}
+          rows={rows}
+          rowKey={(row) => row.id}
+        />
+      )}
+    </Panel>
   );
 }
 
@@ -287,6 +402,7 @@ export function UsersView(): ReactNode {
           </>
         ) : null}
       </Panel>
+      <TeamsPanel users={rows} onChanged={reload} />
     </>
   );
 }

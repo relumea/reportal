@@ -38,6 +38,7 @@ under the hyphenated heading.
 - Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
+- Teams and scope: [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 
 ## Request shape
@@ -610,6 +611,34 @@ update with neither `role` nor `disabled`. Roles are `viewer`, `analyst` and
 ### user-not-found
 
 `404`. No user carries that id.
+
+### invalid-team
+
+`400`. A team request named a blank or oversized name, an update with neither
+`name` nor `description`, a membership for an unknown or already-member user, or
+a scope whose `visibility` is outside `public`/`team` (a `team` one also needs a
+`team_id`).
+
+### team-exists
+
+`409`. Another team already carries that name (names compare
+case-insensitively).
+
+### team-not-found
+
+`404`. No team carries that id, or no such team is named in a scope request.
+
+### not-a-team-member
+
+`404`. The membership addressed by `DELETE /api/teams/<id>/members/<user_id>`
+does not exist, so there is nothing to remove.
+
+### scope-forbidden
+
+`403`. The object belongs to a team the caller is not a member of, so the write
+is refused. A *read* of such an object is a 404 for its own kind instead, so the
+answer does not disclose that it exists. Ask a team member or an admin to add
+you (`reportal team-member <team-id> <user-id>`).
 
 ## Server
 

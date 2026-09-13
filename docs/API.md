@@ -15,6 +15,16 @@ write) and `admin` (also the user table); `docs/THREAT_MODEL.md` has the rest.
 `cli.serve` refuses a non-loopback bind unless auth is on and at least one
 enabled user exists.
 
+A binary or a collection also carries a **scope**: `public` (every
+authenticated caller) or `team` (only the members of the team that owns it).
+`server._enforce_scope` reads the object a path names (`/api/binaries/<id>`,
+`/api/collections/<id>`, and a function or analysis through the binary it
+belongs to) and refuses a read of a scoped object the caller cannot see with the
+object's own 404, and a write with 403 `scope-forbidden`.  Because the check
+lives in the router dependency, a route added later is covered without repeating
+it.  The listings (`/api/binaries`, `/api/collections`, `/api/search`) filter
+their pages by the same rule.
+
 | Path | Method | Description |
 |------|--------|-------------|
 | `/api/iam/me` | GET | who the caller is: `auth` (`open` or `required`), the `user`, its `role` and the `permissions` that role carries; with auth off the user is null and the permissions are all three, because the caller is the local operator |
@@ -24,6 +34,15 @@ enabled user exists.
 | `/api/users/<id>` | PATCH | set the user's `role` or `disabled`; body `{"role"?, "disabled"?}` (400 `invalid-user` with neither); journaled and revertible |
 | `/api/users/<id>/token` | POST | replace the user's token and return the new one once; the previous token stops authenticating; journaled, so a revert restores the digest |
 | `/api/users/<id>` | DELETE | delete one user; journaled, so a revert puts the row back |
+| `/api/teams` | GET | every team with its `member_count`; readable by any authenticated caller |
+| `/api/teams` | POST | create a team; body `{"name", "description"?}`; 201, journaled and revertible; 400 `invalid-team` for a blank name, 409 `team-exists` |
+| `/api/teams/<id>` | GET | one team with its members (each `id`, `name`, `role`); 404 `team-not-found` |
+| `/api/teams/<id>` | PATCH | set the team's `name` or `description` (400 `invalid-team` with neither); journaled |
+| `/api/teams/<id>` | DELETE | delete a team; the binaries and collections it owned return to the whole workspace, and the revert restores the team, its members and their scope |
+| `/api/teams/<id>/members` | POST | add a user; body `{"user_id"}`; 201 with the team, 400 `invalid-team` for an unknown or already-member user; journaled |
+| `/api/teams/<id>/members/<user_id>` | DELETE | remove a membership (404 `not-a-team-member` when it does not exist); journaled |
+| `/api/binaries/<id>/scope` | PATCH | set a binary's visibility: body `{"visibility": "public"}` or `{"visibility": "team", "team_id": N}` (400 `invalid-team` for a missing or unknown team, 404 for an unknown binary); if the binary already belongs to a team the caller is not in, 403 `scope-forbidden`; journaled and revertible |
+| `/api/collections/<id>/scope` | PATCH | the same for a collection; journaled and revertible |
 | `/api/health` | GET | status, version, database path, row counts |
 | `/api/config` | GET | what this instance can do: `version`, the engine's availability and origin, its decompiler backends, the LLM bridge's state and model, the database path and table count, the on/off `features`, every cap in `limits`, and the MCP tool counts; a pure read, so a client can fetch it on start |
 | `/api/binaries` | GET | all binaries with function counts |

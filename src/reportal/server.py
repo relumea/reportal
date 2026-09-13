@@ -17,7 +17,9 @@ import contextlib
 import gzip
 import json
 import logging
+import re
 import sqlite3
+from collections.abc import Mapping
 from contextvars import ContextVar, Token
 from typing import Any
 from urllib.parse import urlsplit
@@ -91,6 +93,89 @@ def db() -> sqlite3.Connection:
     return store.connect(path)
 
 
+# The object a path names, so the team scope is enforced once for every route
+# instead of in each handler.  An id that names no row is left to the route: the
+# gate only refuses what it can see, and a missing object is the route's 404.
+_SCOPED_PATHS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"^/api/binaries/(?P<id>\d+)"), "binary"),
+    (re.compile(r"^/api/collections/(?P<id>\d+)"), "collection"),
+    (re.compile(r"^/api/functions/(?P<id>\d+)"), "function"),
+    (re.compile(r"^/api/analyses/(?P<id>\d+)"), "analysis"),
+)
+
+# The 404 each object reports when the caller may not see it.  A team-scoped
+# object a non-member asks for is reported as missing rather than forbidden, so
+# the answer does not disclose that it exists.
+_NOT_FOUND_NAME: dict[str, str] = {
+    "binary": "binary not found",
+    "collection": "collection not found",
+    "function": "function not found",
+    "analysis": "analysis not found",
+}
+
+
+def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[str, Any]] | None:
+    """The binary or collection a path names, and the kind it is.
+
+    A function or an analysis resolves to its owning binary, because that is the
+    object a team scope attaches to: reportal has no per-function owner.
+    """
+    for pattern, kind in _SCOPED_PATHS:
+        match = pattern.match(path)
+        if match is None:
+            continue
+        row_id = int(match.group("id"))
+        if kind == "binary":
+            row = store.get_binary(conn, row_id)
+        elif kind == "collection":
+            row = store.get_collection(conn, row_id)
+        elif kind == "function":
+            function = store.get_function(conn, row_id)
+            analysis = (
+                None if function is None else store.get_analysis(conn, int(function["analysis_id"]))
+            )
+        else:
+            analysis = store.get_analysis(conn, row_id)
+        if kind != "binary" and kind != "collection":
+            row = None if analysis is None else store.get_binary(conn, int(analysis["binary_id"]))
+        if row is None:
+            return None
+        return kind, row
+    return None
+
+
+def _enforce_scope(
+    conn: sqlite3.Connection,
+    request: Request,
+    user: Mapping[str, Any],
+) -> None:
+    """Refuse a request for a team-scoped object the caller may not reach.
+
+    A read of an object the caller cannot see is a 404 for that object kind,
+    because saying "forbidden" would disclose that it exists; a write is a 403
+    ``scope-forbidden``, because the caller has already proven it is a member of
+    the workspace and the object is not a secret at that point.
+    """
+    if str(user.get("role")) == auth.ROLE_ADMIN:
+        return
+    found = _scoped_object(conn, request.url.path)
+    if found is None:
+        return
+    kind, row = found
+    if str(row.get("visibility") or auth.VISIBILITY_PUBLIC) != auth.VISIBILITY_TEAM:
+        return
+    team_ids = [int(team["id"]) for team in auth.teams_of_user(conn, int(user["id"]))]
+    if int(row.get("owner_team_id") or 0) in team_ids:
+        return
+    if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        raise json_error(404, error=_NOT_FOUND_NAME[kind], detail=f"no {kind} with that id")
+    raise json_error(
+        403,
+        error=auth.ERROR_SCOPE_FORBIDDEN,
+        detail=f"this {kind} belongs to a team you are not a member of",
+    )
+
+
 def require_auth(request: Request) -> None:
     """Refuse an API request that carries no acceptable token, when auth is on.
 
@@ -113,6 +198,8 @@ def require_auth(request: Request) -> None:
     needed = auth.required_permission(request.method, request.url.path)
     if needed not in auth.permissions_for(str(user["role"])):
         raise json_error(403, error=auth.ERROR_FORBIDDEN, detail=auth.FORBIDDEN_DETAIL)
+    with contextlib.closing(db()) as conn:
+        _enforce_scope(conn, request, user)
     request.state.user = user
 
 

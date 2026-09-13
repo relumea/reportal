@@ -125,7 +125,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (161 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (168 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -306,19 +306,40 @@ every write that changed something) through `?order=`.
   loopback install keeps working unchanged, and `reportal serve --host` refuses
   a non-loopback bind unless the gate is armed and an enabled user exists
   (`cli._require_lan_auth`).
-- `reportal users`/`user-add`/`user-token`/`user-edit`/`user-rm`, the
-  `list_users`, `add_user`, `rotate_user_token`, `update_user` and `delete_user`
-  MCP tools (161 tools: 75 read-only, 86 destructive) and the SPA Users view
-  (identity block, the browser's bearer-token field, the user table with role,
-  disable, rotate and delete) expose the same.  `docs/THREAT_MODEL.md` records
-  the moved boundary and its residual risks.
+- teams and the team-as-owner scope (`src/reportal/auth.py`, the `teams` and
+  `team_members` tables): `GET|POST /api/teams`, `GET|PATCH|DELETE
+  /api/teams/<id>`, `POST /api/teams/<id>/members` and `DELETE
+  /api/teams/<id>/members/<user_id>`, every write journaled and revertible, and
+  a team delete that returns the objects it owned to the workspace rather than
+  orphaning them.  A binary or a collection carries `visibility` (`public` or
+  `team`) and `owner_team_id`, set through `PATCH /api/binaries/<id>/scope` and
+  `PATCH /api/collections/<id>/scope`.
+- the per-object enforcement that scope needs: `server._scoped_object` resolves
+  the object a path names (a function or an analysis resolves through its
+  binary, the object a team actually owns), a non-member's read is the object's
+  own 404 rather than a disclosure, a non-member's write is 403
+  `scope-forbidden`, and because the check lives in the router dependency a
+  route added later is covered without repeating it.  The listings
+  (`/api/binaries`, `/api/collections`, `/api/search`) filter their pages by
+  `auth.visible_clause` and a bulk action skips the ids outside the caller's
+  reach with the reason `not permitted`.
+- `reportal users`/`user-add`/`user-token`/`user-edit`/`user-rm`,
+  `reportal teams`/`team-add`/`team-rm`/`team-member`/`binary-scope`/
+  `collection-scope`, the `list_users`, `add_user`, `rotate_user_token`,
+  `update_user`, `delete_user`, `list_teams`, `create_team`, `delete_team`,
+  `add_team_member`, `remove_team_member`, `set_binary_scope` and
+  `set_collection_scope` MCP tools (168 tools: 76 read-only, 92 destructive) and
+  the SPA (the Users view with its identity block, the browser's bearer-token
+  field, the user table and the Teams panel, plus the Binaries table's per-row
+  scope select) expose the same.  `docs/THREAT_MODEL.md` records the moved
+  boundary and its residual risks.
 
-Still open in this cluster: per-object team scoping (a `teams` table with
-membership and a scope on each analyst write), the activity feed
-(`GET /v2/users/activity`, derived from the action journal once a journal entry
-records the actor it happened for) and local feedback notes
-(`POST /v2/users/feedback`).  The hosted `GET /v2/users/{id}` single-user read
-is covered by the list; `docs/TODO.md` entries 2 and 5 track the scoping work.
+Still open in this cluster: the activity feed (`GET /v2/users/activity`, derived
+from the action journal once a journal entry records the actor it happened for)
+and local feedback notes (`POST /v2/users/feedback`).  Organisations, groups and
+per-team roles are hosted structure this model deliberately does not carry;
+`docs/TODO.md` entries 2 and 5 record exactly what is left there.  The hosted
+`GET /v2/users/{id}` single-user read is covered by the list.
 
 ### G. Models (hosted 1 operation plus analysis parameters)
 

@@ -64,13 +64,19 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   (`/documentation/teams-and-access`).  Endpoints absent from the public spec:
   `GET /v2/iam/teams`, `GET /v2/iam/teams/{id}`, `GET
   /v2/iam/teams/{id}/members`, `GET /v2/iam/organisations`.
-- reportal: single user, no identity.  [PARITY.md](PARITY.md) cluster F plans
-  users, roles and per-object scoping, but not the team-as-owner model, team
-  switching, organisations or groups.
-- Build: `teams`, `team_members` and `organisations` tables, a team scope on
-  binaries, analyses and collections, an active-team setting, and team roles
-  (admin/member) on the write paths.  No billing, no external IdP.
-- Size: L.
+- reportal: `teams` and `team_members` plus the team-as-owner model are now
+  shipped (cluster F): a team owns binaries and collections through
+  `owner_team_id`/`visibility`, membership is managed over HTTP, the CLI and
+  MCP, and a non-member's read is a 404 while its write is 403.  Roles exist
+  (`viewer`/`analyst`/`admin`).
+- **Status:** Closed for teams, roles and the team scope.  Still open, and
+  stated as such in `docs/PARITY.md` cluster F: organisations and the groups
+  inside them (no hierarchy, no org-level credits), team roles beyond
+  membership (every member is equal inside a team), an active-team setting (a
+  caller sees every team it belongs to, which is the union rather than a
+  switch) and team switching in the SPA.  None of that is access control the
+  current model needs; it is structure the hosted product sells.
+- Size: L for the rest (organisations, groups, per-team roles).
 
 ### 3. Secret store
 
@@ -111,13 +117,18 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   a System badge instead of the visibility toggle
   (`/documentation/analyses`, `/documentation/analysis-overview`,
   `/documentation/teams-and-access`).
-- reportal: single-user, every row is equally visible.  Cluster D already plans
-  the examples read (`/v3/analyses/examples`); visibility is not in it.
-- Build: a `visibility` and `owner` on analyses and collections, a workspace
-  filter on the list routes, and an examples flag with a System badge.  With
-  one local user this is labelling and filtering, not access control, and the
-  docs must say so.  Shares cluster F's identity work.
-- Size: S once F lands.
+- reportal: `binaries` and `collections` carry `visibility` (`public` or
+  `team`) and `owner_team_id`; the API gate enforces them on every route by
+  resolving the object a path names, the listings and the typed search filter
+  their pages, and the bulk guard skips what the caller cannot reach.  With
+  auth off this is labelling (the local operator sees everything); with it on
+  it is access control.
+- **Status:** Closed for binaries and collections.  Still open: an owner column
+  and a per-analysis toggle (the scope is the owning binary's, which is the
+  object reportal stores a team on), a workspace filter on the list routes
+  (`Personal`/`Team`/`Public` as distinct controls rather than the rows a
+  caller can see) and the Library/System badge for a seeded analysis, which
+  the example-analyses row above records as not applicable.
 
 ### 6. Agent feedback and the Custom (MCP) onboarding card
 

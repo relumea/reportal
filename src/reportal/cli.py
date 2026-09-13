@@ -414,6 +414,261 @@ def serve(
         _fail(f"Failed to start server on {url}: {exc.strerror or exc}", json_output=False)
 
 
+# ── teams ──────────────────────────────────────────────────────────
+
+
+@app.command()
+def teams(json_output: bool = typer.Option(False, "--json", help="Output results as JSON")) -> None:
+    """List the teams with their member counts."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        rows = auth.list_teams(conn)
+    if json_output:
+        typer.echo(json.dumps({"teams": rows, "count": len(rows)}))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ID", style="magenta", justify="right")
+    table.add_column("Name", style="cyan")
+    table.add_column("Members", justify="right")
+    table.add_column("Description", style="dim")
+    for row in rows:
+        table.add_row(
+            str(row["id"]), str(row["name"]), str(row["member_count"]), row["description"]
+        )
+    console.print(f"\n[bold cyan]{len(rows)} team(s)[/bold cyan]")
+    console.print(table)
+
+
+@app.command("team-add")
+def team_add(
+    name: str = typer.Argument(..., help="Team name"),
+    description: str = typer.Option("", "--description", help="What the team works on"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Create a team; journaled and revertible."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                team = auth.create_team(conn, name=name, description=description)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+            journal.journaled_create(
+                log,
+                table=auth.TEAM_TABLE,
+                key=int(team["id"]),
+                description=f"created team {team['name']}",
+            )
+    payload = log.attach(team)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Created[/green] team {team['name']} (id {team['id']})")
+    _print_journal_action(log, json_output)
+
+
+@app.command("team-rm")
+def team_rm(
+    team_id: int = typer.Argument(..., help="Team id to delete"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete a team; the objects it owned return to the whole workspace."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if not yes and not typer.confirm(f"Delete team {team_id}?"):
+        _fail("aborted", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_team(conn, team_id) is None:
+            _fail(f"no team with id {team_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            for table, where in (
+                (auth.TEAM_TABLE, "id = ?"),
+                (auth.MEMBER_TABLE, "team_id = ?"),
+                ("binaries", "owner_team_id = ?"),
+                ("collections", "owner_team_id = ?"),
+            ):
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table=table,
+                    where=where,
+                    params=(team_id,),
+                    description=f"deleted team {team_id} ({table})",
+                )
+            auth.delete_team(conn, team_id)
+    payload = log.attach({"deleted": team_id})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Deleted[/green] team {team_id}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("team-member")
+def team_member(
+    team_id: int = typer.Argument(..., help="Team id"),
+    user_id: int = typer.Argument(..., help="User id to add or remove"),
+    remove: bool = typer.Option(False, "--remove", help="Remove the membership instead"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Add or remove one user's team membership; journaled and revertible."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_team(conn, team_id) is None:
+            _fail(f"no team with id {team_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            if remove:
+                changed = auth.remove_member(conn, team_id, user_id)
+                if changed:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"removed user {user_id} from team {team_id}",
+                        journal.row_restore_descriptor(
+                            auth.MEMBER_TABLE, [{"team_id": team_id, "user_id": user_id}]
+                        ),
+                    )
+            else:
+                changed = auth.add_member(conn, team_id, user_id)
+                if changed:
+                    journal.journaled_create(
+                        log,
+                        table=auth.MEMBER_TABLE,
+                        key={"team_id": team_id, "user_id": user_id},
+                        description=f"added user {user_id} to team {team_id}",
+                    )
+            team = auth.get_team(conn, team_id)
+    if not changed:
+        _fail(
+            f"user {user_id} is "
+            + ("not in " if remove else "unknown or already in ")
+            + f"team {team_id}",
+            json_output,
+        )
+    payload = log.attach(team or {})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    verb = "Removed" if remove else "Added"
+    console.print(
+        f"[green]{verb}[/green] user {user_id} {'from' if remove else 'to'} team {team_id}"
+    )
+    _print_journal_action(log, json_output)
+
+
+def _run_scope(
+    portal_db: Path,
+    *,
+    kind: str,
+    row_id: int,
+    visibility: str,
+    team_id: int | None,
+    json_output: bool,
+) -> dict[str, Any]:
+    """Set one object's scope, journaled, and return the payload."""
+    table = "binaries" if kind == "binary" else "collections"
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        current = (
+            store.get_binary(conn, row_id)
+            if kind == "binary"
+            else store.get_collection(conn, row_id)
+        )
+        if current is None:
+            _fail(f"no {kind} with id {row_id}", json_output)
+        owner, resolved = auth.scope_of(conn, team_id=team_id, visibility=visibility)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=table,
+                where="id = ?",
+                params=(row_id,),
+                description=f"scoped {kind} {row_id} to {resolved}",
+            )
+            if kind == "binary":
+                updated = store.set_binary_scope(
+                    conn, row_id, owner_team_id=owner, visibility=resolved
+                )
+            else:
+                updated = store.set_collection_scope(
+                    conn, row_id, owner_team_id=owner, visibility=resolved
+                )
+    return log.attach(updated or {})
+
+
+@app.command("binary-scope")
+def binary_scope(
+    binary_id: int = typer.Argument(..., help="Binary id"),
+    visibility: str = typer.Option(auth.VISIBILITY_PUBLIC, "--visibility", help="public or team"),
+    team_id: int | None = typer.Option(None, "--team", help="Owning team id for --visibility team"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Set which team owns a binary and whether the workspace may see it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    try:
+        payload = _run_scope(
+            portal_db,
+            kind="binary",
+            row_id=binary_id,
+            visibility=visibility,
+            team_id=team_id,
+            json_output=json_output,
+        )
+    except auth.AuthError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"[green]Scoped[/green] binary {binary_id}: {payload.get('visibility')}"
+        f" (team {payload.get('owner_team_id')})"
+    )
+
+
+@app.command("collection-scope")
+def collection_scope(
+    collection_id: int = typer.Argument(..., help="Collection id"),
+    visibility: str = typer.Option(auth.VISIBILITY_PUBLIC, "--visibility", help="public or team"),
+    team_id: int | None = typer.Option(None, "--team", help="Owning team id for --visibility team"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Set which team owns a collection and whether the workspace may see it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    try:
+        payload = _run_scope(
+            portal_db,
+            kind="collection",
+            row_id=collection_id,
+            visibility=visibility,
+            team_id=team_id,
+            json_output=json_output,
+        )
+    except auth.AuthError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"[green]Scoped[/green] collection {collection_id}: {payload.get('visibility')}"
+        f" (team {payload.get('owner_team_id')})"
+    )
+
+
 # ── users ──────────────────────────────────────────────────────────
 
 

@@ -30,6 +30,7 @@ import os
 import secrets
 import sqlite3
 import tomllib
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -78,8 +79,12 @@ MAX_USER_NAME = 64
 AUTHORIZATION_HEADER = "authorization"
 BEARER_PREFIX = "Bearer "
 
-# The table users live in.
+# The tables identity lives in.  ``teams`` plus ``team_members`` scope an
+# object to the people who work on it: membership is the only attribute, because
+# a team here answers "who can write this" and nothing else.
 TABLE = "users"
+TEAM_TABLE = "teams"
+MEMBER_TABLE = "team_members"
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS {TABLE} (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,7 +94,37 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     created_at TEXT NOT NULL,
     disabled   INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS {TEAM_TABLE} (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS {MEMBER_TABLE} (
+    team_id INTEGER NOT NULL REFERENCES {TEAM_TABLE}(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES {TABLE}(id) ON DELETE CASCADE,
+    PRIMARY KEY (team_id, user_id)
+);
 """
+
+# Visibility an object carries: public to every authenticated user, or scoped
+# to the team that owns it.
+VISIBILITY_PUBLIC = "public"
+VISIBILITY_TEAM = "team"
+VISIBILITIES: tuple[str, ...] = (VISIBILITY_PUBLIC, VISIBILITY_TEAM)
+
+# Length bound on a team name and its description.
+MAX_TEAM_NAME = 64
+MAX_TEAM_DESCRIPTION = 280
+
+# Error names the team surface reports.
+ERROR_INVALID_TEAM = "invalid-team"
+ERROR_TEAM_EXISTS = "team-exists"
+ERROR_TEAM_NOT_FOUND = "team-not-found"
+ERROR_NOT_A_MEMBER = "not-a-team-member"
+ERROR_SCOPE_FORBIDDEN = "scope-forbidden"
 
 # Error names the API, CLI and MCP surfaces report.
 ERROR_UNAUTHORIZED = "unauthorized"
@@ -128,6 +163,26 @@ class UserExistsError(AuthError):
 
 class UnknownUserError(AuthError):
     """No user carries the requested id."""
+
+
+class InvalidTeamError(AuthError):
+    """The team request itself is unusable (a blank name, an unknown visibility)."""
+
+
+class TeamExistsError(AuthError):
+    """Another team already carries that name."""
+
+
+class UnknownTeamError(AuthError):
+    """No team carries the requested id."""
+
+
+class NotAMemberError(AuthError):
+    """The caller is not a member of the team an object is scoped to."""
+
+
+class ScopeForbiddenError(AuthError):
+    """The caller may not change an object its team owns."""
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -317,6 +372,221 @@ def token_of(header_value: str | None) -> str:
     if not value.lower().startswith(BEARER_PREFIX.lower()):
         return ""
     return value[len(BEARER_PREFIX) :].strip()
+
+
+# ── Teams ──────────────────────────────────────────────────────────
+
+
+def _validated_team_name(name: str) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise InvalidTeamError(ERROR_INVALID_TEAM, "name must not be blank")
+    if len(cleaned) > MAX_TEAM_NAME:
+        raise InvalidTeamError(
+            ERROR_INVALID_TEAM, f"name must be at most {MAX_TEAM_NAME} characters"
+        )
+    return cleaned
+
+
+def _team_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "name": str(row["name"]),
+        "description": str(row["description"]),
+        "created_at": str(row["created_at"]),
+    }
+
+
+def create_team(conn: sqlite3.Connection, *, name: str, description: str = "") -> dict[str, Any]:
+    """Create one team; a duplicate name (case-insensitive) is refused."""
+    cleaned = _validated_team_name(name)
+    if find_team(conn, cleaned) is not None:
+        raise TeamExistsError(ERROR_TEAM_EXISTS, f"a team named {cleaned!r} already exists")
+    text = (description or "").strip()[:MAX_TEAM_DESCRIPTION]
+    cursor = conn.execute(
+        f"INSERT INTO {TEAM_TABLE} (name, description, created_at) VALUES (?, ?, ?)",
+        (cleaned, text, now()),
+    )
+    conn.commit()
+    team = get_team(conn, int(cursor.lastrowid or 0))
+    assert team is not None, "the row was just created"
+    return team
+
+
+def get_team(conn: sqlite3.Connection, team_id: int) -> dict[str, Any] | None:
+    """One team by id, with its member ids; None when unknown."""
+    row = conn.execute(f"SELECT * FROM {TEAM_TABLE} WHERE id = ?", (team_id,)).fetchone()
+    if row is None:
+        return None
+    team = _team_row(row)
+    members = conn.execute(
+        f"SELECT u.id, u.name, u.role FROM {MEMBER_TABLE} m JOIN {TABLE} u ON u.id = m.user_id"
+        " WHERE m.team_id = ? ORDER BY u.id",
+        (team_id,),
+    ).fetchall()
+    team["members"] = [dict(member) for member in members]
+    team["member_count"] = len(team["members"])
+    return team
+
+
+def find_team(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
+    """One team by name (case-insensitive), without its members."""
+    row = conn.execute(f"SELECT * FROM {TEAM_TABLE} WHERE name = ?", (name.strip(),)).fetchone()
+    return _team_row(row) if row else None
+
+
+def list_teams(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every team, oldest first, each with its member count."""
+    rows = conn.execute(
+        f"SELECT t.*, (SELECT COUNT(*) FROM {MEMBER_TABLE} m WHERE m.team_id = t.id)"
+        f" AS member_count FROM {TEAM_TABLE} t ORDER BY t.id"
+    ).fetchall()
+    teams: list[dict[str, Any]] = []
+    for row in rows:
+        team = _team_row(row)
+        team["member_count"] = int(row["member_count"])
+        teams.append(team)
+    return teams
+
+
+def update_team(
+    conn: sqlite3.Connection,
+    team_id: int,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+) -> dict[str, Any] | None:
+    """Set a team's name or description; None when the id is unknown."""
+    if get_team(conn, team_id) is None:
+        return None
+    if name is not None:
+        cleaned = _validated_team_name(name)
+        clash = find_team(conn, cleaned)
+        if clash is not None and int(clash["id"]) != team_id:
+            raise TeamExistsError(ERROR_TEAM_EXISTS, f"a team named {cleaned!r} already exists")
+        conn.execute(f"UPDATE {TEAM_TABLE} SET name = ? WHERE id = ?", (cleaned, team_id))
+    if description is not None:
+        conn.execute(
+            f"UPDATE {TEAM_TABLE} SET description = ? WHERE id = ?",
+            (description.strip()[:MAX_TEAM_DESCRIPTION], team_id),
+        )
+    conn.commit()
+    return get_team(conn, team_id)
+
+
+def delete_team(conn: sqlite3.Connection, team_id: int) -> bool:
+    """Delete one team; its objects (and their memberships) lose the scope.
+
+    The objects the team owned return to the whole workspace rather than
+    disappearing with it: a stale ``owner_team_id`` would make them invisible to
+    everyone, which is data loss by another name.
+    """
+    if get_team(conn, team_id) is None:
+        return False
+    for table in ("binaries", "collections"):
+        conn.execute(
+            f"UPDATE {table} SET owner_team_id = NULL, visibility = ? WHERE owner_team_id = ?",
+            (VISIBILITY_PUBLIC, team_id),
+        )
+    conn.execute(f"DELETE FROM {MEMBER_TABLE} WHERE team_id = ?", (team_id,))
+    conn.execute(f"DELETE FROM {TEAM_TABLE} WHERE id = ?", (team_id,))
+    conn.commit()
+    return True
+
+
+def add_member(conn: sqlite3.Connection, team_id: int, user_id: int) -> bool:
+    """Add a user to a team; False when either id is unknown or already in it."""
+    if conn.execute(f"SELECT 1 FROM {TEAM_TABLE} WHERE id = ?", (team_id,)).fetchone() is None:
+        return False
+    if conn.execute(f"SELECT 1 FROM {TABLE} WHERE id = ?", (user_id,)).fetchone() is None:
+        return False
+    if conn.execute(
+        f"SELECT 1 FROM {MEMBER_TABLE} WHERE team_id = ? AND user_id = ?", (team_id, user_id)
+    ).fetchone():
+        return False
+    conn.execute(f"INSERT INTO {MEMBER_TABLE} (team_id, user_id) VALUES (?, ?)", (team_id, user_id))
+    conn.commit()
+    return True
+
+
+def remove_member(conn: sqlite3.Connection, team_id: int, user_id: int) -> bool:
+    """Remove a user from a team; False when the membership does not exist."""
+    cursor = conn.execute(
+        f"DELETE FROM {MEMBER_TABLE} WHERE team_id = ? AND user_id = ?", (team_id, user_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def teams_of_user(conn: sqlite3.Connection, user_id: int) -> list[dict[str, Any]]:
+    """Every team the user belongs to, oldest first."""
+    rows = conn.execute(
+        f"SELECT t.* FROM {TEAM_TABLE} t JOIN {MEMBER_TABLE} m ON m.team_id = t.id"
+        " WHERE m.user_id = ? ORDER BY t.id",
+        (user_id,),
+    ).fetchall()
+    return [_team_row(row) for row in rows]
+
+
+# ── Object scope ───────────────────────────────────────────────────
+
+
+def visible_clause(
+    conn: sqlite3.Connection, user: Mapping[str, Any] | None, *, prefix: str = ""
+) -> tuple[str, list[Any]] | None:
+    """The SQL that narrows a listing to what *user* may see, or None.
+
+    None means "no restriction": auth is off (the local operator sees the whole
+    workspace) or the caller is an admin.  Otherwise an object is visible when
+    it is public or owned by one of the caller's teams, which is the one rule
+    the read paths share.
+    """
+    if user is None or str(user.get("role")) == ROLE_ADMIN:
+        return None
+    clause = (
+        f"({prefix}visibility = ? OR {prefix}owner_team_id IN"
+        f" (SELECT team_id FROM {MEMBER_TABLE} WHERE user_id = ?))"
+    )
+    return clause, [VISIBILITY_PUBLIC, int(user["id"])]
+
+
+def may_write(
+    user: Mapping[str, Any] | None, row: Mapping[str, Any], *, team_ids: Sequence[int]
+) -> bool:
+    """Whether *user* may change *row*, from the row's visibility and team.
+
+    A public object is writable by anyone whose role carries `write` (the route
+    gate already checked that); a team-scoped one only by a member of that team
+    (*team_ids* is the caller's membership) or an admin, so an object a team
+    owns cannot be changed by the rest of the workspace.
+    """
+    if user is None or str(user.get("role")) == ROLE_ADMIN:
+        return True
+    if str(row.get("visibility") or VISIBILITY_PUBLIC) != VISIBILITY_TEAM:
+        return True
+    return int(row.get("owner_team_id") or 0) in set(team_ids)
+
+
+def scope_of(
+    conn: sqlite3.Connection, *, team_id: int | None, visibility: str
+) -> tuple[int | None, str]:
+    """Validate a requested object scope: its team id and visibility.
+
+    A `team` visibility needs a team that exists; a `public` one clears the
+    owner, so "back to everyone" is one call rather than two.
+    """
+    if visibility not in VISIBILITIES:
+        raise InvalidTeamError(
+            ERROR_INVALID_TEAM,
+            f"unknown visibility: {visibility}; expected {', '.join(VISIBILITIES)}",
+        )
+    if visibility == VISIBILITY_PUBLIC:
+        return None, VISIBILITY_PUBLIC
+    if team_id is None:
+        raise InvalidTeamError(ERROR_INVALID_TEAM, "a team-scoped object needs a team_id")
+    if get_team(conn, int(team_id)) is None:
+        raise UnknownTeamError(ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+    return int(team_id), VISIBILITY_TEAM
 
 
 def authenticate(conn: sqlite3.Connection, token: str) -> dict[str, Any] | None:

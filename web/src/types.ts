@@ -7,6 +7,10 @@ export interface Binary {
   format: string;
   arch: string;
   function_count: number;
+  /** `public` to every authenticated caller, `team` to the owners' members. */
+  visibility: "public" | "team";
+  /** The team that owns it while `visibility` is `team`. */
+  owner_team_id: number | null;
 }
 
 export interface FunctionRow {
@@ -1866,6 +1870,23 @@ export interface DieInfo {
   sources: Record<string, DetailSource>;
 }
 
+/** One team and, on the detail read, its members. */
+export interface TeamRow {
+  id: number;
+  name: string;
+  description: string;
+  created_at: string;
+  member_count: number;
+  /** Present on `GET /api/teams/<id>` only. */
+  members?: { id: number; name: string; role: string }[];
+}
+
+/** `GET /api/teams`: every team and the count. */
+export interface TeamsPayload {
+  teams: TeamRow[];
+  count: number;
+}
+
 /** One local user; the token digest is never part of the answer. */
 export interface UserRow {
   id: number;
@@ -1889,6 +1910,8 @@ export interface Me {
   user: UserRow | null;
   role: string | null;
   permissions: string[];
+  /** The teams the caller belongs to; empty while auth is off. */
+  teams: TeamRow[];
 }
 
 /** The `GET /api/analyses/<id>/status` payload. */

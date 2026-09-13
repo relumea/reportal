@@ -241,7 +241,18 @@ will read.  `cli.serve` refuses a non-loopback bind unless the gate is armed and
 at least one enabled user exists (`cli._require_lan_auth`), so the unauthenticated
 remote control plane the old posture allowed cannot be reached by forgetting a
 flag.  Only a token's SHA-256 digest is stored; the token is returned once, by
-the call that created or rotated it.  `docs/THREAT_MODEL.md` carries the residual
+the call that created or rotated it.
+
+A binary or a collection additionally carries a scope (`owner_team_id` plus a
+`visibility` of `public` or `team`), and the same dependency enforces it:
+`server._scoped_object` resolves the object a path names (a function or an
+analysis resolves through the binary it belongs to, since that is where the
+scope lives) and `_enforce_scope` refuses a read a non-member may not make with
+the object's own 404 (no existence disclosure) and a write with 403
+`scope-forbidden`.  `auth.visible_clause` is the one SQL rule the listings,
+`/api/search` and the bulk guard share, and `auth.may_write` is the one
+predicate the scope setters and the collection membership route share.  A team
+delete resets its objects to public rather than orphaning them.  `docs/THREAT_MODEL.md` carries the residual
 risks, the largest of which is that authorization is per route kind rather than
 per object.
 

@@ -44,6 +44,13 @@ choice is a real boundary, and it is what the rest of this document qualifies.
    The static SPA shell and its assets stay public in both modes: they carry no
    portal data, and a browser cannot attach a header to the initial document
    request.  Every `/api` route, `/api/health` included, is behind the gate.
+   Authorization beyond the route kind is per object: a binary or a collection
+   carries a `visibility` (`public` or `team`) and an `owner_team_id`, and
+   `server._enforce_scope` resolves the object a path names (a function or an
+   analysis through its binary) to refuse a non-member's read with the object's
+   own 404 and its write with 403 `scope-forbidden`.  The listings and
+   `/api/search` filter their pages by the same rule (`auth.visible_clause`) and
+   a bulk action skips the ids outside it.
 2. **Application to durable local state.**  The database and workspace are
    written by the store, the journal and auto mode.  Filesystem permissions and
    host-user access therefore cross this boundary; there is no encryption.
@@ -95,6 +102,7 @@ choice is a real boundary, and it is what the rest of this document qualifies.
 | Document upload and paste | Network client; untrusted text | `api.py` knowledge routes, `knowledge.ingest_document` |
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
 | Authenticated API client | Network client; bearer token header | `server.require_auth`, `auth.authenticate` |
+| Team-scoped object request | Network client; object id in the path | `server._scoped_object`, `server._enforce_scope`, `auth.visible_clause` |
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm._parse_json` |
 | MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
@@ -106,13 +114,19 @@ choice is a real boundary, and it is what the rest of this document qualifies.
   binary; analysis is delegated to rebrew subcommands that parse bytes
   (`engines.RebrewEngine`).  Malware containment, dynamic analysis and network
   isolation of a sample are the sandbox's problem, not reportal's.
-- **Per-object authorization.**  Token auth answers *who* may call *which kind*
-  of route; it does not scope an object to a team or an owner.  Any user whose
-  role carries `write` may write any binary, function, collection or document in
-  the workspace (the per-object scoping and team model are still open, recorded
-  in `docs/PARITY.md` cluster F).  The comment `author` remains free text kept
-  in the browser (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an
-  attribution convenience, not a security principal.
+- **Documents, comments and conversations have no scope of their own.**  The
+  team scope lives on binaries and collections; a document, a comment or a
+  conversation is reached through the binary or function it hangs off, so it
+  follows that object's scope, but there is no per-document restriction inside a
+  visible binary.  The comment `author` remains free text kept in the browser
+  (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an attribution
+  convenience, not a security principal.
+- **The team scope narrows objects, not aggregates.**  `GET /api/health` counts
+  every row and `store.search`'s per-group `total` is the unfiltered match
+  count, so a member of the workspace can learn *how many* objects exist that it
+  cannot open, though not their names.  Corpus-wide operations (matching,
+  lineage, related) rank against every stored function rather than the visible
+  subset, so their scores can be influenced by data the caller cannot read.
 - **Multi-tenancy.**  One process owns one workspace and one database
   (`_paths.project_root`).  Concurrent independent users are outside the model,
   as is per-tenant isolation.
@@ -148,10 +162,12 @@ choice is a real boundary, and it is what the rest of this document qualifies.
   request, so a cross-site scripting flaw in the SPA or an extension with access
   to the origin can read it.  There is no cookie, no session and no rotation on
   a timer; `reportal user-token <id>` rotates one by hand.
-- **Authorization is per route kind, not per object.**  A caller whose role
-  carries `write` can write every object in the workspace, and any authenticated
-  user may revert the journal (`revert_journal_entry`).  Roles separate reading,
-  writing and user management, not ownership.
+- **Authorization is per route kind and per object scope, not per owner.**  A
+  caller whose role carries `write` may write any *public* object in the
+  workspace, and any authenticated user may revert the journal
+  (`revert_journal_entry`), which is workspace-wide.  Team members share a
+  team's objects fully: there is no per-member ownership inside a team, and an
+  object has one owning team rather than a set of collaborators.
 - **The journal is a revert tool, not an audit log.**  It records the write and,
   once the identity slice lands, no actor column: the authenticated user of a
   request is not recorded beside the entry it caused (`journal._SCHEMA`).  Who

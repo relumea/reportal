@@ -316,9 +316,10 @@ def _open() -> sqlite3.Connection:
 
 
 @router.get("/api/binaries")
-def list_binaries() -> Response:
+def list_binaries(request: Request) -> Response:
+    """Every binary the caller may see; a team-scoped one drops out for a non-member."""
     with contextlib.closing(_open()) as conn:
-        return json_response({"binaries": store.list_binaries(conn)})
+        return json_response({"binaries": store.list_binaries(conn, visible_to=_caller(request))})
 
 
 def _upload_suffix(raw_filename: str) -> str:
@@ -5401,7 +5402,12 @@ def list_collections(request: Request) -> Response:
         return _invalid_query("order", order, sorted(store.COLLECTION_ORDERS))
     with contextlib.closing(_open()) as conn:
         return json_response(
-            {"collections": store.list_collections(conn, order=order), "order": order}
+            {
+                "collections": store.list_collections(
+                    conn, order=order, visible_to=_caller(request)
+                ),
+                "order": order,
+            }
         )
 
 
@@ -5432,7 +5438,7 @@ def create_collection(body: dict[str, Any] = Depends(json_body)) -> Response:
 
 @router.post("/api/collections/{collection_id}/binaries")
 def add_collection_binary(
-    collection_id: int, body: dict[str, Any] = Depends(json_body)
+    collection_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
 ) -> Response:
     binary_id = _require_int(body, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -5443,9 +5449,16 @@ def add_collection_binary(
                 error="collection not found",
                 detail=f"no collection with id {collection_id}",
             )
-        if store.get_binary(conn, binary_id) is None:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if not auth.may_write(_caller(request), binary, team_ids=_caller_team_ids(conn, request)):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"binary {binary_id} belongs to a team you are not a member of",
             )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -5833,7 +5846,7 @@ def _bulk_ids(body: dict[str, Any], key: str) -> list[int] | Response:
 
 
 @router.post("/api/binaries/bulk")
-def bulk_binaries(body: dict[str, Any] = Depends(json_body)) -> Response:
+def bulk_binaries(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Apply one action (``add_tag``, ``remove_tag``, ``delete``) to many binaries."""
     action = body.get("action")
     if not isinstance(action, str):
@@ -5845,11 +5858,17 @@ def bulk_binaries(body: dict[str, Any] = Depends(json_body)) -> Response:
     if not isinstance(tag, str):
         return json_error(400, error="invalid bulk request", detail="tag must be a string")
     with contextlib.closing(_open()) as conn:
+        caller = _caller(request)
+        allowed = (
+            None
+            if caller is None
+            else {int(row["id"]) for row in store.list_binaries(conn, visible_to=caller)}
+        )
         action_id = journal.new_action()
         with journal.journaled(conn, action_id) as log:
             try:
                 result = bulk_actions.apply_binary_action(
-                    conn, action=action, ids=ids, tag=tag, log=log
+                    conn, action=action, ids=ids, tag=tag, log=log, allowed=allowed
                 )
             except bulk_actions.BulkError as exc:
                 return _bulk_failure(exc)
@@ -6526,7 +6545,11 @@ def search(request: Request) -> Response:
     with contextlib.closing(_open()) as conn:
         try:
             results = store.search(
-                conn, query, kind=kind, limit=limit or store.DEFAULT_SEARCH_LIMIT
+                conn,
+                query,
+                kind=kind,
+                limit=limit or store.DEFAULT_SEARCH_LIMIT,
+                visible_to=_caller(request),
             )
         except store.SearchError as exc:
             return json_error(400, error=exc.code, detail=exc.detail)
@@ -7632,15 +7655,19 @@ def iam_me(request: Request) -> Response:
                 "user": None,
                 "role": None,
                 "permissions": list(auth.ROLE_PERMISSIONS[auth.ROLE_ADMIN]),
+                "teams": [],
             }
         )
     role = str(user["role"])
+    with contextlib.closing(_open()) as conn:
+        teams = auth.teams_of_user(conn, int(user["id"]))
     return json_response(
         {
             "auth": "required",
             "user": user,
             "role": role,
             "permissions": list(auth.permissions_for(role)),
+            "teams": teams,
         }
     )
 
@@ -7766,3 +7793,253 @@ def delete_user(user_id: int) -> Response:
             )
             auth.delete_user(conn, user_id)
     return json_response(log.attach({"deleted": user_id}))
+
+
+# ── Teams and object scope ─────────────────────────────────────────
+#
+# A team is the identity side of the visibility model: `binaries` and
+# `collections` carry an `owner_team_id` and a `visibility` (`public` to every
+# authenticated user, `team` to the owners' members).  The gate
+# (`server._enforce_scope`) reads the scope off the path, so a route added later
+# is covered without repeating the check; these routes are the ones that set it.
+
+
+def _team_failure(exc: auth.AuthError) -> Response:
+    """Map a team validation failure onto its JSON status and error name."""
+    if isinstance(exc, auth.TeamExistsError):
+        status = 409
+    elif isinstance(exc, auth.UnknownTeamError):
+        status = 404
+    else:
+        status = 400
+    return json_error(status, error=exc.code, detail=exc.detail)
+
+
+def _caller_team_ids(conn: sqlite3.Connection, request: Request) -> list[int]:
+    """The team ids the authenticated caller belongs to; empty while auth is off."""
+    user = _caller(request)
+    if user is None:
+        return []
+    return [int(team["id"]) for team in auth.teams_of_user(conn, int(user["id"]))]
+
+
+@router.get("/api/teams")
+def list_teams() -> Response:
+    """Every team with its member count; readable by any authenticated caller."""
+    with contextlib.closing(_open()) as conn:
+        teams = auth.list_teams(conn)
+    return json_response({"teams": teams, "count": len(teams)})
+
+
+@router.post("/api/teams")
+def create_team(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Create a team; journaled and revertible."""
+    name = _require_str(body, "name")
+    description = _optional_str(body, "description")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                team = auth.create_team(conn, name=name, description=description)
+            except auth.AuthError as exc:
+                return _team_failure(exc)
+            journal.journaled_create(
+                log,
+                table=auth.TEAM_TABLE,
+                key=int(team["id"]),
+                description=f"created team {team['name']}",
+            )
+    return json_response(log.attach(team), status=201)
+
+
+@router.get("/api/teams/{team_id}")
+def get_team(team_id: int) -> Response:
+    """One team with its members."""
+    with contextlib.closing(_open()) as conn:
+        team = auth.get_team(conn, team_id)
+    if team is None:
+        return json_error(404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}")
+    return json_response(team)
+
+
+@router.patch("/api/teams/{team_id}")
+def update_team(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Set a team's name or description; journaled and revertible."""
+    if "name" not in body and "description" not in body:
+        return json_error(400, error=auth.ERROR_INVALID_TEAM, detail="provide name or description")
+    name = _optional_str(body, "name") if "name" in body else None
+    description = _optional_str(body, "description") if "description" in body else None
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TEAM_TABLE,
+                where="id = ?",
+                params=(team_id,),
+                description=f"updated team {team_id}",
+            )
+            try:
+                updated = auth.update_team(conn, team_id, name=name, description=description)
+            except auth.AuthError as exc:
+                return _team_failure(exc)
+    return json_response(log.attach(updated or {}))
+
+
+@router.delete("/api/teams/{team_id}")
+def delete_team(team_id: int) -> Response:
+    """Delete a team; journaled, including the objects that lose their scope.
+
+    The binaries and collections the team owned return to the whole workspace,
+    so the revert restores their scope as well as the team row and its members.
+    """
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            for table, where in (
+                (auth.TEAM_TABLE, "id = ?"),
+                (auth.MEMBER_TABLE, "team_id = ?"),
+                ("binaries", "owner_team_id = ?"),
+                ("collections", "owner_team_id = ?"),
+            ):
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table=table,
+                    where=where,
+                    params=(team_id,),
+                    description=f"deleted team {team_id} ({table})",
+                )
+            auth.delete_team(conn, team_id)
+    return json_response(log.attach({"deleted": team_id}))
+
+
+@router.post("/api/teams/{team_id}/members")
+def add_team_member(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Add a user to a team; journaled and revertible."""
+    user_id = _require_int(body, "user_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            added = auth.add_member(conn, team_id, user_id)
+            if added:
+                journal.journaled_create(
+                    log,
+                    table=auth.MEMBER_TABLE,
+                    key={"team_id": team_id, "user_id": user_id},
+                    description=f"added user {user_id} to team {team_id}",
+                )
+            team = auth.get_team(conn, team_id)
+    if not added:
+        return json_error(
+            400,
+            error=auth.ERROR_INVALID_TEAM,
+            detail=f"user {user_id} is unknown or already in team {team_id}",
+        )
+    return json_response(log.attach(team or {}), status=201)
+
+
+@router.delete("/api/teams/{team_id}/members/{user_id}")
+def remove_team_member(team_id: int, user_id: int) -> Response:
+    """Remove a user from a team; journaled, so a revert puts the row back."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            snapshot = journal.journaled_rows(
+                conn,
+                log,
+                table=auth.MEMBER_TABLE,
+                where="team_id = ? AND user_id = ?",
+                params=(team_id, user_id),
+                description=f"removed user {user_id} from team {team_id}",
+            )
+            auth.remove_member(conn, team_id, user_id)
+            team = auth.get_team(conn, team_id)
+    if not snapshot:
+        return json_error(
+            404,
+            error=auth.ERROR_NOT_A_MEMBER,
+            detail=f"user {user_id} is not in team {team_id}",
+        )
+    return json_response(log.attach(team or {}))
+
+
+def _set_scope(
+    request: Request,
+    body: dict[str, Any],
+    *,
+    kind: str,
+    row_id: int,
+) -> Response:
+    """Set one object's visibility and owning team; journaled and revertible."""
+    visibility = _optional_str(body, "visibility", auth.VISIBILITY_PUBLIC)
+    raw_team = body.get("team_id")
+    if raw_team is not None and (isinstance(raw_team, bool) or not isinstance(raw_team, int)):
+        return json_error(400, error=auth.ERROR_INVALID_TEAM, detail="team_id must be an integer")
+    table = "binaries" if kind == "binary" else "collections"
+    with contextlib.closing(_open()) as conn:
+        current = (
+            store.get_binary(conn, row_id)
+            if kind == "binary"
+            else store.get_collection(conn, row_id)
+        )
+        if current is None:
+            return json_error(404, error=f"{kind} not found", detail=f"no {kind} with id {row_id}")
+        if not auth.may_write(_caller(request), current, team_ids=_caller_team_ids(conn, request)):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"this {kind} belongs to a team you are not a member of",
+            )
+        try:
+            owner, resolved = auth.scope_of(conn, team_id=raw_team, visibility=visibility)
+        except auth.AuthError as exc:
+            return _team_failure(exc)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=table,
+                where="id = ?",
+                params=(row_id,),
+                description=f"scoped {kind} {row_id} to {resolved}",
+            )
+            if kind == "binary":
+                updated = store.set_binary_scope(
+                    conn, row_id, owner_team_id=owner, visibility=resolved
+                )
+            else:
+                updated = store.set_collection_scope(
+                    conn, row_id, owner_team_id=owner, visibility=resolved
+                )
+    return json_response(log.attach(updated or {}))
+
+
+@router.patch("/api/binaries/{binary_id}/scope")
+def set_binary_scope(
+    binary_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Set a binary's visibility and owning team (`public` or `team`)."""
+    return _set_scope(request, body, kind="binary", row_id=binary_id)
+
+
+@router.patch("/api/collections/{collection_id}/scope")
+def set_collection_scope(
+    collection_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Set a collection's visibility and owning team (`public` or `team`)."""
+    return _set_scope(request, body, kind="collection", row_id=collection_id)

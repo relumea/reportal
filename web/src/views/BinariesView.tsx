@@ -25,6 +25,7 @@ import type {
   Collection,
   Family,
   FamilyList,
+  TeamsPayload,
   UploadBatchResult,
   UploadFileOptions,
 } from "../types";
@@ -93,6 +94,7 @@ export function BinariesView(): ReactNode {
   const { data, error, reload } = useAsync(() => api<{ binaries: BinaryListRow[] }>("/binaries"), []);
   const familyData = useAsync(() => api<FamilyList>("/families"), []);
   const collectionData = useAsync(() => api<{ collections: Collection[] }>("/collections"), []);
+  const teamData = useAsync(() => api<TeamsPayload>("/teams"), []);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
   const [uploadCollection, setUploadCollection] = useState("");
@@ -139,6 +141,25 @@ export function BinariesView(): ReactNode {
       );
       setBulkAction(result.journal_action ?? "");
       setSelected(new Set());
+      reload();
+    } catch (failure) {
+      setBulkError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const setScope = async (binaryId: number, value: string): Promise<void> => {
+    setBulkError(null);
+    setBusy(`scope-${binaryId}`);
+    try {
+      await api(`/binaries/${binaryId}/scope`, {
+        method: "PATCH",
+        json:
+          value === "public"
+            ? { visibility: "public" }
+            : { visibility: "team", team_id: Number(value) },
+      });
       reload();
     } catch (failure) {
       setBulkError(failure);
@@ -532,6 +553,24 @@ export function BinariesView(): ReactNode {
                 label: "Comments",
                 numeric: true,
                 render: (row) => <Badge>{row.comment_count}</Badge>,
+              },
+              {
+                label: "Scope",
+                render: (row) => (
+                  <select
+                    aria-label={`scope of ${row.name}`}
+                    value={row.visibility === "team" ? String(row.owner_team_id ?? "") : "public"}
+                    disabled={busy === `scope-${row.id}`}
+                    onChange={(event) => void setScope(row.id, event.target.value)}
+                  >
+                    <option value="public">public</option>
+                    {(teamData.data?.teams ?? []).map((team) => (
+                      <option key={team.id} value={team.id}>
+                        team {team.name}
+                      </option>
+                    ))}
+                  </select>
+                ),
               },
               {
                 label: "Actions",

@@ -392,3 +392,15 @@ randomness and every comparison goes through `hmac.compare_digest`.
 read; the table only answers *which* user a presented token names.  The user
 writes are journaled like every other write, so a create, a role change, a
 rotation and a delete are each revertible.
+
+`teams` and `team_members` are the identity side of visibility, owned by
+`auth.py` alongside `users`.  A team is a name, an optional description and its
+creation time; membership is the pair `(team_id, user_id)` and nothing else,
+because a team here answers "who may write this" rather than carrying its own
+roles.  `binaries` and `collections` each carry `owner_team_id` (nullable) and
+`visibility` (`public`, the default, or `team`), added to databases that predate
+them by the `_ADDED_COLUMNS` migration: a pre-team row is public and ownerless,
+which is what it always meant.  Deleting a team resets the objects it owned to
+public and ownerless rather than leaving a dangling scope, because a stale
+`owner_team_id` would make them invisible to everyone.
+

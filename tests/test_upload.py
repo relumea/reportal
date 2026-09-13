@@ -26,6 +26,9 @@ RESPONSE_KEYS = {
     "created_at",
     "function_count",
     "duplicate",
+    # The object scope a binary carries; public and ownerless until a team is set.
+    "owner_team_id",
+    "visibility",
 }
 
 

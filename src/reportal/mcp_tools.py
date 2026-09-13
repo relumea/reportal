@@ -3264,6 +3264,144 @@ def _tool_delete_user(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach({"deleted": user_id})
 
 
+def _tool_list_teams(arguments: dict[str, Any]) -> dict[str, Any]:
+    with contextlib.closing(_open()) as conn:
+        teams = auth.list_teams(conn)
+    return {"teams": teams, "count": len(teams)}
+
+
+def _tool_create_team(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    description = _arg_optional_str(arguments, "description")
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        try:
+            team = auth.create_team(conn, name=name, description=description)
+        except auth.AuthError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        journal.journaled_create(
+            log,
+            table=auth.TEAM_TABLE,
+            key=int(team["id"]),
+            description=f"created team {team['name']}",
+        )
+        return log.attach(team)
+
+
+def _tool_delete_team(arguments: dict[str, Any]) -> dict[str, Any]:
+    team_id = _arg_int(arguments, "team_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            for table, where in (
+                (auth.TEAM_TABLE, "id = ?"),
+                (auth.MEMBER_TABLE, "team_id = ?"),
+                ("binaries", "owner_team_id = ?"),
+                ("collections", "owner_team_id = ?"),
+            ):
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table=table,
+                    where=where,
+                    params=(team_id,),
+                    description=f"deleted team {team_id} ({table})",
+                )
+            auth.delete_team(conn, team_id)
+            return log.attach({"deleted": team_id})
+
+
+def _tool_add_team_member(arguments: dict[str, Any]) -> dict[str, Any]:
+    team_id = _arg_int(arguments, "team_id")
+    user_id = _arg_int(arguments, "user_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            if not auth.add_member(conn, team_id, user_id):
+                raise ToolError(
+                    auth.ERROR_INVALID_TEAM,
+                    f"user {user_id} is unknown or already in team {team_id}",
+                )
+            journal.journaled_create(
+                log,
+                table=auth.MEMBER_TABLE,
+                key={"team_id": team_id, "user_id": user_id},
+                description=f"added user {user_id} to team {team_id}",
+            )
+            return log.attach(auth.get_team(conn, team_id) or {})
+
+
+def _tool_remove_team_member(arguments: dict[str, Any]) -> dict[str, Any]:
+    team_id = _arg_int(arguments, "team_id")
+    user_id = _arg_int(arguments, "user_id")
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        snapshot = journal.journaled_rows(
+            conn,
+            log,
+            table=auth.MEMBER_TABLE,
+            where="team_id = ? AND user_id = ?",
+            params=(team_id, user_id),
+            description=f"removed user {user_id} from team {team_id}",
+        )
+        if not snapshot:
+            raise ToolError(auth.ERROR_NOT_A_MEMBER, f"user {user_id} is not in team {team_id}")
+        auth.remove_member(conn, team_id, user_id)
+        return log.attach(auth.get_team(conn, team_id) or {})
+
+
+def _set_object_scope(arguments: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    row_id = _arg_int(arguments, "binary_id" if kind == "binary" else "collection_id")
+    visibility = _arg_optional_str(arguments, "visibility", auth.VISIBILITY_PUBLIC)
+    team_id = _arg_optional_int(arguments, "team_id", 0) or None
+    table = "binaries" if kind == "binary" else "collections"
+    with contextlib.closing(_open()) as conn:
+        current = (
+            store.get_binary(conn, row_id)
+            if kind == "binary"
+            else store.get_collection(conn, row_id)
+        )
+        if current is None:
+            raise ToolError(f"{kind} not found", f"no {kind} with id {row_id}")
+        try:
+            owner, resolved = auth.scope_of(conn, team_id=team_id, visibility=visibility)
+        except auth.AuthError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=table,
+                where="id = ?",
+                params=(row_id,),
+                description=f"scoped {kind} {row_id} to {resolved}",
+            )
+            if kind == "binary":
+                updated = store.set_binary_scope(
+                    conn, row_id, owner_team_id=owner, visibility=resolved
+                )
+            else:
+                updated = store.set_collection_scope(
+                    conn, row_id, owner_team_id=owner, visibility=resolved
+                )
+            assert updated is not None, "the row was just read"
+            return log.attach(updated)
+
+
+def _tool_set_binary_scope(arguments: dict[str, Any]) -> dict[str, Any]:
+    return _set_object_scope(arguments, kind="binary")
+
+
+def _tool_set_collection_scope(arguments: dict[str, Any]) -> dict[str, Any]:
+    return _set_object_scope(arguments, kind="collection")
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -5445,6 +5583,80 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"user_id": _int("User id.")}, ("user_id",)),
             _WRITE,
             _tool_delete_user,
+        ),
+        Tool(
+            "list_teams",
+            "The teams with their member counts; a team scopes the binaries and collections"
+            " that carry its visibility.",
+            _object({}),
+            _READ,
+            _tool_list_teams,
+        ),
+        Tool(
+            "create_team",
+            "Create a team; journaled and revertible.",
+            _object(
+                {"name": _str("Team name."), "description": _str("What the team works on.")},
+                ("name",),
+            ),
+            _WRITE,
+            _tool_create_team,
+        ),
+        Tool(
+            "delete_team",
+            "Delete a team; the binaries and collections it owned return to the whole"
+            " workspace.  Journaled, so a revert restores the team, its members and the scope.",
+            _object({"team_id": _int("Team id.")}, ("team_id",)),
+            _WRITE,
+            _tool_delete_team,
+        ),
+        Tool(
+            "add_team_member",
+            "Add a user to a team; journaled and revertible.",
+            _object(
+                {"team_id": _int("Team id."), "user_id": _int("User id to add.")},
+                ("team_id", "user_id"),
+            ),
+            _WRITE,
+            _tool_add_team_member,
+        ),
+        Tool(
+            "remove_team_member",
+            "Remove a user from a team; journaled and revertible.",
+            _object(
+                {"team_id": _int("Team id."), "user_id": _int("User id to remove.")},
+                ("team_id", "user_id"),
+            ),
+            _WRITE,
+            _tool_remove_team_member,
+        ),
+        Tool(
+            "set_binary_scope",
+            "Set a binary's visibility (public or team) and its owning team; journaled.",
+            _object(
+                {
+                    "binary_id": _int("Binary id."),
+                    "visibility": _enum("Who may see it.", auth.VISIBILITIES),
+                    "team_id": _int("Owning team id, required for the team visibility."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_set_binary_scope,
+        ),
+        Tool(
+            "set_collection_scope",
+            "Set a collection's visibility (public or team) and its owning team; journaled.",
+            _object(
+                {
+                    "collection_id": _int("Collection id."),
+                    "visibility": _enum("Who may see it.", auth.VISIBILITIES),
+                    "team_id": _int("Owning team id, required for the team visibility."),
+                },
+                ("collection_id",),
+            ),
+            _WRITE,
+            _tool_set_collection_scope,
         ),
         Tool(
             "ingest_document",

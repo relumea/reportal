@@ -393,6 +393,16 @@ disabled flag, New token rotates and shows the replacement once, and Delete
 goes through the confirm pattern.  With auth off the page says so and the API is
 the local operator's, which is the honest reading of an empty user table.
 
+The Users view also carries the Teams panel: `GET /api/teams` as a table (id,
+name, member count, description) with a create form, a per-row "add member"
+select over the known users and a Delete behind the confirm pattern, so team
+membership is managed in the browser the same way the CLI manages it.
+
+The Binaries view (`views/BinariesView.tsx`) carries the scope of each row as a
+select in the table: `public` for the whole workspace, or a team that owns it
+(`PATCH /api/binaries/<id>/scope`).  The options come from `GET /api/teams`, so
+the control lists exactly the teams that exist.
+
 The Analyses view's log drawer (`views/AnalysesView.tsx`) opens with the
 lifecycle read for that analysis: its status badge, engine, created and finished
 times and the scan and log counts by status and severity, beside an Add log

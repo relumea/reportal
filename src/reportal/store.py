@@ -512,6 +512,13 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # changed.  A row that predates the column takes its creation time below,
     # so the sort never puts an untouched collection before a touched one.
     ("collections", "updated_at", "TEXT NOT NULL DEFAULT ''"),
+    # Which team owns a binary or a collection, and whether the rest of the
+    # workspace may see it.  A row that predates the columns is public and
+    # ownerless, which is what every pre-team install meant.
+    ("binaries", "owner_team_id", "INTEGER"),
+    ("binaries", "visibility", "TEXT NOT NULL DEFAULT 'public'"),
+    ("collections", "owner_team_id", "INTEGER"),
+    ("collections", "visibility", "TEXT NOT NULL DEFAULT 'public'"),
 )
 
 # Statements run after the columns above are added, to fill what an existing
@@ -613,10 +620,16 @@ def find_binary_by_sha256(conn: sqlite3.Connection, sha256: str) -> dict[str, An
     return get_binary(conn, binary_id) if binary_id is not None else None
 
 
-def list_binaries(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """All binaries, newest id last, each with its function and comment counts."""
-    cur = conn.execute(
-        """
+def list_binaries(
+    conn: sqlite3.Connection, *, visible_to: Mapping[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """All binaries, newest id last, each with its function and comment counts.
+
+    *visible_to* is the authenticated caller (None while auth is off); a
+    non-admin caller sees only the public binaries and its own teams', which is
+    what `auth.visible_clause` expresses.
+    """
+    sql = """
         SELECT b.*, (
             SELECT COUNT(*) FROM functions f
             JOIN analyses a ON f.analysis_id = a.id
@@ -626,10 +639,14 @@ def list_binaries(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             WHERE c.scope_kind = 'binary' AND c.scope_id = b.id
         ) AS comment_count
         FROM binaries b
-        ORDER BY b.id
-        """
-    )
-    return _rows(cur)
+    """
+    params: list[Any] = []
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        sql += f" WHERE {scope[0]}"
+        params.extend(scope[1])
+    sql += " ORDER BY b.id"
+    return _rows(conn.execute(sql, params))
 
 
 def get_binary(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
@@ -2147,25 +2164,59 @@ DEFAULT_COLLECTION_ORDER = "id"
 
 
 def list_collections(
-    conn: sqlite3.Connection, *, order: str = DEFAULT_COLLECTION_ORDER
+    conn: sqlite3.Connection,
+    *,
+    order: str = DEFAULT_COLLECTION_ORDER,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """All collections with their member-binary count, in *order*.
 
     *order* is one of :data:`COLLECTION_ORDERS`; an unknown one raises
     ``ValueError``, which the API, the CLI and the MCP tools map to their own
-    error vocabulary.
+    error vocabulary.  *visible_to* narrows the listing the way
+    :func:`list_binaries` does.
     """
     if order not in COLLECTION_ORDERS:
         raise ValueError(f"unknown collection order: {order}")
-    cur = conn.execute(
-        f"""
-        SELECT c.*, (
-            SELECT COUNT(*) FROM collection_binaries cb WHERE cb.collection_id = c.id
-        ) AS binary_count
-        FROM collections c ORDER BY {COLLECTION_ORDERS[order]}
-        """
+    sql = (
+        "SELECT c.*, (SELECT COUNT(*) FROM collection_binaries cb"
+        " WHERE cb.collection_id = c.id) AS binary_count FROM collections c"
     )
-    return _rows(cur)
+    params: list[Any] = []
+    scope = auth.visible_clause(conn, visible_to, prefix="c.")
+    if scope is not None:
+        sql += f" WHERE {scope[0]}"
+        params.extend(scope[1])
+    sql += f" ORDER BY {COLLECTION_ORDERS[order]}"
+    return _rows(conn.execute(sql, params))
+
+
+def set_binary_scope(
+    conn: sqlite3.Connection, binary_id: int, *, owner_team_id: int | None, visibility: str
+) -> dict[str, Any] | None:
+    """Set which team owns a binary and whether the workspace may see it."""
+    if get_binary(conn, binary_id) is None:
+        return None
+    conn.execute(
+        "UPDATE binaries SET owner_team_id = ?, visibility = ? WHERE id = ?",
+        (owner_team_id, visibility, binary_id),
+    )
+    conn.commit()
+    return get_binary(conn, binary_id)
+
+
+def set_collection_scope(
+    conn: sqlite3.Connection, collection_id: int, *, owner_team_id: int | None, visibility: str
+) -> dict[str, Any] | None:
+    """Set which team owns a collection and whether the workspace may see it."""
+    if get_collection(conn, collection_id) is None:
+        return None
+    conn.execute(
+        "UPDATE collections SET owner_team_id = ?, visibility = ?, updated_at = ? WHERE id = ?",
+        (owner_team_id, visibility, now(), collection_id),
+    )
+    conn.commit()
+    return get_collection(conn, collection_id)
 
 
 def touch_collection(conn: sqlite3.Connection, collection_id: int) -> None:
@@ -3077,6 +3128,7 @@ def search(
     *,
     limit: int = DEFAULT_SEARCH_LIMIT,
     kind: str = SEARCH_KIND_ALL,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Search the store by substring or by one typed query.
 
@@ -3128,6 +3180,18 @@ def search(
             conn, pattern, needle, limit, names_only=False
         )
         tags, tag_total = _search_tags(conn, pattern, limit)
+
+    # The page is bounded, so the visibility filter runs over the returned rows:
+    # a binary in a team the caller is not in drops out of the page.  The
+    # *total* stays the unfiltered match count, which is a stated residual
+    # (docs/THREAT_MODEL.md) rather than a wrong page.
+    scope = auth.visible_clause(conn, visible_to)
+    if scope is not None:
+        visible_ids = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT id FROM binaries WHERE {scope[0]}", scope[1])
+        }
+        binaries = [row for row in binaries if int(row["id"]) in visible_ids]
 
     return {
         "binaries": binaries,

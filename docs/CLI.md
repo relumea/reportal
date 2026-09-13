@@ -361,6 +361,18 @@ reportal journal-revert --action ID | --entry ID [--json]
                                            #   stored inverses; a wired command prints its
                                            #   action id to stderr (or in --json output)
 reportal stats [--json]                    # row counts
+reportal teams [--json]                    # the teams with their member counts
+reportal team-add NAME [--description TEXT] [--json]
+                                           # create a team; journaled
+reportal team-rm <team-id> [--yes] [--json]
+                                           # delete a team; the objects it owned
+                                           #   return to the whole workspace
+reportal team-member <team-id> <user-id> [--remove] [--json]
+                                           # add or remove a membership; journaled
+reportal binary-scope <binary-id> [--visibility public|team] [--team ID] [--json]
+                                           # who may see one binary; journaled
+reportal collection-scope <collection-id> [--visibility public|team] [--team ID] [--json]
+                                           # who may see one collection; journaled
 reportal users [--json]                    # local users with their roles and state;
                                            #   never a token digest
 reportal user-add <name> [--role viewer|analyst|admin] [--json]
