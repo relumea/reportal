@@ -1,0 +1,248 @@
+// The SPA's keyboard layer: one registry every shortcut lives in, installed
+// once by the shell.  The cheatsheet renders this registry, so the documented
+// set and the live set cannot drift.
+//
+// A binding is `(combo, scope, description, handler)`.  A combo is either a
+// chord (`mod+k`: `mod` is Command on a Mac and Control elsewhere, so one
+// binding covers both) or a space-separated sequence (`g d`: the `g` prefix
+// stays armed for `PREFIX_TIMEOUT_MS`).
+//
+// Precedence: a `view`-scoped binding is matched before a `global` one with
+// the same combo, so a view can override the shell, and within a scope the
+// first registration wins.  Registering a combo twice in one scope throws:
+// two handlers for one chord is a defect, not a configuration.
+//
+// Two hard rules, both unconditional today:
+//
+// * A binding never fires while the focus owns text (an input, a textarea, a
+//   select or a contenteditable), which is what keeps a literal `k` in a
+//   filter box from opening the search dialog
+//   (`web/tests/search-modal.spec.ts` pins that).
+// * A binding never fires while a modal dialog owns the keyboard, so the keys
+//   that opened the cheatsheet cannot act behind it.
+//
+// No binding needs the opposite, so neither rule carries an exception; a
+// binding that genuinely does should say why where it is registered.
+//
+// A matched binding consumes the key (`preventDefault`), whether or not its
+// handler could act on the current view: a shortcut that sometimes falls
+// through to the browser would make the same key mean two things.
+
+import { isTypingTarget } from "./views/SearchModal";
+
+/** Where a binding is live: the whole shell, or the view that registered it. */
+export type ShortcutScope = "global" | "view";
+
+export interface Shortcut {
+  /** Canonical combo: `mod+k` for a chord, `g d` for a prefix sequence. */
+  combo: string;
+  scope: ShortcutScope;
+  /** What the shortcut does, as the cheatsheet renders it. */
+  description: string;
+  handler: (event: KeyboardEvent) => void;
+}
+
+/** How long a prefix stays armed after its first key. */
+export const PREFIX_TIMEOUT_MS = 1500;
+
+/** Modifiers a combo may name, in the order a canonical chord lists them. */
+const MODIFIER_ORDER = ["mod", "alt", "shift"] as const;
+
+/** Aliases folded onto the canonical modifier names. */
+const MODIFIER_ALIASES: Record<string, string> = {
+  mod: "mod",
+  cmd: "mod",
+  meta: "mod",
+  ctrl: "mod",
+  control: "mod",
+  alt: "alt",
+  option: "alt",
+  shift: "shift",
+};
+
+// Keys whose shift state belongs to the combo.  A shifted punctuation key
+// (`?` is Shift+`/`) is the same binding as the character it produces.
+const SHIFTED_KEY = /^[a-z0-9]$/;
+
+const registry: Shortcut[] = [];
+let pending: string | null = null;
+let pendingTimer: number | null = null;
+
+function canonicalChord(chord: string): string {
+  const parts = chord.split("+").map((part) => part.trim().toLowerCase()).filter(Boolean);
+  const key = parts.pop() ?? "";
+  const modifiers = MODIFIER_ORDER.filter((name) =>
+    parts.some((part) => MODIFIER_ALIASES[part] === name),
+  );
+  return [...modifiers, key].join("+");
+}
+
+/** The canonical spelling of *combo*, which is what the registry stores. */
+export function normalizeCombo(combo: string): string {
+  return combo
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(canonicalChord)
+    .join(" ");
+}
+
+/** The combo an event carries, or null for a bare modifier. */
+export function comboOf(event: KeyboardEvent): string | null {
+  const key = event.key.toLowerCase();
+  if (key === "shift" || key === "control" || key === "meta" || key === "alt") return null;
+  const modifiers: string[] = [];
+  if (event.metaKey || event.ctrlKey) modifiers.push("mod");
+  if (event.altKey) modifiers.push("alt");
+  if (event.shiftKey && SHIFTED_KEY.test(key)) modifiers.push("shift");
+  return [...modifiers, key].join("+");
+}
+
+/**
+ * Register one binding; returns the function that unregisters it.
+ *
+ * Throws when the combo is already registered in the same scope, so a
+ * conflicting binding fails at registration rather than silently winning or
+ * losing at dispatch time.
+ */
+export function registerShortcut(shortcut: Shortcut): () => void {
+  const combo = normalizeCombo(shortcut.combo);
+  if (!combo) throw new Error(`empty shortcut combo: ${shortcut.combo}`);
+  if (registry.some((entry) => entry.combo === combo && entry.scope === shortcut.scope)) {
+    throw new Error(`shortcut ${combo} is already registered in scope ${shortcut.scope}`);
+  }
+  const entry: Shortcut = { ...shortcut, combo };
+  registry.push(entry);
+  return () => {
+    const index = registry.indexOf(entry);
+    if (index >= 0) registry.splice(index, 1);
+  };
+}
+
+/** The registered bindings, in registration order. */
+export function shortcuts(): Shortcut[] {
+  return [...registry];
+}
+
+/** The binding a combo resolves to: the view-scoped one first, then the shell's. */
+export function resolveShortcut(combo: string): Shortcut | undefined {
+  return (
+    registry.find((entry) => entry.scope === "view" && entry.combo === combo) ??
+    registry.find((entry) => entry.scope === "global" && entry.combo === combo)
+  );
+}
+
+/** True when *combo* starts a registered sequence (`g` for `g d`). */
+export function isPrefix(combo: string): boolean {
+  return registry.some((entry) => entry.combo.startsWith(`${combo} `));
+}
+
+function clearPending(): void {
+  pending = null;
+  if (pendingTimer !== null) {
+    window.clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+}
+
+function armPending(combo: string): void {
+  clearPending();
+  pending = combo;
+  pendingTimer = window.setTimeout(clearPending, PREFIX_TIMEOUT_MS);
+}
+
+/** True when a modal dialog owns the keyboard, so no shortcut may act. */
+function inModal(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest('[aria-modal="true"]') !== null;
+}
+
+function onKeyDown(event: KeyboardEvent): void {
+  if (event.defaultPrevented) return;
+  if (isTypingTarget(event.target) || inModal(event.target)) return;
+  const chord = comboOf(event);
+  if (chord === null) return;
+  const sequence = pending === null ? chord : `${pending} ${chord}`;
+  clearPending();
+  const binding = resolveShortcut(sequence) ?? resolveShortcut(chord);
+  if (binding === undefined) {
+    if (isPrefix(chord)) armPending(chord);
+    return;
+  }
+  event.preventDefault();
+  binding.handler(event);
+}
+
+/**
+ * Install the key listener; returns the function that removes it.
+ *
+ * The listener sits on `window`, which is where a key event that started on
+ * the focused element ends up after bubbling (and where a synthetic event a
+ * test dispatches without a focus target arrives); a listener on `document`
+ * would miss the latter, since an event dispatched on `window` does not travel
+ * down to it.
+ */
+export function installShortcuts(): () => void {
+  window.addEventListener("keydown", onKeyDown);
+  return () => {
+    window.removeEventListener("keydown", onKeyDown);
+    clearPending();
+  };
+}
+
+/** True on a Mac, where `mod` renders as Command. */
+export function isMac(): boolean {
+  return /mac|iphone|ipad/i.test(navigator.userAgent);
+}
+
+function displayToken(token: string, mac: boolean): string {
+  if (token === "mod") return mac ? "⌘" : "Ctrl";
+  if (token === "alt") return mac ? "⌥" : "Alt";
+  if (token === "shift") return mac ? "⇧" : "Shift";
+  return token.length === 1 ? token.toUpperCase() : token;
+}
+
+/** How a combo reads in the cheatsheet: `⌘K`, `Ctrl+K`, `G then D`, `?`. */
+export function displayCombo(combo: string, mac: boolean): string {
+  return combo
+    .split(" ")
+    .map((chord) =>
+      chord
+        .split("+")
+        .map((token) => displayToken(token, mac))
+        .join(mac ? "" : "+"),
+    )
+    .join(" then ");
+}
+
+/**
+ * Focus the current view's filter box: the first `input[type="search"]` in the
+ * content area, which is the convention every filter field follows.
+ */
+export function focusViewFilter(): boolean {
+  const field = document.querySelector<HTMLInputElement>('#content input[type="search"]');
+  if (field === null) return false;
+  field.focus();
+  return true;
+}
+
+/**
+ * Move the focus *delta* rows through the first focusable table in the content
+ * area (a row `DataTable` makes tabbable because clicking it navigates).  A
+ * table with no such row leaves the keys inert, and the focus clamps at the
+ * ends rather than wrapping.
+ */
+export function moveTableRow(delta: number): boolean {
+  const rows = Array.from(
+    document.querySelectorAll<HTMLElement>('#content table.data-table tbody tr[tabindex="0"]'),
+  );
+  if (rows.length === 0) return false;
+  const current = rows.indexOf(document.activeElement as HTMLElement);
+  const next =
+    current === -1
+      ? delta > 0
+        ? 0
+        : rows.length - 1
+      : Math.min(rows.length - 1, Math.max(0, current + delta));
+  rows[next].focus();
+  return true;
+}

@@ -1,0 +1,675 @@
+// Shared UI primitives.  Every view builds on these: Panel, Toolbar, Button,
+// Badge, Field, EmptyState, Loading, ErrorNote, Note, CodeBlock, KeyValue,
+// DataTable, SegmentMeter, Readout and the small text helpers.  Styling lives
+// in styles.css under the matching class names, driven by the token layer;
+// the semantic hue names live in design.ts.
+
+import { Fragment, useState } from "react";
+import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
+
+import { errorText, isApiErrorCode } from "./api";
+import {
+  METER_SEGMENTS,
+  RAMP_STEPS,
+  categoryHue,
+  levelOf,
+  statusEntity,
+} from "./design";
+import type { HueFamily, Level, StatusEntity } from "./design";
+import type { PanelEntry } from "./panelCache";
+
+export const NA = "n/a";
+
+/** Value shown in place of one the source does not provide (rule 25). */
+export const UNAVAILABLE = "Unavailable";
+
+export function hex(value: number): string {
+  return `0x${Number(value).toString(16)}`;
+}
+
+export function cellText(value: unknown): ReactNode {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string" || typeof value === "number") return value;
+  return String(value);
+}
+
+// ── Text helpers ───────────────────────────────────────────────────
+
+export function Muted({ children }: { children: ReactNode }): ReactNode {
+  return <p className="muted">{children}</p>;
+}
+
+/** Monospace value with its own copy control; `NA` when the value is empty. */
+export function CopyValue({ value }: { value: string | null | undefined }): ReactNode {
+  if (!value) return NA;
+  return (
+    <span className="copy-row">
+      <span className="mono">{value}</span>
+      <CopyButton text={value} />
+    </span>
+  );
+}
+
+// ── Buttons ────────────────────────────────────────────────────────
+
+export type ButtonTone = "default" | "primary" | "ghost" | "danger";
+
+export function Button({
+  children,
+  onClick,
+  tone = "default",
+  size = "md",
+  type = "button",
+  disabled = false,
+  pending = false,
+  title,
+}: {
+  children: ReactNode;
+  onClick?: () => void;
+  tone?: ButtonTone;
+  size?: "sm" | "md";
+  type?: "button" | "submit";
+  disabled?: boolean;
+  /** Show a spinner and disable the control while work is in flight. */
+  pending?: boolean;
+  title?: string;
+}): ReactNode {
+  const classes = ["btn"];
+  if (tone !== "default") classes.push(`btn-${tone}`);
+  if (size === "sm") classes.push("btn-sm");
+  if (pending) classes.push("btn-pending");
+  return (
+    <button
+      type={type}
+      className={classes.join(" ")}
+      disabled={disabled || pending}
+      aria-busy={pending || undefined}
+      title={title}
+      onClick={onClick}
+    >
+      {pending ? <span className="btn-spinner" aria-hidden="true" /> : null}
+      {children}
+    </button>
+  );
+}
+
+export function CopyButton({ text }: { text: string }): ReactNode {
+  const [copied, setCopied] = useState(false);
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <Button size="sm" tone="ghost" onClick={() => void copy()}>
+      {copied ? "Copied" : "Copy"}
+    </Button>
+  );
+}
+
+/** A destructive action behind an inline confirmation step, never a modal. */
+export function ConfirmButton({
+  label,
+  confirmLabel,
+  message,
+  onConfirm,
+  pending = false,
+  disabled = false,
+}: {
+  label: string;
+  confirmLabel?: string;
+  message: string;
+  onConfirm: () => void;
+  pending?: boolean;
+  disabled?: boolean;
+}): ReactNode {
+  const [confirming, setConfirming] = useState(false);
+  if (!confirming) {
+    return (
+      <Button
+        tone="danger"
+        size="sm"
+        disabled={disabled}
+        pending={pending}
+        onClick={() => setConfirming(true)}
+      >
+        {label}
+      </Button>
+    );
+  }
+  return (
+    <span className="confirm" role="group" aria-label={message}>
+      <span className="confirm-text">{message}</span>
+      <Button
+        tone="danger"
+        size="sm"
+        pending={pending}
+        onClick={() => {
+          setConfirming(false);
+          onConfirm();
+        }}
+      >
+        {confirmLabel ?? label}
+      </Button>
+      <Button size="sm" tone="ghost" onClick={() => setConfirming(false)}>
+        Cancel
+      </Button>
+    </span>
+  );
+}
+
+// ── Badges ─────────────────────────────────────────────────────────
+
+export type BadgeTone = "neutral" | "ok" | "warn" | "danger" | "info" | "accent" | "insert" | "delete";
+
+/** Hue a badge may carry: a status family, or the confidence/severity scale. */
+export type BadgeHue = HueFamily | "confidence" | "severity";
+
+export function Badge({
+  children,
+  tone = "neutral",
+  mono = false,
+  title,
+  hue,
+  entity,
+  level,
+}: {
+  children: ReactNode;
+  tone?: BadgeTone;
+  mono?: boolean;
+  title?: string;
+  /** Family hue, or the confidence/severity scale. */
+  hue?: BadgeHue;
+  /** Status entity whose ink token the badge uses. */
+  entity?: StatusEntity;
+  /** Level on a confidence or severity scale. */
+  level?: Level;
+}): ReactNode {
+  const classes = ["badge", `badge-${tone}`];
+  if (mono) classes.push("badge-mono");
+  return (
+    <span
+      className={classes.join(" ")}
+      title={title}
+      data-hue={hue}
+      data-status={entity}
+      data-level={level}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function StatusCell({ status }: { status?: string | null }): ReactNode {
+  const label = status || "unknown";
+  return <Badge entity={statusEntity(label) ?? undefined}>{label}</Badge>;
+}
+
+export function ConfidenceBadge({ level }: { level: string }): ReactNode {
+  const key = levelOf(level);
+  if (!key) return <Badge>{level || NA}</Badge>;
+  return (
+    <Badge hue="confidence" level={key}>
+      {level}
+    </Badge>
+  );
+}
+
+export function SeverityBadge({ level }: { level: string }): ReactNode {
+  const key = levelOf(level);
+  if (!key) return <Badge>{level || NA}</Badge>;
+  return (
+    <Badge hue="severity" level={key}>
+      {level}
+    </Badge>
+  );
+}
+
+export function CategoryBadge({ category }: { category: string }): ReactNode {
+  const hue = categoryHue(category);
+  return <Badge hue={hue ?? undefined}>{category}</Badge>;
+}
+
+// ── Instruments: meters and readouts ───────────────────────────────
+
+/** The ramp step a lit segment sits on, 1 (cold) to RAMP_STEPS (matched). */
+function rampStep(index: number): number {
+  return Math.min(RAMP_STEPS, Math.floor((index * RAMP_STEPS) / METER_SEGMENTS) + 1);
+}
+
+/**
+ * A quantized level meter: discrete segments, the unlit remainder always
+ * visible, and a numeric readout in a fixed position beside it.  `value` is
+ * 0..1, or null when the source has no value, which renders `missing` instead
+ * of a zero the source never reported.
+ */
+export function SegmentMeter({
+  label,
+  value,
+  readout,
+  hue,
+  level,
+  missing = NA,
+  band,
+  title,
+}: {
+  label: string;
+  value: number | null;
+  /** Readout text; defaults to the value as a percentage. */
+  readout?: ReactNode;
+  /** Family hue for the lit segments; omitted uses the sequential ramp. */
+  hue?: HueFamily;
+  /**
+   * Severity intensity for the lit segments, for a meter on the severity scale
+   * (the threat score).  Takes precedence over `hue` when both are given.
+   */
+  level?: Level;
+  missing?: string;
+  /** Fraction range (0..1) marked as a reference band along the track bottom. */
+  band?: { from: number; to: number };
+  title?: string;
+}): ReactNode {
+  const clamped = value === null ? 0 : Math.min(1, Math.max(0, value));
+  const lit = value === null || clamped <= 0 ? 0 : Math.max(1, Math.round(clamped * METER_SEGMENTS));
+  const percent = Math.round(clamped * 100);
+  return (
+    <div
+      className="meter"
+      data-hue={hue}
+      data-level={level}
+      data-missing={value === null ? "true" : undefined}
+      title={title}
+    >
+      <div className="meter-head">
+        <span className="meter-label">{label}</span>
+        <span className="meter-value">{value === null ? missing : (readout ?? `${percent}%`)}</span>
+      </div>
+      <div className="meter-track" aria-hidden="true">
+        {Array.from({ length: METER_SEGMENTS }, (_unused, index) => {
+          const on = index < lit;
+          return (
+            <span
+              key={index}
+              className="meter-seg"
+              data-lit={on ? "true" : undefined}
+              data-step={on && !hue ? String(rampStep(index)) : undefined}
+              data-band={inBand(index, band) ? "true" : undefined}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Whether segment *index* falls inside the `band` fraction range. */
+function inBand(index: number, band?: { from: number; to: number }): boolean {
+  if (!band) return false;
+  const position = (index + 0.5) / METER_SEGMENTS;
+  return position >= band.from && position <= band.to;
+}
+
+/** A headline number with its label and unit; `missing` when there is none. */
+export function Readout({
+  label,
+  value,
+  unit,
+  hue,
+  className,
+  missing = NA,
+}: {
+  label: string;
+  value: ReactNode | null | undefined;
+  unit?: string;
+  hue?: HueFamily;
+  /** Extra classes, e.g. the change flash. */
+  className?: string;
+  missing?: string;
+}): ReactNode {
+  const empty = value === null || value === undefined || value === "";
+  return (
+    <div
+      className={className ? `readout ${className}` : "readout"}
+      data-hue={hue}
+      data-missing={empty ? "true" : undefined}
+    >
+      <div className="readout-value">
+        {empty ? missing : value}
+        {empty || !unit ? null : <span className="readout-unit">{unit}</span>}
+      </div>
+      <div className="readout-label">{label}</div>
+    </div>
+  );
+}
+
+// ── Fields ─────────────────────────────────────────────────────────
+
+export function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      {children}
+      {hint ? <span className="field-hint">{hint}</span> : null}
+    </label>
+  );
+}
+
+export function CheckboxField({
+  label,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}): ReactNode {
+  return (
+    <label className="checkbox-field">
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      {label}
+    </label>
+  );
+}
+
+export function Toolbar({ children }: { children: ReactNode }): ReactNode {
+  return <div className="toolbar">{children}</div>;
+}
+
+// ── Feedback ───────────────────────────────────────────────────────
+
+export function Loading({ label, rows = 3 }: { label: string; rows?: number }): ReactNode {
+  return (
+    <div className="skeleton" role="status" aria-label={label}>
+      {Array.from({ length: rows }, (_unused, index) => (
+        <div className="skeleton-row" key={index} />
+      ))}
+    </div>
+  );
+}
+
+export function Note({
+  children,
+  tone = "info",
+}: {
+  children: ReactNode;
+  tone?: "info" | "warn" | "error";
+}): ReactNode {
+  const toneClass = tone === "info" ? "note-info" : tone === "warn" ? "note-warn" : "note-error";
+  return (
+    <div className={`note ${toneClass}`}>
+      <p className="note-text">{children}</p>
+    </div>
+  );
+}
+
+export function ErrorNote({
+  error,
+  onRetry,
+}: {
+  error: unknown;
+  onRetry?: () => void;
+}): ReactNode {
+  return (
+    <div className="note note-error" role="alert">
+      <p className="note-text">{errorText(error)}</p>
+      {onRetry ? (
+        <Button size="sm" tone="ghost" onClick={onRetry}>
+          Retry
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+export function EmptyState({
+  children,
+  action,
+}: {
+  children: ReactNode;
+  action?: ReactNode;
+}): ReactNode {
+  return (
+    <div className="empty-state">
+      <p>{children}</p>
+      {action}
+    </div>
+  );
+}
+
+// ── Code ───────────────────────────────────────────────────────────
+
+export function CodeBlock({ text, title }: { text: string; title?: string }): ReactNode {
+  return (
+    <div className="code-block">
+      <div className="code-head">
+        <span className="code-title">{title ?? "output"}</span>
+        <CopyButton text={text} />
+      </div>
+      <pre className="code-scroll">{text}</pre>
+    </div>
+  );
+}
+
+// ── Key/value ──────────────────────────────────────────────────────
+
+export function KeyValue({ rows }: { rows: Array<[string, ReactNode]> }): ReactNode {
+  return (
+    <div className="kv">
+      {rows.map(([field, value], index) => (
+        <Fragment key={`${field}-${index}`}>
+          <div className="kv-key">{field}</div>
+          <div className="kv-value">{value}</div>
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
+export function RawJson({ value }: { value: unknown }): ReactNode {
+  return (
+    <details>
+      <summary>Raw JSON</summary>
+      <CodeBlock text={JSON.stringify(value, null, 2)} title="json" />
+    </details>
+  );
+}
+
+// ── Table ──────────────────────────────────────────────────────────
+
+export interface Column<T> {
+  label: string;
+  key?: keyof T;
+  /** Header content in place of `label`, e.g. a sort control; `label` stays the key. */
+  header?: ReactNode;
+  render?: (row: T, index: number) => ReactNode;
+  /** Right-aligned tabular numerics in the monospace face. */
+  numeric?: boolean;
+  /** Render the raw value in the monospace face. */
+  mono?: boolean;
+}
+
+function isInteractive(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest("a, button, input, select, textarea, label") !== null
+  );
+}
+
+export function DataTable<T>({
+  columns,
+  rows,
+  onRowClick,
+  rowKey,
+  rowClassName,
+  empty,
+}: {
+  columns: Array<Column<T>>;
+  rows: T[];
+  onRowClick?: (row: T) => void;
+  rowKey?: (row: T, index: number) => string | number;
+  /** Extra classes for a row, e.g. the change flash. */
+  rowClassName?: (row: T, index: number) => string | undefined;
+  /** Rendered in place of the table when there are no rows. */
+  empty?: ReactNode;
+}): ReactNode {
+  if (!rows.length && empty !== undefined) return empty;
+  return (
+    <div className="table-scroll">
+      <table className="data-table">
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column.label} className={column.numeric ? "num" : undefined}>
+                {column.header ?? column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr
+              key={rowKey ? rowKey(row, index) : index}
+              className={
+                [onRowClick ? "clickable" : undefined, rowClassName?.(row, index)]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              tabIndex={onRowClick ? 0 : undefined}
+              role={onRowClick ? "link" : undefined}
+              onClick={
+                onRowClick
+                  ? (event: MouseEvent<HTMLTableRowElement>) => {
+                      if (isInteractive(event.target)) return;
+                      onRowClick(row);
+                    }
+                  : undefined
+              }
+              onKeyDown={
+                onRowClick
+                  ? (event: KeyboardEvent<HTMLTableRowElement>) => {
+                      if (event.key !== "Enter") return;
+                      if (isInteractive(event.target)) return;
+                      onRowClick(row);
+                    }
+                  : undefined
+              }
+            >
+              {columns.map((column) => {
+                const classes: string[] = [];
+                if (column.numeric) classes.push("num");
+                if (column.mono) classes.push("mono-cell");
+                return (
+                  <td key={column.label} className={classes.length ? classes.join(" ") : undefined}>
+                    {column.render
+                      ? column.render(row, index)
+                      : cellText(column.key ? row[column.key] : null)}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Panels ─────────────────────────────────────────────────────────
+
+export function Panel({
+  title,
+  subtitle,
+  actions,
+  hue,
+  className,
+  children,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  actions?: ReactNode;
+  /** Tints the card border with the panel's own data hue. */
+  hue?: HueFamily;
+  /** Extra classes, e.g. the change flash or a cockpit column span. */
+  className?: string;
+  children?: ReactNode;
+}): ReactNode {
+  return (
+    <section className={className ? `panel ${className}` : "panel"} data-hue={hue}>
+      <div className="panel-head">
+        <div className="panel-heading">
+          <h2 className="panel-title">{title}</h2>
+          {subtitle ? <div className="panel-subtitle">{subtitle}</div> : null}
+        </div>
+        {actions ? <div className="panel-actions">{actions}</div> : null}
+      </div>
+      <div className="panel-body">{children}</div>
+    </section>
+  );
+}
+
+/** A nested card for repeated records inside a panel (one data type, one run). */
+export function Card({
+  title,
+  actions,
+  hue,
+  className,
+  children,
+}: {
+  title: ReactNode;
+  actions?: ReactNode;
+  /** Tints the card border with the card's own data hue. */
+  hue?: HueFamily;
+  className?: string;
+  children: ReactNode;
+}): ReactNode {
+  return (
+    <div className={className ? `card ${className}` : "card"} data-hue={hue}>
+      <div className="card-head">
+        <div className="card-title">{title}</div>
+        {actions ? <div className="panel-actions">{actions}</div> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function PanelBody<T>({
+  entry,
+  hint,
+  noScanHint,
+  onRetry,
+  children,
+}: {
+  entry: PanelEntry<T> | undefined;
+  hint: string;
+  noScanHint?: string;
+  onRetry?: () => void;
+  children: (data: T) => ReactNode;
+}): ReactNode {
+  if (!entry || entry.state === "loading") return <Loading label={hint || "Loading"} />;
+  if (entry.state === "error") {
+    if (noScanHint && isApiErrorCode(entry.error, "no-scan")) {
+      return <EmptyState>{noScanHint}</EmptyState>;
+    }
+    return <ErrorNote error={entry.error} onRetry={onRetry} />;
+  }
+  return children(entry.data);
+}

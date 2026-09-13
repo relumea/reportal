@@ -1,0 +1,1262 @@
+import { useState } from "react";
+import type { ReactNode } from "react";
+
+import { api, isApiErrorCode } from "../api";
+import {
+  Badge,
+  Button,
+  Card,
+  CodeBlock,
+  ConfirmButton,
+  EmptyState,
+  ErrorNote,
+  Field,
+  KeyValue,
+  Loading,
+  Muted,
+  Note,
+  Panel,
+  Toolbar,
+} from "../components";
+import {
+  DATA_TYPE_KIND_LABELS,
+  DATA_TYPE_KINDS,
+  DECOMPILER_BACKENDS,
+  DEFAULT_DECOMPILER_BACKEND,
+} from "../constants";
+import { panelKey, refreshPanel, usePanel } from "../panelCache";
+import type {
+  DataType,
+  DataTypeChange,
+  DataTypeExportResult,
+  DataTypeHistory,
+  DataTypeImportResult,
+  DataTypeKind,
+  DataTypeList,
+  DataTypeMember,
+  DataTypeReferences,
+  DataTypeRevertResult,
+  DataTypeValue,
+  NamespaceNode,
+  SignatureExportResult,
+  SignatureImportResult,
+  StructResult,
+} from "../types";
+
+// Functions decompiled by the Recover control when the limit input is blank;
+// mirrors DEFAULT_STRUCT_LIMIT on the API side.
+const DEFAULT_STRUCT_LIMIT = 50;
+
+// A type's source when the recovered structs scan created it; mirrors
+// data_types.SOURCE_SCAN, the only other value being a manual edit.
+const SOURCE_SCAN = "scan";
+
+// The structs GET is stored-only; 404 no-scan means nothing was recovered yet.
+const STRUCTS_NO_SCAN = "No structs recovered yet. Run the engine to recover them.";
+const NO_TYPES_HINT = "No types yet. Import the stored structs scan to seed the model.";
+
+/** Render a member's type the way the exported C header does. */
+function memberTypeText(member: DataTypeMember): string {
+  const base = member.pointer ? `${member.type} *` : member.type;
+  const sized = member.count === null ? base : `${base}[${member.count}]`;
+  return member.bits === null ? sized : `${sized} : ${member.bits}`;
+}
+
+/**
+ * The member type an input edits: the declaration without the bit width, which
+ * travels as its own field.  A width folded into the type text would make the
+ * declaration unparsable, so the input never carries one.
+ */
+function memberTypeInput(member: DataTypeMember): string {
+  const base = member.pointer ? `${member.type} *` : member.type;
+  return member.count === null ? base : `${base}[${member.count}]`;
+}
+
+/** Parse a bit-width input; null when it is blank, undefined when it is not a width. */
+function parseBitsInput(text: string): number | null | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const parsed = Number.parseInt(trimmed, 10);
+  return parsed >= 1 ? parsed : undefined;
+}
+
+/** Parse a decimal or `0x` value input; null when it is neither. */
+function parseValueInput(text: string): number | null {
+  const trimmed = text.trim();
+  if (!(trimmed && (/^-?\d+$/.test(trimmed) || /^0x[0-9a-f]+$/i.test(trimmed)))) return null;
+  return Number(trimmed);
+}
+
+/** The kind badge's label; mirrors the API's kind vocabulary. */
+function kindLabel(kind: DataTypeKind): string {
+  return DATA_TYPE_KIND_LABELS[kind];
+}
+
+export function DataTypesPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const structsKey = panelKey("binary", binaryId, "structs");
+  const typesPath = `/binaries/${binaryId}/data-types`;
+  const structsPath = `/binaries/${binaryId}/structs`;
+  const structsEntry = usePanel(structsKey, () => api<StructResult>(structsPath));
+
+  const [kind, setKind] = useState("");
+  const [namespace, setNamespace] = useState("");
+  const [search, setSearch] = useState("");
+  const [backend, setBackend] = useState<string>(DEFAULT_DECOMPILER_BACKEND);
+  const [limit, setLimit] = useState(String(DEFAULT_STRUCT_LIMIT));
+  const [status, setStatus] = useState("");
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+  const [exportPath, setExportPath] = useState("");
+  const [exportResult, setExportResult] = useState<DataTypeExportResult | null>(null);
+  const [exportError, setExportError] = useState<unknown>(null);
+  const [forceNeeded, setForceNeeded] = useState(false);
+  const [signatureStatus, setSignatureStatus] = useState("");
+  const [prototypePath, setPrototypePath] = useState("");
+  const [prototypeResult, setPrototypeResult] = useState<SignatureExportResult | null>(null);
+  const [prototypeError, setPrototypeError] = useState<unknown>(null);
+  const [prototypeForceNeeded, setPrototypeForceNeeded] = useState(false);
+
+  // The list filter is the API's own: the query string names the kind, the
+  // namespace path and the search needle, so one mechanism decides what a
+  // filtered list means.  The panel's key carries the same string.
+  const query = new URLSearchParams();
+  if (kind) query.set("kind", kind);
+  if (namespace) query.set("namespace", namespace);
+  if (search.trim()) query.set("search", search.trim());
+  const queryString = query.toString();
+  const listPath = queryString ? `${typesPath}?${queryString}` : typesPath;
+  const typesKey = panelKey("binary", binaryId, "data-types", queryString);
+  const loadTypes = (): Promise<DataTypeList> => api<DataTypeList>(listPath);
+  const entry = usePanel(typesKey, loadTypes);
+
+  const recover = (): void => {
+    const parsed = Number.parseInt(limit, 10);
+    const bound = Number.isNaN(parsed) ? DEFAULT_STRUCT_LIMIT : parsed;
+    setActionError(null);
+    setBusy("recover");
+    api<StructResult>(structsPath, { method: "POST", json: { decompiler: backend, limit: bound } })
+      .then((result) => {
+        setStatus(`recovered ${result.decompiled ?? 0} functions, skipped ${result.skipped ?? 0}`);
+        refreshPanel(structsKey, () => api<StructResult>(structsPath));
+      })
+      .catch((error: unknown) => {
+        setActionError(error);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  const importFromScan = (): void => {
+    setActionError(null);
+    setBusy("import");
+    api<DataTypeImportResult>(`${typesPath}/import`, { method: "POST" })
+      .then((result) => {
+        setStatus(`created ${result.created}, updated ${result.updated}, skipped ${result.skipped}`);
+        refreshPanel(typesKey, loadTypes);
+      })
+      .catch((error: unknown) => {
+        setActionError(error);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  const doExport = (force: boolean): void => {
+    setExportError(null);
+    setExportResult(null);
+    setBusy("export");
+    api<DataTypeExportResult>(`${typesPath}/export`, {
+      method: "POST",
+      json: { path: exportPath, force },
+    })
+      .then((result) => {
+        setExportResult(result);
+        setForceNeeded(false);
+      })
+      .catch((error: unknown) => {
+        if (isApiErrorCode(error, "export-exists")) {
+          setForceNeeded(true);
+          return;
+        }
+        setForceNeeded(false);
+        setExportError(error);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  const importSignatures = (): void => {
+    setActionError(null);
+    setSignatureStatus("");
+    setBusy("signatures");
+    api<SignatureImportResult>(`/binaries/${binaryId}/signatures/import`, { method: "POST" })
+      .then((result) => {
+        setSignatureStatus(
+          `signatures: created ${result.created}, updated ${result.updated}, skipped ${result.skipped}`,
+        );
+      })
+      .catch((error: unknown) => {
+        setActionError(error);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  const doExportPrototypes = (force: boolean): void => {
+    setPrototypeError(null);
+    setPrototypeResult(null);
+    setBusy("prototypes");
+    api<SignatureExportResult>(`/binaries/${binaryId}/signatures/export`, {
+      method: "POST",
+      json: { path: prototypePath, force },
+    })
+      .then((result) => {
+        setPrototypeResult(result);
+        setPrototypeForceNeeded(false);
+      })
+      .catch((error: unknown) => {
+        if (isApiErrorCode(error, "export-exists")) {
+          setPrototypeForceNeeded(true);
+          return;
+        }
+        setPrototypeForceNeeded(false);
+        setPrototypeError(error);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  return (
+    <Panel
+      title="Data types"
+      subtitle="The editable type model of this binary: its structs, unions, enums, aliases and function types, plus the prototypes exported from the signature model."
+      actions={
+        <Toolbar>
+          <Field label="Backend">
+            <select value={backend} onChange={(event) => setBackend(event.target.value)}>
+              {DECOMPILER_BACKENDS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Limit">
+            <input
+              type="number"
+              min="0"
+              value={limit}
+              onChange={(event) => setLimit(event.target.value)}
+            />
+          </Field>
+          <Button pending={busy === "recover"} onClick={recover}>
+            Recover structs
+          </Button>
+          <Button pending={busy === "import"} onClick={importFromScan}>
+            Import from scan
+          </Button>
+          <Field label="Export header">
+            <input
+              type="text"
+              value={exportPath}
+              placeholder="types.h"
+              onChange={(event) => setExportPath(event.target.value)}
+            />
+          </Field>
+          <Button pending={busy === "export"} onClick={() => doExport(false)}>
+            Export header
+          </Button>
+          <Button pending={busy === "signatures"} onClick={importSignatures}>
+            Import signatures
+          </Button>
+          <Field label="Export prototypes">
+            <input
+              type="text"
+              value={prototypePath}
+              placeholder="prototypes.h"
+              onChange={(event) => setPrototypePath(event.target.value)}
+            />
+          </Field>
+          <Button pending={busy === "prototypes"} onClick={() => doExportPrototypes(false)}>
+            Export prototypes
+          </Button>
+        </Toolbar>
+      }
+    >
+      {structsEntry?.state === "error" && isApiErrorCode(structsEntry.error, "no-scan") ? (
+        <Muted>{STRUCTS_NO_SCAN}</Muted>
+      ) : (
+        <Muted>The type model is stored locally; import seeds it from the stored structs scan.</Muted>
+      )}
+      {status ? <Badge hue="match">{status}</Badge> : null}
+      {signatureStatus ? <Badge hue="match">{signatureStatus}</Badge> : null}
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      {forceNeeded ? (
+        <Note tone="warn">
+          {exportPath} already exists.{" "}
+          <Button size="sm" tone="danger" pending={busy === "export"} onClick={() => doExport(true)}>
+            Force overwrite
+          </Button>
+        </Note>
+      ) : null}
+      {exportError ? <ErrorNote error={exportError} /> : null}
+      {exportResult ? (
+        <Muted>
+          wrote {exportResult.bytes} bytes ({exportResult.types} types) to {exportResult.path}
+        </Muted>
+      ) : null}
+      {prototypeForceNeeded ? (
+        <Note tone="warn">
+          {prototypePath} already exists.{" "}
+          <Button
+            size="sm"
+            tone="danger"
+            pending={busy === "prototypes"}
+            onClick={() => doExportPrototypes(true)}
+          >
+            Force overwrite
+          </Button>
+        </Note>
+      ) : null}
+      {prototypeError ? <ErrorNote error={prototypeError} /> : null}
+      {prototypeResult ? (
+        <Muted>
+          wrote {prototypeResult.bytes} bytes ({prototypeResult.signatures} signatures) to{" "}
+          {prototypeResult.path}
+        </Muted>
+      ) : null}
+      <Toolbar>
+        {/* The filter is named for what it narrows; each type card carries its
+            own Kind control, so one plain "Kind" would name two controls. */}
+        <Field label="Kind filter">
+          <select value={kind} onChange={(event) => setKind(event.target.value)}>
+            <option value="">All kinds</option>
+            {DATA_TYPE_KINDS.map((option) => (
+              <option key={option} value={option}>
+                {kindLabel(option)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Filter">
+          <input
+            type="search"
+            placeholder="name, member or enum value"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </Field>
+      </Toolbar>
+      {!entry || entry.state === "loading" ? (
+        <Loading label="Loading the type model" />
+      ) : entry.state === "error" ? (
+        <ErrorNote error={entry.error} onRetry={() => refreshPanel(typesKey, loadTypes)} />
+      ) : (
+        <>
+          <NamespaceTree
+            nodes={entry.data.namespaces}
+            selected={namespace}
+            onSelect={setNamespace}
+          />
+          <TypeList
+            data={entry.data}
+            search={search}
+            namespace={namespace}
+            kind={kind}
+            onChanged={() => refreshPanel(typesKey, loadTypes)}
+            onNote={setStatus}
+          />
+        </>
+      )}
+    </Panel>
+  );
+}
+
+/** Keep a node when its name or any descendant matches the needle. */
+function filterTree(node: NamespaceNode, needle: string): NamespaceNode | null {
+  const text = needle.trim().toLowerCase();
+  if (!text) return node;
+  const children = node.children
+    .map((child) => filterTree(child, needle))
+    .filter((child): child is NamespaceNode => child !== null);
+  if (node.name.toLowerCase().includes(text) || children.length > 0) {
+    return { ...node, children };
+  }
+  return null;
+}
+
+/** The namespace tree: its own search box, a collapse control and one node per branch. */
+function NamespaceTree({
+  nodes,
+  selected,
+  onSelect,
+}: {
+  nodes: NamespaceNode[];
+  selected: string;
+  onSelect: (path: string) => void;
+}): ReactNode {
+  const [needle, setNeedle] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
+  const shown = nodes
+    .map((node) => filterTree(node, needle))
+    .filter((node): node is NamespaceNode => node !== null);
+  return (
+    <div className="namespace-tree">
+      <Toolbar>
+        <Field label="Search namespaces">
+          <input
+            type="search"
+            placeholder="namespace"
+            value={needle}
+            onChange={(event) => setNeedle(event.target.value)}
+          />
+        </Field>
+        <Button size="sm" onClick={() => setCollapsed((value) => !value)}>
+          {collapsed ? "Expand" : "Collapse"}
+        </Button>
+        {selected ? (
+          <Button size="sm" tone="ghost" onClick={() => onSelect("")}>
+            All namespaces
+          </Button>
+        ) : null}
+      </Toolbar>
+      {shown.length === 0 ? (
+        <Muted>No namespace matches {needle.trim()}.</Muted>
+      ) : (
+        <ul className="namespace-list">
+          {shown.map((node) => (
+            <NamespaceNode
+              key={node.path}
+              node={node}
+              selected={selected}
+              collapsed={collapsed}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function NamespaceNode({
+  node,
+  selected,
+  collapsed,
+  onSelect,
+}: {
+  node: NamespaceNode;
+  selected: string;
+  collapsed: boolean;
+  onSelect: (path: string) => void;
+}): ReactNode {
+  return (
+    <li>
+      <button
+        type="button"
+        className={selected === node.path ? "tree-node is-active" : "tree-node"}
+        aria-pressed={selected === node.path}
+        onClick={() => onSelect(node.path)}
+      >
+        {node.name} <span className="muted">({node.count})</span>
+      </button>
+      {!collapsed && node.children.length > 0 ? (
+        <ul className="namespace-list">
+          {node.children.map((child) => (
+            <NamespaceNode
+              key={child.path}
+              node={child}
+              selected={selected}
+              collapsed={collapsed}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+/** The filtered type list with the counts the active filters produce. */
+function TypeList({
+  data,
+  search,
+  namespace,
+  kind,
+  onChanged,
+  onNote,
+}: {
+  data: DataTypeList;
+  search: string;
+  namespace: string;
+  kind: string;
+  onChanged: () => void;
+  onNote: (note: string) => void;
+}): ReactNode {
+  const members = data.types.reduce((total, dataType) => total + dataType.members.length, 0);
+  const scanned = data.types.filter((dataType) => dataType.source === SOURCE_SCAN).length;
+  const filterLabel = [kind, namespace, search.trim()].filter(Boolean).join(", ");
+  if (data.types.length === 0) {
+    return filterLabel ? (
+      <EmptyState>No type matches {filterLabel}.</EmptyState>
+    ) : (
+      <EmptyState>{NO_TYPES_HINT}</EmptyState>
+    );
+  }
+  return (
+    <>
+      <Muted>
+        {data.count} of {data.total} types ({members} members; {scanned} from the recovered scan,{" "}
+        {data.count - scanned} manual)
+      </Muted>
+      {data.types.map((dataType) => (
+        <DataTypeCard
+          key={dataType.id}
+          dataType={dataType}
+          onChange={onChanged}
+          onNote={onNote}
+        />
+      ))}
+    </>
+  );
+}
+
+function DataTypeCard({
+  dataType,
+  onChange,
+  onNote,
+}: {
+  dataType: DataType;
+  onChange: () => void;
+  onNote: (note: string) => void;
+}): ReactNode {
+  const [name, setName] = useState(dataType.name);
+  const [kind, setKind] = useState<DataTypeKind>(dataType.kind);
+  const [namespace, setNamespace] = useState(dataType.namespace);
+  const [sizeText, setSizeText] = useState(String(dataType.size));
+  const [memberName, setMemberName] = useState("");
+  const [memberType, setMemberType] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+  const [showReferences, setShowReferences] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const mutate = (label: string, action: () => Promise<unknown>): void => {
+    setError(null);
+    setBusy(label);
+    action()
+      .then(() => onChange())
+      .catch((failure: unknown) => {
+        setError(failure);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  const rename = (): void => {
+    mutate("rename", () => api(`/data-types/${dataType.id}`, { method: "PATCH", json: { name } }));
+  };
+
+  /** Save the kind, namespace and declared size in one write and one history entry. */
+  const saveFields = (): void => {
+    const parsedSize = Number.parseInt(sizeText, 10);
+    mutate("fields", () =>
+      api(`/data-types/${dataType.id}`, {
+        method: "PATCH",
+        json: {
+          kind,
+          namespace,
+          size: Number.isNaN(parsedSize) ? dataType.size : parsedSize,
+        },
+      }),
+    );
+  };
+
+  const addMember = (): void => {
+    mutate("add", () =>
+      api(`/data-types/${dataType.id}/members`, {
+        method: "POST",
+        json: { name: memberName, type: memberType },
+      }),
+    );
+  };
+
+  const removeType = (): void => {
+    mutate("delete", () => api(`/data-types/${dataType.id}`, { method: "DELETE" }));
+  };
+
+  const memberKind =
+    dataType.kind === "struct" || dataType.kind === "union" || dataType.kind === "function";
+
+  return (
+    <Card
+      title={
+        <>
+          <Badge mono>{dataType.name}</Badge> <Badge>{kindLabel(dataType.kind)}</Badge>{" "}
+          {dataType.namespace ? dataType.namespace : "program-defined"} · {dataType.size} bytes ·{" "}
+          {dataType.kind === "enum"
+            ? `${dataType.values.length} values`
+            : `${dataType.members.length} members`}{" "}
+          · {dataType.source || "manual"}
+        </>
+      }
+      actions={
+        <>
+          <Field label="Rename">
+            <input type="text" value={name} onChange={(event) => setName(event.target.value)} />
+          </Field>
+          <Button size="sm" pending={busy === "rename"} onClick={rename}>
+            Rename type
+          </Button>
+          <Button size="sm" tone="ghost" onClick={() => setShowReferences((value) => !value)}>
+            {showReferences ? "Hide references" : "References"}
+          </Button>
+          <Button size="sm" tone="ghost" onClick={() => setShowHistory((value) => !value)}>
+            {showHistory ? "Hide history" : "History"}
+          </Button>
+          <ConfirmButton
+            label="Delete type"
+            message="Delete type?"
+            pending={busy === "delete"}
+            onConfirm={removeType}
+          />
+        </>
+      }
+    >
+      <Toolbar>
+        <Field label="Kind">
+          <select value={kind} onChange={(event) => setKind(event.target.value as DataTypeKind)}>
+            {DATA_TYPE_KINDS.map((option) => (
+              <option key={option} value={option}>
+                {kindLabel(option)}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Namespace">
+          <input
+            type="text"
+            placeholder="program-defined"
+            value={namespace}
+            onChange={(event) => setNamespace(event.target.value)}
+          />
+        </Field>
+        <Field label="Size">
+          <input
+            type="number"
+            min="0"
+            value={sizeText}
+            onChange={(event) => setSizeText(event.target.value)}
+          />
+        </Field>
+        <Button size="sm" tone="primary" pending={busy === "fields"} onClick={saveFields}>
+          Save fields
+        </Button>
+      </Toolbar>
+      {dataType.size_check.match ? null : <Note tone="warn">{dataType.size_check.warning}</Note>}
+      <CodeBlock text={dataType.as_c} title="As C" />
+      {dataType.kind === "enum" ? (
+        <EnumValues dataType={dataType} onChange={onChange} onNote={onNote} />
+      ) : dataType.kind === "struct" || dataType.kind === "union" ? (
+        <MemberTable
+          dataType={dataType}
+          onChange={onChange}
+          addName={memberName}
+          addType={memberType}
+        />
+      ) : (
+        <KeyValue
+          rows={[
+            ["Target", dataType.target || "n/a"],
+            ["Element count", dataType.element_count === null ? "n/a" : String(dataType.element_count)],
+          ]}
+        />
+      )}
+      {memberKind ? (
+        <Toolbar>
+          <Field label="Add member">
+            <input
+              type="text"
+              placeholder="name"
+              value={memberName}
+              onChange={(event) => setMemberName(event.target.value)}
+            />
+          </Field>
+          <Field label="Type">
+            <input
+              type="text"
+              placeholder="unsigned int"
+              value={memberType}
+              onChange={(event) => setMemberType(event.target.value)}
+            />
+          </Field>
+          <Button size="sm" tone="primary" pending={busy === "add"} onClick={addMember}>
+            Add member
+          </Button>
+        </Toolbar>
+      ) : null}
+      {error ? <ErrorNote error={error} /> : null}
+      {showHistory ? <DataTypeHistorySection dataTypeId={dataType.id} onChange={onChange} /> : null}
+      {showReferences ? <TypeReferences dataTypeId={dataType.id} /> : null}
+    </Card>
+  );
+}
+
+/** Render one recorded field value the way a history diff shows it. */
+function changeText(value: DataTypeChange["before"]): string {
+  if (value === null || value === "") return "n/a";
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "none";
+    return value
+      .map((item) => ("type" in item ? memberTypeText(item) : `${item.name} = ${item.value}`))
+      .join(", ");
+  }
+  return String(value);
+}
+
+/** One type's edit history: a version list with its field diff and a revert each. */
+function DataTypeHistorySection({
+  dataTypeId,
+  onChange,
+}: {
+  dataTypeId: number;
+  onChange: () => void;
+}): ReactNode {
+  const key = panelKey("data-type", dataTypeId, "history");
+  const loadHistory = (): Promise<DataTypeHistory> =>
+    api<DataTypeHistory>(`/data-types/${dataTypeId}/history`);
+  const entry = usePanel(key, loadHistory);
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+
+  const revert = (historyId: number): void => {
+    setError(null);
+    setBusy(`revert-${historyId}`);
+    api<DataTypeRevertResult>(`/data-types/${dataTypeId}/history/${historyId}/revert`, {
+      method: "POST",
+    })
+      .then(() => {
+        refreshPanel(key, loadHistory);
+        onChange();
+      })
+      .catch((failure: unknown) => {
+        setError(failure);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  if (!entry || entry.state === "loading") {
+    return <Loading label="Loading the type history" rows={2} />;
+  }
+  if (entry.state === "error") {
+    return <ErrorNote error={entry.error} onRetry={() => refreshPanel(key, loadHistory)} />;
+  }
+  const data = entry.data;
+  return (
+    <>
+      <h4>History</h4>
+      <Muted>
+        {data.count} recorded {data.count === 1 ? "edit" : "edits"}; a revert restores the state a
+        version replaced and is itself revertible through its journal action.
+      </Muted>
+      {data.count === 0 ? (
+        <EmptyState>No edits recorded for this type yet.</EmptyState>
+      ) : (
+        <ul className="type-history">
+          {data.history.map((version) => (
+            <li key={version.id}>
+              <div className="toolbar">
+                <Badge mono>#{version.id}</Badge>
+                <Muted>
+                  {version.source || "manual"} ({version.actor || "manual"}) {version.created_at}
+                </Muted>
+                <ConfirmButton
+                  label="Revert"
+                  message="Restore this version?"
+                  pending={busy === `revert-${version.id}`}
+                  onConfirm={() => revert(version.id)}
+                />
+              </div>
+              {version.previous === null ? (
+                <Muted>created this type</Muted>
+              ) : version.current === null ? (
+                <Muted>deleted this type</Muted>
+              ) : version.changes.length === 0 ? (
+                <Muted>no model field changed</Muted>
+              ) : (
+                <ul>
+                  {version.changes.map((change) => (
+                    <li key={change.field}>
+                      <code>{change.field}</code> {changeText(change.before)} -&gt;{" "}
+                      {changeText(change.after)}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {error ? <ErrorNote error={error} /> : null}
+    </>
+  );
+}
+
+function MemberTable({
+  dataType,
+  onChange,
+  addName,
+  addType,
+}: {
+  dataType: DataType;
+  onChange: () => void;
+  addName: string;
+  addType: string;
+}): ReactNode {
+  return (
+    <>
+      {dataType.kind === "union" ? <Muted>All members overlap.</Muted> : null}
+      {dataType.members.length === 0 ? (
+        <EmptyState>No members yet. Add one below.</EmptyState>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th className="num">Offset</th>
+                <th className="num">Size</th>
+                <th>Member</th>
+                <th>Type</th>
+                <th className="num">Bits</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dataType.members.map((member, index) => (
+                <MemberRow
+                  key={`${member.name}-${index}`}
+                  dataTypeId={dataType.id}
+                  member={member}
+                  onChange={onChange}
+                  addName={addName}
+                  addType={addType}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * An enum's named constants, editable in place: a rename, a revalue and a
+ * removal per row, and an add that auto-increments when the value is blank.
+ */
+function EnumValues({
+  dataType,
+  onChange,
+  onNote,
+}: {
+  dataType: DataType;
+  onChange: () => void;
+  onNote: (note: string) => void;
+}): ReactNode {
+  const [name, setName] = useState("");
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+
+  const add = (): void => {
+    setError(null);
+    setBusy("add-value");
+    const body: Record<string, unknown> = { name };
+    if (value.trim()) {
+      const parsed = parseValueInput(value);
+      body.value = parsed === null ? value.trim() : parsed;
+    }
+    api<DataType & { note?: string }>(`/data-types/${dataType.id}/values`, {
+      method: "POST",
+      json: body,
+    })
+      .then((result) => {
+        const added = result.values[result.values.length - 1];
+        // The note goes to the panel: this card's own state does not survive
+        // the model refresh the write triggers.
+        onNote(result.note ?? `added ${added.name} = ${added.value}`);
+        setName("");
+        setValue("");
+        onChange();
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(""));
+  };
+
+  return (
+    <>
+      {dataType.values.length === 0 ? (
+        <EmptyState>No enum values stored.</EmptyState>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th className="num">Value</th>
+                <th className="num">Hex</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dataType.values.map((entry, index) => (
+                <EnumValueRow
+                  key={`${entry.name}-${index}`}
+                  dataTypeId={dataType.id}
+                  value={entry}
+                  onChange={onChange}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Toolbar>
+        <Field label="Add value">
+          <input
+            type="text"
+            placeholder="NP_FLAG_C"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Field label="Value">
+          <input
+            type="text"
+            placeholder="increments"
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </Field>
+        <Button
+          size="sm"
+          tone="primary"
+          pending={busy === "add-value"}
+          disabled={!name.trim()}
+          onClick={add}
+        >
+          Add value
+        </Button>
+      </Toolbar>
+      {error ? <ErrorNote error={error} /> : null}
+    </>
+  );
+}
+
+function EnumValueRow({
+  dataTypeId,
+  value,
+  onChange,
+}: {
+  dataTypeId: number;
+  value: DataTypeValue;
+  onChange: () => void;
+}): ReactNode {
+  const [name, setName] = useState(value.name);
+  const [valueText, setValueText] = useState(String(value.value));
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+
+  const mutate = (label: string, action: () => Promise<unknown>): void => {
+    setError(null);
+    setBusy(label);
+    action()
+      .then(() => onChange())
+      .catch((failure: unknown) => {
+        setError(failure);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  const save = (): void => {
+    const parsed = parseValueInput(valueText);
+    if (parsed === null) {
+      setError(new Error("value must be a decimal or 0x hex literal"));
+      return;
+    }
+    mutate("save", () =>
+      api(`/data-types/${dataTypeId}/values/${encodeURIComponent(value.name)}`, {
+        method: "PATCH",
+        json: { new_name: name, new_value: parsed },
+      }),
+    );
+  };
+
+  const remove = (): void => {
+    mutate("remove", () =>
+      api(`/data-types/${dataTypeId}/values/${encodeURIComponent(value.name)}`, {
+        method: "DELETE",
+      }),
+    );
+  };
+
+  const parsed = parseValueInput(valueText);
+  const hex =
+    parsed === null ? "n/a" : parsed < 0 ? `-0x${(-parsed).toString(16)}` : `0x${parsed.toString(16)}`;
+  return (
+    <tr>
+      <td>
+        <input
+          type="text"
+          aria-label={`Name of enum value ${value.name}`}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </td>
+      <td className="num">
+        <input
+          type="text"
+          aria-label={`Value of enum value ${value.name}`}
+          value={valueText}
+          onChange={(event) => setValueText(event.target.value)}
+        />
+      </td>
+      <td className="num mono">{hex}</td>
+      <td>
+        <div className="actions-cell">
+          <Button size="sm" pending={busy === "save"} onClick={save}>
+            Save
+          </Button>
+          <ConfirmButton
+            label="Remove"
+            message="Remove?"
+            pending={busy === "remove"}
+            onConfirm={remove}
+          />
+        </div>
+        {error ? <ErrorNote error={error} /> : null}
+      </td>
+    </tr>
+  );
+}
+
+/** The two reverse indices the API builds for one type, loaded on demand. */
+function TypeReferences({ dataTypeId }: { dataTypeId: number }): ReactNode {
+  const key = panelKey("data-type", dataTypeId, "references");
+  const entry = usePanel(key, () => api<DataTypeReferences>(`/data-types/${dataTypeId}/references`));
+  if (!entry || entry.state === "loading") {
+    return <Loading label="Loading type references" rows={2} />;
+  }
+  if (entry.state === "error") {
+    return <ErrorNote error={entry.error} />;
+  }
+  const data = entry.data;
+  return (
+    <>
+      <Muted>{data.note}</Muted>
+      <h4>Referenced by</h4>
+      {data.referenced_by.length === 0 ? (
+        <EmptyState>Nothing references this type.</EmptyState>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Kind</th>
+                <th>Namespace</th>
+                <th>Relationship</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.referenced_by.map((reference) => (
+                <tr key={reference.id}>
+                  <td className="mono">{reference.name}</td>
+                  <td>{reference.kind}</td>
+                  <td>{reference.namespace || "program-defined"}</td>
+                  <td>{reference.relationships.join(", ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <h4>Used by functions</h4>
+      {data.used_by_functions.length === 0 ? (
+        <EmptyState>No stored signature names this type.</EmptyState>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Function</th>
+                <th>Usage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.used_by_functions.map((usage) => (
+                <tr key={usage.function_id}>
+                  <td>
+                    <a href={`#/functions/${usage.function_id}`}>{usage.name}</a>
+                  </td>
+                  <td>{usage.usages.join(", ")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MemberRow({
+  dataTypeId,
+  member,
+  onChange,
+  addName,
+  addType,
+}: {
+  dataTypeId: number;
+  member: DataTypeMember;
+  onChange: () => void;
+  addName: string;
+  addType: string;
+}): ReactNode {
+  const [name, setName] = useState(member.name);
+  const [typeText, setTypeText] = useState(memberTypeInput(member));
+  const [bitsText, setBitsText] = useState(member.bits === null ? "" : String(member.bits));
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+
+  const mutate = (label: string, action: () => Promise<unknown>): void => {
+    setError(null);
+    setBusy(label);
+    action()
+      .then(() => onChange())
+      .catch((failure: unknown) => {
+        setError(failure);
+      })
+      .finally(() => setBusy(""));
+  };
+
+  const save = (): void => {
+    const bits = parseBitsInput(bitsText);
+    if (bits === undefined) {
+      setError(new Error("bit width must be a whole number of at least 1"));
+      return;
+    }
+    mutate("save", () =>
+      api(`/data-types/${dataTypeId}`, {
+        method: "PATCH",
+        json: {
+          member: {
+            name: member.name,
+            new_name: name,
+            new_type: typeText,
+            new_bits: bits,
+          },
+        },
+      }),
+    );
+  };
+
+  const remove = (): void => {
+    mutate("remove", () =>
+      api(`/data-types/${dataTypeId}/members/${encodeURIComponent(member.name)}`, {
+        method: "DELETE",
+      }),
+    );
+  };
+
+  const insertAfter = (): void => {
+    mutate("insert", () =>
+      api(`/data-types/${dataTypeId}/members`, {
+        method: "POST",
+        json: { name: addName, type: addType, after: member.name },
+      }),
+    );
+  };
+
+  const toGap = (): void => {
+    mutate("gap", () =>
+      api(`/data-types/${dataTypeId}/members/${encodeURIComponent(member.name)}/gap`, {
+        method: "POST",
+        json: {},
+      }),
+    );
+  };
+
+  const fromGap = (): void => {
+    mutate("ungap", () =>
+      api(`/data-types/${dataTypeId}/members/${encodeURIComponent(member.name)}/ungap`, {
+        method: "POST",
+        json: { name, type: typeText },
+      }),
+    );
+  };
+
+  const canInsert = addName.trim() !== "" && addType.trim() !== "";
+  const isGap = member.is_gap === true;
+  return (
+    <tr>
+      <td className="num">{`0x${member.offset.toString(16)}`}</td>
+      <td className="num">{member.size}</td>
+      <td>
+        <input
+          type="text"
+          aria-label={`Name of member ${member.name}`}
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+        {isGap ? <span className="muted"> padding</span> : null}
+      </td>
+      <td>
+        <input
+          type="text"
+          aria-label={`Type of member ${member.name}`}
+          value={typeText}
+          onChange={(event) => setTypeText(event.target.value)}
+        />
+        {member.note ? <span className="muted"> {member.note}</span> : null}
+      </td>
+      <td className="num bits-cell">
+        <input
+          type="text"
+          aria-label={`Bit width of member ${member.name}`}
+          placeholder="-"
+          value={bitsText}
+          onChange={(event) => setBitsText(event.target.value)}
+        />
+      </td>
+      <td>
+        <div className="actions-cell">
+          <Button size="sm" pending={busy === "save"} onClick={save}>
+            Save
+          </Button>
+          <Button
+            size="sm"
+            tone="ghost"
+            pending={busy === "insert"}
+            disabled={!canInsert}
+            title={canInsert ? undefined : "Fill the add-member name and type first"}
+            onClick={insertAfter}
+          >
+            Insert after
+          </Button>
+          {isGap ? (
+            <Button size="sm" tone="ghost" pending={busy === "ungap"} onClick={fromGap}>
+              Convert to member
+            </Button>
+          ) : (
+            <Button size="sm" tone="ghost" pending={busy === "gap"} onClick={toGap}>
+              Convert to gap
+            </Button>
+          )}
+          <ConfirmButton
+            label="Remove"
+            message="Remove?"
+            pending={busy === "remove"}
+            onConfirm={remove}
+          />
+        </div>
+        {error ? <ErrorNote error={error} /> : null}
+      </td>
+    </tr>
+  );
+}

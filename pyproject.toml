@@ -1,0 +1,188 @@
+[build-system]
+# setuptools 77 is the first release implementing PEP 639 (SPDX license
+# expressions); `license = "MIT"` below fails validation on older versions.
+requires = ["setuptools>=84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reportal"
+dynamic = ["version"]
+description = "Self-hosted reverse-engineering portal over rebrew, resembl and recoverage"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["reverse-engineering", "decompilation", "binary-matching", "portal"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Disassemblers",
+]
+dependencies = [
+    "fastapi>=0.141",
+    "httpx2>=2.12",
+    "mcp>=2.2",
+    "python-multipart>=0.0.9",
+    "rebrew",
+    "reportlab>=4.2",
+    "rich>=13.0",
+    "typer>=0.27.2",
+    "uvicorn>=0.52",
+]
+
+[project.urls]
+Homepage = "https://github.com/maci0/reportal"
+Repository = "https://github.com/maci0/reportal"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=6.0",
+    "ruff>=0.16.5",
+    "mypy>=1.17",
+]
+# Optional structural-similarity scoring for `reportal match`: reuses the
+# sibling `resembl` project's dependency-light token/MinHash core
+# (resembl/scoring.py), which is where pygments and its CVE floor come from.
+# The default install stays light; without this extra matching reports the
+# similarity feature as unavailable.
+similarity = [
+    "resembl",
+    "rapidfuzz>=3.13",
+]
+# Optional Cognee knowledge-graph backend.  The built-in `sqlite` backend is
+# the default and needs nothing; this extra makes the `cognee` backend report
+# available so `reportal graph-sync <id> --backend cognee` (and the API and MCP
+# equivalents) push the deterministic local graph into a Cognee dataset.
+# Without it the backend is registered but unavailable and every path answers
+# `backend-unavailable`.  Building the graph needs a configured model.  The
+# pin is the release the backend's add/cognify calls were verified against; the
+# tests exercise its add API when the extra is installed and skip without it.
+cognee = [
+    "cognee>=1.5",
+]
+
+# Third-party graph backends register through the `reportal.graph_backends`
+# entry-point group, whose value is `module:attr` naming a GraphBackend or a
+# zero-argument factory returning one (see src/reportal/graph_backends.py);
+# the `sqlite` and `cognee` backends are declared in-tree.
+
+[project.scripts]
+reportal = "reportal.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "reportal.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# The built SPA (Vite output into `assets/dist/`) ships in the wheel: the
+# package serves `index.html` and its `assets/*.js` and `assets/*.css` from
+# there.  A pattern does not cross a directory separator, so the two levels of
+# `dist/` are named explicitly; a deeper layout would need another line.
+reportal = [
+    "assets/dist/*",
+    "assets/dist/assets/*",
+]
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+# Sibling-checkout path deps, resolved relative to this pyproject.toml so the
+# manifest carries no machine-specific absolute path.  `rebrew` is a base
+# dependency: the in-process engine plus the `rebrew.workspace` config and
+# coverage.db resolver; `resembl` backs the `similarity` extra.
+rebrew = { path = "../rebrew", editable = true }
+resembl = { path = "../resembl" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["reportal"]
+
+[tool.coverage.report]
+# Ratchet: the floor only ever moves up.  It is the whole-percent coverage the
+# suite produces with these settings; the measured value and the command that
+# produced it are recorded in AGENTS.md.
+fail_under = 92
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+# `.scratch/` holds agent scratch work; ruff's default excludes do not cover
+# it, and this tree is not a git checkout for `respect-gitignore` to use.
+# `docs/` is prose: ruff formats Python code fences there, and docs are not
+# source this gate owns.
+extend-exclude = [".scratch", "docs"]
+
+[tool.ruff.lint]
+# Core groups (E/F/W/I/UP/B/SIM) plus correctness-oriented groups that stay
+# clean on this tree; every remaining rule is enforced (no blanket ignores).
+select = [
+    "E", "F", "W", "I", "UP", "B", "SIM",
+    "A", "DTZ", "G", "N", "PGH", "TID", "RUF100",
+    "T10", "C4", "RET", "PIE", "ISC", "FURB", "T20",
+]
+ignore = []
+
+[tool.ruff.lint.flake8-bugbear]
+# typer's idiom is `param = typer.Option(...)` in signature defaults, and
+# FastAPI's is `body: dict = Depends(...)` / `file: UploadFile = File(...)`;
+# without these, B008 would demand a noqa on every CLI option and every
+# request parameter.
+extend-immutable-calls = [
+    "typer.Option",
+    "typer.Argument",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+]
+
+[tool.mypy]
+# The project is annotated by convention but was never type-checked, so this is
+# a graduated set rather than `strict`: it catches every untyped def and body,
+# stale ignore, implicit Optional, non-overlapping comparison, `Any` return and
+# bare generic.  Plain `mypy` uses this config; the `--strict` tail it does not
+# cover is counted in AGENTS.md and is a documented follow-up, not a claim of
+# compliance.
+python_version = "3.12"
+files = ["src/reportal", "tests"]
+# `tools/` is not part of the type-checked tree; `tests/test_smoke_seed.py`
+# imports `tools/smoke_spa.py`, and this keeps the errors in a module outside
+# this gate's scope from being reported (the module is still parsed).
+follow_imports = "silent"
+disallow_untyped_defs = true
+check_untyped_defs = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+warn_return_any = true
+disallow_any_generics = true
+
+# The suite is held to the same set rather than relaxed.  `tests/` has no
+# `__init__.py`, so mypy names its modules by basename and no per-module
+# pattern can target the directory alone: the wildcard that matches it (`*.*`)
+# also matches every package module, which would silently weaken
+# `src/reportal`.  Fixing the suite's own annotations is stricter than a
+# per-module relaxation and keeps the package at the graduated set.
+
+# Runtime-only dependencies published without a PEP 561 marker: the sibling
+# resembl checkout (the similarity extra), cognee's LLM exception module and
+# reportlab's canvas.  There are no stubs to check against, and their values are
+# used through the annotations this project already writes.
+[[tool.mypy.overrides]]
+module = [
+    "resembl",
+    "resembl.*",
+    "cognee",
+    "cognee.*",
+    "reportlab",
+    "reportlab.*",
+]
+ignore_missing_imports = true

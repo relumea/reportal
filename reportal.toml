@@ -1,0 +1,4 @@
+# reportal workspace marker.  The directory containing this file is the
+# portal root; reportal.db beside it holds all portal state.
+[portal]
+db = "reportal.db"

@@ -1,0 +1,41 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          version: "0.8.22"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+
+      # java runs vnu.jar, shellcheck is a gate step, chromium backs the
+      # headless-Chrome smoke and audit in the `ui` target.
+      - name: Install system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jre-headless shellcheck chromium
+
+      - name: Install the VNU HTML/CSS validator
+        run: bun install -g vnu
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --extra dev
+          cd web && bun install --frozen-lockfile
+
+      # Lint, types, tests under the coverage floor, the SPA gates and the
+      # wheel packaging check all run from the one target.
+      - name: make check
+        run: make check

@@ -1,0 +1,567 @@
+# reportal error codes
+
+Every JSON error reportal returns has the same shape:
+
+```json
+{"error": "no-scan", "detail": "no threat scan for binary 7; ...", "doc_url": "https://github.com/maci0/reportal/blob/main/docs/ERRORS.md#no-scan"}
+```
+
+`error` is a stable, sanitized code: branch on it, never on `detail`, which is
+human context and may name an id, a path or an engine message. `doc_url` links
+to the section below that documents that code, or is `null` when the catalogue
+does not name it, so a code is never linked to a section that does not exist.
+
+The same vocabulary covers the stdio MCP server, where a code reaches the
+caller as an MCP tool error (`isError: true` with `{"error", "detail"}`) rather
+than an HTTP body.
+
+The catalogue itself lives in one place in the code,
+`src/reportal/error_docs.py` (`ERROR_DOC_ANCHORS`), and
+`tests/test_error_docs.py` checks it against this page in both directions:
+every code a route writes literally has a section here, every section heading
+is an anchor the catalogue names, and no code is mapped to a missing heading.
+
+Two families share one section: field-level validation messages built at the
+call site (`narrative must be a boolean`, `invalid kind`) are documented under
+[invalid-params](#invalid-params), and the two spellings of a code that both
+exist in the codebase (`invalid body` / `invalid-body`) are documented once,
+under the hyphenated heading.
+
+## Contents
+
+- Request shape: [invalid-body](#invalid-body), [invalid-json-body](#invalid-json-body), [request-body-must-be-a-json-object](#request-body-must-be-a-json-object), [invalid-params](#invalid-params), [invalid-bulk-request](#invalid-bulk-request), [invalid-data-type](#invalid-data-type), [invalid-scope-id](#invalid-scope-id), [invalid-scope-kind](#invalid-scope-kind), [invalid-size-range](#invalid-size-range), [invalid-kind](#invalid-kind), [invalid-limit](#invalid-limit), [invalid-hash](#invalid-hash), [short-hash](#short-hash), [ambiguous-hash](#ambiguous-hash), [invalid-url](#invalid-url)
+- Uploads and archives: [no-file](#no-file), [empty-file](#empty-file), [file-too-large](#file-too-large), [too-many-files](#too-many-files), [unsupported-format](#unsupported-format), [external-tool-required](#external-tool-required), [password-required](#password-required), [bad-password](#bad-password), [corrupt-archive](#corrupt-archive), [archive-too-large](#archive-too-large), [too-many-members](#too-many-members), [binary-not-on-disk](#binary-not-on-disk), [too-many-documents](#too-many-documents)
+- Not found: [binary-not-found](#binary-not-found), [function-not-found](#function-not-found), [collection-not-found](#collection-not-found), [family-not-found](#family-not-found), [comment-not-found](#comment-not-found), [conversation-not-found](#conversation-not-found), [data-type-not-found](#data-type-not-found), [document-not-found](#document-not-found), [member-not-found](#member-not-found), [node-not-found](#node-not-found), [project-not-found](#project-not-found), [run-not-found](#run-not-found), [tag-not-found](#tag-not-found), [format-not-found](#format-not-found), [domain-not-found](#domain-not-found), [component-not-found](#component-not-found), [action-not-found](#action-not-found), [entry-not-found](#entry-not-found), [history-not-found](#history-not-found), [analysis-not-found](#analysis-not-found), [candidate-not-found](#candidate-not-found), [signature-not-found](#signature-not-found), [not-found](#not-found)
+- Stored-only reads: [no-scan](#no-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
+- Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
+- Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
+- Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
+- Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
+- Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
+
+## Request shape
+
+### invalid-body
+
+`400`. The request body is not what the route expects: malformed
+`multipart/form-data`, a body field of the wrong JSON type, or an option the
+route cannot read. Read `detail` for the field, and send the shape the route's
+entry in `docs/API.md` documents.
+
+### invalid-json-body
+
+`400` (`invalid JSON body`). The request declared a JSON body that does not
+parse as UTF-8 JSON. Send a JSON object.
+
+### request-body-must-be-a-json-object
+
+`400`. The body parsed as JSON but is not an object (an array, a number, a
+string). Wrap the payload in an object.
+
+### invalid-params
+
+`400`. The shared section for per-field validation messages: a body field of
+the wrong type (`narrative must be a boolean`, `limit must be an integer`,
+`name must be a string`), a value outside its bound (`top must be positive`), or
+a value outside its closed vocabulary (`invalid params` for the auto-mode
+bounds, `invalid kind`, `invalid backend`, `invalid severity`, and the rest).
+`detail` names the field and the accepted values. Send a value inside the range
+or the set the route documents.
+
+### invalid-bulk-request
+
+`400`. A bulk request's body is missing `action`, carries an unknown action, or
+lists no ids. Send one of the route's actions and a non-empty id list.
+
+### invalid-data-type
+
+`400`. A type-model edit that no more specific code covers. `detail` names the
+operation; check the request against the data-type routes in `docs/API.md`.
+
+### invalid-scope-id
+
+`400`. A knowledge scope id that cannot be used: a project scope needs a
+negative id and a binary scope a stored binary. Send an id of the right kind.
+
+### invalid-scope-kind
+
+`400`. The scope kind is outside the closed set for that route
+(`conversations.SCOPE_KINDS`, `knowledge.SCOPE_KINDS`). Send one of the kinds
+the route documents.
+
+### invalid-size-range
+
+`400`. A function-list query gave `min_size` above `max_size`. Swap the bounds.
+
+### invalid-kind
+
+`400` (also `invalid-kind`). A query or body named a kind outside its closed
+set: a scan kind, a search kind, a data-type kind, an artifact kind or a
+diff kind. Send one of the names the route documents.
+
+### invalid-limit
+
+`400` (also `invalid limit`). A limit is not an integer, is not positive, or is
+above the route's cap. Send a positive integer inside the documented bound.
+
+### invalid-hash
+
+`400`. A SHA-256 query is not hexadecimal or is longer than 64 characters. Send
+a hex prefix.
+
+### short-hash
+
+`400`. A SHA-256 prefix shorter than `store.MIN_SHA256_PREFIX` characters would
+match too much. Send a longer prefix.
+
+### ambiguous-hash
+
+`400`. A SHA-256 prefix matches more than one stored binary. Send more
+characters, or a full digest.
+
+### invalid-url
+
+`400`. A remote-ingestion target failed validation: empty, unparsable, without
+a host, carrying credentials, with an invalid port, or on a port that is not
+allowed. Send a plain `http`/`https` URL.
+
+## Uploads and archives
+
+### no-file
+
+`400`. A multipart upload carried no `file` part. Send the file.
+
+### empty-file
+
+`400`. The uploaded part had zero bytes. Nothing was stored.
+
+### file-too-large
+
+`413`. The upload, document or fetched body is over the route's cap
+(`api.MAX_UPLOAD_BYTES`, `knowledge.MAX_DOCUMENT_BYTES`, or the remote
+ingestion cap). Send something smaller.
+
+### too-many-files
+
+`400`. A batch upload carried more parts than `api.MAX_UPLOAD_FILES`. Split the
+batch.
+
+### unsupported-format
+
+`400`. The content's suffix is not on the supported list for that route:
+neither an archive kind `reportal.archive` reads nor a text extension
+`reportal.knowledge` reads. Convert the input or unpack it yourself.
+
+### external-tool-required
+
+`400`. The archive is a format reportal deliberately does not read in-process
+(`.rar`, `.7z`), because unpacking it needs an external tool. Unpack it with
+that tool and upload the members.
+
+### password-required
+
+`400`. The archive is encrypted and no password was given. Retry with the
+`password` field.
+
+### bad-password
+
+`400`. The archive password is wrong. Retry with the right one.
+
+### corrupt-archive
+
+`400`. The archive could not be read as its declared format, or a member failed
+its own integrity check. Re-export the archive.
+
+### archive-too-large
+
+`400`. A member expands past the compression-ratio or total-size cap
+(`archive.MAX_COMPRESSION_RATIO`, `archive.MAX_TOTAL_BYTES`). Nothing is
+extracted from it.
+
+### too-many-members
+
+`400`. The archive holds more members than `archive.MAX_MEMBERS`. Split it.
+
+### binary-not-on-disk
+
+`400` for an engine call, `404` for `GET /api/binaries/<id>/download`. The stored
+row's `path` is empty or no longer holds a file, so the engine has nothing to
+read, or the download has nothing to stream. The download answers not-found
+rather than the engine family's bad-request because the caller asked for a
+resource, not for a parse. Re-upload the binary or fix the path.
+
+### too-many-documents
+
+`400`. The scope already holds `knowledge.MAX_DOCUMENTS_PER_SCOPE` documents.
+Delete one before ingesting another.
+
+## Not found
+
+### binary-not-found
+
+`404`. The id names no stored binary. The body counts every not-found case for
+this resource, including one that belongs to another binary.
+
+### function-not-found
+
+`404`. The id names no stored function.
+
+### collection-not-found
+
+`404`. The id names no stored collection.
+
+### family-not-found
+
+`404`. The id names no registered malware family.
+
+### comment-not-found
+
+`404`. The id names no analyst comment.
+
+### conversation-not-found
+
+`404`. The id names no stored conversation.
+
+### data-type-not-found
+
+`404` (`data type not found` and `data-type-not-found`). The id names no row in
+the local type model.
+
+### document-not-found
+
+`404`. The id names no ingested document.
+
+### member-not-found
+
+`404`. The selector names no member of that data type.
+
+### node-not-found
+
+`404`. The node id names no row in a stored knowledge graph.
+
+### project-not-found
+
+`404`. A knowledge scope used kind `project` with an id that is not a negative
+project id.
+
+### run-not-found
+
+`404`. The id names no pipeline run, auto run or task.
+
+### tag-not-found
+
+`404`. The tag id names no tag.
+
+### format-not-found
+
+`404`. The route serves one artifact format and the requested one is not on the
+stored payload (`yara`, `snort`, `stix`).
+
+### domain-not-found
+
+`404`. A hardening or behavior domain is outside the closed set for that scan.
+
+### component-not-found
+
+`404`. The name matches no component in the live registry.
+
+### action-not-found
+
+`404`. The journal action id names no recorded action.
+
+### entry-not-found
+
+`404`. The journal entry id names no recorded entry.
+
+### history-not-found
+
+`404`. The rename-history id, module signature-history id or data-type
+definition-history id names no recorded row.
+
+### analysis-not-found
+
+`404`. The id names no stored analysis.
+
+### candidate-not-found
+
+`404`. The candidate function of a match transfer names no stored function.
+
+### signature-not-found
+
+`404` (`signature not found` and `signature-not-found`). The function has no
+stored signature row.
+
+### not-found
+
+`404`. The catch-all for a path no route serves, and for a request that names no
+known resource. Check the path; the API's routes are listed in `docs/API.md`.
+
+## Stored-only reads
+
+### no-scan
+
+`404`. The route serves a stored scan and the binary has none of that kind. Run
+the matching POST (or the CLI command `detail` names) first; reportal never runs
+an engine on a read.
+
+### no-artifact
+
+`404`. The route serves a stored AI artifact or detection artifact and none is
+stored. Generate it first.
+
+### no-run
+
+`404`. The route serves the latest pipeline or auto run and none exists yet.
+Run it first.
+
+### no-graph
+
+`404`. The binary has no stored knowledge graph. Build it first.
+
+### no-report
+
+`404`. The generated report site does not exist yet. Run `reportal report` or
+the report POST.
+
+### no-pdf
+
+`404`. The PDF export has not been rendered for this binary. Post the PDF route
+first.
+
+### no-decompilation
+
+`404`. The AI route needs a stored decompilation and the function has none.
+Decompile it first.
+
+### no-proposal
+
+`404`. The auto-unstrip proposal the request names is not on the stored scan.
+
+### no-strings
+
+`404`. A scan needed the binary's string table and the engine returned none.
+Nothing was stored over an existing result.
+
+### no-such-match
+
+`400`. A match transfer named a stored match edge that does not exist. List the
+function's matches first.
+
+### no-engine-context
+
+`400`. The binary has no stored rebrew project directory, which the engine call
+needs as its working directory. Run `reportal import-rebrew` for it.
+
+### last-analysis
+
+`400`. The request would remove the binary's newest analysis, which every scan
+is attached to.
+
+### no-workspace
+
+`500`. The process is not inside a reportal workspace: the `reportal.toml`
+walk-up found no marker and no `REPORTAL_DB` override. Run `reportal init` or
+start from inside a workspace.
+
+## Conflicts
+
+### signature-conflict
+
+`409`. A signature transfer would overwrite a target function whose calling
+convention differs and is not empty. Rename the convention first or transfer the
+name alone.
+
+### export-exists
+
+`409`. The export target path exists and `force` was not set. Pass `force` to
+overwrite.
+
+### duplicate-name
+
+`400`. A create or rename would collide with an existing name (a data type, a
+family). Pick another name.
+
+### duplicate-member
+
+`400`. A data-type member with that name already exists.
+
+### duplicate-parameter
+
+`400`. A function signature already has a parameter with that name.
+
+### duplicate-family
+
+`409`. A family with that name is already registered.
+
+### not-reloadable
+
+`409`. The component was registered in-process and has no declaring module to
+re-read, so it cannot be reloaded. Restart the process instead.
+
+### not-withdrawable
+
+`409`. The component provides nothing and declares no revert, so there is
+nothing to withdraw.
+
+### not-active
+
+`409`. The action or run is already reverted, closed or withdrawn.
+
+### component-missing
+
+`500`. The component's declaring module was re-imported and no longer binds the
+declaration. Fix the module and reload again.
+
+## Engines and models
+
+### engine-error
+
+`500`. The rebrew engine ran and failed, or a module of it could not be
+imported. `detail` carries the engine's bounded message. Fix the underlying
+engine problem and retry; nothing partial is stored.
+
+### engine-unavailable
+
+`503`. The installed `rebrew` package cannot be imported, so no engine call can
+run. `rebrew` is a base dependency, so this means a broken install: reinstall
+with `uv sync`.
+
+### llm-error
+
+`502`. The configured OpenAI-compatible endpoint answered with an error or an
+unusable body. Nothing was stored. Check the endpoint and the model name.
+
+### llm-unavailable
+
+`503`. No LLM endpoint is configured, so the route cannot run. Configure
+`[llm] endpoint` or `REPORTAL_LLM_ENDPOINT`; every deterministic route keeps
+working without it.
+
+### pipeline-unavailable
+
+`503`. The AI decompilation composition could not be assembled at all. Check
+that the component registry loads (the route lists what failed).
+
+### backend-not-found
+
+`404`. The route names a registered plugin backend and no backend has that
+name. List the registered backends and pick one of them.
+
+### similarity-unavailable
+
+`503`. The optional `similarity` extra (the sibling `resembl`) is not installed,
+so no assembly similarity can be computed. Install `reportal[similarity]`.
+
+### backend-unavailable
+
+`503`. A registered plugin backend is not installed or not usable in this
+process (a knowledge-graph backend such as `cognee`, or a model it needs).
+Install it, or select a backend that reports `available: true`.
+
+### query-unsupported
+
+`400`. The selected knowledge-graph backend does not implement `query`. Use a
+backend whose `supports_query` is true, or read the stored graph directly.
+
+### unmapped-address
+
+`400`. A memory read names an address that no stored section covers, so there
+are no bytes to return.
+
+### write-failed
+
+`500`. A transfer computed its plan and the store write failed. Nothing was
+committed; retry the transfer.
+
+### journal-error
+
+`500`. An action-journal operation could not be completed, so the request's
+inverse was not recorded. The writes it did make are reported in `detail`.
+
+### internal-server-error
+
+`500`. An unhandled exception reached the route. The response is sanitized and
+carries no stack trace; the server log holds the traceback.
+
+## Remote ingestion
+
+### remote-ingest-disabled
+
+`403`. Remote URL ingestion is off, which is the default. Enable it with
+`REPORTAL_ALLOW_REMOTE_INGEST=1` or `[knowledge] allow_remote = true` before
+fetching a URL.
+
+### fetch-failed
+
+`502`. The guarded fetch failed: a connection error, a rejected status, or a
+body that could not be read. Nothing was stored.
+
+### unresolvable-host
+
+`400`. The target host does not resolve, or resolves to no usable address.
+
+### unsupported-content-type
+
+`415`. The response's content type is not on the ingestion allowlist. Send text
+or a document type reportal can extract.
+
+### too-many-redirects
+
+`400`. The fetch followed more redirects than the guard allows. Send the final
+URL.
+
+## Transfer and graph targets
+
+### same-binary
+
+`400`. A comparison or transfer named the same binary on both sides.
+
+### tag-not-on-binary
+
+`404`. The binary does not carry that tag, so there is nothing to remove.
+
+### unknown-binary
+
+`400`. A matching scope named a binary id that is not stored.
+
+### unknown-collection
+
+`400`. A matching scope named a collection id that is not stored.
+
+### candidate-has-no-name
+
+`400`. A name transfer's candidate has no name to copy.
+
+### candidate-has-no-signature
+
+`400`. A signature transfer's candidate has no stored signature to copy.
+
+### transfers-must-be-a-non-empty-list
+
+`400`. A bulk transfer carried an empty `transfers` list. Send at least one.
+
+### too-many-transfers
+
+`400`. A bulk transfer carried more entries than the route allows in one
+request. Split it.
+
+## Server
+
+### ui-not-built
+
+`503`. The SPA has no build: `src/reportal/assets/dist/index.html` is missing.
+Run `bun install && bun run build` in `web/`.
+
+### unexpected-host-header
+
+`400`. The `Host` header names a hostname outside the loopback allowlist, which
+is the DNS-rebinding guard. Send the loopback name the server is bound to, or
+configure a remote bind deliberately.
+
+### provide-a-name-or-all-not-both
+
+`400`. A component reload was given both a `name` and `all`. Send one.
+
+### provide-a-component-name-or-all
+
+`400`. A component reload was given neither a `name` nor `all`. Send one.

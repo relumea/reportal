@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Workspace runtime state: the portal database and its SQLite sidecars (the DB
+# name follows `[portal] db`), the content-addressed uploaded binaries and the
+# generated report sites.  Local state, never source.
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+/binaries/
+/reports/
+
+# Agent scratch (throwaway probes, seeded e2e workspaces, captures)
+.scratch/
+
+# Build artifacts.  `dist/` covers both the wheel and the Vite SPA bundled into
+# src/reportal/assets/dist/.
+build/
+dist/
+web/node_modules/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Coverage
+.coverage
+htmlcov/
+
+# Environment / secrets (bun loads web/.env at build time)
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,32 @@
+{
+  "name": "reportal-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "bun@1.4.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "oxlint src tests playwright.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test:ui": "playwright test",
+    "test:ui:headed": "playwright test --headed"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.102.8",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-router": "^8.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "oxlint": "^1.82.0",
+    "typescript": "~5.9.3",
+    "vite": "^8.0.1"
+  }
+}

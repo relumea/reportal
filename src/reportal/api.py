@@ -1,0 +1,6669 @@
+"""JSON API routes for reportal.
+
+Every route lives under ``/api/`` and returns JSON.  POST bodies are JSON
+objects; malformed input yields a 400 with a fixed message, unknown ids a
+404.  The routes mount on :data:`router`, which :mod:`reportal.webapp`
+includes in the application.
+
+A handler that reads a JSON body declares it as ``body: dict[str, Any] =
+Depends(json_body)``, or ``optional_json_body`` when an absent body is `{}`.
+A handler that reads the query string takes ``request: Request`` and passes it
+to the ``_query_*`` helpers, which read through ``request.query_params``.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import json
+import os
+import re
+import shutil
+import sqlite3
+import tempfile
+import threading
+from collections.abc import Iterator, Mapping, Sequence
+from functools import partial
+from pathlib import Path, PurePosixPath
+from typing import Any
+
+from fastapi import APIRouter, Depends, Request
+from python_multipart.exceptions import MultipartParseError
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException
+from starlette.responses import Response, StreamingResponse
+
+from reportal import (
+    __version__,
+    analysis_log,
+    archive,
+    auto_mode,
+    auto_store,
+    auto_workers,
+    behavior,
+    bulk_actions,
+    capabilities,
+    comments,
+    components,
+    composition,
+    conversations,
+    data_types,
+    diffview,
+    effects,
+    engines,
+    families,
+    filetypes,
+    function_triage,
+    graph,
+    graph_backends,
+    hardening,
+    integrations,
+    journal,
+    knowledge,
+    lineage,
+    llm,
+    matching,
+    pdf,
+    pipeline,
+    protocols,
+    related,
+    remediation,
+    remote_ingest,
+    renames,
+    secrets,
+    signatures,
+    similarity,
+    store,
+    surface,
+    threat,
+    unstrip,
+)
+from reportal._paths import binaries_dir, db_path, reports_dir
+from reportal.server import db, json_body, json_error, json_response, optional_json_body
+from reportal.surface import classified as _classified
+from reportal.surface import journaled_data_type_write as _journal_data_type_write
+from reportal.surface import journaled_signature_write as _journal_signature_write
+from reportal.surface import store_lineage as _store_lineage
+
+
+def _fail(status: int, error: str, detail: str) -> Exception:
+    """The HTTP answer to a shared-helper failure: the JSON error envelope."""
+    return json_error(status, error=error, detail=detail)
+
+
+def _family_error(exc: families.FamilyError) -> Response:
+    """Map a family validation failure to its 400 response."""
+    error, detail = surface.family_detail(exc)
+    return json_error(400, error=error, detail=detail)
+
+
+# The shared checks, bound to this surface's error channel.
+_binary_file = partial(surface.binary_file, fail=_fail)
+_engine = partial(surface.engine, fail=_fail)
+_project_context = partial(surface.project_context, fail=_fail)
+_require_binary = partial(surface.require_binary, fail=_fail)
+
+router = APIRouter()
+
+# The disassembly format `disasm_cache` holds.  The cache key is the function
+# id alone, so only this format is cached; a `hex` request runs the engine and
+# leaves the cache untouched rather than risk serving the wrong listing.
+CACHEABLE_DISASM_FORMAT = "nasm"
+
+# Functions decompiled by a struct recovery run when the caller names no limit.
+# `rebrew recover-structs` decompiles each function, so a live request needs a
+# bound; the engine's own `--limit 0` means unlimited.
+DEFAULT_STRUCT_LIMIT = 50
+
+# Largest binary `POST /api/binaries` accepts.  The handler streams the part to
+# disk and stops at this cap, so an oversized upload never writes the whole
+# body; the response is 413 `file-too-large`.
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+
+# Most files one batch upload may carry.  Each part is streamed to disk, so the
+# count is a resource bound beside the per-file size cap.
+MAX_UPLOAD_FILES = 64
+
+# Explicit per-file upload hints the batch options accept.  They mirror the
+# hosted portal's File Format and ISA pickers and the suffix-derived `format`/
+# `arch` columns reportal already fills (the arch spellings are the engine's
+# own, `matching.ARCHITECTURES`); an absent value leaves the stored one.
+UPLOAD_FORMATS: tuple[str, ...] = ("pe", "elf", "blob")
+UPLOAD_ARCHITECTURES: tuple[str, ...] = ("x86_32", "x86_64", "arm64")
+
+# Read size while an upload streams to disk.
+_UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+# Shape of the suffix kept from a client filename.  Anything else is dropped
+# rather than passed through, so no client-supplied text reaches the stored
+# file name.
+_UPLOAD_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
+
+# Accepted spellings of a boolean query parameter (`?named=`).  Anything else
+# is a 400 rather than a silent false.
+_QUERY_TRUE = frozenset({"1", "true", "yes"})
+_QUERY_FALSE = frozenset({"0", "false", "no", ""})
+
+# Scope of the matches a binary's match run replaces: every function of the
+# binary owns the rows, and the run rewrites them.
+_BINARY_MATCHES_WHERE = (
+    "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
+    " WHERE a.binary_id = ?)"
+)
+
+# Scope of the signature rows a binary's seed run replaces: one row per function.
+_BINARY_SIGNATURES_WHERE = (
+    "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
+    " WHERE a.binary_id = ?)"
+)
+
+# Scope of the signature-history rows a binary's seed run appends.
+_BINARY_SIGNATURE_HISTORY_WHERE = _BINARY_SIGNATURES_WHERE
+
+# Function-list filter vocabularies.  The name-source labels and the
+# capability names come from the modules that classify them, so the route
+# validates against the one definition instead of a copy that could drift.
+FUNCTION_NAME_SOURCES: tuple[str, ...] = composition.NAME_SOURCE_LABELS
+FUNCTION_CAPABILITIES: tuple[str, ...] = tuple(rule.name for rule in capabilities.CAPABILITIES)
+
+# Largest function size a `?max_size=` bound accepts, in bytes.  A function
+# larger than 1 GiB is not a real function, so an out-of-range bound is a
+# request error rather than a query the database has to plan.
+MAX_FUNCTION_SIZE = 1 << 30
+
+# Access a global reference's engine kind names.  A kind the table does not
+# carry is reported without an access rather than guessed at: an address load
+# (`lea`, `mov`, `push`) references the address without reading its value, and
+# a read-modify-write kind (`and_mem`, `inc_mem`) is neither one thing nor the
+# other, so both stay null.
+GLOBAL_ACCESS: dict[str, str] = {
+    "mov_mem": "read",
+    "push_mem": "read",
+    "mov_mem_store": "write",
+}
+
+
+def _query_bool(request: Request, name: str, default: bool) -> bool:
+    """Return boolean query parameter *name*, or *default* when absent."""
+    raw = request.query_params.get(name)
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in _QUERY_TRUE:
+        return True
+    if value in _QUERY_FALSE:
+        return False
+    raise json_error(400, error=f"{name} must be a boolean")
+
+
+def _query_int(request: Request, name: str) -> int | None:
+    """Return integer query parameter *name*, or None when absent or blank."""
+    raw = request.query_params.get(name)
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise json_error(400, error=f"{name} must be an integer") from None
+
+
+def _query_text(request: Request, name: str) -> str | None:
+    """Return trimmed query parameter *name*, or None when absent or blank."""
+    raw = request.query_params.get(name)
+    if raw is None:
+        return None
+    value = raw.strip()
+    return value or None
+
+
+def _invalid_query(name: str, value: str, allowed: Sequence[str]) -> Response:
+    """The 400 for a query parameter outside its closed value set."""
+    return json_error(
+        400,
+        error=f"invalid {name}",
+        detail=f"unknown {name}: {value}; expected one of {', '.join(allowed)}",
+    )
+
+
+def _require_int(body: dict[str, Any], key: str) -> int:
+    """Return ``body[key]`` as an int, or raise a 400 for a non-integer."""
+    value = body.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise json_error(400, error=f"{key} must be an integer")
+    return value
+
+
+def _require_str(body: dict[str, Any], key: str) -> str:
+    """Return ``body[key]`` as a non-empty string, or raise a 400."""
+    value = body.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise json_error(400, error=f"{key} must be a non-empty string")
+    return value
+
+
+def _optional_str(body: dict[str, Any], key: str, default: str = "") -> str:
+    """Return ``body[key]`` as a string, defaulting when absent."""
+    value = body.get(key, default)
+    if not isinstance(value, str):
+        raise json_error(400, error=f"{key} must be a string")
+    return value
+
+
+def _optional_number(body: dict[str, Any], key: str, default: float) -> float:
+    """Return ``body[key]`` as a float, defaulting when absent."""
+    value = body.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise json_error(400, error=f"{key} must be a number")
+    return float(value)
+
+
+def _optional_int(body: dict[str, Any], key: str, default: int) -> int:
+    """Return ``body[key]`` as an int, defaulting when absent."""
+    value = body.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise json_error(400, error=f"{key} must be an integer")
+    return value
+
+
+def _optional_bool(body: dict[str, Any], key: str, default: bool) -> bool:
+    """Return ``body[key]`` as a bool, defaulting when absent."""
+    value = body.get(key, default)
+    if not isinstance(value, bool):
+        raise json_error(400, error=f"{key} must be a boolean")
+    return value
+
+
+def _optional_int_list(body: dict[str, Any], key: str) -> list[int] | None:
+    """Return ``body[key]`` as a list of ints, or None when absent."""
+    value = body.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(
+        isinstance(item, bool) or not isinstance(item, int) for item in value
+    ):
+        raise json_error(400, error=f"{key} must be a list of integers")
+    return [int(item) for item in value]
+
+
+def _open() -> sqlite3.Connection:
+    return db()
+
+
+# ── Action journal helpers ─────────────────────────────────────────
+
+
+# ── Health ─────────────────────────────────────────────────────────
+#
+# ``GET /api/health`` has moved to :mod:`reportal.rest`.
+
+
+# ── Binaries ───────────────────────────────────────────────────────
+
+
+@router.get("/api/binaries")
+def list_binaries() -> Response:
+    with contextlib.closing(_open()) as conn:
+        return json_response({"binaries": store.list_binaries(conn)})
+
+
+def _upload_suffix(raw_filename: str) -> str:
+    """Return the accepted suffix of a client filename, else ""."""
+    suffix = Path(raw_filename).suffix
+    return suffix if _UPLOAD_SUFFIX.match(suffix) else ""
+
+
+def _client_name(raw_filename: str) -> str:
+    """Return the display name a client filename suggests, else "".
+
+    Only the basename is kept, and a name that survives as a path component
+    (``.`` or ``..``) is dropped so the caller falls back to the content hash.
+    """
+    candidate = Path(raw_filename).name
+    return "" if candidate in {"", ".", ".."} else candidate
+
+
+class _PartError(Exception):
+    """One multipart part reportal refuses; the route renders it as a JSON body."""
+
+    def __init__(self, status: int, error: str, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.error = error
+        self.detail = detail
+
+
+def _stream_upload(upload: Any, directory: Path) -> tuple[Path, str, int]:
+    """Stream one multipart part into *directory*, hashing as it goes.
+
+    Returns ``(temporary path, sha256, size)``.  The write stops at
+    :data:`MAX_UPLOAD_BYTES`; a part that passes the cap removes the temporary
+    file and raises :class:`_PartError`, so no oversized upload reaches the
+    disk.  The batch path catches that per file; the single-file path answers
+    its 413 unchanged.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(dir=directory, prefix=".upload-")
+    temp = Path(temp_name)
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            while True:
+                chunk = upload.file.read(_UPLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise _PartError(
+                        413,
+                        "file-too-large",
+                        f"upload exceeds {MAX_UPLOAD_BYTES} bytes",
+                    )
+                digest.update(chunk)
+                handle.write(chunk)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    return temp, digest.hexdigest(), size
+
+
+def _read_upload(upload: Any, limit: int) -> bytes:
+    """Read one multipart part into memory, raising a 413 past *limit*.
+
+    A document is stored whole (its text is what search ranks), so unlike the
+    binary upload it is buffered rather than streamed to a file; *limit* is
+    what keeps the buffer bounded.
+    """
+    buffer = bytearray()
+    while True:
+        chunk = upload.file.read(_UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        buffer.extend(chunk)
+        if len(buffer) > limit:
+            raise json_error(413, error="file-too-large", detail=f"upload exceeds {limit} bytes")
+    return bytes(buffer)
+
+
+def _file_option_str(entry: Mapping[str, Any], key: str) -> str:
+    """Return a per-file upload option as a trimmed string, or ""."""
+    value = entry.get(key, "")
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise json_error(400, error="invalid-body", detail=f"file option {key} must be a string")
+    return value.strip()
+
+
+def _file_option_str_list(entry: Mapping[str, Any], key: str) -> list[str]:
+    """Return a per-file upload option as a list of trimmed strings."""
+    value = entry.get(key, [])
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise json_error(
+            400, error="invalid-body", detail=f"file option {key} must be a list of strings"
+        )
+    return [item.strip() for item in value if item.strip()]
+
+
+def _file_option_int_list(entry: Mapping[str, Any], key: str) -> list[int]:
+    """Return a per-file upload option as a list of integers."""
+    value = entry.get(key, [])
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(
+        isinstance(item, bool) or not isinstance(item, int) for item in value
+    ):
+        raise json_error(
+            400, error="invalid-body", detail=f"file option {key} must be a list of integers"
+        )
+    return [int(item) for item in value]
+
+
+def _file_options(raw: Any, count: int) -> list[dict[str, Any]]:
+    """Parse the batch upload's per-file options, one entry per ``file`` part.
+
+    The ``files`` field is a JSON array beside the repeated ``file`` parts,
+    entry *i* describing part *i*.  An absent field means every file takes its
+    defaults (the client filename and the suffix-derived format).
+    """
+    text = "" if raw is None else str(raw).strip()
+    if not text:
+        return [{} for _ in range(count)]
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        raise json_error(
+            400, error="invalid-body", detail="the 'files' field is not JSON"
+        ) from None
+    if not isinstance(parsed, list) or any(not isinstance(entry, dict) for entry in parsed):
+        raise json_error(
+            400, error="invalid-body", detail="the 'files' field must be a JSON array of objects"
+        )
+    if len(parsed) != count:
+        raise json_error(
+            400,
+            error="invalid-body",
+            detail=(
+                f"the 'files' field describes {len(parsed)} files but the request carries {count}"
+            ),
+        )
+    return [dict(entry) for entry in parsed]
+
+
+def _apply_upload_tags(
+    conn: sqlite3.Connection, log: journal.Journal, binary_id: int, tags: Sequence[str]
+) -> list[str]:
+    """Apply *tags* to a freshly uploaded binary, journaling every new row."""
+    applied: list[str] = []
+    for name in tags:
+        created = store.find_tag(conn, name) is None
+        tag_id = store.create_tag(conn, name)
+        if created:
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                f"created tag {tag_id}",
+                journal.row_delete_descriptor("tags", tag_id),
+            )
+        if store.add_binary_tag(conn, binary_id, tag_id):
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                f"tagged binary {binary_id} with tag {tag_id}",
+                journal.row_delete_descriptor(
+                    "binary_tags", {"binary_id": binary_id, "tag_id": tag_id}
+                ),
+            )
+        applied.append(name)
+    return applied
+
+
+def _apply_upload_collections(
+    conn: sqlite3.Connection, log: journal.Journal, binary_id: int, collection_ids: Sequence[int]
+) -> list[int]:
+    """Add a freshly uploaded binary to each named collection, journaling the links."""
+    applied: list[int] = []
+    for collection_id in collection_ids:
+        if store.add_collection_binary(conn, collection_id, binary_id):
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                f"added binary {binary_id} to collection {collection_id}",
+                journal.row_delete_descriptor(
+                    "collection_binaries",
+                    {"collection_id": collection_id, "binary_id": binary_id},
+                ),
+            )
+        applied.append(collection_id)
+    return applied
+
+
+def _upload_entry(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    upload: Any,
+    entry: Mapping[str, Any],
+    directory: Path,
+) -> dict[str, Any]:
+    """Register one part of a batch upload and report its outcome.
+
+    A refusal is reported in the entry instead of failing the request, so the
+    files that succeeded stay registered.
+    """
+    raw_name = str(upload.filename or "")
+    display = _file_option_str(entry, "name") or _client_name(raw_name) or raw_name
+    try:
+        temp, sha256, size = _stream_upload(upload, directory)
+    except _PartError as exc:
+        return _upload_error_entry(display, exc.error, exc.detail, exc.status)
+    if size == 0:
+        temp.unlink(missing_ok=True)
+        return _upload_error_entry(display, "empty-file", "uploaded file is empty")
+    tags = _file_option_str_list(entry, "tags")
+    collection_ids = _file_option_int_list(entry, "collection_ids")
+    existing = store.find_binary_by_sha256(conn, sha256)
+    if existing is not None:
+        temp.unlink(missing_ok=True)
+        binary_id = int(existing["id"])
+        duplicate = True
+    else:
+        suffix = _upload_suffix(raw_name)
+        target = directory / f"{sha256}{suffix}"
+        os.replace(temp, target)
+        binary_id = store.add_binary(
+            conn,
+            sha256=sha256,
+            name=display or sha256,
+            path=str(target),
+            size=size,
+            fmt=_file_option_str(entry, "format") or suffix.lstrip(".").upper(),
+            arch=_file_option_str(entry, "arch"),
+        )
+        duplicate = False
+        log.record(
+            effects.EFFECT_FILE_DELETE,
+            f"stored uploaded file {target}",
+            journal.file_delete_descriptor(str(target)),
+        )
+        log.record(
+            effects.EFFECT_ROW_DELETE,
+            f"registered binary {binary_id}",
+            journal.row_delete_descriptor("binaries", binary_id),
+        )
+    applied_tags = _apply_upload_tags(conn, log, binary_id, tags)
+    applied_collections = _apply_upload_collections(conn, log, binary_id, collection_ids)
+    return {
+        "file": display or sha256,
+        "binary_id": binary_id,
+        "duplicate": duplicate,
+        "tags": applied_tags,
+        "collections": applied_collections,
+        "error": None,
+    }
+
+
+def _upload_error_entry(name: str, error: str, detail: str, status: int = 400) -> dict[str, Any]:
+    """One batch entry for a part reportal refused; it never carries an id."""
+    return {
+        "file": name,
+        "binary_id": None,
+        "duplicate": False,
+        "tags": [],
+        "collections": [],
+        "error": {"error": error, "detail": detail, "status": status},
+    }
+
+
+@router.get("/api/binaries/{binary_id}")
+def get_binary(binary_id: int) -> Response:
+    with contextlib.closing(_open()) as conn:
+        binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        return json_error(404, error="binary not found", detail=f"no binary with id {binary_id}")
+    return json_response(binary)
+
+
+class ExtractError(Exception):
+    """An archive extraction the caller refuses, as ``(status, code, detail)``."""
+
+    def __init__(self, status: int, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.status = status
+        self.code = code
+        self.detail = detail
+
+
+def _sha256_file(path: Path) -> str:
+    """The sha256 of *path*, streamed so a large member is never buffered."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(_UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _member_collection_name(binary: Mapping[str, Any]) -> str:
+    """The default collection name an archive's extracted binaries join."""
+    return f"{binary.get('name') or 'archive'} extraction"
+
+
+def _resolve_extract_collection(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    binary: Mapping[str, Any],
+    collection_id: int,
+) -> tuple[int, str]:
+    """Return the collection an extraction joins, creating a default when none is named."""
+    if collection_id:
+        row = next(
+            (entry for entry in store.list_collections(conn) if int(entry["id"]) == collection_id),
+            None,
+        )
+        if row is None:
+            raise ExtractError(
+                404, "collection not found", f"no collection with id {collection_id}"
+            )
+        return collection_id, str(row["name"])
+    name = _member_collection_name(binary)
+    existing = store.find_collection_by_name(conn, name)
+    if existing is not None:
+        return int(existing["id"]), str(existing["name"])
+    created = store.create_collection(
+        conn,
+        name=name,
+        description=f"binaries extracted from {binary.get('name') or 'an archive'}",
+        scope="binary",
+    )
+    log.record(
+        effects.EFFECT_ROW_DELETE,
+        f"created collection {created}",
+        journal.row_delete_descriptor("collections", created),
+    )
+    return created, name
+
+
+def _register_member(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    member: archive.MemberOutcome,
+    directory: Path,
+) -> dict[str, Any]:
+    """Register one extracted member as a stored binary, or report it as a duplicate."""
+    if member.path is None:
+        return {
+            "name": member.name,
+            "size": member.size,
+            "binary_id": None,
+            "duplicate": False,
+            "skipped": member.skipped,
+        }
+    display = PurePosixPath(member.name).name or member.name
+    sha256 = _sha256_file(member.path)
+    size = member.path.stat().st_size
+    existing = store.find_binary_by_sha256(conn, sha256)
+    if existing is not None:
+        binary_id = int(existing["id"])
+        member.path.unlink(missing_ok=True)
+        duplicate = True
+    else:
+        suffix = _upload_suffix(display)
+        target = directory / f"{sha256}{suffix}"
+        os.replace(member.path, target)
+        binary_id = store.add_binary(
+            conn,
+            sha256=sha256,
+            name=display or sha256,
+            path=str(target),
+            size=size,
+            fmt=suffix.lstrip(".").upper(),
+        )
+        duplicate = False
+        log.record(
+            effects.EFFECT_FILE_DELETE,
+            f"stored extracted file {target}",
+            journal.file_delete_descriptor(str(target)),
+        )
+        log.record(
+            effects.EFFECT_ROW_DELETE,
+            f"registered extracted binary {binary_id}",
+            journal.row_delete_descriptor("binaries", binary_id),
+        )
+    return {
+        "name": display,
+        "size": size,
+        "binary_id": binary_id,
+        "duplicate": duplicate,
+        "skipped": "",
+    }
+
+
+def extract_archive_binary(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    *,
+    password: str = "",
+    collection_id: int = 0,
+) -> dict[str, Any]:
+    """Unpack the stored archive *binary_id* and register the binaries it holds.
+
+    Shared by the HTTP route, the CLI and the MCP tool.  Members are extracted
+    into a temporary directory under the workspace `binaries/` directory (never
+    outside it) and every member that survives :mod:`reportal.archive`'s safety
+    checks is registered by content hash exactly like an upload.  The binaries
+    land in one collection (the named one, else one named after the archive,
+    created on demand).  Raises :class:`ExtractError` for an unknown binary, a
+    row without a file, an unknown collection, or an archive reportal cannot
+    read at all.
+    """
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise ExtractError(404, "binary not found", f"no binary with id {binary_id}")
+    archive_path = Path(str(binary["path"]))
+    if not archive_path.is_file():
+        raise ExtractError(
+            400, "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+        )
+    directory = binaries_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    temp_root = Path(tempfile.mkdtemp(dir=directory, prefix=".extract-"))
+    try:
+        try:
+            extraction = archive.extract(archive_path, temp_root, password=password or None)
+        except archive.ArchiveError as exc:
+            raise ExtractError(400, exc.code, exc.detail) from None
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            resolved_id, collection_name = _resolve_extract_collection(
+                conn, log, binary, collection_id
+            )
+            members: list[dict[str, Any]] = []
+            for member in extraction.members:
+                entry = _register_member(conn, log, member, directory)
+                registered = entry["binary_id"]
+                if registered is not None and store.add_collection_binary(
+                    conn, resolved_id, int(registered)
+                ):
+                    log.record(
+                        effects.EFFECT_ROW_DELETE,
+                        f"added binary {registered} to collection {resolved_id}",
+                        journal.row_delete_descriptor(
+                            "collection_binaries",
+                            {"collection_id": resolved_id, "binary_id": registered},
+                        ),
+                    )
+                members.append(entry)
+        return log.attach(
+            {
+                "binary_id": binary_id,
+                "collection_id": resolved_id,
+                "collection_name": collection_name,
+                "members": members,
+                "notes": list(extraction.notes),
+                "kept": sum(1 for row in members if row["skipped"] == ""),
+                "skipped": sum(1 for row in members if row["skipped"] != ""),
+            }
+        )
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+
+
+@router.post("/api/binaries/{binary_id}/extract")
+def extract_binary(binary_id: int, body: dict[str, Any] = Depends(optional_json_body)) -> Response:
+    """Unpack a stored archive and register the binaries it holds.
+
+    The archive is a stored binary; each member is reported with the id it
+    became or the reason it was skipped, so a partially readable archive still
+    registers what it could.  The whole request is **one journal action**:
+    reverting its ``journal_action`` removes every binary it created, the file
+    it stored and the collection it joined.  An archive reportal cannot read at
+    all (an unsupported format, ``.rar``/``.7z`` without the external unpacker,
+    a missing or wrong password) is 400 with the archive module's code.
+    """
+    password = _optional_str(body, "password")
+    collection_id = _optional_int(body, "collection_id", 0)
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = extract_archive_binary(
+                conn, binary_id, password=password, collection_id=collection_id
+            )
+        except ExtractError as exc:
+            return json_error(exc.status, error=exc.code, detail=exc.detail)
+    return json_response(payload)
+
+
+def _function_capabilities(function: dict[str, Any]) -> frozenset[str]:
+    """Capability names a function's own name matches, through the rule table.
+
+    A function name is an import name when the row is an import stub (a THUNK
+    named after the API it forwards to), so the binary capability classifier
+    answers the same question for one name: it is run with an empty string
+    list, and only its import rules can match.
+    """
+    name = str(function.get("name") or "")
+    if not name:
+        return frozenset()
+    found = capabilities.classify([{"name": name}], [])
+    return frozenset(str(entry["name"]) for entry in found)
+
+
+def _query_referrer_address(request: Request) -> int | None:
+    """Return the `refers_to` query parameter as an address, or None when absent."""
+    raw = _query_text(request, "refers_to")
+    if raw is None:
+        return None
+    try:
+        return int(raw, 0)
+    except ValueError:
+        raise json_error(
+            400,
+            error="invalid refers_to",
+            detail="refers_to must be an integer or 0x-prefixed hex",
+        ) from None
+
+
+def _containing_function_ids(
+    functions: Sequence[Mapping[str, Any]], addresses: Sequence[int]
+) -> set[int]:
+    """The ids of the stored functions whose byte range contains one of *addresses*.
+
+    A function with no size contains nothing, and an address no stored function
+    covers is simply not among the referrers: there is nowhere to navigate to.
+    """
+    covered: set[int] = set()
+    for row in functions:
+        start = int(row["va"])
+        size = int(row["size"] or 0)
+        if size <= 0:
+            continue
+        if any(start <= address < start + size for address in addresses):
+            covered.add(int(row["id"]))
+    return covered
+
+
+@router.get("/api/binaries/{binary_id}/functions")
+def list_binary_functions(request: Request, binary_id: int) -> Response:
+    """Functions of one binary, filtered and sorted from the query string.
+
+    Filters: ``name_source`` (one of :data:`FUNCTION_NAME_SOURCES`),
+    ``capability`` (one of :data:`FUNCTION_CAPABILITIES`), ``min_size`` and
+    ``max_size`` (inclusive byte bounds, at most :data:`MAX_FUNCTION_SIZE`),
+    ``string`` (a literal the stored decompilation carries), ``match`` (one of
+    :data:`reportal.store.FUNCTION_MATCH_VALUES`), ``refers_to`` (an address
+    whose referrers the list keeps; the one engine-backed filter, resolved
+    through the same ``rebrew xrefs`` call the xrefs route makes), ``sort``
+    (one of :data:`reportal.store.FUNCTION_SORT_COLUMNS`) and ``order`` (one
+    of :data:`reportal.store.FUNCTION_ORDERS`).  An unknown value is a 400.
+    ``total`` counts the binary's functions before filtering, so a reader can
+    tell a filter from a small binary.
+    """
+    min_size = _query_int(request, "min_size")
+    max_size = _query_int(request, "max_size")
+    for name, bound in (("min_size", min_size), ("max_size", max_size)):
+        if bound is not None and not 0 <= bound <= MAX_FUNCTION_SIZE:
+            return json_error(
+                400,
+                error=f"invalid {name}",
+                detail=f"{name} must be between 0 and {MAX_FUNCTION_SIZE}",
+            )
+    if min_size is not None and max_size is not None and min_size > max_size:
+        return json_error(400, error="invalid size range", detail="min_size is above max_size")
+    name_source = _query_text(request, "name_source")
+    if name_source is not None and name_source not in FUNCTION_NAME_SOURCES:
+        return _invalid_query("name_source", name_source, FUNCTION_NAME_SOURCES)
+    capability = _query_text(request, "capability")
+    if capability is not None and capability not in FUNCTION_CAPABILITIES:
+        return _invalid_query("capability", capability, FUNCTION_CAPABILITIES)
+    match = _query_text(request, "match")
+    if match is not None and match not in store.FUNCTION_MATCH_VALUES:
+        return _invalid_query("match", match, store.FUNCTION_MATCH_VALUES)
+    refers_to = _query_referrer_address(request)
+    sort = _query_text(request, "sort") or store.DEFAULT_FUNCTION_SORT
+    if sort not in store.FUNCTION_SORT_COLUMNS:
+        return _invalid_query("sort", sort, tuple(store.FUNCTION_SORT_COLUMNS))
+    order = _query_text(request, "order") or store.DEFAULT_FUNCTION_ORDER
+    if order not in store.FUNCTION_ORDERS:
+        return _invalid_query("order", order, store.FUNCTION_ORDERS)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        functions = store.list_functions(
+            conn,
+            binary_id=binary_id,
+            min_size=min_size,
+            max_size=max_size,
+            string=_query_text(request, "string"),
+            match=match,
+            sort=sort,
+            order=order,
+        )
+        total = store.count_functions(conn, binary_id=binary_id)
+        referrers: set[int] | None = None
+        if refers_to is not None:
+            project_dir = _project_context(conn, binary_id)
+            try:
+                result = _engine().xrefs(project_dir, refers_to)
+            except engines.EngineError as exc:
+                return json_error(500, error="engine-error", detail=str(exc))
+            refs = result.get("refs")
+            from_vas = [
+                int(ref["from_va"])
+                for ref in (refs if isinstance(refs, list) else [])
+                if isinstance(ref, Mapping) and isinstance(ref.get("from_va"), int)
+            ]
+            referrers = _containing_function_ids(functions, from_vas)
+            functions = [row for row in functions if int(row["id"]) in referrers]
+    if name_source is not None:
+        label = composition.name_source_label
+        functions = [row for row in functions if label(row) == name_source]
+    if capability is not None:
+        functions = [row for row in functions if capability in _function_capabilities(row)]
+    return json_response({"functions": functions, "count": len(functions), "total": total})
+
+
+# ── Engine routes ──────────────────────────────────────────────────
+
+
+@router.get("/api/binaries/{binary_id}/fingerprint")
+def get_binary_fingerprint(binary_id: int) -> Response:
+    """Stored fingerprint when one exists, else a live compute that is not stored."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = store.get_fingerprint(conn, binary_id)
+        if stored is not None:
+            return json_response(stored)
+        path = _binary_file(conn, binary_id)
+        fingerprint = _engine().fingerprint(path)
+    return json_response(fingerprint)
+
+
+@router.post("/api/binaries/{binary_id}/fingerprint")
+def store_binary_fingerprint(binary_id: int) -> Response:
+    """Compute and store a binary fingerprint through the rebrew engine."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            path = _binary_file(conn, binary_id)
+            before = journal.journaled_rows(
+                conn,
+                log,
+                table="binary_fingerprints",
+                where="binary_id = ?",
+                params=(binary_id,),
+                description=f"replaced the fingerprint of binary {binary_id}",
+            )
+            fingerprint = _engine().fingerprint(path)
+            store.set_fingerprint(conn, binary_id, fingerprint)
+            if not before:
+                journal.journaled_create(
+                    log,
+                    table="binary_fingerprints",
+                    key={"binary_id": binary_id},
+                    description=f"stored the fingerprint of binary {binary_id}",
+                )
+    return json_response(log.attach(fingerprint))
+
+
+@router.get("/api/binaries/{binary_id}/imports")
+def get_binary_imports(binary_id: int) -> Response:
+    """Live pass-through of the engine's import table for a binary."""
+    with contextlib.closing(_open()) as conn:
+        path = _binary_file(conn, binary_id)
+        imports = _engine().imports(path)
+    return json_response(imports)
+
+
+@router.get("/api/binaries/{binary_id}/strings")
+def get_binary_strings(request: Request, binary_id: int) -> Response:
+    """Live strings from the engine, normalized and sorted server-side.
+
+    ``?sort=`` orders by ``value`` (the text) or ``length`` and ``?order=`` by
+    ``asc``/``desc``; an unknown value is 400.  Each string carries its VA when
+    the engine reported one, which is what makes a click-through to the
+    functions referencing it possible; an absent field stays ``null``.
+    """
+    sort = _query_text(request, "sort") or store.DEFAULT_STRING_SORT
+    if sort not in store.STRING_SORTS:
+        return _invalid_query("sort", sort, store.STRING_SORTS)
+    order = _query_text(request, "order") or store.DEFAULT_FUNCTION_ORDER
+    if order not in store.FUNCTION_ORDERS:
+        return _invalid_query("order", order, store.FUNCTION_ORDERS)
+    with contextlib.closing(_open()) as conn:
+        path = _binary_file(conn, binary_id)
+        payload = _engine().strings(path)
+    entries = store.normalize_string_entries(payload)
+    return json_response(
+        {
+            "binary": payload.get("binary"),
+            "count": len(entries),
+            "strings": store.sort_string_entries(entries, sort=sort, order=order),
+            "binary_id": binary_id,
+            "sort": sort,
+            "order": order,
+        }
+    )
+
+
+def _match_view(row: Mapping[str, Any]) -> dict[str, Any]:
+    """One stored match row with the derived metric fields the view renders.
+
+    ``difference`` is the platform's Difference metric, the complement
+    ``100 - similarity``, and it is derived here rather than stored; ``band``
+    is the quality band the similarity falls into.
+    """
+    similarity_score = float(row.get("similarity") or 0.0)
+    return {
+        **row,
+        "difference": matching.difference_of(similarity_score),
+        "band": composition.quality_band(similarity_score),
+    }
+
+
+@router.post("/api/binaries/{binary_id}/match")
+def match_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Rank a binary's functions against the local corpus under Match Settings.
+
+    The body carries the documented settings, each with a default that
+    reproduces the run from before the settings existed: ``min_similarity``
+    (80.0, a percentage floor), ``min_confidence`` (0.0, the softmax floor),
+    ``include_self`` (true, whether the binary's own functions may be
+    candidates), ``top`` (10), ``platforms`` (``windows``, ``linux``,
+    ``android``), ``architectures`` (``x86_64``, ``x86_32``, ``arm64``),
+    ``binary_ids`` and ``collection_ids``.  A value outside its range or its
+    closed vocabulary is 400 with the repo's error vocabulary; an unknown
+    binary or collection id is 400 too.
+
+    The platform and architecture scope is best effort: it compares a
+    binary's stored fingerprint when it has one, else its suffix-derived
+    ``format``/``arch`` columns, so it is a coarse filter and not a guarantee.
+    The response carries that caveat in ``notes``.
+
+    The run records its settings on every row it writes, so a later ``GET``
+    reports them back and a reader can tell two runs apart.
+    """
+    try:
+        settings = matching.MatchSettings.from_request(body)
+    except matching.InvalidSettingsError as exc:
+        return json_error(400, error=exc.error, detail=exc.detail)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        try:
+            matching.resolve_scope(conn, settings)
+        except matching.InvalidSettingsError as exc:
+            return json_error(400, error=exc.error, detail=exc.detail)
+        engine = _engine()
+        if not similarity.available():
+            return json_error(
+                503,
+                error="similarity-unavailable",
+                detail="install the optional extra: uv sync --extra similarity",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.journaled_rows(
+                conn,
+                log,
+                table="matches",
+                where=_BINARY_MATCHES_WHERE,
+                params=(binary_id,),
+                description=f"replaced the matches of binary {binary_id}",
+            )
+            try:
+                summary = matching.match_binary(
+                    conn, binary_id=binary_id, engine=engine, settings=settings
+                )
+            except engines.EngineUnavailable:
+                return json_error(
+                    503, error="engine-unavailable", detail=engines.ENGINE_UNAVAILABLE_HINT
+                )
+            except engines.EngineError as exc:
+                return json_error(500, error="engine-error", detail=str(exc))
+            except similarity.SimilarityUnavailable:
+                return json_error(
+                    503,
+                    error="similarity-unavailable",
+                    detail="install the optional extra: uv sync --extra similarity",
+                )
+            except matching.InvalidSettingsError as exc:
+                return json_error(400, error=exc.error, detail=exc.detail)
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table="matches",
+                where=_BINARY_MATCHES_WHERE,
+                params=(binary_id,),
+                before=before,
+                key=("id",),
+                description=f"recorded a match of binary {binary_id}",
+            )
+    return json_response(
+        log.attach(
+            {
+                **summary,
+                "binary_id": binary_id,
+                "settings": settings.payload(),
+                "notes": matching.scope_notes(settings),
+            }
+        )
+    )
+
+
+@router.get("/api/binaries/{binary_id}/matches")
+def binary_matches(binary_id: int) -> Response:
+    """The binary's recorded matches and the settings of the run that wrote them.
+
+    Stored-only: it never scores and never touches the engine.  Each row
+    carries the derived metric fields the matches view renders.  ``settings``
+    is the run scope the rows were recorded under, or null for rows written
+    outside a match run, and ``notes`` repeats the scope's caveats.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        rows = matching.binary_match_rows(conn, binary_id)
+    settings = rows[0]["settings"] if rows else None
+    if settings is None:
+        notes = ["these rows were written outside a match run; no settings were recorded"]
+    else:
+        try:
+            notes = matching.scope_notes(matching.MatchSettings.from_request(settings))
+        except matching.InvalidSettingsError:
+            # A stored payload the tool did not write is reported as unknown
+            # rather than failing the read.
+            notes = ["the recorded settings are not readable"]
+    return json_response(
+        {
+            "binary_id": binary_id,
+            "count": len(rows),
+            "settings": settings,
+            "notes": notes,
+            "matches": [_match_view(row) for row in rows],
+        }
+    )
+
+
+@router.post("/api/binaries/{binary_id}/matches/transfer")
+def transfer_binary_matches(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Transfer candidate names and signatures for a list of matches at once.
+
+    The body carries ``transfers`` (a non-empty list of objects with
+    ``function_id``, ``candidate_function_id`` and ``mode``, the mode one of
+    ``name``, ``signature`` or ``both`` and defaulting to ``name``), an
+    optional boolean ``dry_run`` and an optional ``actor``.  Every row must
+    name a function of this binary.
+
+    One row's failure never abandons the rest: a row that cannot be applied is
+    reported in ``transfers`` as ``failed`` with its reason, and the rows that
+    succeeded keep their result.  The whole action is one journal entry, so
+    ``journal_action`` reverts every row it wrote in one step.  ``dry_run``
+    reports what would happen and writes nothing.
+
+    Collision policy for a signature transfer: the target's return type,
+    calling convention and parameters are replaced, but a target that already
+    carries a different non-empty calling convention is refused with reason
+    ``signature-conflict``, so an ABI-level mismatch is never overwritten
+    silently.
+    """
+    try:
+        requests = matching.parse_transfers(body)
+    except matching.InvalidSettingsError as exc:
+        return json_error(400, error=exc.error, detail=exc.detail)
+    dry_run = _optional_bool(body, "dry_run", False)
+    actor = _optional_str(body, "actor", "api")
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            report = matching.transfer_matches(
+                conn,
+                None if dry_run else log,
+                requests=requests,
+                actor=actor,
+                binary_id=binary_id,
+                dry_run=dry_run,
+            )
+    return json_response(log.attach(report))
+
+
+# ── Triage, report and structs ─────────────────────────────────────
+
+
+def _run_triage(path: Path) -> dict[str, Any]:
+    """Run the engine's one-shot dossier for *path*, mapping a failure to a 500."""
+    try:
+        return _engine().analyze(path)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+def _run_report(project_dir: str, output_dir: Path) -> dict[str, Any]:
+    """Run the engine's report into *output_dir*, mapping a failure to a 500."""
+    try:
+        return _engine().report(project_dir, output_dir)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+def _run_structs(project_dir: str, decompiler: str, limit: int) -> dict[str, Any]:
+    """Run the engine's struct recovery, mapping a failure to a 500."""
+    try:
+        return _engine().structs(project_dir, decompiler=decompiler, limit=limit)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+def _run_crypto_scan(path: Path) -> dict[str, Any]:
+    """Run the engine's crypto scan for *path*, mapping a failure to a 500."""
+    try:
+        return _engine().crypto_scan(path)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+def _run_pe_info(path: Path) -> dict[str, Any]:
+    """Run the engine's PE metadata scan for *path*, mapping a failure to a 500."""
+    try:
+        return _engine().pe_info(path)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+def _run_security_scan(project_dir: str, min_severity: str) -> dict[str, Any]:
+    """Run the engine's security scan in *project_dir*, mapping a failure to a 500."""
+    try:
+        return _engine().security_scan(project_dir, min_severity)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+def _no_scan(binary_id: int, kind: str, *, command: str | None = None) -> Response:
+    """Return the stored-only 404 for a binary with no scan of *kind*.
+
+    *command* overrides the route and CLI slug in the hint when it differs from
+    the stored kind, as the crypto scan's ``crypto-scan`` does.
+    """
+    slug = command or kind
+    return json_error(
+        404,
+        error="no-scan",
+        detail=(
+            f"no {kind} scan for binary {binary_id}; "
+            f"run POST /api/binaries/{binary_id}/{slug} or 'reportal {slug} {binary_id}'"
+        ),
+    )
+
+
+@contextlib.contextmanager
+def _scan_span(conn: sqlite3.Connection, binary_id: int, kind: str) -> Iterator[None]:
+    """Log a scan's start, and its failure, around a result route's engine call.
+
+    The result-style scan routes run the engine before the journal helper
+    stores the payload, so they cannot use `journal.journaled_scan` (which
+    wraps the run itself).  This is the same span with
+    ``ensure_analysis=False``: the analysis row stays the journal's to create
+    and its revert's to remove when the scan succeeds, while a failure always
+    leaves a log entry to blame.
+    """
+    with store.scan_span(conn, binary_id=binary_id, kind=kind, ensure_analysis=False):
+        yield
+
+
+@router.post("/api/binaries/{binary_id}/triage")
+def store_binary_triage(binary_id: int) -> Response:
+    """Run the engine's one-shot dossier for a binary and store it."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            with _scan_span(conn, binary_id, store.SCAN_KIND_TRIAGE):
+                dossier = _run_triage(_binary_file(conn, binary_id))
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_TRIAGE, dossier)
+        payload = _classified(conn, binary_id, dossier)
+    return json_response(log.attach(payload))
+
+
+@router.get("/api/binaries/{binary_id}/triage")
+def get_binary_triage(binary_id: int) -> Response:
+    """Stored triage dossier; a binary without one is a 404 no-scan.
+
+    The response adds `software_type` and `threat_score`, derived at request
+    time from the binary's stored evidence, so the stored dossier stays exactly
+    what the engine returned.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_TRIAGE)
+            if stored is not None:
+                return json_response(_classified(conn, binary_id, stored))
+    return _no_scan(binary_id, "triage")
+
+
+@router.post("/api/binaries/{binary_id}/report")
+def store_binary_report(binary_id: int) -> Response:
+    """Run the engine's report into the workspace report directory and store the result."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        project_dir = _project_context(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            with _scan_span(conn, binary_id, store.SCAN_KIND_REPORT):
+                result = _run_report(project_dir, reports_dir(binary_id))
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_REPORT, result)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/report")
+def get_binary_report(binary_id: int) -> Response:
+    """Stored report result; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_REPORT)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "report")
+
+
+@router.post("/api/binaries/{binary_id}/report/pdf")
+def generate_binary_report_pdf(binary_id: int) -> Response:
+    """Render the binary's PDF summary into its workspace report directory."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        target = reports_dir(binary_id) / pdf.REPORT_PDF_NAME
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            previous = journal.read_bounded(target) if target.is_file() else None
+            result = pdf.write_report(
+                conn,
+                binary_id=binary_id,
+                path=target,
+                generated=store.now(),
+            )
+            journal.journaled_file(log, target, previous=previous)
+    return json_response(
+        log.attach(
+            {
+                "path": result["path"],
+                "bytes": result["bytes"],
+                "pages": result["pages"],
+                "download_url": f"/api/binaries/{binary_id}/report/pdf",
+            }
+        )
+    )
+
+
+@router.get("/api/binaries/{binary_id}/report/pdf")
+def get_binary_report_pdf(binary_id: int) -> Response:
+    """Serve the generated PDF report; a binary without one is a 404 no-pdf."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+    target = reports_dir(binary_id) / pdf.REPORT_PDF_NAME
+    if not target.is_file():
+        return json_error(
+            404,
+            error="no-pdf",
+            detail=(
+                f"no PDF report for binary {binary_id}; run"
+                f" 'reportal report-pdf {binary_id}' to generate it"
+            ),
+        )
+    return Response(
+        content=target.read_bytes(),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{pdf.REPORT_PDF_NAME}"'},
+    )
+
+
+@router.post("/api/binaries/{binary_id}/structs")
+def store_binary_structs(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Recover a binary's struct definitions through the engine and store the result."""
+    decompiler = _optional_str(body, "decompiler", engines.DEFAULT_DECOMPILER_BACKEND)
+    limit = _optional_int(body, "limit", DEFAULT_STRUCT_LIMIT)
+    if decompiler not in engines.DECOMPILER_BACKENDS:
+        return json_error(
+            400,
+            error="invalid backend",
+            detail=f"unsupported decompiler backend: {decompiler}",
+        )
+    if limit < 0:
+        return json_error(400, error="invalid limit", detail=f"limit must not be negative: {limit}")
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        project_dir = _project_context(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            with _scan_span(conn, binary_id, store.SCAN_KIND_STRUCTS):
+                result = _run_structs(project_dir, decompiler, limit)
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_STRUCTS, result)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/structs")
+def get_binary_structs(binary_id: int) -> Response:
+    """Stored struct recovery; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_STRUCTS)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "structs")
+
+
+# ── Data types ─────────────────────────────────────────────────────
+
+
+# HTTP status and stable error name per data-type failure, so the domain module
+# carries no HTTP knowledge and every route answers the same codes.
+_DATA_TYPE_ERRORS: tuple[tuple[type[data_types.DataTypeError], int, str], ...] = (
+    (data_types.NoScanError, 404, "no-scan"),
+    (data_types.UnknownDataTypeError, 404, "data-type-not-found"),
+    (data_types.UnknownHistoryError, 404, "history not found"),
+    (data_types.UnknownMemberError, 404, "member-not-found"),
+    # An enum's named constants are its member entries, so their selector
+    # failure shares the member code the catalogue documents.
+    (data_types.UnknownValueError, 404, "member-not-found"),
+    (data_types.ExportExistsError, 409, "export-exists"),
+    (data_types.InvalidIdentifierError, 400, "invalid name"),
+    (data_types.InvalidKindError, 400, "invalid kind"),
+    (data_types.InvalidSizeError, 400, "invalid size"),
+    (data_types.DuplicateNameError, 400, "duplicate name"),
+    (data_types.DuplicateMemberError, 400, "duplicate member"),
+    (data_types.DuplicateValueError, 400, "duplicate member"),
+    (data_types.EmptyStructError, 400, "invalid member"),
+    (data_types.InvalidMemberError, 400, "invalid member"),
+    (data_types.InvalidValueError, 400, "invalid member"),
+    (data_types.DefinitionError, 400, "invalid definition"),
+    (data_types.ExportParentMissingError, 400, "invalid path"),
+)
+
+
+def _data_type_failure(exc: data_types.DataTypeError) -> Response:
+    """Map a data-type failure to its JSON response."""
+    for kind, status, error in _DATA_TYPE_ERRORS:
+        if isinstance(exc, kind):
+            return json_error(status, error=error, detail=str(exc))
+    return json_error(400, error="invalid data type", detail=str(exc))
+
+
+@router.get("/api/binaries/{binary_id}/data-types")
+def list_binary_data_types(request: Request, binary_id: int) -> Response:
+    """The binary's editable type model, optionally filtered and always counted.
+
+    Without a filter the answer is the whole model, as it always was.  The
+    namespace tree is built over the whole model either way, so the panel can
+    offer a branch that the active filter excludes.
+    """
+    kind = (request.query_params.get("kind") or "").strip()
+    if kind:
+        try:
+            kind = data_types.validate_kind(kind)
+        except data_types.InvalidKindError as exc:
+            return _data_type_failure(exc)
+    namespace = (request.query_params.get("namespace") or "").strip()
+    search = (request.query_params.get("search") or "").strip()
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        types = data_types.list_types(conn, binary_id=binary_id)
+    selected = data_types.filter_types(
+        types,
+        namespace=namespace or None,
+        kind=kind or None,
+        search=search or None,
+    )
+    return json_response(
+        {
+            "binary_id": binary_id,
+            "count": len(selected),
+            "total": len(types),
+            "types": [data_types.encode_type(data_type) for data_type in selected],
+            "namespaces": data_types.namespace_tree(types),
+        }
+    )
+
+
+@router.get("/api/data-types/{data_type_id}/references")
+def data_type_references(data_type_id: int) -> Response:
+    """The type's reverse indices: what references it and which functions use it."""
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = data_types.references(conn, data_type_id)
+        except data_types.DataTypeError as exc:
+            return _data_type_failure(exc)
+    return json_response(payload)
+
+
+@router.post("/api/binaries/{binary_id}/data-types/import")
+def import_binary_data_types(binary_id: int) -> Response:
+    """Seed the type model from the binary's stored structs scan."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_binary(conn, binary_id)
+                before = journal.journaled_rows(
+                    conn,
+                    log,
+                    table="data_types",
+                    where="binary_id = ?",
+                    params=(binary_id,),
+                    description=f"replaced the data types of binary {binary_id}",
+                )
+                history_before = journal.snapshot_rows(
+                    conn,
+                    table="data_type_history",
+                    where="binary_id = ?",
+                    params=(binary_id,),
+                )
+                summary = data_types.import_types(
+                    conn, binary_id=binary_id, engine=engines.get_engine()
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table="data_types",
+                where="binary_id = ?",
+                params=(binary_id,),
+                before=before,
+                key=("id",),
+                description=f"imported a data type for binary {binary_id}",
+            )
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table="data_type_history",
+                where="binary_id = ?",
+                params=(binary_id,),
+                before=history_before,
+                key=("id",),
+                description=f"data type history of binary {binary_id}",
+            )
+    return json_response(log.attach(summary))
+
+
+@router.post("/api/binaries/{binary_id}/data-types/export")
+def export_binary_data_types(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Render the type model to the explicit path the caller names."""
+    path = _require_str(body, "path")
+    force = _optional_bool(body, "force", False)
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_binary(conn, binary_id)
+                target = Path(path)
+                previous = journal.read_bounded(target) if target.is_file() else None
+                summary = data_types.export_header(
+                    conn, binary_id=binary_id, path=path, force=force
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+            journal.journaled_file(log, target, previous=previous)
+    return json_response(log.attach(summary))
+
+
+@router.patch("/api/data-types/{data_type_id}")
+def update_data_type(
+    data_type_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Edit a type's level fields and/or one of its members.
+
+    The type-level fields (``name``, ``kind``, ``namespace``, ``size``) are one
+    write and one history entry; the member edit is the exclusive alternative,
+    so a request naming both is 400 ``invalid request``.  An unknown kind is 400
+    `invalid kind` listing the known ones.
+    """
+    name = body.get("name")
+    kind = body.get("kind")
+    namespace = body.get("namespace")
+    size = body.get("size")
+    member = body.get("member")
+    type_edit = {
+        "name": name,
+        "kind": kind,
+        "namespace": namespace,
+        "size": size,
+    }
+    named = {key: value for key, value in type_edit.items() if value is not None}
+    if member is None and not named:
+        return json_error(
+            400,
+            error="invalid request",
+            detail="one of name, kind, namespace, size or member is required",
+        )
+    if member is not None and named:
+        return json_error(
+            400,
+            error="invalid request",
+            detail=f"member is exclusive with {', '.join(sorted(named))}",
+        )
+    for key in ("name", "kind", "namespace"):
+        if type_edit[key] is not None and not isinstance(type_edit[key], str):
+            return json_error(400, error=f"invalid {key}", detail=f"{key} must be a string")
+    if size is not None and (isinstance(size, bool) or not isinstance(size, int)):
+        return json_error(400, error="invalid size", detail="size must be an integer")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                if member is None:
+                    edit = _type_edit(body)
+                    row = _journal_data_type_write(
+                        conn,
+                        log,
+                        data_type_id,
+                        f"edited data type {data_type_id}",
+                        lambda: data_types.update_type(conn, data_type_id, **edit),
+                    )
+                else:
+                    member_edit = _member_edit(member)
+                    row = _journal_data_type_write(
+                        conn,
+                        log,
+                        data_type_id,
+                        f"edited data type {data_type_id}",
+                        lambda: data_types.update_member(conn, data_type_id, **member_edit),
+                    )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+def _type_edit(body: dict[str, Any]) -> dict[str, Any]:
+    """Decode a PATCH body's type-level fields, absent ones left out."""
+    return {
+        key: body[key] for key in ("name", "kind", "namespace", "size") if body.get(key) is not None
+    }
+
+
+def _member_edit(member: Any) -> dict[str, Any]:
+    """Decode a ``{"name"|"index", ...}`` member edit.
+
+    ``new_pointer``, ``new_count`` and ``new_bits`` are tri-state: an absent key
+    leaves the field as it is, an explicit ``null`` clears it.
+    """
+    if not isinstance(member, dict):
+        raise json_error(400, error="invalid member", detail="member must be an object")
+    selector_name = member.get("name")
+    selector_index = member.get("index")
+    if selector_name is not None and not isinstance(selector_name, str):
+        raise json_error(400, error="invalid member", detail="member name must be a string")
+    if selector_index is not None and (
+        isinstance(selector_index, bool) or not isinstance(selector_index, int)
+    ):
+        raise json_error(400, error="invalid member", detail="member index must be an integer")
+    new_name = member.get("new_name")
+    new_type = member.get("new_type")
+    if new_name is not None and not isinstance(new_name, str):
+        raise json_error(400, error="invalid member", detail="new_name must be a string")
+    if new_type is not None and not isinstance(new_type, str):
+        raise json_error(400, error="invalid member", detail="new_type must be a string")
+    edit: dict[str, Any] = {
+        "name": selector_name,
+        "index": selector_index,
+        "new_name": new_name,
+        "new_type": new_type,
+    }
+    if "new_pointer" in member:
+        pointer = member["new_pointer"]
+        if pointer is not None and not isinstance(pointer, bool):
+            raise json_error(400, error="invalid member", detail="new_pointer must be a boolean")
+        edit["new_pointer"] = pointer
+    for key in ("new_count", "new_bits"):
+        if key in member:
+            value = member[key]
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise json_error(400, error="invalid member", detail=f"{key} must be an integer")
+            edit[key] = value
+    return edit
+
+
+@router.post("/api/data-types/{data_type_id}/members")
+def add_data_type_member(data_type_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Add one member to a type, appended or at a named position.
+
+    ``index`` is the position the member takes and ``after`` names the member it
+    follows; naming both is 400 `invalid member` rather than silently picking
+    one.  The body's optional ``pointer``, ``count`` and ``bits`` carry the rest
+    of the member shape.
+    """
+    name = _require_str(body, "name")
+    type_text = _require_str(body, "type")
+    addition = _member_addition(body)
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"added a member to data type {data_type_id}",
+                    lambda: data_types.add_member(
+                        conn, data_type_id, name=name, type_text=type_text, **addition
+                    ),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+def _member_addition(body: dict[str, Any]) -> dict[str, Any]:
+    """Decode the optional member shape and position an add names."""
+    addition: dict[str, Any] = {}
+    for key in ("index", "count", "bits"):
+        if key in body:
+            value = body[key]
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise json_error(400, error="invalid member", detail=f"{key} must be an integer")
+            addition[key] = value
+    if "pointer" in body:
+        pointer = body["pointer"]
+        if pointer is not None and not isinstance(pointer, bool):
+            raise json_error(400, error="invalid member", detail="pointer must be a boolean")
+        addition["pointer"] = pointer
+    if "after" in body:
+        after = body["after"]
+        if not isinstance(after, str) or not after.strip():
+            raise json_error(
+                400, error="invalid member", detail="after must be a non-empty member name"
+            )
+        addition["after"] = after.strip()
+    return addition
+
+
+@router.post("/api/data-types/{data_type_id}/members/{member}/gap")
+def convert_data_type_member_to_gap(
+    data_type_id: int, member: str, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Convert one member to explicit padding named after its offset."""
+    size = body.get("size")
+    if size is not None and (isinstance(size, bool) or not isinstance(size, int)):
+        return json_error(400, error="invalid size", detail="size must be an integer")
+    selector = {"index": int(member)} if member.isdigit() else {"name": member}
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"converted a member of data type {data_type_id} to a gap",
+                    lambda: data_types.convert_to_gap(conn, data_type_id, **selector, size=size),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.post("/api/data-types/{data_type_id}/members/{member}/ungap")
+def convert_data_type_gap_to_member(
+    data_type_id: int, member: str, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Turn one padding member back into a named, typed member."""
+    new_name = _require_str(body, "name")
+    new_type = _require_str(body, "type")
+    conversion = _member_restore(body)
+    selector = {"index": int(member)} if member.isdigit() else {"name": member}
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"converted a gap of data type {data_type_id} to a member",
+                    lambda: data_types.convert_from_gap(
+                        conn,
+                        data_type_id,
+                        **selector,
+                        new_name=new_name,
+                        new_type=new_type,
+                        **conversion,
+                    ),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+def _member_restore(body: dict[str, Any]) -> dict[str, Any]:
+    """Decode an ungap body's optional pointer, count and bits, absent left out."""
+    restore: dict[str, Any] = {}
+    if "pointer" in body:
+        pointer = body["pointer"]
+        if pointer is not None and not isinstance(pointer, bool):
+            raise json_error(400, error="invalid member", detail="pointer must be a boolean")
+        restore["pointer"] = pointer
+    for key in ("count", "bits"):
+        if key in body:
+            value = body[key]
+            if value is not None and (isinstance(value, bool) or not isinstance(value, int)):
+                raise json_error(400, error="invalid member", detail=f"{key} must be an integer")
+            restore[key] = value
+    return restore
+
+
+@router.delete("/api/data-types/{data_type_id}/members/{member}")
+def remove_data_type_member(data_type_id: int, member: str) -> Response:
+    """Remove one member, selected by name or by a decimal index."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                if member.isdigit():
+                    row = _journal_data_type_write(
+                        conn,
+                        log,
+                        data_type_id,
+                        f"removed a member from data type {data_type_id}",
+                        lambda: data_types.remove_member(conn, data_type_id, index=int(member)),
+                    )
+                else:
+                    row = _journal_data_type_write(
+                        conn,
+                        log,
+                        data_type_id,
+                        f"removed a member from data type {data_type_id}",
+                        lambda: data_types.remove_member(conn, data_type_id, name=member),
+                    )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.post("/api/data-types/{data_type_id}/values")
+def add_data_type_value(data_type_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Append one named enum constant.
+
+    The body's ``value`` may be a JSON integer or a decimal/``0x`` literal
+    string; omitting it continues from the last constant and the payload's
+    ``note`` says which number was derived.
+    """
+    name = _require_str(body, "name")
+    value = body.get("value")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"added an enum value to data type {data_type_id}",
+                    lambda: data_types.add_value(conn, data_type_id, name=name, value=value),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.patch("/api/data-types/{data_type_id}/values/{value}")
+def update_data_type_value(
+    data_type_id: int, value: str, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Rename and/or revalue one enum constant, selected by name or index."""
+    new_name = body.get("new_name")
+    new_value = body.get("new_value")
+    if new_name is None and new_value is None:
+        return json_error(
+            400, error="invalid member", detail="one of new_name or new_value is required"
+        )
+    if new_name is not None and not isinstance(new_name, str):
+        return json_error(400, error="invalid member", detail="new_name must be a string")
+    selector = {"index": int(value)} if value.isdigit() else {"name": value}
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"edited an enum value of data type {data_type_id}",
+                    lambda: data_types.update_value(
+                        conn,
+                        data_type_id,
+                        **selector,
+                        new_name=new_name,
+                        new_value=new_value,
+                    ),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.delete("/api/data-types/{data_type_id}/values/{value}")
+def remove_data_type_value(data_type_id: int, value: str) -> Response:
+    """Remove one enum constant, selected by name or index."""
+    selector = {"index": int(value)} if value.isdigit() else {"name": value}
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"removed an enum value from data type {data_type_id}",
+                    lambda: data_types.remove_value(conn, data_type_id, **selector),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.get("/api/data-types/{data_type_id}/history")
+def data_type_history(data_type_id: int) -> Response:
+    """A type's edit history, newest first, each entry carrying its per-field diff.
+
+    Always answers.  The history rows are keyed by the type id and do not
+    cascade with the row, so a deleted type's history is still readable here;
+    a type written before the history table existed answers an empty list.
+    """
+    with contextlib.closing(_open()) as conn:
+        history = data_types.list_history(conn, data_type_id)
+        row = store.get_data_type(conn, data_type_id)
+    binary_id = (
+        int(row["binary_id"])
+        if row is not None
+        else (int(history[0]["binary_id"]) if history else None)
+    )
+    return json_response(
+        {
+            "data_type_id": data_type_id,
+            "binary_id": binary_id,
+            "exists": row is not None,
+            "count": len(history),
+            "history": history,
+        }
+    )
+
+
+@router.post("/api/data-types/{data_type_id}/history/{history_id}/revert")
+def revert_data_type_history(data_type_id: int, history_id: int) -> Response:
+    """Restore the state one history row recorded, undoing that mutation.
+
+    The revert is journaled (its ``journal_action`` reverts the revert) and
+    reverting the same row twice is a no-op; a deleted type's revert puts the
+    row back under its original id.  404 `history not found` for an unknown row
+    or one of another type.
+    """
+    with contextlib.closing(_open()) as conn:
+        entry = data_types.get_history(conn, history_id)
+        if entry is None or int(entry["data_type_id"]) != data_type_id:
+            return json_error(
+                404,
+                error="history not found",
+                detail=f"no history {history_id} for data type {data_type_id}",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"reverted data type {data_type_id}",
+                    lambda: data_types.revert_history(conn, data_type_id, history_id),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(result))
+
+
+@router.delete("/api/data-types/{data_type_id}")
+def delete_data_type(data_type_id: int) -> Response:
+    """Delete one data type; 404 for an unknown id."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"deleted data type {data_type_id}",
+                    lambda: _delete_data_type_or_raise(conn, data_type_id),
+                )
+            except data_types.UnknownDataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach({"data_type_id": data_type_id, "deleted": True}))
+
+
+def _delete_data_type_or_raise(conn: sqlite3.Connection, data_type_id: int) -> dict[str, Any]:
+    """Delete one type, raising the domain error an unknown id maps to.
+
+    The route answers 404 `data-type-not-found` from that single path, so the
+    journaled and direct delete forms cannot drift apart.
+    """
+    if not data_types.delete_type(conn, data_type_id):
+        raise data_types.UnknownDataTypeError(f"no data type with id {data_type_id}")
+    return {"data_type_id": data_type_id, "deleted": True}
+
+
+# HTTP status and stable error name per signature failure, so the domain module
+# carries no HTTP knowledge and every route answers the same codes.
+_SIGNATURE_ERRORS: tuple[tuple[type[signatures.SignatureError], int, str], ...] = (
+    (signatures.UnknownSignatureError, 404, "signature-not-found"),
+    (signatures.UnknownHistoryError, 404, "history not found"),
+    (signatures.UnknownParameterError, 400, "invalid index"),
+    (signatures.InvalidIdentifierError, 400, "invalid name"),
+    (signatures.DuplicateParameterError, 400, "duplicate parameter"),
+    (signatures.InvalidTypeError, 400, "invalid type"),
+    (signatures.InvalidParameterError, 400, "invalid parameter"),
+    (signatures.ExportExistsError, 409, "export-exists"),
+    (signatures.ExportParentMissingError, 400, "invalid path"),
+)
+
+
+def _signature_failure(exc: signatures.SignatureError) -> Response:
+    """Map a signature failure to its JSON response."""
+    for kind, status, error in _SIGNATURE_ERRORS:
+        if isinstance(exc, kind):
+            return json_error(status, error=error, detail=str(exc))
+    return json_error(400, error="invalid signature", detail=str(exc))
+
+
+def _require_function_signature(conn: sqlite3.Connection, function_id: int) -> dict[str, Any]:
+    """Return the function's signature, raising 404 for an unknown function or row."""
+    if store.get_function(conn, function_id) is None:
+        raise json_error(
+            404, error="function not found", detail=f"no function with id {function_id}"
+        )
+    row = signatures.get_signature(conn, function_id)
+    if row is None:
+        raise json_error(
+            404, error="signature-not-found", detail=f"no signature for function {function_id}"
+        )
+    return row
+
+
+def _signature_field(body: dict[str, Any], key: str) -> Any:
+    """Return an optional signature field: :data:`signatures.UNSET` when absent."""
+    if key not in body:
+        return signatures.UNSET
+    return body[key]
+
+
+def _optional_signature_str(value: Any) -> str | None:
+    """An optional string signature field, or None when the caller left it out."""
+    return None if value is signatures.UNSET or value is None else str(value)
+
+
+def _optional_signature_bits(value: Any) -> int | None:
+    """An optional width signature field, or None when the caller left it out."""
+    return None if value is signatures.UNSET or value is None else int(value)
+
+
+@router.get("/api/binaries/{binary_id}/signatures")
+def list_binary_signatures(binary_id: int) -> Response:
+    """The binary's parsed function signatures, ordered by name."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        model = signatures.list_signatures(conn, binary_id=binary_id)
+    return json_response({"binary_id": binary_id, "count": len(model), "signatures": model})
+
+
+@router.post("/api/binaries/{binary_id}/signatures/import")
+def import_binary_signatures(binary_id: int) -> Response:
+    """Seed the signature model from the binary's stored decompilations."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_binary(conn, binary_id)
+                before = journal.journaled_rows(
+                    conn,
+                    log,
+                    table="function_signatures",
+                    where=_BINARY_SIGNATURES_WHERE,
+                    params=(binary_id,),
+                    description=f"replaced the signatures of binary {binary_id}",
+                )
+                history_before = journal.snapshot_rows(
+                    conn,
+                    table="signature_history",
+                    where=_BINARY_SIGNATURE_HISTORY_WHERE,
+                    params=(binary_id,),
+                )
+                summary = signatures.seed_signatures(conn, binary_id=binary_id)
+            except signatures.SignatureError as exc:
+                return _signature_failure(exc)
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table="function_signatures",
+                where=_BINARY_SIGNATURES_WHERE,
+                params=(binary_id,),
+                before=before,
+                key=("function_id",),
+                description=f"imported a signature for binary {binary_id}",
+            )
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table="signature_history",
+                where=_BINARY_SIGNATURE_HISTORY_WHERE,
+                params=(binary_id,),
+                before=history_before,
+                key=("id",),
+                description=f"signature history of binary {binary_id}",
+            )
+    return json_response(log.attach(summary))
+
+
+@router.post("/api/binaries/{binary_id}/signatures/export")
+def export_binary_signatures(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Render the signature model to the explicit path the caller names."""
+    path = _require_str(body, "path")
+    force = _optional_bool(body, "force", False)
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_binary(conn, binary_id)
+                target = Path(path)
+                previous = journal.read_bounded(target) if target.is_file() else None
+                summary = signatures.export_prototypes(
+                    conn, binary_id=binary_id, path=path, force=force
+                )
+            except signatures.SignatureError as exc:
+                return _signature_failure(exc)
+            journal.journaled_file(log, target, previous=previous)
+    return json_response(log.attach(summary))
+
+
+@router.get("/api/functions/{function_id}/signature")
+def get_function_signature(function_id: int) -> Response:
+    """The parsed signature of one function plus its rendered prototype; 404 without one.
+
+    Each parameter also carries ``default_at``: the arrival location its
+    calling convention implies, offered beside the model rather than written
+    into ``at``, so an absent ``at`` stays null.
+    """
+    with contextlib.closing(_open()) as conn:
+        row = _require_function_signature(conn, function_id)
+    model = {**row, "parameters": signatures.describe_parameters(row)}
+    return json_response({**model, "prototype": signatures.render_prototype(row)})
+
+
+@router.patch("/api/functions/{function_id}/signature")
+def update_function_signature(
+    function_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Set the return type and/or calling convention of one signature."""
+    return_type = body.get("return_type")
+    convention = body.get("calling_convention")
+    if return_type is None and convention is None:
+        return json_error(
+            400, error="invalid request", detail="return_type or calling_convention is required"
+        )
+    if return_type is not None and not isinstance(return_type, str):
+        return json_error(400, error="invalid type", detail="return_type must be a string")
+    if convention is not None and not isinstance(convention, str):
+        return json_error(400, error="invalid name", detail="calling_convention must be a string")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+
+            def edit() -> dict[str, Any]:
+                row = _require_function_signature(conn, function_id)
+                if return_type is not None:
+                    row = signatures.set_return_type(conn, function_id, return_type=return_type)
+                if convention is not None:
+                    row = signatures.set_calling_convention(
+                        conn, function_id, calling_convention=convention
+                    )
+                return row
+
+            try:
+                row = _journal_signature_write(
+                    conn, log, function_id, f"edited signature of {function_id}", edit
+                )
+            except signatures.SignatureError as exc:
+                return _signature_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.post("/api/functions/{function_id}/signature/parameters")
+def add_function_signature_parameter(
+    function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Add one parameter, appended or inserted at the named index.
+
+    The body's optional ``at``, ``kind`` and ``bits`` are stored as given; an
+    absent one stays null.
+    """
+    type_text = _require_str(body, "type")
+    name = _optional_str(body, "name", "")
+    index = body.get("index")
+    if index is not None and (isinstance(index, bool) or not isinstance(index, int)):
+        return json_error(400, error="invalid index", detail="index must be an integer")
+    at = _signature_field(body, "at")
+    kind = _signature_field(body, "kind")
+    bits = _signature_field(body, "bits")
+    for key, value in (("at", at), ("kind", kind)):
+        if value is not None and value is not signatures.UNSET and not isinstance(value, str):
+            return json_error(400, error="invalid parameter", detail=f"{key} must be a string")
+    if (
+        bits is not None
+        and bits is not signatures.UNSET
+        and (isinstance(bits, bool) or not isinstance(bits, int))
+    ):
+        return json_error(400, error="invalid parameter", detail="bits must be an integer")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_function_signature(conn, function_id)
+                row = _journal_signature_write(
+                    conn,
+                    log,
+                    function_id,
+                    f"added a parameter to signature {function_id}",
+                    lambda: signatures.add_parameter(
+                        conn,
+                        function_id,
+                        type_text=type_text,
+                        name=name,
+                        index=index,
+                        at=_optional_signature_str(at),
+                        kind=_optional_signature_str(kind),
+                        bits=_optional_signature_bits(bits),
+                    ),
+                )
+            except signatures.SignatureError as exc:
+                return _signature_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.patch("/api/functions/{function_id}/signature/parameters/{index}")
+def update_function_signature_parameter(
+    function_id: int, index: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Edit one parameter's type, name, arrival location, kind or width.
+
+    ``at``, ``kind`` and ``bits`` are optional; an explicit ``null`` clears the
+    field, an absent key leaves it as it is, and a request naming none of the
+    fields is 400 ``invalid parameter``.
+    """
+    type_text = body.get("type")
+    name = body.get("name")
+    at = _signature_field(body, "at")
+    kind = _signature_field(body, "kind")
+    bits = _signature_field(body, "bits")
+    if (
+        type_text is None
+        and name is None
+        and at is signatures.UNSET
+        and kind is signatures.UNSET
+        and bits is signatures.UNSET
+    ):
+        return json_error(
+            400,
+            error="invalid parameter",
+            detail="one of type, name, at, kind or bits is required",
+        )
+    if type_text is not None and not isinstance(type_text, str):
+        return json_error(400, error="invalid type", detail="type must be a string")
+    if name is not None and not isinstance(name, str):
+        return json_error(400, error="invalid name", detail="name must be a string")
+    for key, value in (("at", at), ("kind", kind)):
+        if value is not None and value is not signatures.UNSET and not isinstance(value, str):
+            return json_error(400, error="invalid parameter", detail=f"{key} must be a string")
+    if (
+        bits is not None
+        and bits is not signatures.UNSET
+        and (isinstance(bits, bool) or not isinstance(bits, int))
+    ):
+        return json_error(400, error="invalid parameter", detail="bits must be an integer")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_function_signature(conn, function_id)
+                row = _journal_signature_write(
+                    conn,
+                    log,
+                    function_id,
+                    f"edited a parameter of signature {function_id}",
+                    lambda: signatures.set_parameter(
+                        conn,
+                        function_id,
+                        index=index,
+                        type_text=type_text,
+                        name=name,
+                        at=at,
+                        kind=kind,
+                        bits=bits,
+                    ),
+                )
+            except signatures.SignatureError as exc:
+                return _signature_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.post("/api/functions/{function_id}/signature/parameters/{index}/move")
+def move_function_signature_parameter(
+    function_id: int, index: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Move one parameter to another position, recomputing the arrival locations."""
+    to_index = body.get("to_index")
+    if isinstance(to_index, bool) or not isinstance(to_index, int):
+        return json_error(400, error="invalid index", detail="to_index must be an integer")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_function_signature(conn, function_id)
+                row = _journal_signature_write(
+                    conn,
+                    log,
+                    function_id,
+                    f"reordered a parameter of signature {function_id}",
+                    lambda: signatures.move_parameter(
+                        conn, function_id, index=index, to_index=to_index
+                    ),
+                )
+            except signatures.SignatureError as exc:
+                return _signature_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.delete("/api/functions/{function_id}/signature/parameters/{index}")
+def remove_function_signature_parameter(function_id: int, index: int) -> Response:
+    """Remove one parameter, reindexing the rest."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                _require_function_signature(conn, function_id)
+                row = _journal_signature_write(
+                    conn,
+                    log,
+                    function_id,
+                    f"removed a parameter of signature {function_id}",
+                    lambda: signatures.remove_parameter(conn, function_id, index=index),
+                )
+            except signatures.SignatureError as exc:
+                return _signature_failure(exc)
+    return json_response(log.attach(row))
+
+
+@router.delete("/api/functions/{function_id}/signature")
+def delete_function_signature(function_id: int) -> Response:
+    """Delete one function's signature; 404 for an unknown function or row."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        if signatures.get_signature(conn, function_id) is None:
+            return json_error(
+                404,
+                error="signature-not-found",
+                detail=f"no signature for function {function_id}",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+
+            def remove() -> dict[str, Any]:
+                signatures.delete_signature(conn, function_id)
+                return {"function_id": function_id, "deleted": True}
+
+            payload = _journal_signature_write(
+                conn, log, function_id, f"deleted signature of {function_id}", remove
+            )
+    return json_response(log.attach(payload))
+
+
+@router.get("/api/functions/{function_id}/signature/history")
+def function_signature_history(function_id: int) -> Response:
+    """A function's signature-edit history, newest first; always answers."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        history = signatures.list_history(conn, function_id)
+    return json_response({"function_id": function_id, "count": len(history), "history": history})
+
+
+@router.post("/api/functions/{function_id}/signature/history/{history_id}/revert")
+def revert_function_signature(function_id: int, history_id: int) -> Response:
+    """Restore the signature state recorded by one history row of a function."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        entry = signatures.get_history(conn, history_id)
+        if entry is None or int(entry["function_id"]) != function_id:
+            return json_error(
+                404,
+                error="history not found",
+                detail=f"no history {history_id} for function {function_id}",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = _journal_signature_write(
+                conn,
+                log,
+                function_id,
+                f"reverted signature of {function_id}",
+                lambda: signatures.revert_history(conn, function_id, history_id),
+            )
+    return json_response(log.attach(result))
+
+
+@router.post("/api/binaries/{binary_id}/crypto-scan")
+def store_binary_crypto_scan(binary_id: int) -> Response:
+    """Run the engine's crypto scan for a binary and store the result."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            with _scan_span(conn, binary_id, store.SCAN_KIND_CRYPTO):
+                result = _run_crypto_scan(_binary_file(conn, binary_id))
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_CRYPTO, result)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/crypto-scan")
+def get_binary_crypto_scan(binary_id: int) -> Response:
+    """Stored crypto scan; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_CRYPTO)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "crypto", command="crypto-scan")
+
+
+@router.post("/api/binaries/{binary_id}/pe-info")
+def store_binary_pe_info(binary_id: int) -> Response:
+    """Run the engine's PE metadata scan for a binary and store the result."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            with _scan_span(conn, binary_id, store.SCAN_KIND_PE_INFO):
+                result = _run_pe_info(_binary_file(conn, binary_id))
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_PE_INFO, result)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/pe-info")
+def get_binary_pe_info(binary_id: int) -> Response:
+    """Stored PE metadata; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_PE_INFO)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "pe-info")
+
+
+@router.get("/api/binaries/{binary_id}/section-coverage")
+def get_binary_section_coverage(binary_id: int) -> Response:
+    """Per-section byte coverage over the stored pe-info sections and functions.
+
+    Stored-only: it reads the binary's stored `pe-info` scan and its stored
+    functions and never runs the engine.  A binary with no stored `pe-info`
+    scan answers 404 `no-scan`; a binary with no stored functions reports
+    `null` percentages and a note, never a fabricated 0%.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        coverage = store.section_byte_coverage(conn, binary_id)
+    if coverage is None:
+        return _no_scan(binary_id, "pe-info")
+    return json_response(coverage)
+
+
+def _query_address(
+    request: Request,
+) -> int:
+    """Return the `va` query parameter as an int, raising a 400 otherwise."""
+    raw = (request.query_params.get("va") or "").strip()
+    if not raw:
+        raise json_error(400, error="invalid address", detail="va is required")
+    try:
+        return int(raw, 0)
+    except ValueError:
+        raise json_error(
+            400, error="invalid address", detail="va must be an integer or 0x-prefixed hex"
+        ) from None
+
+
+def _query_length(
+    request: Request,
+) -> int:
+    """Return the bounded `length` query parameter, defaulting to the portal's 64."""
+    raw = request.query_params.get("length")
+    if raw is None or not raw.strip():
+        return engines.MEMORY_READ_DEFAULT
+    try:
+        length = int(raw)
+    except ValueError:
+        raise json_error(400, error="invalid length", detail="length must be an integer") from None
+    if length <= 0 or length > engines.MEMORY_READ_MAX:
+        raise json_error(
+            400,
+            error="invalid length",
+            detail=f"length must be between 1 and {engines.MEMORY_READ_MAX}",
+        )
+    return length
+
+
+def _query_address_kind(
+    request: Request,
+) -> str:
+    """Return the `kind` query parameter, defaulting to an absolute VA."""
+    kind = (request.query_params.get("kind") or engines.MEMORY_ADDRESS_KIND_VA).strip()
+    if kind not in engines.MEMORY_ADDRESS_KINDS:
+        raise json_error(
+            400,
+            error="invalid kind",
+            detail=f"kind must be one of {', '.join(sorted(engines.MEMORY_ADDRESS_KINDS))}",
+        )
+    return kind
+
+
+@router.get("/api/binaries/{binary_id}/memory")
+def read_binary_memory(request: Request, binary_id: int) -> Response:
+    """Read a window of the binary's bytes by address through the engine.
+
+    `?va=` is the address, `?length=` the window size (default 64, cap 1024, the
+    hosted portal's read_memory bounds) and `?kind=` the address kind (`va`,
+    `rva` or `file`).  The engine's own `pe-info` section map locates the bytes;
+    reportal never parses a PE.  An address not backed by the image's raw bytes
+    answers 400 `unmapped address`, and an engine failure 500 `engine-error`.
+    """
+    address = _query_address(
+        request,
+    )
+    length = _query_length(
+        request,
+    )
+    kind = _query_address_kind(
+        request,
+    )
+    with contextlib.closing(_open()) as conn:
+        path = _binary_file(conn, binary_id)
+    try:
+        window = _engine().read_memory(path, address=address, length=length, kind=kind)
+    except engines.UnmappedAddressError as exc:
+        return json_error(400, error="unmapped address", detail=str(exc))
+    except engines.EngineError as exc:
+        return json_error(500, error="engine-error", detail=str(exc))
+    return json_response({"binary_id": binary_id, **window})
+
+
+def _query_page_address(
+    request: Request,
+) -> int | None:
+    """Return the `va` query parameter for a page read, or None for the start."""
+    raw = (request.query_params.get("va") or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw, 0)
+    except ValueError:
+        raise json_error(
+            400, error="invalid address", detail="va must be an integer or 0x-prefixed hex"
+        ) from None
+
+
+def _query_page_length(
+    request: Request,
+) -> int:
+    """Return the bounded `length` query parameter of a page read."""
+    raw = request.query_params.get("length")
+    if raw is None or not raw.strip():
+        return engines.MEMORY_PAGE_DEFAULT
+    try:
+        length = int(raw)
+    except ValueError:
+        raise json_error(400, error="invalid length", detail="length must be an integer") from None
+    if length <= 0 or length > engines.MEMORY_PAGE_MAX:
+        raise json_error(
+            400,
+            error="invalid length",
+            detail=f"length must be between 1 and {engines.MEMORY_PAGE_MAX}",
+        )
+    return length
+
+
+@router.get("/api/binaries/{binary_id}/memory/page")
+def read_binary_memory_page(request: Request, binary_id: int) -> Response:
+    """Read one page of the binary's bytes for the full-file hex view.
+
+    The engine's own section map decides what is data and what is a gap: a run
+    inside a section's raw bytes is read from the file, and every other byte in
+    the page (a header, the gap between two sections, a section's uninitialized
+    tail) is a `gap` row rather than zeros.  `?va=` is the page's first address
+    (omitted starts at the first raw-backed section), `?length=` the page size
+    (default 256, cap 4096) and `?kind=` the address kind (`va`, `rva` or
+    `file`, so a jump is either virtual or an offset).  A start without backing
+    bytes answers 400 `unmapped address`; an engine failure 500 `engine-error`.
+    """
+    length = _query_page_length(
+        request,
+    )
+    kind = _query_address_kind(
+        request,
+    )
+    address = _query_page_address(
+        request,
+    )
+    with contextlib.closing(_open()) as conn:
+        path = _binary_file(conn, binary_id)
+    try:
+        page = _engine().read_memory_page(path, address=address, length=length, kind=kind)
+    except engines.UnmappedAddressError as exc:
+        return json_error(400, error="unmapped address", detail=str(exc))
+    except engines.EngineError as exc:
+        return json_error(500, error="engine-error", detail=str(exc))
+    return json_response({"binary_id": binary_id, **page})
+
+
+def _run_capabilities(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """Classify a binary's capabilities from its imports and strings, then store it."""
+    engine = _engine()
+    try:
+        return capabilities.run_capabilities(conn, binary_id=binary_id, engine=engine)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+@router.post("/api/binaries/{binary_id}/capabilities")
+def store_binary_capabilities(binary_id: int) -> Response:
+    """Classify a binary from its imports and strings and store the result."""
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = journal.journaled_scan(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_CAPABILITIES,
+                lambda: _run_capabilities(conn, binary_id),
+            )
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/capabilities")
+def get_binary_capabilities(binary_id: int) -> Response:
+    """Stored capability scan; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_CAPABILITIES)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "capabilities")
+
+
+@router.post("/api/binaries/{binary_id}/security-scan")
+def store_binary_security_scan(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Run the engine's security scan in the binary's rebrew project and store it."""
+    min_severity = _optional_str(body, "min_severity", engines.DEFAULT_SECURITY_MIN_SEVERITY)
+    if min_severity not in engines.SECURITY_SEVERITIES:
+        return json_error(
+            400,
+            error="invalid severity",
+            detail=f"unsupported security severity: {min_severity}",
+        )
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        project_dir = _project_context(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            with _scan_span(conn, binary_id, store.SCAN_KIND_SECURITY):
+                result = _run_security_scan(project_dir, min_severity)
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_SECURITY, result)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/security-scan")
+def get_binary_security_scan(binary_id: int) -> Response:
+    """Stored security scan; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_SECURITY)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "security", command="security-scan")
+
+
+@router.post("/api/binaries/{binary_id}/threat")
+def store_binary_threat(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Build a binary's local threat report and store it as the `threat` scan."""
+    narrative = _optional_bool(body, "narrative", False)
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        engine = _engine()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    store.SCAN_KIND_THREAT,
+                    lambda: threat.build_threat_report(
+                        conn,
+                        binary_id=binary_id,
+                        engine=engine,
+                        llm_client=llm.get_client(),
+                        narrative=narrative,
+                    ),
+                )
+            except engines.EngineError as exc:
+                raise json_error(500, error="engine-error", detail=str(exc)) from exc
+            payload = _classified(conn, binary_id, result)
+    return json_response(log.attach(payload))
+
+
+@router.get("/api/binaries/{binary_id}/threat")
+def get_binary_threat(binary_id: int) -> Response:
+    """Stored threat report; a binary without one is a 404 no-scan.
+
+    The response adds `software_type` and `threat_score`, derived at request
+    time from the binary's stored evidence, so the stored scan stays the
+    engine-independent payload `reportal threat` wrote.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_THREAT)
+            if stored is not None:
+                return json_response(_classified(conn, binary_id, stored))
+    return _no_scan(binary_id, "threat")
+
+
+@router.post("/api/binaries/{binary_id}/remediation")
+def store_binary_remediation(binary_id: int) -> Response:
+    """Generate the YARA, Snort and STIX artifacts for a binary and store them."""
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        engine = _engine()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    store.SCAN_KIND_REMEDIATION,
+                    lambda: remediation.build_remediation(conn, binary_id=binary_id, engine=engine),
+                )
+            except remediation.NoStringsError as exc:
+                raise json_error(404, error="no-strings", detail=str(exc)) from exc
+            except engines.EngineUnavailable as exc:
+                raise json_error(503, error="engine-unavailable", detail=str(exc)) from exc
+            except engines.EngineError as exc:
+                raise json_error(500, error="engine-error", detail=str(exc)) from exc
+    return json_response(log.attach(result))
+
+
+def _stored_remediation(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
+    """Return the stored remediation payload of *binary_id*, or None."""
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None:
+        return None
+    return store.get_scan(conn, analysis_id, store.SCAN_KIND_REMEDIATION)
+
+
+def _no_remediation_scan(binary_id: int) -> Response:
+    """Return the 404 for a binary with no stored remediation payload."""
+    return json_error(
+        404,
+        error="no-scan",
+        detail=(
+            f"no remediation scan for binary {binary_id}; run"
+            f" POST /api/binaries/{binary_id}/remediation or 'reportal yara {binary_id}'"
+        ),
+    )
+
+
+@router.get("/api/binaries/{binary_id}/remediation")
+def get_binary_remediation(binary_id: int) -> Response:
+    """Stored remediation rule; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = _stored_remediation(conn, binary_id)
+    if stored is not None:
+        return json_response(stored)
+    return _no_remediation_scan(binary_id)
+
+
+def _no_remediation_artifact(binary_id: int, fmt: str) -> Response:
+    """Return the 404 for a stored payload without the requested artifact."""
+    return json_error(
+        404,
+        error="no-artifact",
+        detail=(
+            f"the stored remediation scan for binary {binary_id} carries no {fmt} artifact;"
+            f" re-run 'reportal {fmt} {binary_id}' to rebuild it"
+        ),
+    )
+
+
+@router.get("/api/binaries/{binary_id}/remediation/{fmt}")
+def get_binary_remediation_artifact(binary_id: int, fmt: str) -> Response:
+    """Serve one stored remediation artifact: YARA and Snort as text, STIX as JSON.
+
+    An unknown format and a payload without that piece answer 404; a Snort
+    artifact with no rules is served as an empty text body, which is its
+    honest result when the threat scan names no network indicator.
+    """
+    if fmt not in remediation.REMEDIATION_FORMATS:
+        return json_error(
+            404,
+            error="format-not-found",
+            detail=(
+                f"unknown remediation format: {fmt};"
+                f" expected one of {', '.join(remediation.REMEDIATION_FORMATS)}"
+            ),
+        )
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = _stored_remediation(conn, binary_id)
+        if stored is None:
+            return _no_remediation_scan(binary_id)
+        if fmt == "yara":
+            text = stored.get("rule")
+        elif fmt == "snort":
+            snort = stored.get("snort")
+            text = snort.get("text") if isinstance(snort, dict) else None
+        else:
+            bundle = stored.get("stix")
+            if not isinstance(bundle, dict) or bundle.get("type") != "bundle":
+                return _no_remediation_artifact(binary_id, fmt)
+            return json_response(bundle)
+    if not isinstance(text, str):
+        return _no_remediation_artifact(binary_id, fmt)
+    return Response(content=text.encode("utf-8"), media_type="text/plain")
+
+
+# ── Behavior scans (execution, networking, filesystem) ─────────────
+
+
+def _behavior_domain_error(domain: str) -> Response | None:
+    """Return the 404 for an unknown behavior domain, or None when it is valid."""
+    if domain not in behavior.BEHAVIOR_DOMAINS:
+        return json_error(
+            404,
+            error="domain not found",
+            detail=f"unknown behavior domain: {domain}",
+        )
+    return None
+
+
+def _stored_behavior(
+    conn: sqlite3.Connection, binary_id: int, domain: str
+) -> dict[str, Any] | None:
+    """Return the stored scan of one behavior *domain*, or None."""
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None:
+        return None
+    return store.get_scan(conn, analysis_id, behavior.DOMAIN_SCAN_KINDS[domain])
+
+
+@router.post("/api/binaries/{binary_id}/behavior/{domain}")
+def store_binary_behavior(binary_id: int, domain: str) -> Response:
+    """Run one behavior scan on a binary and store the result."""
+    error = _behavior_domain_error(domain)
+    if error is not None:
+        return error
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        kind = behavior.DOMAIN_SCAN_KINDS[domain]
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    kind,
+                    lambda: behavior.scan_domain(
+                        conn, binary_id=binary_id, domain=domain, engine=_engine()
+                    ),
+                )
+            except engines.EngineError as exc:
+                raise json_error(500, error="engine-error", detail=str(exc)) from exc
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/behavior")
+def get_binary_behavior(binary_id: int) -> Response:
+    """All three stored behavior scans of a binary, null where one is absent."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        payload: dict[str, Any] = {
+            domain: _stored_behavior(conn, binary_id, domain)
+            for domain in behavior.BEHAVIOR_DOMAINS
+        }
+    return json_response(payload)
+
+
+@router.get("/api/binaries/{binary_id}/behavior/{domain}")
+def get_binary_behavior_domain(binary_id: int, domain: str) -> Response:
+    """Stored scan of one behavior domain; a binary without one is a 404 no-scan."""
+    error = _behavior_domain_error(domain)
+    if error is not None:
+        return error
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = _stored_behavior(conn, binary_id, domain)
+        if stored is not None:
+            return json_response(stored)
+    return json_error(
+        404,
+        error="no-scan",
+        detail=(
+            f"no {domain} scan for binary {binary_id}; run"
+            f" POST /api/binaries/{binary_id}/behavior/{domain}"
+            f" or 'reportal behavior {binary_id} {domain}'"
+        ),
+    )
+
+
+# ── Hardening scans (anti-analysis, obfuscation) ───────────────────
+
+
+def _hardening_domain_error(domain: str) -> Response | None:
+    """Return the 404 for an unknown hardening domain, or None when it is valid."""
+    if domain not in hardening.HARDENING_DOMAINS:
+        return json_error(
+            404,
+            error="domain not found",
+            detail=f"unknown hardening domain: {domain}",
+        )
+    return None
+
+
+def _stored_hardening(
+    conn: sqlite3.Connection, binary_id: int, domain: str
+) -> dict[str, Any] | None:
+    """Return the stored scan of one hardening *domain*, or None."""
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None:
+        return None
+    return store.get_scan(conn, analysis_id, hardening.DOMAIN_SCAN_KINDS[domain])
+
+
+@router.post("/api/binaries/{binary_id}/hardening/{domain}")
+def store_binary_hardening(binary_id: int, domain: str) -> Response:
+    """Run one hardening scan on a binary and store the result."""
+    error = _hardening_domain_error(domain)
+    if error is not None:
+        return error
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        kind = hardening.DOMAIN_SCAN_KINDS[domain]
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    kind,
+                    lambda: hardening.scan_hardening(
+                        conn, binary_id=binary_id, domain=domain, engine=_engine()
+                    ),
+                )
+            except engines.EngineError as exc:
+                raise json_error(500, error="engine-error", detail=str(exc)) from exc
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/hardening")
+def get_binary_hardening(binary_id: int) -> Response:
+    """Both stored hardening scans of a binary, null where one is absent."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        payload: dict[str, Any] = {
+            domain: _stored_hardening(conn, binary_id, domain)
+            for domain in hardening.HARDENING_DOMAINS
+        }
+    return json_response(payload)
+
+
+@router.get("/api/binaries/{binary_id}/hardening/{domain}")
+def get_binary_hardening_domain(binary_id: int, domain: str) -> Response:
+    """Stored scan of one hardening domain; a binary without one is a 404 no-scan."""
+    error = _hardening_domain_error(domain)
+    if error is not None:
+        return error
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = _stored_hardening(conn, binary_id, domain)
+        if stored is not None:
+            return json_response(stored)
+    return json_error(
+        404,
+        error="no-scan",
+        detail=(
+            f"no {domain} scan for binary {binary_id}; run"
+            f" POST /api/binaries/{binary_id}/hardening/{domain}"
+            f" or 'reportal hardening {binary_id} {domain}'"
+        ),
+    )
+
+
+# ── Secrets scan ───────────────────────────────────────────────────
+
+
+def _run_secrets(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """Scan a binary's strings for secrets from the engine, then store the result."""
+    engine = _engine()
+    try:
+        return secrets.run_secrets(conn, binary_id=binary_id, engine=engine)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+@router.post("/api/binaries/{binary_id}/secrets")
+def store_binary_secrets(binary_id: int) -> Response:
+    """Scan a binary's strings for credentials and high-entropy values and store them."""
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = journal.journaled_scan(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_SECRETS,
+                lambda: _run_secrets(conn, binary_id),
+            )
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/secrets")
+def get_binary_secrets(binary_id: int) -> Response:
+    """Stored secrets scan; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_SECRETS)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "secrets")
+
+
+# ── Protocols scan ─────────────────────────────────────────────────
+
+
+def _run_protocols(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """Infer a binary's protocols from the engine payloads, then store the result."""
+    engine = _engine()
+    try:
+        return protocols.scan_protocols(conn, binary_id=binary_id, engine=engine)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+@router.post("/api/binaries/{binary_id}/protocols")
+def store_binary_protocols(binary_id: int) -> Response:
+    """Infer the network protocols a binary speaks and store the result."""
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = journal.journaled_scan(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_PROTOCOLS,
+                lambda: _run_protocols(conn, binary_id),
+            )
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/protocols")
+def get_binary_protocols(binary_id: int) -> Response:
+    """Stored protocols scan; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_PROTOCOLS)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "protocols")
+
+
+# ── Function triage ────────────────────────────────────────────────
+
+
+def _run_function_triage(
+    conn: sqlite3.Connection, binary_id: int, *, function_ids: list[int] | None, limit: int
+) -> dict[str, Any]:
+    """Summarize and score selected functions, then store the aggregate.
+
+    A missing LLM endpoint is not an error: the run falls back to the
+    deterministic heuristic and records that in its notes.  A missing engine is
+    an error only on the LLM path, which needs a disassembly for a function
+    whose decompilation is not stored.
+    """
+    try:
+        return function_triage.summarize_functions(
+            conn,
+            binary_id=binary_id,
+            function_ids=function_ids,
+            limit=limit,
+            client=llm.get_client(),
+            engine=engines.get_engine(),
+        )
+    except ValueError as exc:
+        raise json_error(400, error="invalid body", detail=str(exc)) from exc
+    except engines.EngineUnavailable as exc:
+        raise json_error(503, error="engine-unavailable", detail=str(exc)) from exc
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+@router.post("/api/binaries/{binary_id}/function-triage")
+def store_binary_function_triage(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Summarize and score a binary's selected functions and store the result."""
+    function_ids = _optional_int_list(body, "function_ids")
+    limit = _optional_int(body, "limit", function_triage.DEFAULT_LIMIT)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = journal.journaled_scan(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_FUNCTION_TRIAGE,
+                lambda: _run_function_triage(
+                    conn, binary_id, function_ids=function_ids, limit=limit
+                ),
+            )
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/function-triage")
+def get_binary_function_triage(binary_id: int) -> Response:
+    """Stored per-function triage; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = function_triage.stored_function_triage(conn, binary_id=binary_id)
+        if stored is not None:
+            return json_response(stored)
+    return _no_scan(binary_id, "function-triage")
+
+
+@router.post("/api/binaries/{binary_id}/unstrip")
+def store_binary_unstrip(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Identify a binary's library functions and store the rename proposals."""
+    min_confidence = _optional_number(body, "min_confidence", unstrip.DEFAULT_MIN_CONFIDENCE)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        _project_context(conn, binary_id)
+        engine = _engine()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    store.SCAN_KIND_UNSTRIP,
+                    lambda: unstrip.run_unstrip(
+                        conn, binary_id=binary_id, engine=engine, min_confidence=min_confidence
+                    ),
+                )
+            except engines.EngineError as exc:
+                return json_error(500, error="engine-error", detail=str(exc))
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/unstrip")
+def get_binary_unstrip(binary_id: int) -> Response:
+    """Stored unstrip proposals; a binary without any is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_UNSTRIP)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, "unstrip")
+
+
+@router.post("/api/binaries/{binary_id}/unstrip/apply")
+def apply_binary_unstrip(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Apply one stored unstrip proposal, recording the rename."""
+    function_id = _require_int(body, "function_id")
+    override = body.get("name")
+    if override is not None and not isinstance(override, str):
+        return json_error(400, error="name must be a string")
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                change = journal.journaled_name_change(
+                    conn,
+                    log,
+                    function_id,
+                    lambda: unstrip.apply_proposal(
+                        conn, function_id=function_id, new_name=override
+                    ),
+                )
+            except KeyError:
+                return json_error(
+                    404, error="function not found", detail=f"no function with id {function_id}"
+                )
+            except unstrip.NoProposalError as exc:
+                return json_error(404, error="no-proposal", detail=str(exc))
+            except ValueError as exc:
+                return json_error(400, error="invalid name", detail=str(exc))
+            function = store.get_function(conn, function_id)
+    return json_response(log.attach({**change, "function": function}))
+
+
+# ── Lineage comparisons ────────────────────────────────────────────
+
+
+def _lineage_other_id(body: dict[str, Any]) -> int:
+    """Return the POST body's other binary id, or raise a 400."""
+    value = body.get("other_binary_id")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise json_error(
+            400,
+            error="invalid other_binary_id",
+            detail="other_binary_id must be an integer",
+        )
+    return value
+
+
+@router.post("/api/binaries/{binary_id}/lineage")
+def store_binary_lineage(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Compare a binary with another and store the comparison on the left binary."""
+    other_binary_id = _lineage_other_id(body)
+    refine = _optional_bool(body, "refine", True)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if store.get_binary(conn, other_binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {other_binary_id}"
+            )
+        if other_binary_id == binary_id:
+            return json_error(
+                400,
+                error="same binary",
+                detail=f"binary {binary_id} cannot be compared with itself",
+            )
+        try:
+            comparison = lineage.compare_binaries(
+                conn,
+                left_binary_id=binary_id,
+                right_binary_id=other_binary_id,
+                engine=engines.get_engine(),
+                refine=refine,
+            )
+        except lineage.SameBinaryError as exc:
+            return json_error(400, error="same binary", detail=str(exc))
+        except KeyError as exc:
+            return json_error(404, error="binary not found", detail=str(exc.args[0]))
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_scan(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_LINEAGE,
+                lambda: _store_lineage(conn, comparison),
+            )
+    return json_response(log.attach(comparison))
+
+
+@router.get("/api/binaries/{binary_id}/lineage")
+def get_binary_lineage(request: Request, binary_id: int) -> Response:
+    """One stored comparison of the pair, or every comparison stored for a binary."""
+    raw_other = request.query_params.get("other_binary_id")
+    if raw_other is not None:
+        try:
+            other_binary_id = int(raw_other)
+        except ValueError:
+            return json_error(
+                400,
+                error="invalid other_binary_id",
+                detail="other_binary_id must be an integer",
+            )
+    else:
+        other_binary_id = None
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if other_binary_id is None:
+            return json_response(
+                {
+                    "binary_id": binary_id,
+                    "comparisons": lineage.stored_comparisons(conn, binary_id),
+                }
+            )
+        stored = lineage.stored_comparison(conn, binary_id, other_binary_id)
+        if stored is not None:
+            return json_response(stored)
+    return json_error(
+        404,
+        error="no-scan",
+        detail=(
+            f"no lineage comparison of binary {binary_id} with binary {other_binary_id};"
+            f" run POST /api/binaries/{binary_id}/lineage"
+            f" or 'reportal lineage {binary_id} {other_binary_id}'"
+        ),
+    )
+
+
+@router.get("/api/analyses/{analysis_id}/scans")
+def list_analysis_scans(analysis_id: int) -> Response:
+    """Stored scans of one analysis, newest first, without their result payloads."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        scans = store.list_scans(conn, analysis_id)
+    return json_response({"scans": scans})
+
+
+# ── Malware families and detection ─────────────────────────────────
+
+
+def _optional_str_list(body: dict[str, Any], key: str) -> list[str]:
+    """Return ``body[key]`` as a list of strings, or raise a 400."""
+    value = body.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise json_error(400, error=f"{key} must be a list of strings")
+    return value
+
+
+def _detect_error(exc: engines.EngineError | KeyError | FileNotFoundError) -> Response:
+    """Map an engine or filesystem failure of a bundle derivation."""
+    if isinstance(exc, engines.EngineUnavailable):
+        return json_error(
+            503,
+            error="engine-unavailable",
+            detail=engines.ENGINE_UNAVAILABLE_HINT,
+        )
+    if isinstance(exc, KeyError):
+        return json_error(404, error="binary not found", detail=str(exc.args[0]))
+    if isinstance(exc, FileNotFoundError):
+        return json_error(400, error="binary not on disk", detail=str(exc))
+    return json_error(500, error="engine-error", detail=str(exc))
+
+
+@router.get("/api/families")
+def list_families() -> Response:
+    """Every registered family with its stored signature bundle."""
+    with contextlib.closing(_open()) as conn:
+        rows = families.list_families(conn)
+    return json_response({"families": rows})
+
+
+@router.post("/api/families")
+def create_family(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Register a family from a reference binary and store its signature bundle."""
+    name = _require_str(body, "name")
+    reference_binary_id = _require_int(body, "reference_binary_id")
+    aliases = _optional_str_list(body, "aliases")
+    notes = _optional_str(body, "notes")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                family = families.register_family(
+                    conn,
+                    name=name,
+                    reference_binary_id=reference_binary_id,
+                    aliases=aliases,
+                    notes=notes,
+                    engine=engines.get_engine(),
+                )
+            except families.FamilyError as exc:
+                return _family_error(exc)
+            except (engines.EngineError, KeyError, FileNotFoundError) as exc:
+                return _detect_error(exc)
+            journal.journaled_create(
+                log,
+                table="families",
+                key=int(family["family_id"]),
+                description=f"registered family {family['family_id']}",
+            )
+    return json_response(log.attach(family), status=201)
+
+
+@router.get("/api/families/{family_id}")
+def get_family(family_id: int) -> Response:
+    """One registered family with its stored signature bundle."""
+    with contextlib.closing(_open()) as conn:
+        family = families.get_family(conn, family_id)
+    if family is None:
+        return json_error(404, error="family not found", detail=f"no family with id {family_id}")
+    return json_response(family)
+
+
+@router.delete("/api/families/{family_id}")
+def delete_family(family_id: int) -> Response:
+    """Delete a registered family; 404 for an unknown id."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="families",
+                where="id = ?",
+                params=(family_id,),
+                description=f"deleted family {family_id}",
+            )
+            if not families.delete_family(conn, family_id):
+                return json_error(
+                    404, error="family not found", detail=f"no family with id {family_id}"
+                )
+    return json_response(log.attach({"family_id": family_id, "deleted": True}))
+
+
+@router.post("/api/binaries/{binary_id}/detect")
+def store_binary_detect(binary_id: int) -> Response:
+    """Match a binary against every registered family and store the result."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    store.SCAN_KIND_DETECT,
+                    lambda: families.detect_binary(
+                        conn, binary_id=binary_id, engine=engines.get_engine()
+                    ),
+                )
+            except (engines.EngineError, KeyError, FileNotFoundError) as exc:
+                return _detect_error(exc)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/detect")
+def get_binary_detect(binary_id: int) -> Response:
+    """Stored family detection; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = families.stored_detection(conn, binary_id)
+        if stored is not None:
+            return json_response(stored)
+    return _no_scan(binary_id, store.SCAN_KIND_DETECT)
+
+
+# ── Related binaries ───────────────────────────────────────────────
+
+
+@router.post("/api/binaries/{binary_id}/related")
+def store_binary_related(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Rank the other stored binaries against this one and store the result."""
+    limit = _optional_int(body, "limit", related.DEFAULT_LIMIT)
+    include_unrelated = _optional_bool(body, "include_unrelated", False)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    store.SCAN_KIND_RELATED,
+                    lambda: related.find_related(
+                        conn,
+                        binary_id=binary_id,
+                        engine=engines.get_engine(),
+                        limit=limit,
+                        include_unrelated=include_unrelated,
+                    ),
+                )
+            except ValueError as exc:
+                return json_error(400, error="invalid limit", detail=str(exc))
+            except KeyError as exc:
+                return json_error(404, error="binary not found", detail=str(exc.args[0]))
+            except engines.EngineError as exc:
+                return json_error(500, error="engine-error", detail=str(exc))
+    return json_response(log.attach(payload))
+
+
+@router.get("/api/binaries/{binary_id}/related")
+def get_binary_related(binary_id: int) -> Response:
+    """Stored relationship ranking; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = related.stored_related(conn, binary_id)
+        if stored is not None:
+            return json_response(stored)
+    return _no_scan(binary_id, store.SCAN_KIND_RELATED, command="related")
+
+
+# ── Composition ────────────────────────────────────────────────────
+
+
+@router.post("/api/binaries/{binary_id}/composition")
+def store_binary_composition(binary_id: int) -> Response:
+    """Build the binary's composition analysis from the store and store it."""
+    with contextlib.closing(_open()) as conn:
+        try:
+            result = composition.compute_composition(conn, binary_id=binary_id)
+        except composition.NoCompositionError as exc:
+            return json_error(404, error="binary not found", detail=str(exc.args[0]))
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_COMPOSITION, result)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/composition")
+def get_binary_composition(binary_id: int) -> Response:
+    """Stored composition analysis; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        stored = composition.stored_composition(conn, binary_id)
+        if stored is not None:
+            return json_response(stored)
+    return _no_scan(binary_id, store.SCAN_KIND_COMPOSITION, command="composition")
+
+
+# ── File type ──────────────────────────────────────────────────────
+
+
+@router.post("/api/binaries/{binary_id}/filetype")
+def store_binary_filetype(binary_id: int) -> Response:
+    """Detect a binary's file type and packer signatures and store the result."""
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        _engine()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    store.SCAN_KIND_FILETYPE,
+                    lambda: filetypes.run_filetype(
+                        conn, binary_id=binary_id, engine=engines.get_engine()
+                    ),
+                )
+            except engines.EngineError as exc:
+                return json_error(500, error="engine-error", detail=str(exc))
+    return json_response(log.attach(payload))
+
+
+@router.get("/api/binaries/{binary_id}/filetype")
+def get_binary_filetype(binary_id: int) -> Response:
+    """Stored file-type detection; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_FILETYPE)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, store.SCAN_KIND_FILETYPE)
+
+
+# ── Functions ──────────────────────────────────────────────────────
+
+
+@router.get("/api/functions/{function_id}")
+def get_function(function_id: int) -> Response:
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+    if function is None:
+        return json_error(
+            404, error="function not found", detail=f"no function with id {function_id}"
+        )
+    return json_response(function)
+
+
+@router.post("/api/functions/{function_id}/rename")
+def rename_function(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    new_name = _require_str(body, "name")
+    actor = _optional_str(body, "actor", "api")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                change = journal.journaled_rename(
+                    conn, log, function_id, new_name=new_name, actor=actor, source="manual"
+                )
+            except KeyError:
+                return json_error(
+                    404, error="function not found", detail=f"no function with id {function_id}"
+                )
+            except ValueError as exc:
+                return json_error(400, error="invalid name", detail=str(exc))
+    return json_response(log.attach(change))
+
+
+@router.get("/api/functions/{function_id}/history")
+def function_history(function_id: int) -> Response:
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        history = store.list_name_history(conn, function_id)
+    return json_response({"history": history})
+
+
+@router.post("/api/functions/{function_id}/history/{history_id}/revert")
+def revert_function_name(function_id: int, history_id: int) -> Response:
+    """Restore the pre-rename name recorded by one history row of a function."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        entry = store.get_name_history(conn, history_id)
+        if entry is None or int(entry["function_id"]) != function_id:
+            return json_error(
+                404,
+                error="history not found",
+                detail=f"no history {history_id} for function {function_id}",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                journal.journaled_revert_name(conn, log, function_id, history_id)
+            except ValueError as exc:
+                return json_error(400, error="invalid name", detail=str(exc))
+    return json_response(
+        log.attach(
+            {"function_id": function_id, "history_id": history_id, "name": str(entry["old_name"])}
+        )
+    )
+
+
+@router.get("/api/functions/{function_id}/matches")
+def function_matches(function_id: int) -> Response:
+    """The recorded match candidates of one function, with the derived metrics.
+
+    Each row carries ``difference`` (the complement ``100 - similarity``) and
+    the quality ``band`` beside the stored similarity and confidence.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        matches = store.list_matches(conn, function_id)
+    return json_response({"matches": [_match_view(row) for row in matches]})
+
+
+@router.post("/api/functions/{function_id}/apply-match")
+def apply_match(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Apply one recorded match to a function: its name, signature, or both.
+
+    ``mode`` defaults to ``name``, the behaviour from before the modes
+    existed.  A ``signature`` transfer copies the candidate's return type,
+    calling convention and parameters; the types those parameters name are
+    resolved by the existing type model, and a referenced local type the
+    target's binary has no row for is reported in ``missing_types`` rather
+    than dropped.  A ``both`` transfer journals both writes, so one revert
+    puts both back.
+
+    Collision policy: a signature transfer refuses with 409
+    ``signature-conflict`` when the target already carries a different
+    non-empty calling convention, so an ABI-level mismatch is never
+    overwritten silently.
+    """
+    candidate_id = _require_int(body, "candidate_function_id")
+    mode = _optional_str(body, "mode", matching.DEFAULT_TRANSFER_MODE)
+    actor = _optional_str(body, "actor", "api")
+    with contextlib.closing(_open()) as conn:
+        try:
+            plan = matching.plan_transfer(
+                conn,
+                function_id=function_id,
+                candidate_function_id=candidate_id,
+                mode=mode,
+            )
+        except matching.InvalidSettingsError as exc:
+            return json_error(400, error=exc.error, detail=exc.detail)
+        if plan.status == matching.TRANSFER_STATUS_FAILED:
+            status, error = matching.TRANSFER_FAILURE_RESPONSE.get(
+                plan.reason, (400, "invalid transfer")
+            )
+            return json_error(status, error=error, detail=plan.detail)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            if plan.status == matching.TRANSFER_STATUS_APPLIED:
+                matching.apply_transfer(conn, log, plan, actor=actor)
+    return json_response(log.attach(matching.plan_payload(plan)))
+
+
+@router.get("/api/functions/{function_id}/disasm")
+def function_disasm(request: Request, function_id: int) -> Response:
+    """NASM or hex listing of one function through its rebrew project context."""
+    raw_format = request.query_params.get("format", "nasm")
+    fmt = raw_format if isinstance(raw_format, str) and raw_format.strip() else "nasm"
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        binary_id = int(function["binary_id"])
+        project_dir = store.get_rebrew_context(conn, binary_id)
+        if project_dir is None:
+            return json_error(
+                400,
+                error="no-engine-context",
+                detail=f"binary {binary_id} has no rebrew project context",
+            )
+        if fmt not in engines.DISASM_FORMATS:
+            return json_error(
+                400, error="invalid format", detail=f"unsupported disassembly format: {fmt}"
+            )
+        va = int(function["va"])
+        size = int(function["size"])
+        if fmt == CACHEABLE_DISASM_FORMAT:
+            cached = store.get_disasm(conn, function_id)
+            if cached is not None:
+                return json_response({"va": va, "size": size, "format": fmt, "disasm": cached})
+        try:
+            disasm = _engine().disassemble(project_dir, va, size, fmt)
+        except engines.EngineError as exc:
+            return json_error(500, error="engine-error", detail=str(exc))
+        if fmt == CACHEABLE_DISASM_FORMAT:
+            store.set_disasm(conn, function_id, disasm)
+    return json_response({"va": va, "size": size, "format": fmt, "disasm": disasm})
+
+
+# ── Control-flow graph ─────────────────────────────────────────────
+
+
+# Why the payload carries no blocks and no engine note.  The engine states its
+# own reason whenever it segments nothing, so this is a fallback for a payload
+# that somehow carries an empty block list and no note: the panel must never
+# render an empty diagram with no explanation.
+_CFG_EMPTY_NOTE = "the engine segmented no basic blocks for this function"
+
+
+def _cfg_address(value: Any) -> int | None:
+    """Parse one address the CFG payload carries, or None when it is unusable.
+
+    ``rebrew asm --format cfg`` reports every address as a ``0x...`` string;
+    the route converts them to ints so the SPA never parses hex.  A bool, a
+    malformed string and a missing field all answer None, and the caller drops
+    the row rather than inventing an address.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 16)
+        except ValueError:
+            return None
+    return None
+
+
+def _cfg_count(value: Any) -> int:
+    """A block count the CFG payload carries, or zero when it is unusable."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _cfg_block_rows(raw: Any) -> list[dict[str, Any]]:
+    """Normalize the payload's blocks, dropping an entry with no address."""
+    rows: list[dict[str, Any]] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        address = _cfg_address(entry.get("va"))
+        if address is None:
+            continue
+        rows.append(
+            {
+                "va": address,
+                "size": _cfg_count(entry.get("size")),
+                "instruction_count": _cfg_count(entry.get("instruction_count")),
+                "first": str(entry.get("first") or ""),
+                "last": str(entry.get("last") or ""),
+            }
+        )
+    return rows
+
+
+def _cfg_edge_rows(raw: Any) -> list[dict[str, Any]]:
+    """Normalize the payload's edges, dropping one with an unusable endpoint."""
+    rows: list[dict[str, Any]] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        source = _cfg_address(entry.get("from"))
+        target = _cfg_address(entry.get("to"))
+        if source is None or target is None:
+            continue
+        rows.append({"from": source, "to": target, "back_edge": bool(entry.get("back_edge"))})
+    return rows
+
+
+@router.get("/api/functions/{function_id}/cfg")
+def function_cfg(function_id: int) -> Response:
+    """Basic-block control-flow graph of one function through its rebrew project.
+
+    The graph is derived from the target binary on every request (there is no
+    stored CFG): ``rebrew asm <hex-va> --size N --format cfg --json`` runs in
+    the binary's stored rebrew project and the route converts the engine's hex
+    addresses to ints.  ``block_count`` is what the payload returns,
+    ``block_total`` the engine's true count and ``block_cap`` the engine's
+    per-function cap, so a truncated graph states what it dropped; ``note``
+    carries the engine's reason when it resolved no extent, and an empty
+    payload always carries one.
+    """
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        project_dir = _project_context(conn, int(function["binary_id"]))
+        va = int(function["va"])
+        try:
+            payload = _engine().control_flow_graph(project_dir, va, int(function["size"]))
+        except engines.EngineError as exc:
+            return json_error(500, error="engine-error", detail=str(exc))
+    blocks = _cfg_block_rows(payload.get("blocks"))
+    edges = _cfg_edge_rows(payload.get("edges"))
+    raw_note = payload.get("note")
+    note = raw_note if isinstance(raw_note, str) and raw_note.strip() else None
+    if not blocks and note is None:
+        note = _CFG_EMPTY_NOTE
+    engine_va = _cfg_address(payload.get("va"))
+    return json_response(
+        {
+            "function_id": function_id,
+            "va": engine_va if engine_va is not None else va,
+            "size": _cfg_count(payload.get("size")),
+            "blocks": blocks,
+            "edges": edges,
+            "block_count": len(blocks),
+            "block_total": _cfg_count(payload.get("block_total")),
+            "block_cap": _cfg_count(payload.get("block_cap")),
+            "truncated": bool(payload.get("truncated")),
+            "note": note,
+        }
+    )
+
+
+# ── Decompilation ──────────────────────────────────────────────────
+
+
+def _decompilation_context(conn: sqlite3.Connection, function: dict[str, Any]) -> tuple[int, str]:
+    """Return the (*va*, rebrew project directory) a decompile call needs.
+
+    Raises a 400 when the function's binary has no rebrew project context,
+    since ``rebrew decompile`` resolves its target from that directory.
+    """
+    va = int(function["va"])
+    binary_id = int(function["binary_id"])
+    project_dir = store.get_rebrew_context(conn, binary_id)
+    if project_dir is None:
+        raise json_error(
+            400,
+            error="no-engine-context",
+            detail=f"binary {binary_id} has no rebrew project context",
+        )
+    return va, project_dir
+
+
+def _run_decompiler(project_dir: str, va: int, backend: str, named: bool) -> dict[str, Any]:
+    """Decompile through the engine, mapping an engine failure to a 500.
+
+    :class:`~reportal.engines.EngineError` carries the bounded engine message;
+    the response keeps the error name fixed and the text in ``detail``.
+    """
+    try:
+        return _engine().decompile(project_dir, va, backend, named)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+@router.get("/api/functions/{function_id}/decompilation")
+def function_decompilation(request: Request, function_id: int) -> Response:
+    """Stored decompilation when one exists, else a live compute that is not stored."""
+    raw_backend = request.query_params.get("backend", engines.DEFAULT_DECOMPILER_BACKEND)
+    backend = (
+        raw_backend
+        if isinstance(raw_backend, str) and raw_backend.strip()
+        else engines.DEFAULT_DECOMPILER_BACKEND
+    )
+    named = _query_bool(request, "named", False)
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        if backend not in engines.DECOMPILER_BACKENDS:
+            return json_error(
+                400,
+                error="invalid backend",
+                detail=f"unsupported decompiler backend: {backend}",
+            )
+        stored = store.get_decompilation(conn, function_id)
+        if stored is not None:
+            return json_response(
+                {
+                    "va": int(function["va"]),
+                    "backend": str(stored["backend"]),
+                    "named": named,
+                    "code": str(stored["code"]),
+                }
+            )
+        va, project_dir = _decompilation_context(conn, function)
+        result = _run_decompiler(project_dir, va, backend, named)
+    return json_response(
+        {
+            "va": va,
+            "backend": str(result.get("backend") or backend),
+            "named": named,
+            "code": str(result.get("code") or ""),
+        }
+    )
+
+
+@router.post("/api/functions/{function_id}/decompilation")
+def store_function_decompilation(
+    function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Compute a function's decompiled source through the engine and store it."""
+    backend = _optional_str(body, "backend", engines.DEFAULT_DECOMPILER_BACKEND)
+    named = _optional_bool(body, "named", False)
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        if backend not in engines.DECOMPILER_BACKENDS:
+            return json_error(
+                400,
+                error="invalid backend",
+                detail=f"unsupported decompiler backend: {backend}",
+            )
+        va, project_dir = _decompilation_context(conn, function)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.journaled_rows(
+                conn,
+                log,
+                table="decompilations",
+                where="function_id = ?",
+                params=(function_id,),
+                description=f"replaced the decompilation of function {function_id}",
+            )
+            result = _run_decompiler(project_dir, va, backend, named)
+            code = str(result.get("code") or "")
+            resolved = str(result.get("backend") or backend)
+            store.set_decompilation(conn, function_id, code, resolved)
+            if not before:
+                journal.journaled_create(
+                    log,
+                    table="decompilations",
+                    key={"function_id": function_id},
+                    description=f"stored the decompilation of function {function_id}",
+                )
+    return json_response(log.attach({"va": va, "backend": resolved, "named": named, "code": code}))
+
+
+# ── Diff view ──────────────────────────────────────────────────────
+
+
+@router.get("/api/functions/{function_id}/diff")
+@router.get("/api/functions/{function_id}/diff/{candidate_id}")
+def function_diff(request: Request, function_id: int, candidate_id: int | None = None) -> Response:
+    """Side-by-side alignment of a function against a recorded match candidate.
+
+    Without a candidate the function's best recorded match is used (404
+    ``no-match`` when it has none); with one, the pair must be a recorded match
+    for the source function (400 ``no-such-match``), mirroring apply-match.
+    """
+    raw_kind = request.query_params.get("kind", diffview.DEFAULT_KIND)
+    kind = raw_kind if isinstance(raw_kind, str) and raw_kind.strip() else diffview.DEFAULT_KIND
+    normalize = _query_bool(request, "normalize", diffview.DEFAULT_NORMALIZE)
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        if candidate_id is not None:
+            if store.get_function(conn, candidate_id) is None:
+                return json_error(
+                    404, error="candidate not found", detail=f"no function with id {candidate_id}"
+                )
+            if not store.has_match(conn, function_id, candidate_id):
+                return json_error(
+                    400,
+                    error="no-such-match",
+                    detail=f"no recorded match for {function_id} -> {candidate_id}",
+                )
+        try:
+            payload = diffview.function_diff(
+                conn,
+                engines.get_engine(),
+                function_id=function_id,
+                candidate_id=candidate_id,
+                kind=kind,
+                normalize=normalize,
+            )
+        except diffview.DiffError as exc:
+            return json_error(exc.status, error=exc.code, detail=exc.detail)
+    return json_response(payload)
+
+
+# ── Cross-references ───────────────────────────────────────────────
+
+
+def _run_xrefs(project_dir: str, va: int, kinds: Sequence[str]) -> dict[str, Any]:
+    """Run the engine's cross-reference lookup, mapping a failure to a 500."""
+    try:
+        return _engine().xrefs(project_dir, va, kinds)
+    except engines.EngineError as exc:
+        raise json_error(500, error="engine-error", detail=str(exc)) from exc
+
+
+@router.get("/api/functions/{function_id}/xrefs")
+def function_xrefs(request: Request, function_id: int) -> Response:
+    """Live cross-references to a function through its rebrew project context.
+
+    A repeated ``?kind=`` keeps only those reference kinds.
+    """
+    kinds = [kind for kind in request.query_params.getlist("kind") if kind.strip()]
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        project_dir = _project_context(conn, int(function["binary_id"]))
+        result = _run_xrefs(project_dir, int(function["va"]), kinds)
+    return json_response(result)
+
+
+# ── Function references: globals, callers and callees ──────────────
+
+
+# Callee kinds the engine reports for a call through an import slot: an
+# indirect call whose target is the slot, not a function address.
+_INDIRECT_CALL_KINDS = frozenset({"iat_call", "iat_jmp"})
+
+_COUNT_NOTE = (
+    "callers counts distinct call sites (from addresses); callees counts distinct"
+    " (target, kind) pairs, so one target reached both directly and through its"
+    " import slot appears twice"
+)
+
+
+def _stored_section_table(
+    conn: sqlite3.Connection, binary_id: int
+) -> tuple[list[Mapping[str, Any]], int]:
+    """The binary's stored pe-info sections and image base, else empty and zero."""
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None:
+        return [], 0
+    stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_PE_INFO)
+    if not isinstance(stored, Mapping):
+        return [], 0
+    sections = stored.get("sections")
+    rows = (
+        [row for row in sections if isinstance(row, Mapping)] if isinstance(sections, list) else []
+    )
+    return rows, int(stored.get("image_base") or 0)
+
+
+def _section_name_for(
+    sections: Sequence[Mapping[str, Any]], image_base: int, address: int
+) -> str | None:
+    """The name of the section covering *address*, or None when none does."""
+    for section in sections:
+        start = image_base + int(section.get("virtual_address") or 0)
+        size = int(section.get("virtual_size") or 0)
+        if size > 0 and start <= address < start + size:
+            return str(section.get("name") or "") or None
+    return None
+
+
+def _global_rows(
+    raw: Any, sections: Sequence[Mapping[str, Any]], image_base: int
+) -> list[dict[str, Any]]:
+    """Normalize the dossier's globals into addressed access rows."""
+    rows: list[dict[str, Any]] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        address = entry.get("va")
+        if isinstance(address, bool) or not isinstance(address, int):
+            continue
+        kind = str(entry.get("kind") or "")
+        rows.append(
+            {
+                "address": address,
+                "kind": kind,
+                "access": GLOBAL_ACCESS.get(kind),
+                "section": _section_name_for(sections, image_base, address),
+            }
+        )
+    return rows
+
+
+def _caller_rows(raw: Any) -> list[dict[str, Any]]:
+    """Normalize the dossier's callers into one row per call site."""
+    rows: list[dict[str, Any]] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        address = entry.get("from_va")
+        if isinstance(address, bool) or not isinstance(address, int):
+            continue
+        rows.append({"from_va": address, "name": str(entry.get("name") or "") or None})
+    return rows
+
+
+def _callee_rows(raw: Any) -> list[dict[str, Any]]:
+    """Normalize the dossier's callees, marking an import-slot call indirect."""
+    rows: list[dict[str, Any]] = []
+    for entry in raw if isinstance(raw, list) else []:
+        if not isinstance(entry, Mapping):
+            continue
+        address = entry.get("to_va")
+        if isinstance(address, bool) or not isinstance(address, int):
+            continue
+        kind = str(entry.get("kind") or "")
+        rows.append(
+            {
+                "to_va": address,
+                "name": str(entry.get("name") or "") or None,
+                "kind": kind,
+                "indirect": kind in _INDIRECT_CALL_KINDS,
+            }
+        )
+    return rows
+
+
+@router.get("/api/functions/{function_id}/references")
+def function_references(function_id: int) -> Response:
+    """One function's globals, callers and callees from the engine's dossier.
+
+    ``rebrew describe`` reports the data addresses the function touches, the
+    call sites into it and the calls it makes.  A global carries the section
+    that owns its address when the stored pe-info scan knows one and a read or
+    a write when the instruction makes that clear; an address or an access the
+    engine did not resolve stays null.  ``counts`` reports the row counts, and
+    ``count_note`` states what each count means.
+    """
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        binary_id = int(function["binary_id"])
+        project_dir = _project_context(conn, binary_id)
+        sections, image_base = _stored_section_table(conn, binary_id)
+        try:
+            dossier = _engine().describe(project_dir, int(function["va"]))
+        except engines.EngineError as exc:
+            return json_error(500, error="engine-error", detail=str(exc))
+    globals_rows = _global_rows(dossier.get("globals"), sections, image_base)
+    callers = _caller_rows(dossier.get("callers"))
+    callees = _callee_rows(dossier.get("callees"))
+    return json_response(
+        {
+            "function_id": function_id,
+            "va": int(function["va"]),
+            "globals": globals_rows,
+            "callers": callers,
+            "callees": callees,
+            "counts": {
+                "globals": len(globals_rows),
+                "callers": len(callers),
+                "callees": len(callees),
+            },
+            "count_note": _COUNT_NOTE,
+        }
+    )
+
+
+# ── AI artifacts ───────────────────────────────────────────────────
+
+
+def _ai_client() -> llm.LlmClient:
+    """Return the process LLM client, or raise a 503 response when none is configured."""
+    client = llm.get_client()
+    if not client.available():
+        raise json_error(503, error="llm-unavailable", detail=llm.UNAVAILABLE_DETAIL)
+    return client
+
+
+def _no_ai_decompilation(function_id: int) -> Response:
+    """Return the 404 for a function with no stored decompilation to feed the model."""
+    return json_error(
+        404,
+        error="no-decompilation",
+        detail=(
+            f"function {function_id} has no stored decompilation; "
+            f"run POST /api/functions/{function_id}/decompilation or "
+            f"'reportal decompile {function_id}' first"
+        ),
+    )
+
+
+def _no_ai_artifact(function_id: int, kind: str) -> Response:
+    """Return the stored-only 404 for a function with no artifact of *kind*."""
+    command = llm.AI_CLI_COMMANDS.get(kind, kind)
+    return json_error(
+        404,
+        error="no-artifact",
+        detail=(
+            f"no {kind} artifact for function {function_id}; "
+            f"run POST /api/functions/{function_id}/{kind} or "
+            f"'reportal {command} {function_id}'"
+        ),
+    )
+
+
+def _store_ai_artifact(function_id: int, kind: str) -> Response:
+    """Compute one AI artifact through the configured LLM and store it.
+
+    A stored decompilation is required and is never generated here: the route
+    reads the model's input from the ``decompilations`` table only.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        client = _ai_client()
+        stored = store.get_decompilation(conn, function_id)
+        if stored is None:
+            return _no_ai_decompilation(function_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = llm.AI_RUNNERS[kind](str(stored["code"]), client=client)
+            except llm.LlmUnavailable:
+                return json_error(503, error="llm-unavailable", detail=llm.UNAVAILABLE_DETAIL)
+            except llm.LlmError as exc:
+                return json_error(502, error="llm-error", detail=str(exc))
+            before = journal.journaled_rows(
+                conn,
+                log,
+                table="ai_artifacts",
+                where="function_id = ? AND kind = ?",
+                params=(function_id, kind),
+                description=f"replaced the {kind} artifact of function {function_id}",
+            )
+            store.set_ai_artifact(conn, function_id, kind, payload, client.model)
+            if not before:
+                journal.journaled_create(
+                    log,
+                    table="ai_artifacts",
+                    key={"function_id": function_id, "kind": kind},
+                    description=f"stored the {kind} artifact of function {function_id}",
+                )
+    return json_response(
+        log.attach(
+            {"function_id": function_id, "kind": kind, "payload": payload, "model": client.model}
+        )
+    )
+
+
+def _get_ai_artifact(function_id: int, kind: str) -> Response:
+    """Serve one stored AI artifact; never calls the LLM."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        artifact = store.get_ai_artifact(conn, function_id, kind)
+    if artifact is None:
+        return _no_ai_artifact(function_id, kind)
+    return json_response({"function_id": function_id, "kind": kind, **artifact})
+
+
+@router.post("/api/functions/{function_id}/summary")
+def store_function_summary(function_id: int) -> bytes | Any:
+    """Summarize a function's stored decompilation with the configured LLM."""
+    return _store_ai_artifact(function_id, llm.AI_KIND_SUMMARY)
+
+
+@router.get("/api/functions/{function_id}/summary")
+def get_function_summary(function_id: int) -> bytes | Any:
+    """Stored AI summary; a function without one is a 404 no-artifact."""
+    return _get_ai_artifact(function_id, llm.AI_KIND_SUMMARY)
+
+
+@router.post("/api/functions/{function_id}/ai-comments")
+def store_function_ai_comments(function_id: int) -> bytes | Any:
+    """Ask the configured LLM for inline comments on a stored decompilation."""
+    return _store_ai_artifact(function_id, llm.AI_KIND_COMMENTS)
+
+
+@router.get("/api/functions/{function_id}/ai-comments")
+def get_function_ai_comments(function_id: int) -> bytes | Any:
+    """Stored AI comments; a function without any is a 404 no-artifact."""
+    return _get_ai_artifact(function_id, llm.AI_KIND_COMMENTS)
+
+
+@router.post("/api/functions/{function_id}/type-suggestions")
+def store_function_type_suggestions(function_id: int) -> bytes | Any:
+    """Ask the configured LLM for type suggestions on a stored decompilation."""
+    return _store_ai_artifact(function_id, llm.AI_KIND_TYPES)
+
+
+@router.get("/api/functions/{function_id}/type-suggestions")
+def get_function_type_suggestions(function_id: int) -> bytes | Any:
+    """Stored type suggestions; a function without any is a 404 no-artifact."""
+    return _get_ai_artifact(function_id, llm.AI_KIND_TYPES)
+
+
+# ── AI identifier renames ──────────────────────────────────────────
+
+
+def _no_renames_artifact(function_id: int) -> Response:
+    """Return the stored-only 404 for a function with no rename suggestions."""
+    return json_error(
+        404,
+        error="no-artifact",
+        detail=(
+            f"no renames artifact for function {function_id}; "
+            f"run POST /api/functions/{function_id}/renames or "
+            f"'reportal suggest-renames {function_id}'"
+        ),
+    )
+
+
+@router.post("/api/functions/{function_id}/renames")
+def store_function_renames(function_id: int) -> Response:
+    """Suggest identifier renames for a stored decompilation and store them."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        client = _ai_client()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.journaled_rows(
+                conn,
+                log,
+                table="ai_artifacts",
+                where="function_id = ? AND kind = ?",
+                params=(function_id, renames.RENAMES_KIND),
+                description=f"replaced the renames artifact of function {function_id}",
+            )
+            try:
+                result = renames.suggest_renames(conn, function_id=function_id, client=client)
+            except renames.NoDecompilationError:
+                return _no_ai_decompilation(function_id)
+            except llm.LlmError as exc:
+                return json_error(502, error="llm-error", detail=str(exc))
+            if not before:
+                journal.journaled_create(
+                    log,
+                    table="ai_artifacts",
+                    key={"function_id": function_id, "kind": renames.RENAMES_KIND},
+                    description=f"stored the renames artifact of function {function_id}",
+                )
+    return json_response(
+        log.attach(
+            {
+                "function_id": function_id,
+                "kind": renames.RENAMES_KIND,
+                "payload": {"suggestions": result["suggestions"]},
+                "model": result["model"],
+                "count": result["count"],
+            }
+        )
+    )
+
+
+@router.get("/api/functions/{function_id}/renames")
+def get_function_renames(function_id: int) -> Response:
+    """Stored rename suggestions; a function without any is a 404 no-artifact."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        artifact = store.get_ai_artifact(conn, function_id, renames.RENAMES_KIND)
+    if artifact is None:
+        return _no_renames_artifact(function_id)
+    return json_response({"function_id": function_id, "kind": renames.RENAMES_KIND, **artifact})
+
+
+def _applied_entries(body: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Return the body's ``applied`` suggestions, or None to apply every stored one."""
+    raw = body.get("applied")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or any(not isinstance(entry, dict) for entry in raw):
+        raise json_error(
+            400,
+            error="invalid applied",
+            detail="applied must be a list of suggestion objects",
+        )
+    return raw
+
+
+@router.post("/api/functions/{function_id}/renames/apply")
+def apply_function_renames(
+    function_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Apply rename suggestions to the function's stored decompilation.
+
+    The body is ``{"applied": [...], "rename_function": bool}``; both are
+    optional and an omitted ``applied`` applies every stored suggestion.  A
+    ``function``-kind suggestion renames the function row only when
+    ``rename_function`` is true.
+    """
+    applied = _applied_entries(body)
+    rename_function = _optional_bool(body, "rename_function", False)
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            artifact_before = journal.journaled_rows(
+                conn,
+                log,
+                table="ai_artifacts",
+                where="function_id = ? AND kind = ?",
+                params=(function_id, renames.RENAMES_APPLIED_KIND),
+                description=f"replaced the applied renames of function {function_id}",
+            )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="decompilations",
+                where="function_id = ?",
+                params=(function_id,),
+                description=f"rewrote the decompilation of function {function_id}",
+            )
+            try:
+                result = journal.journaled_name_change(
+                    conn,
+                    log,
+                    function_id,
+                    lambda: renames.apply_renames(
+                        conn,
+                        function_id=function_id,
+                        applied=applied,
+                        rename_function=rename_function,
+                    ),
+                )
+            except renames.NoDecompilationError:
+                return _no_ai_decompilation(function_id)
+            except renames.NoSuggestionError:
+                return _no_renames_artifact(function_id)
+            if result["decompilation_updated"] and not artifact_before:
+                journal.journaled_create(
+                    log,
+                    table="ai_artifacts",
+                    key={"function_id": function_id, "kind": renames.RENAMES_APPLIED_KIND},
+                    description=f"journaled the applied renames of function {function_id}",
+                )
+    return json_response(log.attach(result))
+
+
+@router.post("/api/functions/{function_id}/renames/revert")
+def revert_function_renames(function_id: int) -> Response:
+    """Restore the decompilation text the last apply journaled."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="ai_artifacts",
+                where="function_id = ? AND kind = ?",
+                params=(function_id, renames.RENAMES_APPLIED_KIND),
+                description=f"reverted the applied renames of function {function_id}",
+            )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="decompilations",
+                where="function_id = ?",
+                params=(function_id,),
+                description=f"restored the decompilation of function {function_id}",
+            )
+            try:
+                result = renames.revert_renames(conn, function_id=function_id)
+            except renames.NoRevertError:
+                return json_error(
+                    404,
+                    error="no-artifact",
+                    detail=f"no applied renames to revert for function {function_id}",
+                )
+    return json_response(log.attach(result))
+
+
+# ── AI decompilation pipeline ──────────────────────────────────────
+
+
+def _disabled_components(body: dict[str, Any]) -> frozenset[str] | None:
+    """Return the body's ``disabled`` component names, or None when it names none.
+
+    None leaves the workspace ``[pipeline] disabled`` list in charge; an empty
+    list overrides it with "nothing disabled".
+    """
+    raw = body.get("disabled")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or any(not isinstance(entry, str) for entry in raw):
+        raise json_error(
+            400,
+            error="invalid disabled",
+            detail="disabled must be a list of component names",
+        )
+    return frozenset(entry.strip() for entry in raw if entry.strip())
+
+
+def _no_pipeline_run(function_id: int) -> Response:
+    """Return the stored-only 404 for a function no pipeline run covered."""
+    return json_error(
+        404,
+        error="no-run",
+        detail=(
+            f"no pipeline run for function {function_id}; "
+            f"run POST /api/functions/{function_id}/pipeline or "
+            f"'reportal pipeline {function_id}'"
+        ),
+    )
+
+
+@router.post("/api/functions/{function_id}/pipeline")
+def run_function_pipeline(
+    function_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Run the AI decompilation composition over one function and store the run.
+
+    A component that cannot run is a skipped or failed step on the run, never a
+    failed request: only a function that does not exist (404) or a composition
+    that cannot be assembled at all (503) answers without a run.
+    """
+    disabled = _disabled_components(body)
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        try:
+            run = pipeline.run_pipeline(conn, function_id=function_id, disabled=disabled)
+        except pipeline.PipelineUnavailable as exc:
+            return json_error(503, error="pipeline-unavailable", detail=str(exc))
+    return json_response(run)
+
+
+@router.get("/api/functions/{function_id}/pipeline")
+def get_function_pipeline(function_id: int) -> Response:
+    """Latest stored AI decompilation run of a function; 404 no-run without one."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        run = pipeline.latest_run(conn, function_id)
+    if run is None:
+        return _no_pipeline_run(function_id)
+    return json_response(run)
+
+
+@router.get("/api/pipeline/runs/{run_id}")
+def get_pipeline_run(run_id: int) -> Response:
+    """One stored pipeline run with its steps and the function's artifacts."""
+    with contextlib.closing(_open()) as conn:
+        run = store.get_pipeline_run(conn, run_id)
+        if run is None:
+            return json_error(
+                404, error="run not found", detail=f"no pipeline run with id {run_id}"
+            )
+        return json_response(pipeline.run_payload(conn, run))
+
+
+@router.post("/api/pipeline/runs/{run_id}/revert")
+def revert_pipeline_run(run_id: int) -> Response:
+    """Undo the writes a stored pipeline run journaled; returns what was undone."""
+    with contextlib.closing(_open()) as conn:
+        try:
+            result = pipeline.revert_run(conn, run_id)
+        except KeyError:
+            return json_error(
+                404, error="run not found", detail=f"no pipeline run with id {run_id}"
+            )
+    return json_response(result)
+
+
+# ── Components ─────────────────────────────────────────────────────
+
+
+def _component_row(entry: components.Registration) -> dict[str, Any]:
+    """One registry entry as the listing routes report it."""
+    refusal = pipeline.withdraw_refusal(entry.component)
+    return {
+        "name": entry.component.name,
+        "requires": sorted(entry.component.requires),
+        "provides": sorted(entry.component.provides),
+        "origin": entry.origin,
+        "reloadable": entry.reloadable,
+        "withdrawable": refusal is None,
+        "withdraw_reason": refusal or "",
+    }
+
+
+@router.get("/api/components")
+def list_components() -> Response:
+    """The component registry: name, coeffects, effects, origin and reloadability."""
+    rows = [_component_row(entry) for entry in components.registrations()]
+    return json_response({"components": rows, "count": len(rows)})
+
+
+@router.get("/api/integrations")
+def list_integrations() -> Response:
+    """Every plugin seam and the parts each registry currently holds.
+
+    A read of the live registries: it starts nothing, changes nothing and keeps
+    no state, so it is a plain GET with no journal entry.
+    """
+    return json_response(integrations.inventory())
+
+
+@router.post("/api/components/reload")
+def reload_components(body: dict[str, Any] = Depends(optional_json_body)) -> Response:
+    """Reload one component's declaration, or every reloadable one.
+
+    The body is ``{"name": "..."}`` or ``{"all": true}``; the registry entry is
+    swapped in place, so an already composed run keeps the snapshot it started
+    with.  Destructive to the process-wide registry.
+    """
+    name = ""
+    try:
+        if _optional_bool(body, "all", False):
+            if body.get("name") is not None:
+                return json_error(400, error="provide a name or all, not both")
+            return json_response(components.reload_all())
+        if body.get("name") is None:
+            return json_error(400, error="provide a component name or all")
+        name = _require_str(body, "name")
+        report = components.reload_component(name)
+    except KeyError:
+        return json_error(404, error="component not found", detail=f"no component named {name!r}")
+    except components.NotReloadableError as exc:
+        return json_error(409, error="not-reloadable", detail=str(exc))
+    except components.ComponentMissingError as exc:
+        return json_error(500, error="component-missing", detail=str(exc))
+    return json_response(report)
+
+
+@router.post("/api/components/{name}/deactivate")
+def deactivate_components(name: str) -> Response:
+    """Withdraw one component's contribution from the live composition.
+
+    The component's ``revert(ctx)`` runs where it declares one and the names it
+    provided are revoked.  The response carries the ``deactivated`` entries and,
+    when the withdrawal recorded a durable write, the action-journal id that
+    reverts it; a withdrawal whose effect is a process-local binding reports
+    ``journaled: false``.
+    """
+    with contextlib.closing(_open()) as conn:
+        try:
+            report = pipeline.withdraw_component(conn, name)
+        except KeyError:
+            return json_error(
+                404, error="component not found", detail=f"no component named {name!r}"
+            )
+        except pipeline.NotWithdrawableError as exc:
+            return json_error(409, error="not-withdrawable", detail=str(exc))
+    return json_response(report)
+
+
+# ── Auto mode ──────────────────────────────────────────────────────
+
+
+def _auto_params(body: dict[str, Any]) -> auto_mode.AutoParams:
+    """Build the validated params of an auto run, or raise a 400."""
+    try:
+        return auto_mode.build_params(
+            worker=_optional_str(body, "worker", auto_workers.WORKER_OFFLINE),
+            execute=_optional_bool(body, "execute", False),
+            concurrency=_optional_int(body, "concurrency", auto_mode.DEFAULT_CONCURRENCY),
+            functions_per_task=_optional_int(
+                body, "functions_per_task", auto_mode.DEFAULT_FUNCTIONS_PER_TASK
+            ),
+            max_attempts=_optional_int(body, "max_attempts", auto_mode.DEFAULT_MAX_ATTEMPTS),
+            max_tasks=_optional_int(body, "max_tasks", auto_mode.DEFAULT_MAX_TASKS),
+        )
+    except ValueError as exc:
+        raise json_error(400, error="invalid params", detail=str(exc)) from exc
+
+
+def _no_auto_run(binary_id: int) -> Response:
+    """Return the stored-only 404 for a binary no auto run covered."""
+    return json_error(
+        404,
+        error="no-run",
+        detail=(
+            f"no auto run for binary {binary_id}; "
+            f"run POST /api/binaries/{binary_id}/auto or `reportal auto {binary_id}`"
+        ),
+    )
+
+
+def _execute_auto_run(run_id: int, params: auto_mode.AutoParams) -> None:
+    """Run a planned auto run on its own connection in a background thread.
+
+    A failure must not leave the run `running` forever: it is closed as failed
+    so the polling client sees a terminal state instead of an eternal spinner.
+    """
+    try:
+        with contextlib.closing(_open()) as conn:
+            auto_mode.execute_auto_run(conn, run_id=run_id, params=params)
+    except Exception as exc:  # a crashed background run is a failed run, not a lost one
+        with contextlib.closing(_open()) as conn:
+            auto_mode.persist_undo_plan(conn, run_id)
+            auto_store.finish_auto_run(
+                conn,
+                run_id,
+                status=auto_store.AUTO_RUN_FAILED,
+                stats={"error": f"{type(exc).__name__}: {exc}"},
+            )
+
+
+@router.post("/api/binaries/{binary_id}/auto")
+def start_auto_run(binary_id: int, body: dict[str, Any] = Depends(optional_json_body)) -> Response:
+    """Plan an auto run and execute it in the background; returns the run id.
+
+    The request creates the run and its task tree, then returns 202 with the
+    run id while a background thread works it, so the client polls
+    ``GET /api/binaries/<id>/auto`` for live progress instead of blocking for
+    minutes.  Body fields are all optional: ``worker`` (default the offline
+    worker), ``execute`` (default false), ``concurrency``,
+    ``functions_per_task``, ``max_attempts`` and ``max_tasks``.
+    """
+    params = _auto_params(body)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        functions = auto_mode.select_functions(conn, binary_id)
+        run_id = auto_mode.create_auto_run(
+            conn, binary_id=binary_id, params=params, functions=functions
+        )
+    thread = threading.Thread(
+        target=_execute_auto_run,
+        args=(run_id, params),
+        name=f"reportal-auto-{run_id}",
+        daemon=True,
+    )
+    thread.start()
+    return json_response(
+        {"run_id": run_id, "binary_id": binary_id, "status": auto_store.AUTO_RUN_RUNNING},
+        status=202,
+    )
+
+
+@router.get("/api/binaries/{binary_id}/auto")
+def get_binary_auto_run(binary_id: int) -> Response:
+    """Latest auto run of a binary with its task tree; 404 no-run without one."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        run = auto_store.latest_auto_run(conn, binary_id)
+        if run is None:
+            return _no_auto_run(binary_id)
+        return json_response(auto_mode.run_summary(conn, int(run["id"])))
+
+
+@router.get("/api/auto/runs/{run_id}")
+def get_auto_run(run_id: int) -> Response:
+    """One auto run with its task tree and coverage; 404 run not found."""
+    with contextlib.closing(_open()) as conn:
+        if auto_store.get_auto_run(conn, run_id) is None:
+            return json_error(404, error="run not found", detail=f"no auto run with id {run_id}")
+        return json_response(auto_mode.run_summary(conn, run_id))
+
+
+@router.post("/api/auto/runs/{run_id}/revert")
+def revert_auto_run(run_id: int) -> Response:
+    """Remove what a run wrote and delete its rows; returns what it undid."""
+    with contextlib.closing(_open()) as conn:
+        try:
+            result = auto_mode.revert_auto_run(conn, run_id)
+        except KeyError:
+            return json_error(404, error="run not found", detail=f"no auto run with id {run_id}")
+    return json_response(result)
+
+
+@router.post("/api/auto/runs/{run_id}/recover")
+def recover_auto_run(run_id: int) -> Response:
+    """Recover a stale run: merge its unfinished tasks' writes and close it.
+
+    There is no registry of live runs, so a `running` run is treated as stale
+    (its worker died with a previous process); a run already closed is returned
+    unchanged with zeroes.
+    """
+    with contextlib.closing(_open()) as conn:
+        try:
+            result = auto_mode.recover_auto_run(conn, run_id)
+        except KeyError:
+            return json_error(404, error="run not found", detail=f"no auto run with id {run_id}")
+    return json_response(result)
+
+
+# ── Conversations ──────────────────────────────────────────────────
+
+
+def _conversation_scope_detail(
+    conn: sqlite3.Connection, scope_kind: str, scope_id: int
+) -> str | None:
+    """Return the 404 detail for a scope id that does not exist, else None.
+
+    The scope is a loose reference (functions and binaries live in different
+    tables), so this is the only place an unknown scope id is rejected.
+    """
+    if scope_kind == conversations.SCOPE_KIND_FUNCTION:
+        if store.get_function(conn, scope_id) is None:
+            return f"no function with id {scope_id}"
+        return None
+    if store.get_binary(conn, scope_id) is None:
+        return f"no binary with id {scope_id}"
+    return None
+
+
+def _no_conversation(conversation_id: int) -> Response:
+    """Return the shared 404 for an unknown conversation id."""
+    return json_error(
+        404, error="conversation not found", detail=f"no conversation with id {conversation_id}"
+    )
+
+
+@router.get("/api/conversations")
+def list_conversations(request: Request) -> Response:
+    """Conversations, optionally filtered by ``?scope_kind=`` and ``?scope_id=``."""
+    raw_kind = request.query_params.get("scope_kind")
+    scope_kind = raw_kind.strip() if isinstance(raw_kind, str) and raw_kind.strip() else None
+    raw_id = request.query_params.get("scope_id")
+    scope_id: int | None = None
+    if raw_id is not None:
+        try:
+            scope_id = int(raw_id)
+        except ValueError:
+            return json_error(400, error="scope_id must be an integer")
+    with contextlib.closing(_open()) as conn:
+        rows = store.list_conversations(conn, scope_kind=scope_kind, scope_id=scope_id)
+    return json_response({"conversations": rows})
+
+
+@router.post("/api/conversations")
+def create_conversation(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Create a conversation for a function or binary scope."""
+    scope_kind = _require_str(body, "scope_kind")
+    scope_id = _require_int(body, "scope_id")
+    if scope_kind not in conversations.SCOPE_KINDS:
+        return json_error(
+            400, error="invalid scope kind", detail=f"unsupported scope kind: {scope_kind}"
+        )
+    title = _optional_str(body, "title")
+    with contextlib.closing(_open()) as conn:
+        detail = _conversation_scope_detail(conn, scope_kind, scope_id)
+        if detail is not None:
+            return json_error(404, error=f"{scope_kind} not found", detail=detail)
+        resolved = title.strip() or conversations.default_title(
+            conn, scope_kind=scope_kind, scope_id=scope_id
+        )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            conversation_id = store.create_conversation(
+                conn, scope_kind=scope_kind, scope_id=scope_id, title=resolved
+            )
+            journal.journaled_create(
+                log,
+                table="conversations",
+                key=conversation_id,
+                description=f"created conversation {conversation_id}",
+            )
+            conversation = store.get_conversation(conn, conversation_id)
+    return json_response(log.attach(conversation or {}), status=201)
+
+
+@router.get("/api/conversations/{conversation_id}")
+def get_conversation(conversation_id: int) -> Response:
+    """One conversation with its messages in append order."""
+    with contextlib.closing(_open()) as conn:
+        conversation = store.get_conversation(conn, conversation_id)
+        if conversation is None:
+            return _no_conversation(conversation_id)
+        messages = store.list_messages(conn, conversation_id)
+    return json_response({**conversation, "messages": messages})
+
+
+@router.delete("/api/conversations/{conversation_id}")
+def delete_conversation(conversation_id: int) -> Response:
+    """Delete a conversation and its messages."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="messages",
+                where="conversation_id = ?",
+                params=(conversation_id,),
+                description=f"deleted the messages of conversation {conversation_id}",
+            )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="conversations",
+                where="id = ?",
+                params=(conversation_id,),
+                description=f"deleted conversation {conversation_id}",
+            )
+            if not store.delete_conversation(conn, conversation_id):
+                return _no_conversation(conversation_id)
+    return json_response(log.attach({"conversation_id": conversation_id, "deleted": True}))
+
+
+@router.post("/api/conversations/{conversation_id}/messages")
+def post_conversation_message(
+    conversation_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Send one message to the configured LLM and store the exchange.
+
+    The conversation must exist before the bridge is checked, so an unknown id
+    is 404 whether or not an endpoint is configured.
+    """
+    content = _require_str(body, "content")
+    with contextlib.closing(_open()) as conn:
+        if store.get_conversation(conn, conversation_id) is None:
+            return _no_conversation(conversation_id)
+        client = _ai_client()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = {int(row["id"]) for row in store.list_messages(conn, conversation_id)}
+            try:
+                result = conversations.send_message(
+                    conn, conversation_id=conversation_id, content=content, client=client
+                )
+            except llm.LlmUnavailable:
+                return json_error(503, error="llm-unavailable", detail=llm.UNAVAILABLE_DETAIL)
+            except llm.LlmError as exc:
+                journal.journaled_messages(conn, log, conversation_id, before)
+                return json_error(502, error="llm-error", detail=str(exc))
+            journal.journaled_messages(conn, log, conversation_id, before)
+    return json_response(log.attach(result))
+
+
+# ── Analyses ───────────────────────────────────────────────────────
+
+
+@router.get("/api/analyses")
+def list_analyses(request: Request) -> Response:
+    """Analyses with their binary, filtered by ``?status=`` and ``?search=``.
+
+    ``?order=`` is one of :data:`reportal.store.ANALYSIS_ORDERS` and
+    ``?limit=`` is bounded by :data:`reportal.store.MAX_ANALYSIS_LIMIT`; an
+    unknown value is a 400.  ``total`` counts every analysis (or the binary's,
+    with ``?binary_id=``) before the filters, so a filter that matched nothing
+    says so instead of looking like an empty project.
+    """
+    status = _query_text(request, "status")
+    if status is not None and status not in store.ANALYSIS_STATUSES:
+        return _invalid_query("status", status, store.ANALYSIS_STATUSES)
+    order = _query_text(request, "order") or store.DEFAULT_ANALYSIS_ORDER
+    if order not in store.ANALYSIS_ORDERS:
+        return _invalid_query("order", order, store.ANALYSIS_ORDERS)
+    limit = _query_int(request, "limit")
+    if limit is not None and not 1 <= limit <= store.MAX_ANALYSIS_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {store.MAX_ANALYSIS_LIMIT}",
+        )
+    binary_id = _query_int(request, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        analyses = store.list_analyses(
+            conn,
+            binary_id=binary_id,
+            status=status,
+            search=_query_text(request, "search"),
+            order=order,
+            limit=limit,
+        )
+        total = store.count_analyses(conn, binary_id=binary_id)
+    return json_response({"analyses": analyses, "count": len(analyses), "total": total})
+
+
+@router.get("/api/analyses/{analysis_id}/logs")
+def list_analysis_logs(request: Request, analysis_id: int) -> Response:
+    """The analysis's log entries, newest first, bounded, with the true total.
+
+    ``?limit=`` is bounded by :data:`reportal.analysis_log.MAX_LOG_LIMIT` and
+    ``?offset=`` skips that many of the newest entries; an out-of-range value
+    is a 400.  ``total`` is the whole log, not the page.
+    """
+    limit = _query_int(request, "limit")
+    limit = analysis_log.DEFAULT_LOG_LIMIT if limit is None else limit
+    if not 1 <= limit <= analysis_log.MAX_LOG_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {analysis_log.MAX_LOG_LIMIT}",
+        )
+    offset = _query_int(request, "offset") or 0
+    if offset < 0:
+        return json_error(400, error="invalid offset", detail="offset must not be negative")
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        entries, total = analysis_log.list_entries(conn, analysis_id, limit=limit, offset=offset)
+    return json_response(
+        {
+            "logs": entries,
+            "count": len(entries),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    )
+
+
+@router.delete("/api/analyses/{analysis_id}")
+def delete_analysis(analysis_id: int) -> Response:
+    """Delete one analysis with its functions, scans and log; journaled.
+
+    A binary's only analysis is refused (409 ``last-analysis``) while it holds
+    functions: the cascade would take them with it and leave the binary with a
+    function table nothing carries.  Delete the binary instead.
+    """
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        binary_id = int(analysis["binary_id"])
+        functions = store.list_functions(conn, analysis_id=analysis_id)
+        if store.is_last_analysis_with_functions(conn, analysis_id):
+            return json_error(
+                409,
+                error="last-analysis",
+                detail=(
+                    f"analysis {analysis_id} is binary {binary_id}'s only analysis and holds"
+                    f" {len(functions)} functions; deleting it would take them with it."
+                    f" Delete binary {binary_id} instead."
+                ),
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_analysis_delete(conn, log, analysis_id)
+    return json_response(
+        log.attach(
+            {
+                "deleted": analysis_id,
+                "binary_id": binary_id,
+                "functions_removed": len(functions),
+            }
+        )
+    )
+
+
+@router.post("/api/analyses")
+def create_analysis(body: dict[str, Any] = Depends(json_body)) -> Response:
+    binary_id = _require_int(body, "binary_id")
+    engine = _optional_str(body, "engine", "manual")
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            analysis_id = store.create_analysis(conn, binary_id=binary_id, engine=engine)
+            journal.journaled_create(
+                log,
+                table="analyses",
+                key=analysis_id,
+                description=f"created analysis {analysis_id} for binary {binary_id}",
+            )
+            analysis = store.get_analysis(conn, analysis_id)
+    return json_response(log.attach(analysis or {}), status=201)
+
+
+# ── Collections ────────────────────────────────────────────────────
+
+
+@router.get("/api/collections")
+def list_collections() -> Response:
+    with contextlib.closing(_open()) as conn:
+        return json_response({"collections": store.list_collections(conn)})
+
+
+@router.post("/api/collections")
+def create_collection(body: dict[str, Any] = Depends(json_body)) -> Response:
+    name = _require_str(body, "name")
+    description = _optional_str(body, "description")
+    scope = _optional_str(body, "scope")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                collection_id = store.create_collection(
+                    conn, name=name, description=description, scope=scope
+                )
+            except ValueError as exc:
+                return json_error(400, error="invalid collection", detail=str(exc))
+            journal.journaled_create(
+                log,
+                table="collections",
+                key=collection_id,
+                description=f"created collection {collection_id}",
+            )
+            collections = store.list_collections(conn)
+    created = next((c for c in collections if c["id"] == collection_id), {})
+    return json_response(log.attach(created), status=201)
+
+
+@router.post("/api/collections/{collection_id}/binaries")
+def add_collection_binary(
+    collection_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    binary_id = _require_int(body, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        known = {c["id"] for c in store.list_collections(conn)}
+        if collection_id not in known:
+            return json_error(
+                404,
+                error="collection not found",
+                detail=f"no collection with id {collection_id}",
+            )
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            added = store.add_collection_binary(conn, collection_id, binary_id)
+            if added:
+                journal.journaled_create(
+                    log,
+                    table="collection_binaries",
+                    key={"collection_id": collection_id, "binary_id": binary_id},
+                    description=f"added binary {binary_id} to collection {collection_id}",
+                )
+    return json_response(
+        log.attach({"collection_id": collection_id, "binary_id": binary_id, "added": added})
+    )
+
+
+# ── Tags ───────────────────────────────────────────────────────────
+
+
+@router.get("/api/tags")
+def list_tags() -> Response:
+    with contextlib.closing(_open()) as conn:
+        return json_response({"tags": store.list_tags(conn)})
+
+
+@router.post("/api/tags")
+def create_tag(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Create a tag by name, returning the existing one when it is already known."""
+    name = _require_str(body, "name")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            created = store.find_tag(conn, name) is None
+            tag_id = store.create_tag(conn, name)
+            if created:
+                journal.journaled_create(
+                    log, table="tags", key=tag_id, description=f"created tag {tag_id}"
+                )
+    return json_response(log.attach({"tag_id": tag_id, "name": name}), status=201)
+
+
+@router.get("/api/binaries/{binary_id}/tags")
+def list_binary_tags(binary_id: int) -> Response:
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        tags = store.get_binary_tags(conn, binary_id)
+    return json_response({"tags": tags})
+
+
+@router.post("/api/binaries/{binary_id}/tags")
+def add_binary_tag(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Link a tag to a binary, addressed by ``name`` (created if needed) or ``tag_id``."""
+    has_name = "name" in body
+    has_tag_id = "tag_id" in body
+    if has_name == has_tag_id:
+        return json_error(400, error="invalid body", detail="provide exactly one of name or tag_id")
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if has_tag_id:
+            tag_id = _require_int(body, "tag_id")
+            tag = store.get_tag(conn, tag_id)
+            if tag is None:
+                return json_error(404, error="tag not found", detail=f"no tag with id {tag_id}")
+            name = str(tag["name"])
+            created_tag = False
+        else:
+            name = _require_str(body, "name")
+            created_tag = store.find_tag(conn, name) is None
+            tag_id = store.create_tag(conn, name)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            if created_tag:
+                log.record(
+                    effects.EFFECT_ROW_DELETE,
+                    f"created tag {tag_id}",
+                    journal.row_delete_descriptor("tags", tag_id),
+                )
+            if store.add_binary_tag(conn, binary_id, tag_id):
+                log.record(
+                    effects.EFFECT_ROW_DELETE,
+                    f"tagged binary {binary_id} with tag {tag_id}",
+                    journal.row_delete_descriptor(
+                        "binary_tags", {"binary_id": binary_id, "tag_id": tag_id}
+                    ),
+                )
+    payload = {"binary_id": binary_id, "tag_id": tag_id, "name": name}
+    return json_response(log.attach(payload))
+
+
+@router.delete("/api/binaries/{binary_id}/tags/{tag_id}")
+def remove_binary_tag(binary_id: int, tag_id: int) -> Response:
+    """Unlink a tag from a binary; the link must exist."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            link = journal.snapshot_rows(
+                conn,
+                table="binary_tags",
+                where="binary_id = ? AND tag_id = ?",
+                params=(binary_id, tag_id),
+            )
+            if not store.remove_binary_tag(conn, binary_id, tag_id):
+                return json_error(
+                    404,
+                    error="tag not on binary",
+                    detail=f"binary {binary_id} has no tag {tag_id}",
+                )
+            if link:
+                log.record(
+                    effects.EFFECT_ROW_RESTORE,
+                    f"untagged binary {binary_id} from tag {tag_id}",
+                    journal.row_restore_descriptor("binary_tags", link),
+                )
+    return json_response(log.attach({"binary_id": binary_id, "tag_id": tag_id, "removed": True}))
+
+
+# ── Comments ───────────────────────────────────────────────────────
+#
+# The comment routes (``/api/binaries/<id>/comments``,
+# ``/api/functions/<id>/comments`` and ``/api/comments/<id>``) have moved to
+# :mod:`reportal.rest`.
+
+
+# ── Bulk actions ───────────────────────────────────────────────────
+
+
+def _bulk_failure(exc: bulk_actions.BulkError) -> Response:
+    return json_error(400, error="invalid bulk request", detail=str(exc))
+
+
+def _bulk_ids(body: dict[str, Any], key: str) -> list[int] | Response:
+    value = body.get(key)
+    if not isinstance(value, list):
+        return json_error(400, error="invalid bulk request", detail=f"{key} must be a list")
+    return value
+
+
+@router.post("/api/binaries/bulk")
+def bulk_binaries(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Apply one action (``add_tag``, ``remove_tag``, ``delete``) to many binaries."""
+    action = body.get("action")
+    if not isinstance(action, str):
+        return json_error(400, error="invalid bulk request", detail="action must be a string")
+    ids = _bulk_ids(body, "binary_ids")
+    if not isinstance(ids, list):
+        return ids
+    tag = body.get("tag", "")
+    if not isinstance(tag, str):
+        return json_error(400, error="invalid bulk request", detail="tag must be a string")
+    with contextlib.closing(_open()) as conn:
+        action_id = journal.new_action()
+        with journal.journaled(conn, action_id) as log:
+            try:
+                result = bulk_actions.apply_binary_action(
+                    conn, action=action, ids=ids, tag=tag, log=log
+                )
+            except bulk_actions.BulkError as exc:
+                return _bulk_failure(exc)
+    return json_response(log.attach(result))
+
+
+@router.post("/api/functions/bulk")
+def bulk_functions(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Apply one action (``rename``, ``clear_matches``) to many functions."""
+    action = body.get("action")
+    if not isinstance(action, str):
+        return json_error(400, error="invalid bulk request", detail="action must be a string")
+    ids = _bulk_ids(body, "function_ids")
+    if not isinstance(ids, list):
+        return ids
+    prefix = body.get("prefix", "")
+    if not isinstance(prefix, str):
+        return json_error(400, error="invalid bulk request", detail="prefix must be a string")
+    replace = body.get("replace", False)
+    if not isinstance(replace, bool):
+        return json_error(400, error="invalid bulk request", detail="replace must be a boolean")
+    with contextlib.closing(_open()) as conn:
+        action_id = journal.new_action()
+        with journal.journaled(conn, action_id) as log:
+            try:
+                result = bulk_actions.apply_function_action(
+                    conn, action=action, ids=ids, prefix=prefix, replace=replace, log=log
+                )
+            except bulk_actions.BulkError as exc:
+                return _bulk_failure(exc)
+    return json_response(log.attach(result))
+
+
+# ── Journal ────────────────────────────────────────────────────────
+
+
+@router.get("/api/journal")
+def list_journal(request: Request) -> Response:
+    """Recent journal entries, newest first, without their descriptor payload."""
+    raw_limit = request.query_params.get("limit")
+    limit = journal.DEFAULT_LIST_LIMIT
+    if raw_limit is not None:
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            return json_error(400, error="limit must be an integer")
+    if limit < 1:
+        return json_error(400, error="limit must be positive", detail="limit is at least 1")
+    raw_action = request.query_params.get("action")
+    action = raw_action.strip() if isinstance(raw_action, str) and raw_action.strip() else None
+    with contextlib.closing(_open()) as conn:
+        entries = journal.list_entries(conn, action=action, limit=limit)
+    return json_response({"entries": entries, "count": len(entries), "limit": limit})
+
+
+@router.get("/api/journal/{action}")
+def get_journal_action(action: str) -> Response:
+    """Every entry of one action, newest first; 404 for an action never recorded."""
+    with contextlib.closing(_open()) as conn:
+        entries = journal.list_entries(conn, action=action, limit=journal.MAX_LIST_LIMIT)
+    if not entries:
+        return json_error(404, error="action not found", detail=f"no journal action {action!r}")
+    return json_response({"action": action, "entries": entries, "count": len(entries)})
+
+
+@router.post("/api/journal/revert")
+def revert_journal(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Revert one action (``{"action"}``) or one entry (``{"entry_id"}``)."""
+    raw_action = body.get("action")
+    raw_entry = body.get("entry_id")
+    if (raw_action is None) == (raw_entry is None):
+        return json_error(
+            400, error="invalid body", detail="provide exactly one of action or entry_id"
+        )
+    with contextlib.closing(_open()) as conn:
+        try:
+            if raw_entry is not None:
+                if isinstance(raw_entry, bool) or not isinstance(raw_entry, int):
+                    return json_error(
+                        400, error="invalid body", detail="entry_id must be an integer"
+                    )
+                return json_response(journal.revert_entry(conn, raw_entry))
+            if not isinstance(raw_action, str) or not raw_action.strip():
+                return json_error(
+                    400, error="invalid body", detail="action must be a non-empty string"
+                )
+            return json_response(journal.revert_action(conn, raw_action))
+        except journal.UnknownActionError as exc:
+            return json_error(404, error="action not found", detail=str(exc))
+        except journal.UnknownEntryError as exc:
+            return json_error(404, error="entry not found", detail=str(exc))
+        except journal.EntryNotActiveError as exc:
+            return json_error(400, error="not-active", detail=str(exc))
+        except ValueError as exc:
+            return json_error(400, error="invalid body", detail=str(exc))
+        except journal.JournalError:
+            return json_error(
+                500, error="journal-error", detail="the stored journal entry is unreadable"
+            )
+
+
+# ── Knowledge ──────────────────────────────────────────────────────
+
+
+def _no_document(document_id: int) -> Response:
+    """Return the shared 404 for an unknown document id."""
+    return json_error(404, error="document not found", detail=f"no document with id {document_id}")
+
+
+def _knowledge_error(exc: knowledge.KnowledgeError) -> Response:
+    """Map an ingest failure to its JSON error response."""
+    status = 413 if exc.code == knowledge.ERROR_FILE_TOO_LARGE else 400
+    return json_error(status, error=exc.code, detail=exc.detail)
+
+
+def _ingested(payload: dict[str, Any]) -> Response:
+    """Answer an ingest: 201 for a new document, 200 for a duplicate."""
+    return json_response(payload, status=200 if payload.get("duplicate") else 201)
+
+
+# HTTP status per remote-ingest error name; an unlisted one is a bad target.
+_REMOTE_STATUS: dict[str, int] = {
+    remote_ingest.ERROR_DISABLED: 403,
+    remote_ingest.ERROR_TOO_LARGE: 413,
+    remote_ingest.ERROR_FETCH_FAILED: 502,
+    remote_ingest.ERROR_TOO_MANY_REDIRECTS: 502,
+}
+
+
+def _remote_error(exc: remote_ingest.RemoteIngestError) -> Response:
+    """Map a remote-ingest failure to its JSON error response."""
+    return json_error(_REMOTE_STATUS.get(exc.code, 400), error=exc.code, detail=exc.detail)
+
+
+def _check_document_scope(
+    conn: sqlite3.Connection, scope_kind: str, scope_id: int
+) -> Response | None:
+    """Return a JSON error for a scope a document may not attach to, else None.
+
+    A binary scope must name a stored binary.  A project scope is a
+    workspace-level bucket no table holds, so it only rejects a negative id.
+    """
+    if scope_id < 0:
+        return json_error(400, error="invalid scope id", detail="scope_id must not be negative")
+    if scope_kind == knowledge.SCOPE_KIND_BINARY and store.get_binary(conn, scope_id) is None:
+        return json_error(404, error="binary not found", detail=f"no binary with id {scope_id}")
+    return None
+
+
+@router.post("/api/documents")
+def create_document(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Ingest a pasted note as a document.
+
+    The body is ``{"scope_kind", "scope_id", "title", "text", "source"}``.  The
+    text is encoded and ingested the way an uploaded file is, so the size cap,
+    the binary and empty rejection and the per-scope dedupe all apply.
+    """
+    scope_kind = _require_str(body, "scope_kind")
+    scope_id = _require_int(body, "scope_id")
+    title = _optional_str(body, "title")
+    source = _optional_str(body, "source")
+    text = _optional_str(body, "text")
+    if scope_kind not in knowledge.SCOPE_KINDS:
+        return json_error(
+            400, error=knowledge.ERROR_INVALID_SCOPE, detail=f"unsupported scope kind: {scope_kind}"
+        )
+    with contextlib.closing(_open()) as conn:
+        failure = _check_document_scope(conn, scope_kind, scope_id)
+        if failure is not None:
+            return failure
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = knowledge.ingest_document(
+                    conn,
+                    scope_kind=scope_kind,
+                    scope_id=scope_id,
+                    title=title,
+                    source=source,
+                    mime="",
+                    data=text.encode("utf-8"),
+                )
+            except knowledge.KnowledgeError as exc:
+                return _knowledge_error(exc)
+            journal.journaled_ingest(conn, log, payload)
+    return _ingested(log.attach(payload))
+
+
+@router.get("/api/binaries/{binary_id}/documents")
+def list_binary_documents(binary_id: int) -> Response:
+    """Documents scoped to one binary, newest last, without their text."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        documents = store.list_documents(
+            conn, scope_kind=knowledge.SCOPE_KIND_BINARY, scope_id=binary_id
+        )
+    return json_response({"documents": documents})
+
+
+@router.get("/api/documents")
+def list_documents(request: Request) -> Response:
+    """Documents, optionally filtered by ``?scope_kind=`` and ``?scope_id=``."""
+    raw_kind = request.query_params.get("scope_kind")
+    scope_kind = raw_kind.strip() if isinstance(raw_kind, str) and raw_kind.strip() else None
+    if scope_kind is not None and scope_kind not in knowledge.SCOPE_KINDS:
+        return json_error(
+            400, error=knowledge.ERROR_INVALID_SCOPE, detail=f"unsupported scope kind: {scope_kind}"
+        )
+    raw_id = request.query_params.get("scope_id")
+    scope_id: int | None = None
+    if raw_id is not None:
+        try:
+            scope_id = int(raw_id)
+        except ValueError:
+            return json_error(400, error="scope_id must be an integer")
+    with contextlib.closing(_open()) as conn:
+        documents = store.list_documents(conn, scope_kind=scope_kind, scope_id=scope_id)
+    return json_response({"documents": documents})
+
+
+@router.get("/api/documents/{document_id}")
+def get_document(request: Request, document_id: int) -> Response:
+    """One document: its metadata and chunk count, the text only on request.
+
+    ``?include_text=true`` adds the extracted text and its chunks, which is
+    what the ranking scores; without it the response stays metadata-sized.
+    """
+    include_text = _query_bool(request, "include_text", False)
+    with contextlib.closing(_open()) as conn:
+        document = store.get_document(conn, document_id)
+        if document is None:
+            return _no_document(document_id)
+        chunks = store.list_chunks(conn, document_id)
+    if not include_text:
+        document.pop("text", None)
+        return json_response(document)
+    return json_response({**document, "chunks": chunks})
+
+
+@router.delete("/api/documents/{document_id}")
+def delete_document(document_id: int) -> Response:
+    """Delete a document and, by cascade, its chunks."""
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # Chunks first: a revert replays newest-first, so the document row
+            # is back before its chunks are re-inserted.
+            journal.journaled_rows(
+                conn,
+                log,
+                table="chunks",
+                where="document_id = ?",
+                params=(document_id,),
+                description=f"deleted the chunks of document {document_id}",
+            )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="documents",
+                where="id = ?",
+                params=(document_id,),
+                description=f"deleted document {document_id}",
+            )
+            if not store.delete_document(conn, document_id):
+                return _no_document(document_id)
+    return json_response(log.attach({"document_id": document_id, "deleted": True}))
+
+
+@router.get("/api/knowledge/config")
+def knowledge_config() -> Response:
+    """Report whether guarded remote ingestion is enabled; read-only."""
+    return json_response({"allow_remote": remote_ingest.remote_enabled()})
+
+
+@router.post("/api/knowledge/fetch")
+def fetch_remote_document(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Fetch one HTTP(S) URL and store its text as a knowledge document.
+
+    The body is ``{"scope_kind", "scope_id", "url", "title"}``.  Remote
+    ingestion is off by default: while it is disabled every request answers 403
+    ``remote-ingest-disabled``.  A blocked or malformed target and an
+    unsupported content type answer 400, a body past the size cap 413, a
+    transport failure 502, an unknown binary scope 404, and a new document 201
+    (a duplicate 200 with ``"duplicate": true``).
+    """
+    scope_kind = _require_str(body, "scope_kind")
+    scope_id = _require_int(body, "scope_id")
+    url = _require_str(body, "url")
+    title = _optional_str(body, "title")
+    if not remote_ingest.remote_enabled():
+        return json_error(
+            403, error=remote_ingest.ERROR_DISABLED, detail=remote_ingest.DISABLED_DETAIL
+        )
+    if scope_kind not in knowledge.SCOPE_KINDS:
+        return json_error(
+            400, error=knowledge.ERROR_INVALID_SCOPE, detail=f"unsupported scope kind: {scope_kind}"
+        )
+    with contextlib.closing(_open()) as conn:
+        failure = _check_document_scope(conn, scope_kind, scope_id)
+        if failure is not None:
+            return failure
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = remote_ingest.ingest_url(
+                    conn,
+                    scope_kind=scope_kind,
+                    scope_id=scope_id,
+                    url=url,
+                    title=title,
+                )
+            except remote_ingest.RemoteIngestError as exc:
+                return _remote_error(exc)
+            except knowledge.KnowledgeError as exc:
+                return _knowledge_error(exc)
+            journal.journaled_ingest(conn, log, payload)
+    return _ingested(log.attach(payload))
+
+
+@router.get("/api/knowledge/search")
+def search_knowledge(request: Request) -> Response:
+    """Rank stored document chunks against ``?q=``; read-only.
+
+    ``?binary_id=`` narrows the corpus to one binary and ``?limit=`` bounds the
+    result list.  An absent or blank query answers an empty list rather than
+    every chunk.
+    """
+    raw_query = request.query_params.get("q", "")
+    query = raw_query if isinstance(raw_query, str) else ""
+    limit = knowledge.DEFAULT_SEARCH_LIMIT
+    raw_limit = request.query_params.get("limit")
+    if raw_limit is not None:
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            return json_error(400, error="limit must be an integer")
+    if limit < 1:
+        return json_error(400, error="limit must be positive", detail="limit is at least 1")
+    scope_kind: str | None = None
+    scope_id: int | None = None
+    raw_binary = request.query_params.get("binary_id")
+    if raw_binary is not None:
+        try:
+            scope_id = int(raw_binary)
+        except ValueError:
+            return json_error(400, error="binary_id must be an integer")
+        scope_kind = knowledge.SCOPE_KIND_BINARY
+    with contextlib.closing(_open()) as conn:
+        results = knowledge.search_knowledge(
+            conn, query=query, scope_kind=scope_kind, scope_id=scope_id, limit=limit
+        )
+    return json_response({"query": query, "count": len(results), "results": results})
+
+
+def _knowledge_query(
+    request: Request,
+) -> str:
+    """The request's ``?q=`` value, "" when absent or not a string."""
+    raw = request.query_params.get("q", "")
+    return raw if isinstance(raw, str) else ""
+
+
+def _knowledge_hits(query: str, scope_kind: str | None, scope_id: int | None) -> Response:
+    """Retrieve bounded hits for one scope; returns the JSON response."""
+    with contextlib.closing(_open()) as conn:
+        results = knowledge.retrieve(conn, query=query, scope_kind=scope_kind, scope_id=scope_id)
+    return json_response({"query": query, "count": len(results), "results": results})
+
+
+@router.get("/api/functions/{function_id}/knowledge")
+def function_knowledge(request: Request, function_id: int) -> Response:
+    """Retrieve the function's binary documents against ``?q=``; read-only.
+
+    ``?q=`` defaults to the function's name when absent or blank, so a plain
+    GET gives the documents most about the function.  The corpus is the
+    binary's knowledge scope.
+    """
+    query = _knowledge_query(
+        request,
+    )
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        binary_id = int(function["binary_id"])
+    resolved = query.strip() or str(function["name"])
+    return _knowledge_hits(resolved, knowledge.SCOPE_KIND_BINARY, binary_id)
+
+
+@router.get("/api/binaries/{binary_id}/knowledge")
+def binary_knowledge(request: Request, binary_id: int) -> Response:
+    """Retrieve the binary's documents against ``?q=``; read-only.
+
+    An absent or blank query answers an empty list rather than every document.
+    """
+    query = _knowledge_query(
+        request,
+    )
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+    return _knowledge_hits(query, knowledge.SCOPE_KIND_BINARY, binary_id)
+
+
+# ── Knowledge graph ────────────────────────────────────────────────
+
+
+def _no_graph(binary_id: int) -> Response:
+    """Return the stored-only 404 for a binary whose graph was never built."""
+    return json_error(
+        404,
+        error="no-graph",
+        detail=(
+            f"no graph for binary {binary_id}; "
+            f"run POST /api/binaries/{binary_id}/graph or 'reportal graph-build {binary_id}'"
+        ),
+    )
+
+
+@router.post("/api/binaries/{binary_id}/graph")
+def build_binary_graph(binary_id: int) -> Response:
+    """Rebuild a binary's knowledge graph from the rows the store already holds."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            result = journal.journaled_graph_rebuild(
+                conn, log, binary_id, lambda: graph.build_graph(conn, binary_id=binary_id)
+            )
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/graph")
+def get_binary_graph(request: Request, binary_id: int) -> Response:
+    """A binary's stored graph; 404 `no-graph` before the first build.
+
+    ``?kind=`` keeps one node kind and ``?include_documents=true`` adds the
+    document nodes and their mention edges, which are left out by default.
+    """
+    raw_kind = request.query_params.get("kind")
+    kind = raw_kind.strip() if isinstance(raw_kind, str) and raw_kind.strip() else None
+    if kind is not None and kind not in graph.GRAPH_NODE_KINDS:
+        return json_error(
+            400,
+            error="invalid kind",
+            detail=f"unsupported node kind: {kind}",
+        )
+    include_documents = _query_bool(request, "include_documents", False)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if store.count_graph_nodes(conn, binary_id) == 0:
+            return _no_graph(binary_id)
+        payload = graph.graph_payload(
+            conn, binary_id=binary_id, kind=kind, include_documents=include_documents
+        )
+    return json_response(payload)
+
+
+@router.get("/api/graph/nodes/{node_id}")
+def get_graph_node(node_id: str) -> Response:
+    """One graph node with its neighbors grouped by relation."""
+    with contextlib.closing(_open()) as conn:
+        try:
+            detail = graph.neighbors(conn, node_id=node_id)
+        except KeyError:
+            return json_error(404, error="node not found", detail=f"no graph node {node_id}")
+    return json_response(detail)
+
+
+# ── Knowledge-graph backends ───────────────────────────────────────
+
+
+def _backend_name(
+    request: Request,
+) -> str | None:
+    """The ``?backend=`` query value, or None to use the configured backend."""
+    raw = request.query_params.get("backend")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.strip()
+
+
+@router.get("/api/graph/backends")
+def graph_backend_list() -> Response:
+    """The registered graph backends and the configured default."""
+    return json_response(
+        {
+            "backends": [backend.describe() for backend in graph_backends.graph_backends()],
+            "default": graph_backends.configured_backend_name(),
+        }
+    )
+
+
+@router.post("/api/binaries/{binary_id}/graph/sync")
+def sync_binary_graph(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Push a binary's stored graph to a backend and return its report.
+
+    The optional body is ``{"backend": "..."}``; without one the configured
+    backend runs.  An unknown binary or backend is 404, a body that is not an
+    object or names a non-string backend is 400 ``invalid body``, a binary
+    without a stored graph is 404 ``no-graph``, and an uninstalled backend is
+    503 ``backend-unavailable`` carrying its install hint.
+    """
+    raw = body.get("backend")
+    if raw is not None and (not isinstance(raw, str) or not raw.strip()):
+        return json_error(400, error="invalid body", detail="backend must be a non-empty string")
+    name = raw.strip() if isinstance(raw, str) else None
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        try:
+            report = graph_backends.sync_graph(conn, binary_id=binary_id, backend_name=name)
+        except graph_backends.UnknownBackendError as exc:
+            return json_error(404, error="backend not found", detail=str(exc))
+        except graph_backends.GraphNotBuiltError:
+            return _no_graph(binary_id)
+        except graph_backends.BackendUnavailableError as exc:
+            return json_error(503, error="backend-unavailable", detail=exc.reason)
+    return json_response(report)
+
+
+@router.get("/api/graph/query")
+def graph_query(request: Request) -> Response:
+    """Query a graph backend that supports it; ``?q=`` is the text.
+
+    The configured backend runs when ``?backend=`` names none.  An unknown
+    backend is 404, an unavailable backend 503 ``backend-unavailable``, and one
+    without query support 400 ``query-unsupported``.
+    """
+    name = (
+        _backend_name(
+            request,
+        )
+        or graph_backends.configured_backend_name()
+    )
+    raw_query = request.query_params.get("q", "")
+    text = raw_query if isinstance(raw_query, str) else ""
+    with contextlib.closing(_open()) as conn:
+        try:
+            backend = graph_backends.get_graph_backend(name)
+        except graph_backends.UnknownBackendError as exc:
+            return json_error(404, error="backend not found", detail=str(exc))
+        if not backend.available():
+            return json_error(
+                503,
+                error="backend-unavailable",
+                detail=backend.unavailable_reason(),
+            )
+        if not graph_backends.backend_supports_query(backend):
+            return json_error(
+                400,
+                error="query-unsupported",
+                detail=f"graph backend {backend.name!r} does not support query",
+            )
+        result = graph_backends.run_query(
+            backend, conn, query=text, limit=graph_backends.DEFAULT_QUERY_LIMIT
+        )
+    return json_response(result)
+
+
+# ── Search ─────────────────────────────────────────────────────────
+
+
+@router.get("/api/search")
+def search(request: Request) -> Response:
+    """Search the store by substring or by one typed query.
+
+    ``?q=`` is the query and ``?kind=`` one of :data:`reportal.store.SEARCH_KINDS`
+    (default ``all``, the substring behaviour the route always had).  ``sha256``
+    matches a binary hash prefix, ``binary`` a binary name, ``collection`` a
+    collection name and ``tag`` a tag name; each row carries the richer metadata
+    the store holds (size, format, arch, created, tags) plus the ``match`` kind
+    that made it hit, and ``counts`` reports each group's returned count against
+    its matched total.  ``?limit=`` bounds each group.  A typed query the store
+    refuses (an ambiguous or malformed hash prefix, an unknown kind) answers its
+    own 400.
+    """
+    query = request.query_params.get("q", "")
+    query = query if isinstance(query, str) else ""
+    kind = request.query_params.get("kind", store.SEARCH_KIND_ALL)
+    kind = kind if isinstance(kind, str) and kind.strip() else store.SEARCH_KIND_ALL
+    limit = _query_int(request, "limit")
+    if limit is not None and not 1 <= limit <= store.MAX_SEARCH_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {store.MAX_SEARCH_LIMIT}",
+        )
+    with contextlib.closing(_open()) as conn:
+        try:
+            results = store.search(
+                conn, query, kind=kind, limit=limit or store.DEFAULT_SEARCH_LIMIT
+            )
+        except store.SearchError as exc:
+            return json_error(400, error=exc.code, detail=exc.detail)
+    return json_response({"query": query, "kind": kind, **results})
+
+
+async def _request_form(request: Request) -> Any:
+    """Parse a multipart or urlencoded body, or return the 400 for a bad one.
+
+    The caller checks ``isinstance(result, Response)``.  A body the reader
+    cannot follow is a 400 ``invalid-body``, the refusal the Bottle route
+    answered: Starlette wraps most parse failures in a 400 of its own (which
+    :mod:`reportal.server` maps), and this catches the ones it lets through.
+    """
+    try:
+        return await request.form()
+    except (MultiPartException, MultipartParseError):
+        return json_error(400, error="invalid-body", detail="malformed multipart body")
+
+
+def _form_text(value: object) -> str:
+    """A non-file form field as text ("" for a missing field or a file part)."""
+    return value if isinstance(value, str) else ""
+
+
+# ── Uploads ────────────────────────────────────────────────────────
+#
+# The one group that is a behaviour port rather than a mechanical one: the
+# parts arrive as ``UploadFile`` objects (Starlette has already parsed the
+# multipart body and spooled each part), and the route streams the spool into
+# its content-addressed home under ``MAX_UPLOAD_BYTES``.
+#
+# ``ponytail:`` the spool is Starlette's, so a part over 1 MiB lands in the
+# system temp directory before the cap is checked -- the Bottle path streamed
+# straight into ``binaries/``.  The cap still decides what is stored; if the
+# transient temp usage ever matters, parse the body here with a bounded
+# ``request.stream()`` reader instead of ``UploadFile``.
+
+
+def _upload_batch(files: Sequence[UploadFile], raw_options: Any, name: str) -> Response:
+    """Upload many files in one journaled action, reporting each one.
+
+    A refusal or a duplicate is an entry on the result rather than a failed
+    request, so the files that succeeded stay registered.  The whole request is
+    one journal action: reverting its ``journal_action`` removes every binary
+    the batch created, the tags it applied and the collections it joined.
+    """
+    if len(files) > MAX_UPLOAD_FILES:
+        return json_error(
+            400,
+            error="too-many-files",
+            detail=f"a batch upload carries at most {MAX_UPLOAD_FILES} files",
+        )
+    if name:
+        return json_error(
+            400,
+            error="invalid-body",
+            detail="name files through the 'files' field in a batch upload",
+        )
+    options = _file_options(raw_options, len(files))
+    for entry in options:
+        fmt = _file_option_str(entry, "format")
+        if fmt and fmt not in UPLOAD_FORMATS:
+            return json_error(
+                400,
+                error="invalid-body",
+                detail=f"file option format must be one of {', '.join(UPLOAD_FORMATS)}",
+            )
+        arch = _file_option_str(entry, "arch")
+        if arch and arch not in UPLOAD_ARCHITECTURES:
+            return json_error(
+                400,
+                error="invalid-body",
+                detail=f"file option arch must be one of {', '.join(UPLOAD_ARCHITECTURES)}",
+            )
+    directory = binaries_dir()
+    with contextlib.closing(_open()) as conn:
+        known = {int(row["id"]) for row in store.list_collections(conn)}
+        for entry in options:
+            unknown = [
+                cid for cid in _file_option_int_list(entry, "collection_ids") if cid not in known
+            ]
+            if unknown:
+                return json_error(
+                    404, error="collection not found", detail=f"no collection with id {unknown[0]}"
+                )
+        results: list[dict[str, Any]] = []
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            for upload, entry in zip(files, options, strict=True):
+                results.append(_upload_entry(conn, log, upload, entry, directory))
+        payload = log.attach(
+            {
+                "files": results,
+                "count": len(results),
+                "duplicates": sum(1 for row in results if row["duplicate"]),
+                "errors": sum(1 for row in results if row["error"] is not None),
+            }
+        )
+    return json_response(payload)
+
+
+@router.post("/api/binaries")
+async def upload_binary(request: Request) -> Response:
+    """Register binaries from a multipart upload, deduped by content hash.
+
+    One ``file`` part is the single-file upload and answers that binary's row
+    with a ``duplicate`` flag, unchanged.  Repeated ``file`` parts (optionally
+    described by a JSON ``files`` field, entry *i* per part, carrying a ``name``,
+    ``tags``, ``collection_ids`` and an explicit ``format``/``arch`` hint) are a
+    batch: every created binary, applied tag and collection link is recorded in
+    **one** journal action, so reverting its ``journal_action`` takes the whole
+    request back.  Each entry answers the same refusal vocabulary as the
+    single-file path.  A compiler hint has no column in reportal's binary model
+    (the hosted portal's Platform and Visibility have no local meaning either),
+    so it is not stored.
+
+    The form is read here rather than declared as ``File``/``Form`` parameters
+    so that a part which is not a file is a missing file (400 ``no-file``), as
+    the Bottle route answered.  Storing the parts then runs on the threadpool:
+    copying a spooled part into ``binaries/`` and hashing it blocks.
+
+    The stored file is named by sha256 plus a suffix taken from the client
+    filename only when it matches :data:`_UPLOAD_SUFFIX`, so the client name
+    never becomes a path component.  The upload is streamed to a temporary file
+    in the workspace `binaries/` directory and published with ``os.replace``,
+    so a partial write is never visible as a finished binary.
+    """
+    form = await _request_form(request)
+    if isinstance(form, Response):
+        return form
+    files = [part for part in form.getlist("file") if isinstance(part, UploadFile)]
+    name = _form_text(form.get("name"))
+    options = _form_text(form.get("files")) or None
+    return await run_in_threadpool(_register_uploads, files, name, options)
+
+
+def _register_uploads(files: list[UploadFile], name: str, options: str | None) -> Response:
+    """Store the parts of one upload request (the blocking half of the route)."""
+    if not files:
+        return json_error(400, error="no-file", detail="multipart body needs a 'file' part")
+    if len(files) > 1 or (options is not None and options.strip()):
+        return _upload_batch(files, options, name)
+
+    upload = files[0]
+    raw_name = str(upload.filename or "")
+    display = name or _client_name(raw_name)
+    directory = binaries_dir()
+    try:
+        temp, sha256, size = _stream_upload(upload, directory)
+    except _PartError as exc:
+        return json_error(exc.status, error=exc.error, detail=exc.detail)
+    if size == 0:
+        temp.unlink(missing_ok=True)
+        return json_error(400, error="empty-file", detail="uploaded file is empty")
+    with contextlib.closing(_open()) as conn:
+        existing = store.find_binary_by_sha256(conn, sha256)
+        if existing is not None:
+            temp.unlink(missing_ok=True)
+            return json_response({**existing, "duplicate": True})
+        suffix = _upload_suffix(raw_name)
+        target = directory / f"{sha256}{suffix}"
+        os.replace(temp, target)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            binary_id = store.add_binary(
+                conn,
+                sha256=sha256,
+                name=display or sha256,
+                path=str(target),
+                size=size,
+                fmt=suffix.lstrip(".").upper(),
+            )
+            log.record(
+                effects.EFFECT_FILE_DELETE,
+                f"stored uploaded file {target}",
+                journal.file_delete_descriptor(str(target)),
+            )
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                f"registered binary {binary_id}",
+                journal.row_delete_descriptor("binaries", binary_id),
+            )
+        row = store.get_binary(conn, binary_id)
+        payload = log.attach({**(row or {}), "duplicate": False})
+    return json_response(payload)
+
+
+@router.post("/api/binaries/{binary_id}/documents")
+async def ingest_binary_document(binary_id: int, request: Request) -> Response:
+    """Ingest one document file scoped to a binary.
+
+    The body is ``multipart/form-data`` with a ``file`` part and an optional
+    ``title`` field, mirroring the binary upload: the part is read into a
+    bounded buffer, its client filename supplies the source and the format, and
+    the same bytes twice in the scope return the stored document with
+    ``duplicate: true``.
+    """
+    form = await _request_form(request)
+    if isinstance(form, Response):
+        return form
+    upload = form.get("file")
+    if not isinstance(upload, UploadFile):
+        return json_error(400, error="no-file", detail="multipart body needs a 'file' part")
+    title = _form_text(form.get("title"))
+    return await run_in_threadpool(_ingest_document, binary_id, upload, title)
+
+
+def _ingest_document(binary_id: int, upload: UploadFile, title: str) -> Response:
+    """Read one document part and store it (the blocking half of the route)."""
+    filename = _client_name(str(upload.filename or ""))
+    if not knowledge.is_supported_name(filename):
+        return json_error(
+            400,
+            error=knowledge.ERROR_UNSUPPORTED_FORMAT,
+            detail=f"{filename or 'upload'} is not a supported text format",
+        )
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        data = _read_upload(upload, knowledge.MAX_DOCUMENT_BYTES)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = knowledge.ingest_document(
+                    conn,
+                    scope_kind=knowledge.SCOPE_KIND_BINARY,
+                    scope_id=binary_id,
+                    title=title or filename,
+                    source=filename,
+                    mime=str(upload.content_type or ""),
+                    data=data,
+                )
+            except knowledge.KnowledgeError as exc:
+                return _knowledge_error(exc)
+            journal.journaled_ingest(conn, log, payload)
+    return _ingested(log.attach(payload))
+
+
+# ── Health, comments and the download ──────────────────────────────
+#
+# The first group ported here, kept together as it was written.
+
+# ── Health ─────────────────────────────────────────────────────────
+
+
+def _database_health(path: Path) -> dict[str, Any]:
+    """Whether the SQLite file accepts a write, tested without writing.
+
+    A permission check on the file and its directory, not a query and not a
+    write: it takes no SQLite lock and cannot contend with a running auto run.
+    A path with no write permission reports not writable, which is what the
+    caller sees when the workspace is read-only or full.
+    """
+    try:
+        writable = os.access(path, os.W_OK) and os.access(path.parent, os.W_OK)
+    except OSError:
+        writable = False
+    detail = "" if writable else f"no write permission on {path} or its directory"
+    return {"writable": writable, "detail": detail}
+
+
+def _engine_health() -> dict[str, Any]:
+    """Where the in-process rebrew engine comes from, and whether it is there.
+
+    ``origin`` is the installed ``rebrew`` package's path, or null when the
+    package is not importable; the probe never imports the engine or spawns
+    anything.
+    """
+    engine = engines.get_engine()
+    return {"available": engine.available(), "origin": engine.origin}
+
+
+def _last_auto_run(conn: Any) -> dict[str, Any] | None:
+    """The newest auto run as a summary, or None before the first one.
+
+    One SELECT over ``auto_runs``; the run's task tree is not read.
+    """
+    runs = auto_store.list_auto_runs(conn)
+    if not runs:
+        return None
+    run = runs[0]
+    return {
+        "run_id": int(run["id"]),
+        "binary_id": int(run["binary_id"]),
+        "status": str(run["status"]),
+        "finished_at": run["finished_at"],
+    }
+
+
+@router.get("/api/health")
+def health() -> Response:
+    """Liveness plus dependency readiness: version, db path, counts, deps.
+
+    The pre-existing keys (``status``, ``version``, ``db``, ``counts``) are
+    unchanged, and a live server always answers 200: a degraded dependency is
+    reported under ``dependencies`` and named in ``failures`` rather than
+    turned into an error, because the process is still serving.
+
+    Every probe is cheap and side-effect free.  The database check is a
+    permission test (no query, no write, no SQLite lock); the engine is read
+    from the process-wide cached ``engines.get_engine()``, whose availability
+    probe imports nothing and spawns nothing; the last auto run is a single
+    SELECT.  The request adds no subprocess and no write.
+    """
+    path = db_path()
+    with contextlib.closing(db()) as conn:
+        counts = store.counts(conn)
+        last_run = _last_auto_run(conn)
+    database = _database_health(path)
+    dependencies = {
+        "database": database,
+        "engine": _engine_health(),
+        "auto": {"last_run": last_run},
+    }
+    failures = [] if database["writable"] else ["database"]
+    return json_response(
+        {
+            "status": "ok",
+            "version": __version__,
+            "db": str(path),
+            "counts": counts,
+            "dependencies": dependencies,
+            "failures": failures,
+        }
+    )
+
+
+# ── Binaries ───────────────────────────────────────────────────────
+
+# Content type a stored binary's suffix names, and the one every other suffix
+# gets.  A fixed table rather than ``mimetypes``: the stdlib type map is read
+# from the host's files, which makes the answer differ per machine.
+BINARY_CONTENT_TYPES: dict[str, str] = {
+    ".exe": "application/vnd.microsoft.portable-executable",
+    ".dll": "application/vnd.microsoft.portable-executable",
+    ".sys": "application/vnd.microsoft.portable-executable",
+    ".ocx": "application/vnd.microsoft.portable-executable",
+    ".elf": "application/x-elf",
+    ".so": "application/x-sharedlib",
+}
+DEFAULT_BINARY_CONTENT_TYPE = "application/octet-stream"
+
+# Bytes one read of a streaming download takes.  ``POST /api/binaries`` accepts
+# up to MAX_UPLOAD_BYTES (256 MiB), so a stored binary can be large; reading it
+# whole would hold all of it in memory for every concurrent download.
+BINARY_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+
+# A stored binary is content-addressed (``<sha256><suffix>``), so its bytes can
+# never change under that name: a client may keep the answer indefinitely.
+BINARY_DOWNLOAD_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+# Characters a download filename may carry.  The stored name is reportal's own,
+# but the header is a quoted string and the value also reaches a caller's
+# filesystem, so every other character (a slash, a quote, a backslash, a
+# newline, a control character) becomes an underscore.
+_UNSAFE_FILENAME_CHAR = re.compile(r"[^A-Za-z0-9._-]")
+
+
+def download_filename(binary: Mapping[str, Any]) -> str:
+    """The filename a download of *binary* carries, safe for a header and a path.
+
+    The name is reduced to one path component (so a name carrying a slash
+    cannot name a directory) and everything outside
+    :data:`_UNSAFE_FILENAME_CHAR`'s set becomes an underscore, so a quote, a
+    backslash or a newline cannot break the ``Content-Disposition`` header.  A
+    name that reduces to nothing falls back to the content-addressed file name
+    reportal stored it under.
+    """
+    candidate = Path(str(binary.get("name") or "")).name
+    cleaned = _UNSAFE_FILENAME_CHAR.sub("_", candidate).strip(" .")
+    if cleaned:
+        return cleaned
+    stored = Path(str(binary.get("path") or "")).name
+    fallback = _UNSAFE_FILENAME_CHAR.sub("_", stored).strip(" .")
+    return fallback or f"binary-{int(binary['id'])}"
+
+
+def _binary_content_type(path: Path) -> str:
+    """The content type of a stored binary, from its suffix or the default."""
+    return BINARY_CONTENT_TYPES.get(path.suffix.lower(), DEFAULT_BINARY_CONTENT_TYPE)
+
+
+def _stream_file(path: Path, chunk_bytes: int = BINARY_DOWNLOAD_CHUNK_BYTES) -> Iterator[bytes]:
+    """Yield *path*'s bytes in bounded chunks, closing the file when done."""
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_bytes)
+            if not chunk:
+                return
+            yield chunk
+
+
+@router.get("/api/binaries/{binary_id}/download")
+def download_binary(binary_id: int) -> Response:
+    """Stream the stored bytes of one binary as a named attachment.
+
+    The file is read in :data:`BINARY_DOWNLOAD_CHUNK_BYTES` chunks and yielded
+    as it is read rather than returned as one body: ``POST /api/binaries``
+    accepts up to :data:`MAX_UPLOAD_BYTES` (256 MiB), so a single ``read()``
+    would hold the whole binary in the server's memory for every concurrent
+    download.
+
+    The filename comes from the stored name, never from the request, and is
+    sanitized by :func:`download_filename`; ``Content-Length`` is the stored
+    file's own byte count, the content type comes from its suffix, and the
+    answer is cacheable indefinitely because the bytes are content-addressed.
+    An unknown id is 404 `binary not found`; a row whose file is gone is 404
+    `binary not on disk` with the path it looked for (the engine routes answer
+    400 for that condition, but a download is of a representation that is gone,
+    so it is a not-found here).
+    """
+    with contextlib.closing(db()) as conn:
+        binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        return json_error(404, error="binary not found", detail=f"no binary with id {binary_id}")
+    path = Path(str(binary["path"]))
+    if not path.is_file():
+        return json_error(
+            404,
+            error="binary not on disk",
+            detail=f"binary {binary_id} has no file at {binary['path']!r}",
+        )
+    return StreamingResponse(
+        _stream_file(path),
+        media_type=_binary_content_type(path),
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_filename(binary)}"',
+            "Content-Length": str(path.stat().st_size),
+            "Cache-Control": BINARY_DOWNLOAD_CACHE_CONTROL,
+        },
+    )
+
+
+# ── Comments ───────────────────────────────────────────────────────
+
+
+def _comment_failure(exc: comments.CommentError) -> Response:
+    """Map a comment validation failure onto its JSON status and error name."""
+    detail = str(exc.args[0]) if exc.args else str(exc)
+    if isinstance(exc, comments.InvalidCommentError):
+        return json_error(400, error="invalid comment", detail=detail)
+    if isinstance(exc, comments.UnknownScopeError):
+        return json_error(404, error=f"{exc.scope_kind} not found", detail=detail)
+    return json_error(404, error="comment not found", detail=detail)
+
+
+def _comment_text(body: dict[str, Any]) -> str:
+    """Return the ``body`` field of a comment request, or a 400."""
+    value = body.get("body")
+    if not isinstance(value, str):
+        raise json_error(400, error="invalid comment", detail="body must be a string")
+    return value
+
+
+def _list_scope_comments(scope_kind: str, scope_id: int) -> Response:
+    with contextlib.closing(db()) as conn:
+        try:
+            rows = comments.list_comments(conn, scope_kind=scope_kind, scope_id=scope_id)
+        except comments.CommentError as exc:
+            return _comment_failure(exc)
+    return json_response({"comments": rows})
+
+
+def _add_scope_comment(scope_kind: str, scope_id: int, body: dict[str, Any]) -> Response:
+    text = _comment_text(body)
+    author = body.get("author")
+    if author is not None and not isinstance(author, str):
+        return json_error(400, error="invalid comment", detail="author must be a string")
+    with contextlib.closing(db()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                created = comments.add_comment(
+                    conn,
+                    scope_kind=scope_kind,
+                    scope_id=scope_id,
+                    body=text,
+                    author=author,
+                )
+            except comments.CommentError as exc:
+                return _comment_failure(exc)
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                f"stored comment {created['id']}",
+                journal.row_delete_descriptor("comments", int(created["id"])),
+            )
+    return json_response(log.attach(created), status=201)
+
+
+@router.get("/api/binaries/{binary_id}/comments")
+def list_binary_comments(binary_id: int) -> Response:
+    """Analyst comments stored on one binary, oldest first."""
+    return _list_scope_comments(comments.SCOPE_BINARY, binary_id)
+
+
+@router.post("/api/binaries/{binary_id}/comments")
+def add_binary_comment(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Store one analyst comment on a binary; body ``{"body", "author"?}``."""
+    return _add_scope_comment(comments.SCOPE_BINARY, binary_id, body)
+
+
+@router.get("/api/functions/{function_id}/comments")
+def list_function_comments(function_id: int) -> Response:
+    """Analyst comments stored on one function, oldest first."""
+    return _list_scope_comments(comments.SCOPE_FUNCTION, function_id)
+
+
+@router.post("/api/functions/{function_id}/comments")
+def add_function_comment(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Store one analyst comment on a function; body ``{"body", "author"?}``."""
+    return _add_scope_comment(comments.SCOPE_FUNCTION, function_id, body)
+
+
+@router.patch("/api/comments/{comment_id}")
+def update_comment(comment_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Replace one comment's body; body ``{"body"}``."""
+    text = _comment_text(body)
+    with contextlib.closing(db()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn, table="comments", where="id = ?", params=(comment_id,)
+            )
+            try:
+                updated = comments.update_comment(conn, comment_id, body=text)
+            except comments.CommentError as exc:
+                return _comment_failure(exc)
+            if before:
+                log.record(
+                    effects.EFFECT_ROW_RESTORE,
+                    f"edited comment {comment_id}",
+                    journal.row_restore_descriptor("comments", before),
+                )
+    return json_response(log.attach(updated))
+
+
+@router.delete("/api/comments/{comment_id}")
+def delete_comment(comment_id: int) -> Response:
+    """Delete one comment by id."""
+    with contextlib.closing(db()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn, table="comments", where="id = ?", params=(comment_id,)
+            )
+            try:
+                deleted = comments.delete_comment(conn, comment_id)
+            except comments.CommentError as exc:
+                return _comment_failure(exc)
+            if before:
+                log.record(
+                    effects.EFFECT_ROW_RESTORE,
+                    f"deleted comment {comment_id}",
+                    journal.row_restore_descriptor("comments", before),
+                )
+    payload = {"comment": deleted, "comment_id": comment_id, "deleted": True}
+    return json_response(log.attach(payload))

@@ -1,0 +1,176 @@
+import { useEffect, useState } from "react";
+import { Link } from "react-router";
+import type { ReactNode } from "react";
+
+import { api } from "../api";
+import {
+  Button,
+  DataTable,
+  EmptyState,
+  ErrorNote,
+  Field,
+  Loading,
+  Panel,
+  StatusCell,
+  Toolbar,
+  hex,
+} from "../components";
+import { SEARCH_KIND_LABELS, SEARCH_KINDS } from "../constants";
+import type { SearchKind, SearchResults } from "../types";
+import { useAsync } from "../useAsync";
+import { COLLECTIONS_HREF, binaryHref, functionHref } from "./SearchResults";
+
+export function SearchView({
+  query,
+  onQuery,
+}: {
+  query: string;
+  onQuery: (query: string) => void;
+}): ReactNode {
+  const [draft, setDraft] = useState(query);
+  const [kind, setKind] = useState<SearchKind>("all");
+
+  useEffect(() => {
+    setDraft(query);
+  }, [query]);
+
+  const resultsResult = useAsync(
+    () => api<SearchResults>(`/search?q=${encodeURIComponent(query)}&kind=${kind}`),
+    [query, kind],
+    query !== "",
+  );
+  const results = resultsResult.data;
+  const total = results
+    ? results.binaries.length + results.functions.length + results.collections.length + results.tags.length
+    : 0;
+
+  return (
+    <Panel
+      title="Search"
+      subtitle="Names, hashes, tags and paths across the whole workspace."
+      actions={
+        <Toolbar>
+          <Field label="Query">
+            <input
+              type="search"
+              placeholder="name, hash, path"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </Field>
+          <Field label="Match">
+            <select
+              value={kind}
+              onChange={(event) => setKind(event.target.value as SearchKind)}
+            >
+              {SEARCH_KINDS.map((option) => (
+                <option key={option} value={option}>
+                  {SEARCH_KIND_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Button tone="primary" onClick={() => onQuery(draft)}>
+            Search
+          </Button>
+        </Toolbar>
+      }
+    >
+      {query === "" ? (
+        <EmptyState>Search binaries, functions and collections. Enter a name or hash above.</EmptyState>
+      ) : resultsResult.error ? (
+        <ErrorNote error={resultsResult.error} onRetry={resultsResult.reload} />
+      ) : !results ? (
+        <Loading label="Searching" />
+      ) : total === 0 ? (
+        <EmptyState>No results for &quot;{query}&quot;. Try a shorter name or a hash prefix.</EmptyState>
+      ) : (
+        <>
+          {results.binaries.length ? (
+            <>
+              <h3>
+                Binaries ({results.binaries.length} of {results.counts.binaries.total})
+              </h3>
+              <DataTable
+                columns={[
+                  { label: "ID", key: "id", numeric: true },
+                  {
+                    label: "Name",
+                    render: (row) => <Link to={binaryHref(row.id)}>{row.name}</Link>,
+                  },
+                  { label: "Format", key: "format", mono: true },
+                  { label: "Arch", key: "arch", mono: true },
+                  { label: "Size", numeric: true, render: (row) => row.size.toLocaleString() },
+                  {
+                    label: "Tags",
+                    render: (row) => (row.tags.length ? row.tags.join(", ") : "n/a"),
+                  },
+                  { label: "Match", key: "match", mono: true },
+                ]}
+                rows={results.binaries}
+                rowKey={(row) => row.id}
+              />
+            </>
+          ) : null}
+          {results.functions.length ? (
+            <>
+              <h3>
+                Functions ({results.functions.length} of {results.counts.functions.total})
+              </h3>
+              <DataTable
+                columns={[
+                  { label: "ID", key: "id", numeric: true },
+                  {
+                    label: "VA",
+                    mono: true,
+                    render: (row) => <Link to={functionHref(row.id)}>{hex(row.va)}</Link>,
+                  },
+                  { label: "Name", key: "name" },
+                  { label: "Status", render: (row) => <StatusCell status={row.status} /> },
+                ]}
+                rows={results.functions}
+                rowKey={(row) => row.id}
+              />
+            </>
+          ) : null}
+          {results.collections.length ? (
+            <>
+              <h3>
+                Collections ({results.collections.length} of {results.counts.collections.total})
+              </h3>
+              <DataTable
+                columns={[
+                  { label: "ID", key: "id", numeric: true },
+                  {
+                    label: "Name",
+                    render: (row) => <Link to={COLLECTIONS_HREF}>{row.name}</Link>,
+                  },
+                  { label: "Description", key: "description" },
+                  { label: "Binaries", key: "binary_count", numeric: true },
+                ]}
+                rows={results.collections}
+                rowKey={(row) => row.id}
+              />
+            </>
+          ) : null}
+          {results.tags.length ? (
+            <>
+              <h3>
+                Tags ({results.tags.length} of {results.counts.tags.total})
+              </h3>
+              <DataTable
+                columns={[
+                  { label: "ID", key: "id", numeric: true },
+                  { label: "Name", key: "name" },
+                  { label: "Binaries", key: "binary_count", numeric: true },
+                ]}
+                rows={results.tags}
+                rowKey={(row) => row.id}
+              />
+            </>
+          ) : null}
+        </>
+      )}
+    </Panel>
+  );
+}
