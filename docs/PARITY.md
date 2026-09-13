@@ -412,7 +412,7 @@ the activity and feedback surfaces.
   authenticated caller, bounded at `store.MAX_FEEDBACK_CHARS` (400
   `invalid feedback`), journaled and revertible.
 - `reportal activity`/`feedback`/`feedback-add`, the read-only `get_activity` and
-  `list_feedback` MCP tools plus the destructive `add_feedback` (  read-only, 95 destructive) and the SPA Users view's Activity panel with its
+  `list_feedback` MCP tools plus the destructive `add_feedback` and the SPA Users view's Activity panel with its
   actor select and feedback form expose the same.  Both new paths are
   self-service (`auth._SELF_PATHS`): an analyst reads its own activity and writes
   its own note without an admin role, while `/api/users` stays admin-only.
