@@ -45,7 +45,7 @@ import re
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 from openai import OpenAI, OpenAIError
@@ -354,7 +354,13 @@ class LlmClient:
             self._client = OpenAI(
                 base_url=_base_url(config.endpoint),
                 api_key=config.api_key or ANONYMOUS_KEY,
-                http_client=http,
+                # The SDK annotates this argument as `httpx.Client`, and
+                # reportal's one HTTP client line is the `httpx2` fork, whose
+                # client carries the same interface under another package name.
+                # A cast is the only way to say that: the two packages are
+                # distinct types, and the client is exercised end to end by the
+                # suite through a mock transport.
+                http_client=cast(Any, http),
                 # reportal's callers decide when to retry; the SDK's own retries
                 # would multiply an engine-verified run's attempts silently.
                 max_retries=0,
