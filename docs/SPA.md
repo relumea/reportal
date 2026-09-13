@@ -337,7 +337,24 @@ the panels they changed and the function header, so the new name shows.  The
 diff view (`views/DiffView.tsx`) renders the two listings side by side with
 the changed lines marked (delete/insert styling), a `kind` select
 (`decomp`/`disasm`), a normalize checkbox, the similarity and the summary
-counts, loading through the diff route.  An AI
+counts, loading through the diff route.  The per-function extras render between the references tables and the matches
+panel: indirect call sites (the cached listing's register and memory calls, each
+with its line, mnemonic and operand, with the nothing-cached hint when the
+function has no listing and a Refresh control); capabilities (the rules the
+function's own imports and literals matched, with their confidence and evidence
+count); strings (the analyst's list with an add form and a Remove per row, and
+below it, labelled as the text scan it is, the literals the stored
+decompilation carries); callees (a Declare callee form with the edge's kind and
+note, the declared edges with a Remove per row, and the derived names as one
+line of text); and a canonical-name panel whose Apply canonical name posts this
+function's id to `POST /api/functions/canonical-names` and reports the rename
+count or the reason it was skipped.  The analysis log drawer carries the analysis
+strings panel: the same list and add form at analysis scope plus a
+one-string-per-line Replace list box, which posts to `PUT
+/api/analyses/<id>/strings` and reports how many values the list now holds.  All
+of it reads the derived payloads as labelled derivations and never calls an
+engine or a model on render.
+An AI
 section groups the AI decompilation, Summary, AI comments, Type suggestions and
 Renames panels.  The AI decompilation panel is the whole-function rewrite: the
 lines with their origin (`original`/`rewritten`/`added`) in a table, a per-token

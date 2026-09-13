@@ -378,7 +378,7 @@ description lives in that file.
 | F | Users, auth and IAM (roles, permissions, teams, scope, activity, feedback) | Closed in PARITY.md |
 | G | Models (registry, model per artifact, upgrade) | Closed in PARITY.md |
 | H | External sources (VirusTotal), now with the team key in entry 3 | Closed in PARITY.md |
-| J | Function-level extras (indirect call sites, capabilities, strings, user strings) | Planned |
+| J | Function-level extras (indirect call sites, capabilities, strings, user strings) | Closed in PARITY.md |
 | K | Data types and signatures bulk operations | Closed in PARITY.md |
 | L | Agentic conversations (tool loop, SSE, cancel, confirm) | Planned |
 | M | Reports as an asynchronous job | Closed in PARITY.md |

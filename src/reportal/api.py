@@ -61,6 +61,7 @@ from reportal import (
     families,
     filetypes,
     firmware,
+    function_extras,
     function_triage,
     graph,
     graph_backends,
@@ -91,6 +92,7 @@ from reportal import (
     surface,
     threat,
     unstrip,
+    user_strings,
     zipcrypto,
 )
 from reportal._paths import binaries_dir, db_path, reports_dir
@@ -4076,6 +4078,98 @@ def get_binary_additional_details_status(binary_id: int) -> Response:
 # ── Functions ──────────────────────────────────────────────────────
 
 
+@router.get("/api/functions/callees-callers")
+def get_functions_callees_callers(request: Request) -> Response:
+    """The derived callers and callees of many functions in one read.
+
+    The query is ``?ids=1,2,3`` (at most :data:`function_extras.MAX_FUNCTIONS_PER_QUERY`).
+    A callee is a name the function's stored decompilation mentions that the
+    binary also stores as a function or an import stub, plus every
+    analyst-declared edge; a caller is a function whose text mentions this one.
+    It is a text derivation over stored rows and the payload says so.
+    """
+    ids = _batch_ids(request)
+    if ids is None:
+        return _batch_error()
+    with contextlib.closing(_open()) as conn:
+        rows = function_extras.callers_and_callees(conn, ids)
+    return json_response(rows)
+
+
+@router.get("/api/functions/matches")
+def get_functions_matches(request: Request) -> Response:
+    """The recorded match rows of many functions in one read.
+
+    ``?ids=1,2,3``.  This reads what a previous match run stored; it runs no
+    scoring and no engine, which the payload's note states.
+    """
+    ids = _batch_ids(request)
+    if ids is None:
+        return _batch_error()
+    with contextlib.closing(_open()) as conn:
+        rows = function_extras.match_rows(conn, ids)
+    return json_response(rows)
+
+
+@router.post("/api/functions/matches")
+def post_functions_matches(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """The same read as the GET, with the ids in the body: ``{"function_ids": [...]}``."""
+    ids = _body_ids(body)
+    if ids is None:
+        return _batch_error()
+    with contextlib.closing(_open()) as conn:
+        rows = function_extras.match_rows(conn, ids)
+    return json_response(rows)
+
+
+@router.post("/api/functions/canonical-names")
+def canonicalize_function_names(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Rename many functions to the canonical name the store already recorded.
+
+    The body is ``{"function_ids": [...], "apply": bool}``; ``apply`` defaults to
+    true and a false one is the dry run that only plans.  The candidate is a
+    predicted name, else the newest recorded rename, and a function with neither
+    is skipped rather than renamed to a guess; each rename is journaled, so one
+    revert puts every name back.
+    """
+    ids = _body_ids(body)
+    if ids is None:
+        return _batch_error()
+    apply_renames = body.get("apply")
+    if apply_renames is not None and not isinstance(apply_renames, bool):
+        return json_error(400, error="invalid apply", detail="apply must be a boolean")
+    with contextlib.closing(_open()) as conn:
+        plan = function_extras.canonical_names(conn, ids)
+        if apply_renames is False:
+            return json_response({**plan, "applied": [], "applied_count": 0, "dry_run": True})
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            applied: list[dict[str, Any]] = []
+            for entry in plan["planned"]:
+                if not entry["changed"]:
+                    continue
+                result = journal.journaled_rename(
+                    conn,
+                    log,
+                    int(entry["function_id"]),
+                    new_name=str(entry["to"]),
+                    actor=journal.current_actor(),
+                    source="canonical-names",
+                )
+                applied.append({**entry, "result": result})
+    return json_response(
+        log.attach(
+            {
+                **plan,
+                "applied": applied,
+                "applied_count": len(applied),
+                "count": len(applied) + len(plan["skipped"]),
+                "dry_run": False,
+            }
+        )
+    )
+
+
 @router.get("/api/functions/signatures")
 def get_function_signatures(request: Request) -> Response:
     """Signatures for many functions in one read, in the order the ids were given.
@@ -7926,6 +8020,46 @@ def _id_list(request: Request, name: str) -> list[int] | None:
     return ids
 
 
+def _batch_ids(request: Request) -> list[int] | None:
+    """The ids a batch read names (``?ids=``), or None when unusable.
+
+    None means a 400: the list is empty, malformed, or longer than
+    :data:`function_extras.MAX_FUNCTIONS_PER_QUERY`, so a caller cannot ask a
+    single read to walk the corpus.
+    """
+    ids = _id_list(request, "ids")
+    if ids is None or not ids or len(ids) > function_extras.MAX_FUNCTIONS_PER_QUERY:
+        return None
+    return ids
+
+
+def _body_ids(body: dict[str, Any]) -> list[int] | None:
+    """The function ids a batch body names (``{"function_ids": [...]}``), or None."""
+    raw = body.get("function_ids")
+    if not isinstance(raw, list) or not raw:
+        return None
+    if len(raw) > function_extras.MAX_FUNCTIONS_PER_QUERY:
+        return None
+    ids: list[int] = []
+    for entry in raw:
+        if isinstance(entry, bool) or not isinstance(entry, int):
+            return None
+        ids.append(entry)
+    return ids
+
+
+def _batch_error() -> Response:
+    """The 400 every function batch read and write answers for an unusable list."""
+    return json_error(
+        400,
+        error="invalid function_ids",
+        detail=(
+            "name between 1 and"
+            f" {function_extras.MAX_FUNCTIONS_PER_QUERY} function ids (ids= or function_ids)"
+        ),
+    )
+
+
 def _definition_list(body: dict[str, Any]) -> list[Any] | None:
     """The ``types`` a bulk data-type route carries, or None when unusable.
 
@@ -8120,6 +8254,308 @@ def get_data_type_functions(analysis_id: int, data_type_id: int) -> Response:
             )
         report = data_types.references(conn, data_type_id)
     return json_response(report)
+
+
+# ── Function-level extras ──────────────────────────────────────────
+#
+# The hosted function reads and writes that sit on top of a stored
+# decompilation: indirect call sites, per-function capabilities, the function's
+# strings (the analyst's and the derived literals), analyst-declared callee
+# edges and the two batch reads.  Everything derived comes from rows reportal
+# already holds and says so; the only writes are the analyst's own.
+
+
+def _function_or_404(conn: sqlite3.Connection, function_id: int) -> Response | None:
+    """The 404 a function-scoped route answers for an unknown id, or None."""
+    if store.get_function(conn, function_id) is None:
+        return json_error(
+            404, error="function not found", detail=f"no function with id {function_id}"
+        )
+    return None
+
+
+@router.get("/api/functions/{function_id}/indirect-call-sites")
+def get_indirect_call_sites(function_id: int) -> Response:
+    """The indirect calls and jumps in a function's cached listing.
+
+    The listing is `disasm_cache`'s when the function has one; a function with
+    no cached listing answers an empty list with a note saying the scan reads the
+    cache rather than spawning the engine behind a read.
+    """
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        cached = store.get_disasm(conn, function_id)
+        rows = function_extras.indirect_call_sites(cached or "")
+    return json_response(
+        {
+            "function_id": function_id,
+            "sites": rows,
+            "count": len(rows),
+            "has_disassembly": cached is not None,
+            "derivation": function_extras.DERIVATION,
+            "note": function_extras.CALL_SITE_NOTE,
+        }
+    )
+
+
+@router.get("/api/functions/{function_id}/capabilities")
+def get_function_capabilities(function_id: int) -> Response:
+    """Classify one function from the imports and literals its decompilation mentions."""
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        try:
+            payload = function_extras.function_capabilities(conn, function_id)
+        except function_extras.EdgeError as exc:
+            return json_error(404, error="function not found", detail=exc.detail)
+    return json_response(payload)
+
+
+@router.get("/api/functions/{function_id}/strings")
+def get_function_strings(function_id: int) -> Response:
+    """The analyst's strings for a function, and the literals its decompilation carries."""
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        try:
+            payload = user_strings.function_strings(conn, function_id)
+        except user_strings.UnknownStringError as exc:
+            return json_error(404, error="function not found", detail=exc.detail)
+    return json_response(payload)
+
+
+@router.post("/api/functions/{function_id}/strings")
+def add_function_string(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Record one analyst string for a function; journaled.
+
+    The body is ``{"value": "...", "kind"?, "note"?}``; a value already recorded
+    at the scope updates its note rather than adding a second row.
+    """
+    value = body.get("value")
+    kind = body.get("kind")
+    note = body.get("note")
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = user_strings.journaled_add(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=function_id,
+                    value=value,
+                    kind=kind,
+                    note=note,
+                    actor=journal.current_actor(),
+                    description=f"stored a string for function {function_id}",
+                )
+            except user_strings.StringError as exc:
+                return json_error(
+                    400 if exc.code == user_strings.ERROR_INVALID else 404,
+                    error=exc.code,
+                    detail=exc.detail,
+                )
+    return json_response(log.attach(row))
+
+
+@router.delete("/api/functions/{function_id}/strings/{string_id}")
+def delete_function_string(function_id: int, string_id: int) -> Response:
+    """Remove one analyst string from a function; journaled."""
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = user_strings.journaled_delete(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=function_id,
+                    string_id=string_id,
+                    description=f"removed string {string_id} from function {function_id}",
+                )
+            except user_strings.StringError as exc:
+                return json_error(404, error=exc.code, detail=exc.detail)
+    return json_response(log.attach(row))
+
+
+@router.get("/api/functions/{function_id}/callees")
+def get_function_callees(function_id: int) -> Response:
+    """A function's derived callees and its analyst-declared edges.
+
+    The derived half is a text scan of the stored decompilation against the
+    binary's function names, and the declared half is what an analyst recorded;
+    the two are reported separately rather than merged.
+    """
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        rows = function_extras.callers_and_callees(conn, [function_id])["functions"]
+    payload: dict[str, Any] = (
+        rows[0] if rows else {"function_id": function_id, "callees": [], "declared": []}
+    )
+    callees: list[Any] = list(payload.get("callees") or [])
+    declared: list[Any] = list(payload.get("declared") or [])
+    return json_response(
+        {
+            **payload,
+            "count": len(callees),
+            "declared_count": len(declared),
+            "derivation": function_extras.DERIVATION,
+        }
+    )
+
+
+@router.post("/api/functions/{function_id}/callees")
+def add_function_callee(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Record one analyst-declared callee edge; journaled.
+
+    The body is ``{"callee": "<name>", "kind"?: "call"|"indirect", "note"?}``.
+    The edge is the analyst's claim, not a scan: it is stored with source
+    ``analyst`` and reported beside the derived callees.
+    """
+    callee = body.get("callee")
+    kind = body.get("kind")
+    note = body.get("note")
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = function_extras.journaled_add_edge(
+                    conn,
+                    log,
+                    function_id=function_id,
+                    callee=callee,
+                    kind=kind,
+                    note=note,
+                    description=f"recorded a callee of function {function_id}",
+                )
+            except function_extras.EdgeError as exc:
+                return json_error(
+                    400 if exc.code == function_extras.ERROR_INVALID else 404,
+                    error=exc.code,
+                    detail=exc.detail,
+                )
+    return json_response(log.attach(row))
+
+
+@router.delete("/api/functions/{function_id}/callees/{edge_id}")
+def delete_function_callee(function_id: int, edge_id: int) -> Response:
+    """Remove one analyst-declared callee edge; journaled."""
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = function_extras.journaled_delete_edge(
+                    conn,
+                    log,
+                    function_id=function_id,
+                    edge_id=edge_id,
+                    description=f"removed an edge of function {function_id}",
+                )
+            except function_extras.EdgeError as exc:
+                return json_error(404, error=exc.code, detail=exc.detail)
+    return json_response(log.attach(row))
+
+
+@router.post("/api/analyses/{analysis_id}/strings")
+def add_analysis_string(analysis_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Record one analyst string at analysis scope; journaled."""
+    value = body.get("value")
+    kind = body.get("kind")
+    note = body.get("note")
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = user_strings.journaled_add(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_ANALYSIS,
+                    scope_id=analysis_id,
+                    value=value,
+                    kind=kind,
+                    note=note,
+                    actor=journal.current_actor(),
+                    description=f"stored a string for analysis {analysis_id}",
+                )
+            except user_strings.StringError as exc:
+                return json_error(
+                    400 if exc.code == user_strings.ERROR_INVALID else 404,
+                    error=exc.code,
+                    detail=exc.detail,
+                )
+    return json_response(log.attach(row))
+
+
+@router.get("/api/analyses/{analysis_id}/strings")
+def list_analysis_strings(analysis_id: int) -> Response:
+    """Every analyst string recorded at analysis scope."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        rows = user_strings.list_strings(
+            conn, scope_kind=user_strings.SCOPE_ANALYSIS, scope_id=analysis_id
+        )
+    return json_response({"analysis_id": analysis_id, "strings": rows, "count": len(rows)})
+
+
+@router.put("/api/analyses/{analysis_id}/strings")
+def replace_analysis_strings(
+    analysis_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Replace an analysis's whole analyst string list; journaled.
+
+    The body is ``{"strings": ["...", ...]}``.  The hosted `PUT` is the whole
+    list at once, so this removes what is there and writes what the body names,
+    in order; every value is validated before anything is written.
+    """
+    raw_values = body.get("strings")
+    if not isinstance(raw_values, list):
+        return json_error(400, error="invalid string", detail="strings must be a list of values")
+    values: list[Any] = raw_values
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                report = user_strings.journaled_replace(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_ANALYSIS,
+                    scope_id=analysis_id,
+                    values=values,
+                    actor=journal.current_actor(),
+                    description=f"replaced the strings of analysis {analysis_id}",
+                )
+            except user_strings.StringError as exc:
+                return json_error(400, error=exc.code, detail=exc.detail)
+    return json_response(log.attach(report))
 
 
 # ── Models ─────────────────────────────────────────────────────────

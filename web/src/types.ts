@@ -2586,3 +2586,95 @@ export interface InstanceConfig {
   limits: Record<string, number>;
   mcp: { total: number; read_only: number; destructive: number };
 }
+
+/** One indirect call or jump in a function's cached disassembly listing. */
+export interface IndirectCallSite {
+  line: number;
+  kind: string;
+  mnemonic: string;
+  target: string;
+  instruction: string;
+}
+
+/** `GET /api/functions/<id>/indirect-call-sites`. */
+export interface IndirectCallSites {
+  function_id: number;
+  sites: IndirectCallSite[];
+  count: number;
+  has_disassembly: boolean;
+  derivation: string;
+  note: string;
+}
+
+/** One capability rule a function's stored text matched. */
+export interface FunctionCapability {
+  name: string;
+  confidence: string;
+  evidence_count: number;
+  evidence?: string[];
+}
+
+/** `GET /api/functions/<id>/capabilities`. */
+export interface FunctionCapabilities {
+  function_id: number;
+  capabilities: FunctionCapability[];
+  count: number;
+  inputs: { imports: number; strings: number };
+  has_decompilation: boolean;
+  derivation: string;
+}
+
+/** One analyst-recorded string, at function or analysis scope. */
+export interface AnalystString {
+  id: number;
+  scope_kind: string;
+  scope_id: number;
+  value: string;
+  kind: string;
+  note: string;
+  actor: string;
+  created_at: string;
+}
+
+/** `GET /api/functions/<id>/strings`: the analyst's and the derived literals. */
+export interface FunctionStrings {
+  function_id: number;
+  analyst: AnalystString[];
+  derived: Array<{ value: string; source: string }>;
+  counts: { analyst: number; derived: number };
+  note: string;
+}
+
+/** `GET /api/analyses/<id>/strings`. */
+export interface AnalysisStrings {
+  analysis_id: number;
+  strings: AnalystString[];
+  count: number;
+}
+
+/** A derived callee or a caller of a function. */
+export interface DerivedCallee {
+  name: string;
+  function_id: number;
+  derivation: string;
+}
+
+/** One callee edge an analyst declared. */
+export interface DeclaredEdge {
+  name: string;
+  kind: string;
+  source: string;
+  edge_id: number;
+}
+
+/** `GET /api/functions/<id>/callees`. */
+export interface FunctionCallees {
+  function_id: number;
+  name?: string;
+  callees: DerivedCallee[];
+  declared: DeclaredEdge[];
+  count: number;
+  declared_count: number;
+  has_decompilation: boolean;
+  derivation: string;
+}

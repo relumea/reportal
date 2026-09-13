@@ -207,6 +207,21 @@ their pages by the same rule.
 | `/api/analyses/<id>/data-types` | POST | create or update an analysis's data types from C declarations; body `{"types": [<declaration>...]}` or one header string, split at top-level semicolons; one journaled action with per-entry results; 400 `invalid types` |
 | `/api/analyses/<id>/data-types` | PUT | the same body, but a declaration whose type is not stored is skipped rather than created (the bulk update half) |
 | `/api/analyses/<id>/data-types/<data_type_id>/functions` | GET | the functions that use one type of the analysis's binary, from the stored reference index; 404 `data type not found` when the type belongs to another binary |
+| `/api/functions/callees-callers` | GET | the derived callers and callees of many functions in one read; `?ids=1,2,3` (at most `function_extras.MAX_FUNCTIONS_PER_QUERY` = 50), in the caller's order, with `found: false` for an unknown id; each payload carries the `derivation` note; 400 `invalid ids` |
+| `/api/functions/matches` | GET | the recorded match rows of many functions in one read, each with the derived `difference` and `band`; runs no scoring and no engine, which the payload's `note` states; 400 `invalid ids` |
+| `/api/functions/matches` | POST | the same read with the ids in the body; `{"function_ids": [...]}`; 400 `invalid ids` |
+| `/api/functions/canonical-names` | POST | rename many functions to the canonical name the store already recorded (a predicted name, else the newest recorded rename), journaling every rename; body `{"function_ids", "apply"?}`, where `apply: false` only plans; a function with no candidate is `skipped` rather than renamed to a guess; 400 `invalid apply` |
+| `/api/functions/<id>/indirect-call-sites` | GET | the indirect calls and jumps in the function's cached disassembly listing, each with its line, mnemonic and operand; a function with no cached listing answers an empty list with `has_disassembly: false` rather than spawning the engine; 404 `function-not-found` |
+| `/api/functions/<id>/capabilities` | GET | classify one function from the imports and string literals its stored decompilation mentions, with the same rule table the binary-level scan uses; 404 `function-not-found` |
+| `/api/functions/<id>/strings` | GET | the function's analyst strings and, separately, the quoted literals its stored decompilation carries; the two halves are never merged and the payload's `note` says the derived half is a text scan; 404 `function-not-found` |
+| `/api/functions/<id>/strings` | POST | record one analyst string at function scope; body `{"value", "kind"?, "note"?}`; a value already stored keeps its row and updates its note; journaled; 400 `invalid string`, 404 `function-not-found` |
+| `/api/functions/<id>/strings/<string_id>` | DELETE | remove one analyst string, journaled; 404 `string-not-found` for an unknown id or one of another scope |
+| `/api/functions/<id>/callees` | GET | the function's derived callees (names its text mentions that the binary stores) and the edges an analyst declared, reported separately rather than merged; 404 `function-not-found` |
+| `/api/functions/<id>/callees` | POST | record one analyst-declared callee edge; body `{"callee", "kind"?: "call"|"indirect", "note"?}`; re-declaring the same edge updates it in place; journaled; 400 `invalid edge`, 404 `function-not-found` |
+| `/api/functions/<id>/callees/<edge_id>` | DELETE | remove one analyst-declared edge, journaled; 404 `edge-not-found` for an unknown id or one of another function |
+| `/api/analyses/<id>/strings` | GET | every analyst string recorded at analysis scope; 404 `analysis not found` |
+| `/api/analyses/<id>/strings` | POST | record one analyst string at analysis scope, journaled; 400 `invalid string` |
+| `/api/analyses/<id>/strings` | PUT | replace the analysis's whole analyst string list in one journaled action, so one revert puts the previous list back; body `{"strings": [...]}`; every value is validated before anything is written; 400 `invalid string` |
 | `/api/external/sources` | GET | the external-source registry: each source's name, kind, availability and reason, plus whether the remote gate is on and a VirusTotal key resolves |
 | `/api/analyses/<id>/external/<source>` | POST | run one source for the analysis and store its answer as the `external:<source>` scan; 403 `external-disabled`, 503 `external-unavailable`, 400 `no-content-hash`, 502 `external-fetch-failed`, 404 `unknown source`; journaled |
 | `/api/analyses/<id>/external/<source>` | GET | the stored answer of one source; 404 `no-scan` before the first pull |
@@ -420,6 +435,22 @@ the last value or a kind without values.  Every type payload carries
 `size_check`: the declared size, the extent the members imply, `match`, and a
 `warning` naming both numbers when they disagree; the check is read-only and
 rewrites neither number.
+The function-level extras are derived from rows the workspace already holds and
+say so in every payload: the indirect call sites come from `disasm_cache` (a
+function with no cached listing reports `has_disassembly: false` and no sites
+rather than spawning the engine behind a read, and an operand that is a register
+or a memory reference is what makes a call indirect), the per-function
+capabilities come from the imports and quoted literals the stored decompilation
+mentions classified through the same rule table the binary-level scan uses, and
+the callees are the names that text mentions matched against the binary's
+function names and import stubs.  The one thing there that is not derived is an
+analyst-declared edge: `POST /api/functions/<id>/callees` stores a claim the
+engine could not resolve, with `source: analyst`, and it is reported beside the
+derived callees rather than merged into them.  The analyst strings are stored at
+function or analysis scope, the derived literals are reported separately from
+them, and `POST /api/functions/canonical-names` renames to a candidate the store
+already recorded (a predicted name, else the newest rename) and skips a function
+with none instead of renaming it to a guess.
 The signature routes also read and write the local model and never touch the
 engine: `GET /api/binaries/<id>/signatures` always answers with the model,
 `POST .../signatures/import` parses the binary's stored decompilations (a

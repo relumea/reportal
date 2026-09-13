@@ -50,6 +50,7 @@ from reportal import (
     families,
     filetypes,
     firmware,
+    function_extras,
     function_triage,
     graph,
     graph_backends,
@@ -80,6 +81,7 @@ from reportal import (
     surface,
     threat,
     unstrip,
+    user_strings,
     zipcrypto,
 )
 from reportal._paths import WorkspaceNotFound, reports_dir
@@ -2813,6 +2815,215 @@ def _tool_get_data_type_functions(arguments: dict[str, Any]) -> dict[str, Any]:
                 f"no data type {data_type_id} in analysis {analysis_id}",
             )
         return data_types.references(conn, data_type_id)
+
+
+def _bounded_function_ids(arguments: dict[str, Any], key: str) -> list[int]:
+    """A bounded, non-empty function-id list from the arguments."""
+    ids = _arg_optional_int_list(arguments, key)
+    limit = function_extras.MAX_FUNCTIONS_PER_QUERY
+    if not ids or len(ids) > limit:
+        raise ToolError("invalid params", f"{key} must be a non-empty list of at most {limit} ids")
+    return ids
+
+
+def _tool_get_indirect_call_sites(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        cached = store.get_disasm(conn, function_id)
+        rows = function_extras.indirect_call_sites(cached or "")
+    return {
+        "function_id": function_id,
+        "sites": rows,
+        "count": len(rows),
+        "has_disassembly": cached is not None,
+        "derivation": function_extras.DERIVATION,
+        "note": function_extras.CALL_SITE_NOTE,
+    }
+
+
+def _tool_get_function_capabilities(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        try:
+            return function_extras.function_capabilities(conn, function_id)
+        except function_extras.EdgeError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
+def _tool_get_function_strings(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        try:
+            return user_strings.function_strings(conn, function_id)
+        except user_strings.UnknownStringError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
+def _tool_list_analysis_strings(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        rows = user_strings.list_strings(
+            conn, scope_kind=user_strings.SCOPE_ANALYSIS, scope_id=analysis_id
+        )
+    return {"analysis_id": analysis_id, "strings": rows, "count": len(rows)}
+
+
+def _tool_list_function_edges(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        rows = function_extras.list_edges(conn, function_id)
+    return {"function_id": function_id, "edges": rows, "count": len(rows)}
+
+
+def _tool_get_functions_callees_callers(arguments: dict[str, Any]) -> dict[str, Any]:
+    ids = _bounded_function_ids(arguments, "function_ids")
+    with contextlib.closing(_open()) as conn:
+        return function_extras.callers_and_callees(conn, ids)
+
+
+def _tool_get_function_matches(arguments: dict[str, Any]) -> dict[str, Any]:
+    ids = _bounded_function_ids(arguments, "function_ids")
+    with contextlib.closing(_open()) as conn:
+        return function_extras.match_rows(conn, ids)
+
+
+def _tool_add_function_string(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    value = _arg_str(arguments, "value")
+    kind = _arg_optional_str(arguments, "kind", user_strings.KIND_STRING)
+    note = _arg_optional_str(arguments, "note")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                row = user_strings.journaled_add(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=function_id,
+                    value=value,
+                    kind=kind,
+                    note=note,
+                    actor=journal.current_actor(),
+                    description=f"stored a string for function {function_id}",
+                )
+            except user_strings.UnknownStringError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            except user_strings.StringError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(row)
+
+
+def _tool_delete_function_string(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    string_id = _arg_int(arguments, "string_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                row = user_strings.journaled_delete(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=function_id,
+                    string_id=string_id,
+                    description=f"removed string {string_id} from function {function_id}",
+                )
+            except user_strings.StringError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(row)
+
+
+def _tool_replace_analysis_strings(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    values = _arg_str_list(arguments, "strings")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                report = user_strings.journaled_replace(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_ANALYSIS,
+                    scope_id=analysis_id,
+                    values=values,
+                    actor=journal.current_actor(),
+                    description=f"replaced the strings of analysis {analysis_id}",
+                )
+            except user_strings.StringError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(report)
+
+
+def _tool_add_function_edge(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    callee = _arg_str(arguments, "callee")
+    kind = _arg_optional_str(arguments, "kind", function_extras.EDGE_CALL)
+    note = _arg_optional_str(arguments, "note")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                row = function_extras.journaled_add_edge(
+                    conn,
+                    log,
+                    function_id=function_id,
+                    callee=callee,
+                    kind=kind,
+                    note=note,
+                    description=f"recorded a callee of function {function_id}",
+                )
+            except function_extras.EdgeError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(row)
+
+
+def _tool_delete_function_edge(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    edge_id = _arg_int(arguments, "edge_id")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                row = function_extras.journaled_delete_edge(
+                    conn,
+                    log,
+                    function_id=function_id,
+                    edge_id=edge_id,
+                    description=f"removed an edge of function {function_id}",
+                )
+            except function_extras.EdgeError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(row)
+
+
+def _tool_canonicalize_function_names(arguments: dict[str, Any]) -> dict[str, Any]:
+    ids = _bounded_function_ids(arguments, "function_ids")
+    apply_renames = _arg_optional_bool(arguments, "apply", True)
+    with contextlib.closing(_open()) as conn:
+        plan = function_extras.canonical_names(conn, ids)
+        if not apply_renames:
+            return {**plan, "applied": [], "applied_count": 0, "dry_run": True}
+        with journal.journaled(conn, journal.new_action()) as log:
+            applied: list[dict[str, Any]] = []
+            for entry in plan["planned"]:
+                if not entry["changed"]:
+                    continue
+                result = journal.journaled_rename(
+                    conn,
+                    log,
+                    int(entry["function_id"]),
+                    new_name=str(entry["to"]),
+                    actor=journal.current_actor(),
+                    source="canonical-names",
+                )
+                applied.append({**entry, "result": result})
+            return log.attach(
+                {**plan, "applied": applied, "applied_count": len(applied), "dry_run": False}
+            )
 
 
 def _tool_list_external_sources(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6703,6 +6914,157 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_import_type_definitions,
+        ),
+        Tool(
+            "get_indirect_call_sites",
+            "The indirect calls and jumps in a function's cached disassembly listing, with the"
+            " line and operand of each; a function with no cached listing reports none rather"
+            " than running the engine.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_get_indirect_call_sites,
+        ),
+        Tool(
+            "get_function_capabilities",
+            "Classify one function from the imports and string literals its stored decompilation"
+            " mentions, with the same rule table the binary-level scan uses.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_get_function_capabilities,
+        ),
+        Tool(
+            "get_function_strings",
+            "A function's analyst-recorded strings and, beside them, the quoted literals its"
+            " stored decompilation carries; the two halves are never merged.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_get_function_strings,
+        ),
+        Tool(
+            "list_analysis_strings",
+            "The analyst strings recorded at analysis scope.",
+            _object({"analysis_id": _ANALYSIS_ID}, ("analysis_id",)),
+            _READ,
+            _tool_list_analysis_strings,
+        ),
+        Tool(
+            "list_function_edges",
+            "The callee edges an analyst declared for one function, with the kind, note and"
+            " source.",
+            _object({"function_id": _FUNCTION_ID}, ("function_id",)),
+            _READ,
+            _tool_list_function_edges,
+        ),
+        Tool(
+            "get_functions_callees_callers",
+            "The derived callers and callees of many functions in one read, plus the edges an"
+            " analyst declared; a text derivation over stored decompilations, so it runs no"
+            " engine.",
+            _object(
+                {"function_ids": _array("Function ids to read.", _int("Function id."))},
+                ("function_ids",),
+            ),
+            _READ,
+            _tool_get_functions_callees_callers,
+        ),
+        Tool(
+            "get_function_matches",
+            "The recorded match rows of many functions in one read, with the derived difference"
+            " and band; it runs no scoring and no engine.",
+            _object(
+                {"function_ids": _array("Function ids to read.", _int("Function id."))},
+                ("function_ids",),
+            ),
+            _READ,
+            _tool_get_function_matches,
+        ),
+        Tool(
+            "add_function_string",
+            "Record one analyst string against a function, at function scope; journaled, and the"
+            " value may not duplicate an entry already recorded there.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "value": _str("The string."),
+                    "kind": {
+                        "type": "string",
+                        "enum": list(user_strings.KINDS),
+                        "description": "Defaults to string.",
+                    },
+                    "note": _str("Why the string matters."),
+                },
+                ("function_id", "value"),
+            ),
+            _WRITE,
+            _tool_add_function_string,
+        ),
+        Tool(
+            "delete_function_string",
+            "Remove one analyst string from a function, journaling the row it removed.",
+            _object(
+                {"function_id": _FUNCTION_ID, "string_id": _int("String id to remove.")},
+                ("function_id", "string_id"),
+            ),
+            _WRITE,
+            _tool_delete_function_string,
+        ),
+        Tool(
+            "replace_analysis_strings",
+            "Replace an analysis's whole analyst string list in one journaled action, so one"
+            " revert puts the previous list back.",
+            _object(
+                {
+                    "analysis_id": _ANALYSIS_ID,
+                    "strings": _array("The complete list.", _str("A string.")),
+                },
+                ("analysis_id", "strings"),
+            ),
+            _WRITE,
+            _tool_replace_analysis_strings,
+        ),
+        Tool(
+            "add_function_edge",
+            "Record one analyst-declared callee edge on a function, for a call the engine cannot"
+            " resolve; journaled, and re-declaring the same edge updates it in place.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "callee": _str("Callee name the analyst asserts."),
+                    "kind": {
+                        "type": "string",
+                        "enum": list(function_extras.EDGE_KINDS),
+                        "description": "Defaults to call.",
+                    },
+                    "note": _str("Why the edge is claimed."),
+                },
+                ("function_id", "callee"),
+            ),
+            _WRITE,
+            _tool_add_function_edge,
+        ),
+        Tool(
+            "delete_function_edge",
+            "Remove one analyst-declared callee edge, journaling the row it removed.",
+            _object(
+                {"function_id": _FUNCTION_ID, "edge_id": _int("Edge id to remove.")},
+                ("function_id", "edge_id"),
+            ),
+            _WRITE,
+            _tool_delete_function_edge,
+        ),
+        Tool(
+            "canonicalize_function_names",
+            "Rename many functions to the canonical name the store already recorded (a predicted"
+            " name, else the newest rename), journaling every rename; apply=false only plans.",
+            _object(
+                {
+                    "function_ids": _array("Function ids to rename.", _int("Function id.")),
+                    "apply": _bool("False plans without writing."),
+                },
+                ("function_ids",),
+            ),
+            _WRITE,
+            _tool_canonicalize_function_names,
         ),
         Tool(
             "list_external_sources",

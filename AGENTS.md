@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 204 source files` is the finish line.
+`Success: no issues found in 208 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.36%, 26103 statements with 1993 missed. `[tool.coverage.report] fail_under`
+92.31%, 27089 statements with 2083 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -476,7 +476,17 @@ signatures in one call and `get_data_type_functions` reads the functions using
 one type, so both are read-only; `copy_signature` copies one function's
 signature onto others in its analysis and `import_type_definitions` creates or
 updates an analysis's types from C declarations, so both are destructive.
-`list_external_sources`,
+`get_indirect_call_sites`,
+`get_function_capabilities`, `get_function_strings`, `list_analysis_strings`,
+`list_function_edges`, `get_functions_callees_callers` and `get_function_matches`
+read the per-function extras (the cached listing's indirect call sites, the
+classification over the function's own imports and literals, the analyst strings
+beside the derived literals, the declared callee edges and the two batch reads)
+and are read-only; `add_function_string`, `delete_function_string`,
+`replace_analysis_strings`, `add_function_edge`, `delete_function_edge` and
+`canonicalize_function_names` write them and are destructive, and every payload
+of a derived read carries the note saying it is a text scan rather than engine
+output.  `list_external_sources`,
 `get_external_report` and `get_external_status` read the external-source registry
 and the stored answers and are read-only; `run_external_source` runs one source
 for an analysis and stores its answer, and is destructive (a remote source is
@@ -491,7 +501,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 201 built-in tools, 93 read-only and 108 destructive.
+declares 214 built-in tools, 100 read-only and 114 destructive.
 
 ## SPA
 
@@ -596,8 +606,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 201 built-in
-tools (93 read-only, 108 destructive).
+and `run_match` expose the same over MCP, and the counts stay 214 built-in
+tools (100 read-only, 114 destructive).
 
 ### Scaling
 

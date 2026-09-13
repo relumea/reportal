@@ -76,6 +76,10 @@ reportal/
 │   ├── capabilities.py       # deterministic capability tagging over imports and strings
 │   ├── families.py           # local malware-family signatures and detection (the `detect` scan)
 │   ├── function_triage.py    # per-function triage: heuristic score, LLM run, aggregate scan
+│   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
+│   │                         #   derived callees, analyst-declared edges, canonical names
+│   ├── user_strings.py       # analyst strings at function or analysis scope, plus
+│   │                         #   the derived literals reported beside them
 │   ├── behavior.py           # behavioral scans (execution, networking, filesystem) over imports and strings
 │   ├── hardening.py          # anti-analysis and obfuscation scans over fingerprints, imports, strings and triage
 │   ├── filetypes.py          # bundled file-type, packer and protector detection (the `filetype` scan)
@@ -804,6 +808,59 @@ network.  `journaled_run` is the one write path the routes, the CLI and the MCP
 tools share: it snapshots the scan it replaces, stores the answer and journals
 the created row when there was none, so a pull is revertible like every other
 scan.
+
+## Function-level extras
+
+`function_extras.py` and `user_strings.py` carry the reads and writes the hosted
+portal has on top of a stored decompilation, and both are built so a read never
+starts work of its own.
+
+The derivations are text scans over rows the workspace already holds and every
+payload says so in its own `derivation` note.  `indirect_call_sites` walks the
+function's `disasm_cache` listing: a `call` or `jmp` whose operand is a register
+or a memory reference is reported with its line and instruction text, and a
+function with no cached listing reports `has_disassembly: false` and no sites
+rather than spawning the engine behind a read.  `function_capabilities` feeds
+the imports and quoted literals the stored decompilation mentions through
+`capabilities.classify`, the same rule table the binary-level scan uses, so a
+function and its binary cannot disagree about a rule.  `callees_from_text`
+matches the identifiers in the text against the binary's stored function names
+and import stubs, and `callers_and_callees` runs that both ways in one pass over
+the binary's functions.  The register vocabulary in `_REGISTERS` is what keeps
+`call rax` indirect while `call sub_401000` stays direct, because a bare
+identifier matches a symbol and a register alike.
+
+`function_edges` is the one thing there that is not derived: an analyst-declared
+callee edge, written with `source: analyst` and reported beside the derived
+callees rather than merged into them, so a claim is never mistaken for a scan.
+`add_edge` replaces a row for the same `(function, callee, kind)` in place and
+the journaled pair is the write path the routes, the CLI and the MCP tools
+share.
+
+`user_strings.py` stores an analyst string at function or analysis scope, with a
+kind and a note.  A value already present at its scope keeps its row and updates
+its note, one scope holds at most `MAX_STRINGS_PER_SCOPE` values, and the
+hosted whole-list `PUT` is `replace_strings`: every value is validated before
+anything is written, and the journaled form snapshots the rows it replaces and
+journals the rows it creates, so a revert restores the previous list whether the
+scope held one or was empty.  `derived_literals` is the other half of a
+function's string read: the quoted literals in the stored decompilation, deduped
+and reported under their own label with the note that they are a text scan, so
+what a human recorded is never confused with what the text carries.
+
+`canonical_names` renames a batch to the candidate the store already recorded (a
+predicted name, else the newest recorded rename) and reports a function with
+neither as `skipped` rather than renaming it to a guess; each rename goes
+through `journal.journaled_rename`, so one action reverts the batch.  `match_rows`
+answers the recorded match rows of a batch with the same derived `difference`
+and `band` the single-function route reports and runs no scoring.
+
+`api._batch_ids` bounds every batch read at
+`function_extras.MAX_FUNCTIONS_PER_QUERY` (50) and the two function-scoped
+routes that would otherwise be shadowed by the int path parameter
+(`/api/functions/callees-callers`, `/api/functions/matches`,
+`/api/functions/canonical-names`) are registered before
+`/api/functions/{function_id}` so the literal path wins.
 
 ## Secret store
 

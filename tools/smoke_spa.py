@@ -752,6 +752,13 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             (RENAME_TO,),
             ("AI decompilation",),
             ("Revert run",),
+            # The per-function extras: the call-site scan, the per-function
+            # capability classification, the analyst strings and edges and the
+            # canonical-name action.
+            ("Indirect call sites",),
+            ("Capabilities",),
+            ("Declare callee",),
+            ("Apply canonical name",),
             ("Chat about this",),
             (COMMENT_FUNCTION_BODY,),
         ),

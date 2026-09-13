@@ -42,6 +42,13 @@ deterministic heuristic, and store the result), ``report`` (generate the
 engine's HTML report into
 the workspace and store the result), ``unstrip`` (store library-identification
 rename proposals) and ``unstrip-apply`` (apply one stored proposal).
+``indirect-calls``, ``function-capabilities`` and ``function-strings`` read a function's
+cached indirect call sites, the capabilities its own imports and literals match and its
+analyst strings beside the derived literals, ``user-string-add``/``user-string-rm`` and
+``analysis-strings``/``analysis-strings-set`` write the analyst string store at function
+or analysis scope, ``callee-add``/``callee-rm`` record and remove an analyst-declared
+callee edge, and ``callees-callers``, ``canonical-names`` and ``function-matches`` are
+the batch reads and the rename over the candidates the store already recorded.
 ``signature-history`` and ``signature-revert`` list a function's signature
 edits and restore the state one recorded, ``memory`` reads a window of a
 binary's bytes by address through the engine, ``memory-page`` pages the bytes
@@ -116,6 +123,7 @@ from reportal import (
     external,
     families,
     filetypes,
+    function_extras,
     function_triage,
     graph,
     graph_backends,
@@ -144,6 +152,7 @@ from reportal import (
     store,
     threat,
     unstrip,
+    user_strings,
     zipcrypto,
 )
 from reportal._paths import (
@@ -1170,6 +1179,418 @@ def analysis_update_command(
         typer.echo(json.dumps(log.attach(updated)))
         return
     console.print(f"analysis {analysis_id}: engine {updated.get('engine')}")
+
+
+def _bulk_ids(function_id: list[int], json_output: bool) -> list[int]:
+    """Bound a batch id list, failing the command when it is too large."""
+    if not function_id:
+        _fail("name at least one function id", json_output)
+    if len(function_id) > function_extras.MAX_FUNCTIONS_PER_QUERY:
+        _fail(
+            f"at most {function_extras.MAX_FUNCTIONS_PER_QUERY} function ids per call",
+            json_output,
+        )
+    return [int(entry) for entry in function_id]
+
+
+@app.command("indirect-calls")
+def indirect_calls_command(
+    function_id: int = typer.Argument(..., help="Function whose listing to scan"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The indirect calls and jumps in a function's cached listing."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        cached = store.get_disasm(conn, function_id)
+        rows = function_extras.indirect_call_sites(cached or "")
+    payload = {
+        "function_id": function_id,
+        "sites": rows,
+        "count": len(rows),
+        "has_disassembly": cached is not None,
+        "derivation": function_extras.DERIVATION,
+        "note": function_extras.CALL_SITE_NOTE,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if not rows:
+        console.print("[yellow]No indirect call sites in the cached listing.[/yellow]")
+        return
+    table = Table(title=f"indirect call sites of function {function_id}")
+    table.add_column("Line", justify="right", style="magenta")
+    table.add_column("Op")
+    table.add_column("Target", style="cyan")
+    for entry in rows:
+        table.add_row(str(entry["line"]), str(entry["mnemonic"]), str(entry["target"]))
+    console.print(table)
+
+
+@app.command("function-capabilities")
+def function_capabilities_command(
+    function_id: int = typer.Argument(..., help="Function to classify"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Classify one function from the imports and literals its decompilation mentions."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        payload = function_extras.function_capabilities(conn, function_id)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if not payload["capabilities"]:
+        console.print("[yellow]No capability rule matched this function.[/yellow]")
+        return
+    table = Table(title=f"capabilities of function {function_id}")
+    table.add_column("Name", style="cyan")
+    table.add_column("Confidence")
+    table.add_column("Evidence", justify="right")
+    for entry in payload["capabilities"]:
+        table.add_row(
+            str(entry["name"]),
+            str(entry["confidence"]),
+            str(entry["evidence_count"]),
+        )
+    console.print(table)
+
+
+@app.command("function-strings")
+def function_strings_command(
+    function_id: int = typer.Argument(..., help="Function whose strings to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """A function's analyst strings and the literals its decompilation carries."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        payload = user_strings.function_strings(conn, function_id)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"function {function_id}: {payload['counts']['analyst']} analyst,"
+        f" {payload['counts']['derived']} derived"
+    )
+    for entry in payload["analyst"]:
+        note = f"  ({entry['note']})" if entry["note"] else ""
+        console.print(f"  analyst  {entry['value']}{note}")
+    for entry in payload["derived"]:
+        console.print(f"  derived  {entry['value']}")
+
+
+@app.command("user-string-add")
+def user_string_add_command(
+    function_id: int = typer.Argument(..., help="Function to record the string against"),
+    value: str = typer.Argument(..., help="The string"),
+    kind: str = typer.Option("string", "--kind", help="string, import or export"),
+    note: str = typer.Option("", "--note", help="Why the string matters"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Record one analyst string for a function; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = user_strings.journaled_add(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=function_id,
+                    value=value,
+                    kind=kind,
+                    note=note,
+                    actor=journal.current_actor(),
+                    description=f"stored a string for function {function_id}",
+                )
+            except user_strings.StringError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(row)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"[green]Stored[/green] string {row['id']} on function {function_id}")
+
+
+@app.command("user-string-rm")
+def user_string_rm_command(
+    function_id: int = typer.Argument(..., help="Function the string belongs to"),
+    string_id: int = typer.Argument(..., help="String id to remove"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Remove one analyst string from a function; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = user_strings.journaled_delete(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=function_id,
+                    string_id=string_id,
+                    description=f"removed string {string_id} from function {function_id}",
+                )
+            except user_strings.StringError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(row)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"[green]Removed[/green] string {string_id}")
+
+
+@app.command("analysis-strings")
+def analysis_strings_command(
+    analysis_id: int = typer.Argument(..., help="Analysis whose strings to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Every analyst string recorded at analysis scope."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        rows = user_strings.list_strings(
+            conn, scope_kind=user_strings.SCOPE_ANALYSIS, scope_id=analysis_id
+        )
+    if json_output:
+        typer.echo(json.dumps({"analysis_id": analysis_id, "strings": rows, "count": len(rows)}))
+        return
+    if not rows:
+        console.print("[yellow]No strings recorded for this analysis.[/yellow]")
+        return
+    for entry in rows:
+        console.print(f"  {entry['id']}  {entry['value']}")
+
+
+@app.command("analysis-strings-set")
+def analysis_strings_set_command(
+    analysis_id: int = typer.Argument(..., help="Analysis whose strings to replace"),
+    value: list[str] = typer.Argument(..., help="The complete list of strings"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Replace an analysis's whole analyst string list; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                report = user_strings.journaled_replace(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_ANALYSIS,
+                    scope_id=analysis_id,
+                    values=list(value),
+                    actor=journal.current_actor(),
+                    description=f"replaced the strings of analysis {analysis_id}",
+                )
+            except user_strings.StringError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(report)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(
+        f"analysis {analysis_id}: {len(report['strings'])} string(s), {report['removed']} replaced"
+    )
+
+
+@app.command("callee-add")
+def callee_add_command(
+    function_id: int = typer.Argument(..., help="Function that makes the call"),
+    callee: str = typer.Argument(..., help="Callee name the analyst asserts"),
+    kind: str = typer.Option("call", "--kind", help="call or indirect"),
+    note: str = typer.Option("", "--note", help="Why the edge is claimed"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Record one analyst-declared callee edge; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = function_extras.journaled_add_edge(
+                    conn,
+                    log,
+                    function_id=function_id,
+                    callee=callee,
+                    kind=kind,
+                    note=note,
+                    description=f"recorded a callee of function {function_id}",
+                )
+            except function_extras.EdgeError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(row)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"[green]Recorded[/green] edge {row['id']}: {row['callee']}")
+
+
+@app.command("callee-rm")
+def callee_rm_command(
+    function_id: int = typer.Argument(..., help="Function the edge belongs to"),
+    edge_id: int = typer.Argument(..., help="Edge id to remove"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Remove one analyst-declared callee edge; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = function_extras.journaled_delete_edge(
+                    conn,
+                    log,
+                    function_id=function_id,
+                    edge_id=edge_id,
+                    description=f"removed an edge of function {function_id}",
+                )
+            except function_extras.EdgeError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(row)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"[green]Removed[/green] edge {edge_id}")
+
+
+@app.command("callees-callers")
+def callees_callers_command(
+    function_id: list[int] = typer.Argument(..., help="Function ids to read in one call"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The derived callers and callees of many functions in one read."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    ids = _bulk_ids(function_id, json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        payload = function_extras.callers_and_callees(conn, ids)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    for entry in payload["functions"]:
+        if not entry["found"]:
+            console.print(f"function {entry['function_id']}: not found")
+            continue
+        console.print(
+            f"function {entry['function_id']} ({entry['name']}):"
+            f" {len(entry['callers'])} caller(s), {len(entry['callees'])} callee(s),"
+            f" {len(entry['declared'])} declared"
+        )
+
+
+@app.command("canonical-names")
+def canonical_names_command(
+    function_id: list[int] = typer.Argument(..., help="Function ids to canonicalize"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan only; write nothing"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rename functions to the canonical name the store already recorded."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    ids = _bulk_ids(function_id, json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        plan = function_extras.canonical_names(conn, ids)
+        if dry_run:
+            for entry in plan["planned"]:
+                console.print(
+                    f"  {entry['function_id']}: {entry['from']} -> {entry['to']}"
+                    f" ({entry['source']})"
+                )
+            for entry in plan["skipped"]:
+                console.print(f"  skipped {entry['function_id']}: {entry['reason']}")
+            if json_output:
+                typer.echo(json.dumps({**plan, "applied": [], "dry_run": True}))
+            return
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            applied: list[dict[str, Any]] = []
+            for entry in plan["planned"]:
+                if not entry["changed"]:
+                    continue
+                result = journal.journaled_rename(
+                    conn,
+                    log,
+                    int(entry["function_id"]),
+                    new_name=str(entry["to"]),
+                    actor=journal.current_actor(),
+                    source="canonical-names",
+                )
+                applied.append({**entry, "result": result})
+    if json_output:
+        typer.echo(
+            json.dumps(
+                log.attach(
+                    {
+                        **plan,
+                        "applied": applied,
+                        "applied_count": len(applied),
+                        "dry_run": False,
+                    }
+                )
+            )
+        )
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"renamed {len(applied)} function(s), skipped {len(plan['skipped'])}")
+
+
+@app.command("function-matches")
+def function_matches_command(
+    function_id: list[int] = typer.Argument(..., help="Function ids whose matches to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The recorded match rows of many functions in one read; runs no scoring."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    ids = _bulk_ids(function_id, json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        payload = function_extras.match_rows(conn, ids)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    for entry in payload["functions"]:
+        console.print(
+            f"function {entry['function_id']}: {entry.get('count', 0)} recorded match(es)"
+        )
 
 
 @app.command("signatures-batch")

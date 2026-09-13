@@ -106,6 +106,37 @@ reportal data-types-import <analysis-id> [--definition DECL]... [--file PATH] [-
 reportal data-type-functions <analysis-id> <data-type-id> [--json]
                                            # the functions that use one data type, from the
                                            #   stored reference index
+reportal indirect-calls <function-id> [--json]
+                                           # the indirect calls and jumps in the function's
+                                           #   cached listing (no cached listing reports none
+                                           #   rather than running the engine)
+reportal function-capabilities <function-id> [--json]
+                                           # classify one function from the imports and
+                                           #   literals its stored decompilation mentions
+reportal function-strings <function-id> [--json]
+                                           # the analyst strings recorded for the function,
+                                           #   and the literals its decompilation carries
+reportal user-string-add <function-id> <value> [--kind KIND] [--note TEXT] [--json]
+reportal user-string-rm <function-id> <string-id> [--json]
+                                           # add or remove one analyst string; journaled
+reportal analysis-strings <analysis-id> [--json]
+                                           # every analyst string recorded at analysis scope
+reportal analysis-strings-set <analysis-id> <value>... [--json]
+                                           # replace the whole list in one journaled action
+reportal callee-add <function-id> <callee> [--kind call|indirect] [--note TEXT] [--json]
+reportal callee-rm <function-id> <edge-id> [--json]
+                                           # record or remove one analyst-declared callee edge
+reportal callees-callers <function-id>... [--json]
+                                           # the derived callers and callees of many functions
+                                           #   in one read (at most 50 ids), plus the declared
+                                           #   edges; a text derivation over stored rows
+reportal canonical-names <function-id>... [--dry-run] [--json]
+                                           # rename functions to the candidate the store
+                                           #   already recorded; a function with none is
+                                           #   skipped rather than renamed to a guess
+reportal function-matches <function-id>... [--json]
+                                           # the recorded match rows of many functions in one
+                                           #   read; runs no scoring and no engine
 reportal external-sources [--json]          # the external-source registry, with each
                                            #   source's kind and availability
 reportal external <analysis-id> [--source NAME] [--json]

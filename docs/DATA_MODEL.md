@@ -452,6 +452,24 @@ a write no request made.  An existing database gets the column through
 `journal.ensure_schema`, which adds it before creating its index, and the rows
 written before it read as an empty actor rather than an invented one.
 
+`function_edges` and `user_strings` are the two per-function extras that carry
+rows of their own, each owned by its module (`function_extras.py`,
+`user_strings.py`) and created lazily by its own `ensure_schema`, the pattern
+`sandbox_runs` uses.  A `function_edges` row is one analyst-declared callee edge:
+the `function_id` that claims it, the `callee_name`, the `kind` (`call` or
+`indirect`), a bounded `note`, `source` (`analyst`, so a reader can tell a claim
+from a scan) and the time.  A row for the same `(function, callee, kind)` is
+updated in place, so re-declaring an edge is not a duplicate, and both writes are
+journaled.  A `user_strings` row is one analyst string at a scope: `scope_kind`
+(`function` or `analysis`), `scope_id`, the `value`, a `kind` (`string`,
+`import` or `export`), a bounded `note`, the `actor` and the time.  A value
+already stored at its scope keeps its row and updates its note rather than
+appending a duplicate, one scope holds at most
+`user_strings.MAX_STRINGS_PER_SCOPE` values, and the whole-list replace is one
+journaled action.  Neither table has a derived half: the literals and callees a
+read reports beside these rows are text scans of the stored decompilation and are
+never written down.
+
 `sandbox_runs` is the detonation ledger, owned by `sandbox.py` and created
 lazily by its own `ensure_schema` (the same pattern `journal.py` uses, which
 keeps `store` from importing the sandbox module back).  One row is one run:
