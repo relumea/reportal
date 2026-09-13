@@ -15,6 +15,7 @@ from reportal import (
     cli,
     components,
     effects,
+    external,
     graph_backends,
     integrations,
     mcp_tools,
@@ -46,6 +47,7 @@ class TestInventory:
             mcp_tools.TOOL_ENTRY_POINT_GROUP,
             sandbox.RUNNER_ENTRY_POINT_GROUP,
             models.MODEL_ENTRY_POINT_GROUP,
+            external.SOURCE_ENTRY_POINT_GROUP,
         }
 
     def test_counts_match_the_registries(self) -> None:

@@ -202,6 +202,10 @@ their pages by the same rule.
 | `/api/functions/<id>/pipeline` | POST | run the AI decompilation component composition; body `{"disabled": [...]}` optional; 404 unknown function, 503 `pipeline-unavailable` only when the composition cannot be assembled (a skipped or failed stage is a step on the run) |
 | `/api/functions/<id>/pipeline` | GET | stored latest run with its steps and the function's durable artifacts; 404 `no-run` before the first run |
 | `/api/pipeline/runs/<id>` | GET | one pipeline run with its steps; 404 `run not found` |
+| `/api/external/sources` | GET | the external-source registry: each source's name, kind, availability and reason, plus whether the remote gate is on and a VirusTotal key resolves |
+| `/api/analyses/<id>/external/<source>` | POST | run one source for the analysis and store its answer as the `external:<source>` scan; 403 `external-disabled`, 503 `external-unavailable`, 400 `no-content-hash`, 502 `external-fetch-failed`, 404 `unknown source`; journaled |
+| `/api/analyses/<id>/external/<source>` | GET | the stored answer of one source; 404 `no-scan` before the first pull |
+| `/api/analyses/<id>/external/<source>/status` | GET | whether the source can run for the analysis, why it cannot, and whether an answer is stored |
 | `/api/secrets` | GET | every stored credential the caller may see, redacted to its name, scope, team, byte length and a last-four hint; `?scope=`/`?team_id=` filter; the value is never in a payload |
 | `/api/secrets/<name>` | PUT | store or replace one credential; body `{"value", "scope"?, "team_id"?}`; a workspace secret needs an admin, a team secret that team's membership; 400 `invalid secret`, 403 `secret forbidden`, 404 `team not found`; journaled |
 | `/api/secrets/<name>` | DELETE | remove one credential, journaled (a revert restores the row); `?scope=`/`?team_id=` name it; 404 `secret not found` |

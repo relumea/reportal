@@ -113,6 +113,7 @@ from reportal import (
     diffview,
     effects,
     engines,
+    external,
     families,
     filetypes,
     function_triage,
@@ -1168,6 +1169,110 @@ def analysis_update_command(
         typer.echo(json.dumps(log.attach(updated)))
         return
     console.print(f"analysis {analysis_id}: engine {updated.get('engine')}")
+
+
+@app.command("external-sources")
+def external_sources_command(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the external sources, their kind and whether they can run."""
+    payload = external.describe()
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(title="external sources", show_header=True, header_style="bold")
+    table.add_column("Name", style="cyan")
+    table.add_column("Kind")
+    table.add_column("Available")
+    table.add_column("Description")
+    for source in payload["sources"]:
+        table.add_row(
+            str(source["name"]),
+            str(source["kind"]),
+            "yes" if source["available"] else f"no: {source['unavailable_reason']}",
+            str(source["description"]),
+        )
+    console.print(table)
+
+
+@app.command("external")
+def external_command(
+    analysis_id: int = typer.Argument(..., help="Analysis to pull an external report for"),
+    source: str = typer.Option(
+        external.LOCAL_SOURCE, "--source", help="Source name, e.g. local or virustotal"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Run one external source for an analysis; journaled and revertible.
+
+    The offline source reads the rows reportal already stored.  A remote source
+    is refused unless the workspace opted in and a key resolves.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = external.journaled_run(
+                    conn,
+                    log,
+                    analysis_id=analysis_id,
+                    source_name=source,
+                    description=f"pulled the {source} external report",
+                )
+            except external.ExternalError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    payload = result["payload"]
+    console.print(
+        f"\n[bold cyan]analysis {analysis_id}[/bold cyan]"
+        f" ({result['source']}, fetched {result['fetched_at']})"
+    )
+    console.print(json.dumps(payload, indent=2), markup=False)
+
+
+@app.command("external-status")
+def external_status_command(
+    analysis_id: int = typer.Argument(..., help="Analysis to report on"),
+    source: str = typer.Option(
+        external.LOCAL_SOURCE, "--source", help="Source name, e.g. local or virustotal"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Whether one source can run for an analysis and what is stored for it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        try:
+            payload = external.status(conn, analysis_id=analysis_id, source_name=source)
+        except external.ExternalError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=False, title=f"{source} on analysis {analysis_id}")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    for key in (
+        "kind",
+        "available",
+        "unavailable_reason",
+        "remote_enabled",
+        "stored",
+        "fetched_at",
+    ):
+        table.add_row(key, str(payload[key]))
+    console.print(table)
 
 
 @app.command("secrets-list")

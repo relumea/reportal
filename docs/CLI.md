@@ -93,6 +93,14 @@ reportal ai-line-comment-add <function-id> <line> <body> [--author NAME] [--json
 reportal ai-line-comment-edit <function-id> <line> <body> [--json]
 reportal ai-line-comment-rm <function-id> <line> [--json]
                                            # add, edit or remove the comment stored at a line
+reportal external-sources [--json]          # the external-source registry, with each
+                                           #   source's kind and availability
+reportal external <analysis-id> [--source NAME] [--json]
+                                           # run one source and store its answer (journaled);
+                                           #   the offline source reads stored rows, a remote
+                                           #   one needs the opt-in and a key
+reportal external-status <analysis-id> [--source NAME] [--json]
+                                           # whether the source can run and what is stored
 reportal secrets-list [--scope local|team] [--team-id N] [--json]
                                            # the stored credentials, redacted: the value is
                                            #   never printed, only the name, scope, byte

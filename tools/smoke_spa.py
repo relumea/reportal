@@ -815,6 +815,17 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         (("Identity",), ("single local user",), ("Bearer token",), ("Create user",)),
     ),
     (
+        "external sources",
+        "#/external",
+        (
+            ("External sources",),
+            ("Pull a report",),
+            ("local",),
+            ("Nothing pulled yet",),
+            ("virustotal",),
+        ),
+    ),
+    (
         "models",
         "#/models",
         (

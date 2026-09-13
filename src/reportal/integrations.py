@@ -23,7 +23,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from reportal import auto_workers, components, effects, graph_backends, mcp_tools, models, sandbox
+from reportal import (
+    auto_workers,
+    components,
+    effects,
+    external,
+    graph_backends,
+    mcp_tools,
+    models,
+    sandbox,
+)
 
 # The module that declares each seam's built-in parts, and the entry-point group
 # a third party registers through.  Both come from the registry modules, so a
@@ -60,6 +69,12 @@ SEAMS: tuple[dict[str, str], ...] = (
         "group": mcp_tools.TOOL_ENTRY_POINT_GROUP,
         "module": "reportal.mcp_tools",
         "contributes": "tools an MCP client can call, annotated read-only or destructive",
+    },
+    {
+        "name": "external sources",
+        "group": external.SOURCE_ENTRY_POINT_GROUP,
+        "module": "reportal.external",
+        "contributes": "one third-party answer about a stored binary, offline or fetched",
     },
     {
         "name": "models",
@@ -134,6 +149,21 @@ def _effect_parts() -> list[dict[str, Any]]:
     ]
 
 
+def _source_parts() -> list[dict[str, Any]]:
+    """One row per registered external source, with its kind and availability."""
+    return [
+        {
+            "name": source.name,
+            "detail": source.description,
+            "origin": "",
+            "kind": source.kind,
+            "available": source.available(),
+            "unavailable_reason": "" if source.available() else source.unavailable_reason(),
+        }
+        for source in external.sources()
+    ]
+
+
 def _model_parts() -> list[dict[str, Any]]:
     """One row per registered model, with its kind and availability."""
     return [
@@ -184,6 +214,7 @@ PART_READERS = {
     "graph backends": _backend_parts,
     "effect handlers": _effect_parts,
     "MCP tools": _tool_parts,
+    "external sources": _source_parts,
     "models": _model_parts,
     "sandbox runners": _runner_parts,
 }

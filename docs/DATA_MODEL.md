@@ -11,6 +11,13 @@ its import analysis is reused by engine label, and functions are refreshed by VA
 each stub becomes a `THUNK` function at its VA with `name_source` `import` and
 the 6-byte `jmp dword ptr [iat]` size, and a coverage-db row wins at the same VA.
 
+An external source's answer is a `scans` row like every other scan, keyed by
+the analysis and the kind `external:<source>` (`external.scan_kind`), so a
+re-pull upserts the same row and a revert removes it.  Nothing new is stored:
+the row's payload carries `analysis_id`, `binary_id`, `source`, `kind`,
+`fetched_at` and the source's own `payload`, and the `local` and `virustotal`
+answers replace each other only within their own kind.
+
 `secrets` holds the local credential store (`secret_store.py`), one row per
 `(name, scope, team_id)` with the value in plaintext and the times it was
 created and last written.  The table is created on first use, so an existing

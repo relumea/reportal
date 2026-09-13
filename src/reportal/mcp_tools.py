@@ -46,6 +46,7 @@ from reportal import (
     diffview,
     effects,
     engines,
+    external,
     families,
     filetypes,
     firmware,
@@ -2693,6 +2694,63 @@ def _tool_delete_ai_line_comment(arguments: dict[str, Any]) -> dict[str, Any]:
         lambda conn, fid: _with_comment(ai_decomp.delete_line_comment(conn, fid, line=line)),
         description=f"removed an inline comment on the AI decompilation of function {function_id}",
     )
+
+
+def _external_failure(exc: external.ExternalError) -> ToolError:
+    """Map an external-source failure onto the tool error the MCP server answers."""
+    return ToolError(exc.code, exc.detail)
+
+
+def _tool_list_external_sources(arguments: dict[str, Any]) -> dict[str, Any]:
+    return external.describe()
+
+
+def _tool_get_external_report(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    source_name = _arg_str(arguments, "source")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        try:
+            stored = external.stored(conn, analysis_id=analysis_id, source_name=source_name)
+        except external.ExternalError as exc:
+            raise _external_failure(exc) from exc
+    if stored is None:
+        raise ToolError(
+            "no-scan",
+            f"the {source_name} source has not run for analysis {analysis_id};"
+            " call run_external_source first",
+        )
+    return stored
+
+
+def _tool_run_external_source(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    source_name = _arg_str(arguments, "source")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                result = external.journaled_run(
+                    conn,
+                    log,
+                    analysis_id=analysis_id,
+                    source_name=source_name,
+                    description=f"pulled the {source_name} external report",
+                )
+            except external.ExternalError as exc:
+                raise _external_failure(exc) from exc
+            return log.attach(result)
+
+
+def _tool_get_external_status(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    source_name = _arg_str(arguments, "source")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        try:
+            return external.status(conn, analysis_id=analysis_id, source_name=source_name)
+        except external.ExternalError as exc:
+            raise _external_failure(exc) from exc
 
 
 def _tool_list_secrets(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6478,6 +6536,56 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_append_analysis_log,
+        ),
+        Tool(
+            "list_external_sources",
+            "The registered external sources with their kind, availability and the remote"
+            " gate, plus whether a VirusTotal key resolves.",
+            _object({}, ()),
+            _READ,
+            _tool_list_external_sources,
+        ),
+        Tool(
+            "get_external_report",
+            "The stored answer of one external source for an analysis; 404 no-scan before"
+            " the first pull.",
+            _object(
+                {
+                    "analysis_id": _ANALYSIS_ID,
+                    "source": _str("Source name, e.g. local or virustotal."),
+                },
+                ("analysis_id", "source"),
+            ),
+            _READ,
+            _tool_get_external_report,
+        ),
+        Tool(
+            "get_external_status",
+            "Whether one external source can run for an analysis and what is stored for it.",
+            _object(
+                {
+                    "analysis_id": _ANALYSIS_ID,
+                    "source": _str("Source name, e.g. local or virustotal."),
+                },
+                ("analysis_id", "source"),
+            ),
+            _READ,
+            _tool_get_external_status,
+        ),
+        Tool(
+            "run_external_source",
+            "Run one external source for an analysis and store its answer; journaled.  The"
+            " offline source reads stored rows, a remote one needs the workspace opt-in and a"
+            " configured key.",
+            _object(
+                {
+                    "analysis_id": _ANALYSIS_ID,
+                    "source": _str("Source name, e.g. local or virustotal."),
+                },
+                ("analysis_id", "source"),
+            ),
+            _WRITE,
+            _tool_run_external_source,
         ),
         Tool(
             "list_secrets",

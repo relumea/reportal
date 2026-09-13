@@ -32,6 +32,7 @@ import { FunctionDetail } from "./views/FunctionDetail";
 import { FunctionsView } from "./views/FunctionsView";
 import { GraphView } from "./views/GraphView";
 import { JobsView } from "./views/JobsView";
+import { ExternalView } from "./views/ExternalView";
 import { ModelsView } from "./views/ModelsView";
 import { JournalView } from "./views/JournalView";
 import { KnowledgeView } from "./views/KnowledgeView";
@@ -276,6 +277,7 @@ export function App(): ReactNode {
     },
     { path: "/jobs", element: <JobsView />, handle: { view: "jobs", title: "Jobs" } },
     { path: "/models", element: <ModelsView />, handle: { view: "models", title: "Models" } },
+    { path: "/external", element: <ExternalView />, handle: { view: "external", title: "External" } },
     { path: "/journal", element: <JournalRoute />, handle: { view: "journal", title: "Journal" } },
     {
       path: "/journal/:action",

@@ -353,7 +353,18 @@ each entry's kind, version, availability and reason, and carries the upgrade
 form: an analysis id, an `llm` model and an optional function bound, posting to
 `POST /api/analyses/<id>/upgrade` and rendering the per-function `applied` and
 `skipped` rows, the `from` to `to` transition and the note that reportal re-runs
-artifacts rather than re-analysing the binary.  The
+artifacts rather than re-analysing the binary.  The Users view adds a Secrets
+panel (the settings **API Key** tab): the stored credentials with their scope,
+team, byte length and last-four hint, a form that stores or replaces one (name,
+value, scope and team) or removes a row, and a password-typed value field; it
+reads `GET /api/secrets` and writes `PUT`/`DELETE /api/secrets/<name>`, and it
+never renders a value because no response carries one.  The External view
+(Analysis group) lists the external-source registry with each source's kind and
+availability and the two switches behind a remote one, and carries a pull form
+(analysis id and source, with Pull posting to `POST
+/api/analyses/<id>/external/<source>` and Read stored loading the `GET` on the
+same path) that renders whatever the source returned under a note naming it, its
+kind and the fetch time.  The
 Renames panel lists each stored suggestion with a checkbox, its reason and
 confidence, an Apply selected / Apply all pair (with a rename-function toggle
 for a function-kind suggestion) and a Revert; an apply or a revert refreshes the

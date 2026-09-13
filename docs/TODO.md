@@ -377,7 +377,7 @@ description lives in that file.
 | D | Analysis lifecycle (basic, params, requeue, bytes, tags, bulk, imported functions) | Closed in PARITY.md (example analyses is not applicable locally) |
 | F | Users, auth and IAM (roles, permissions, teams, scope, activity, feedback) | Closed in PARITY.md |
 | G | Models (registry, model per artifact, upgrade) | Closed in PARITY.md |
-| H | External sources (VirusTotal), now with the team key in entry 3 | Planned |
+| H | External sources (VirusTotal), now with the team key in entry 3 | Closed in PARITY.md |
 | J | Function-level extras (indirect call sites, capabilities, strings, user strings) | Planned |
 | K | Data types and signatures bulk operations | Planned |
 | L | Agentic conversations (tool loop, SSE, cancel, confirm) | Planned |

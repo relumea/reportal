@@ -82,6 +82,9 @@ reportal/
 │   ├── secrets.py            # secrets scan: credential patterns, Shannon entropy, redaction
 │   ├── secret_store.py       # named credentials: workspace/team scope, redacted
 │   │                         #   reads and journaled writes
+│   ├── external.py            # external sources: the offline evidence answer and the
+│   │                         #   guarded, opt-in third-party fetch
+│   │                         #   reads and journaled writes
 │   ├── protocols.py          # protocol inference from imports, schemes, literals and ports
 │   ├── threat.py             # local threat report: IOC extraction, ATT&CK mapping, narrative,
 │   │                         #   software-type classification and the 0-100 threat score
@@ -773,6 +776,34 @@ changes only the request's model field.
 The registry caches its built-ins at first use like every other registry here,
 so a process that configures an endpoint after that read calls
 `models.refresh_models()` to pick the new model name up.
+
+## External sources
+
+`external.py` is the source registry and the two answers it ships.  A source is
+an offline one that derives its payload from rows the workspace already holds
+(the fingerprint, the detected families, the capability tags, the threat report
+and the secrets count, each reported present or absent) or a remote one that
+makes a request.
+
+The remote path is the one place reportal talks to a third party about a binary,
+and it is guarded three ways.  The gate is the `remote_ingest.py` shape:
+`REPORTAL_ALLOW_EXTERNAL` or `[external] allow_remote = true`, else every
+remote call is 403 `external-disabled` before a socket is opened.  The key
+resolves environment, then `reportal.toml`, then the secret store under
+`virustotal.api_key`, which is the store's first real consumer.  The request
+itself is fixed: one https host, a path built from the hash alone, the key in
+the `x-apikey` header, `follow_redirects=False` so a 3xx fails rather than
+hopping, a body capped at `MAX_BYTES`, a `FETCH_TIMEOUT_SECONDS` wall clock, and
+a normalized subset stored (per-engine results capped at `MAX_ENGINE_RESULTS`,
+no vendor links, no raw response).  A 404 is a result (`found: false`); any
+other failure raises and stores nothing.
+
+The transport is injectable (`set_http_client`), the way `llm.set_client` is, so
+the suite drives it over an `httpx.MockTransport` and no test reaches the
+network.  `journaled_run` is the one write path the routes, the CLI and the MCP
+tools share: it snapshots the scan it replaces, stores the answer and journals
+the created row when there was none, so a pull is revertible like every other
+scan.
 
 ## Secret store
 

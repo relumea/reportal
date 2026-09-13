@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 200 source files` is the finish line.
+`Success: no issues found in 203 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.32%, 25246 statements with 1939 missed. `[tool.coverage.report] fail_under`
+92.38%, 25676 statements with 1956 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -243,9 +243,9 @@ set around the request (`server.authenticate` + `journal.acting_as`).
 
 The optional LLM bridge resolves its API key first match wins: the environment,
 then the workspace `reportal.toml` `[llm]` table, then the store under
-`llm.api_key`.  Nothing else in reportal reads a stored credential today; an
-external source added later reads the same way through
-`secret_store.resolve_from_workspace`.
+`llm.api_key`.  The external sources read the same way: the VirusTotal key
+resolves from its own environment variable and table key, then the store's
+`virustotal.api_key` entry (`secret_store.resolve_from_workspace`).
 
 | Where | Spelling | Notes |
 |-------|----------|-------|
@@ -260,6 +260,28 @@ read.  A workspace secret needs an admin to write and a team secret that team's
 membership, and every write is journaled, so a rotation is revertible.
 `docs/THREAT_MODEL.md` states the plaintext-at-rest boundary and the journal
 residual.
+
+### External source configuration
+
+An external source answers one question about one analysis.  The offline `local`
+source derives its answer from rows the workspace already holds and never makes
+a request.  The remote `virustotal` source is off until the workspace opts in
+and a key resolves; a request goes to one fixed https host, follows no redirect
+and stores a normalized subset of the answer.
+
+| Setting | Env var | `reportal.toml` key | Default |
+|---------|---------|---------------------|---------|
+| Enable remote sources | `REPORTAL_ALLOW_EXTERNAL` (truthy: `1`, `true`, `yes`, `on`) | `[external] allow_remote = true` | off |
+| VirusTotal key | `REPORTAL_VIRUSTOTAL_KEY` | `[external] virustotal_api_key` | the secret store's `virustotal.api_key` |
+
+While the gate is off every remote call answers 403 `external-disabled` and no
+socket is opened; without a key the answer is 503 `external-unavailable`.
+`GET /api/external/sources`, `reportal external-sources`,
+`POST /api/analyses/<id>/external/<source>`, `reportal external <analysis-id>
+[--source NAME]` and the four MCP tools from `list_external_sources` to
+`run_external_source` expose the registry, the pulls and the status, and a third
+party registers a source through the `reportal.external_sources` entry-point
+group.  `docs/THREAT_MODEL.md` states what a pull discloses.
 
 ### Sandbox configuration
 
@@ -449,7 +471,11 @@ configured LLM for a whole rewritten function and stores it,
 `set_ai_decompilation_overrides` sets or clears the analyst names of its
 placeholder tokens, `rate_ai_decompilation` records feedback and
 `add_ai_line_comment`, `update_ai_line_comment` and `delete_ai_line_comment`
-write its per-line comments, so all six are destructive.  `list_secrets` reads the
+write its per-line comments, so all six are destructive.  `list_external_sources`,
+`get_external_report` and `get_external_status` read the external-source registry
+and the stored answers and are read-only; `run_external_source` runs one source
+for an analysis and stores its answer, and is destructive (a remote source is
+refused unless the workspace opted in and a key resolves).  `list_secrets` reads the
 secret store, redacted to its name, scope, byte length and a last-four hint, and
 is read-only; `set_secret` and `delete_secret` write it and are destructive, and
 neither ever returns the value.  `list_models` reads the model
@@ -460,7 +486,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 193 built-in tools, 88 read-only and 105 destructive.
+declares 197 built-in tools, 91 read-only and 106 destructive.
 
 ## SPA
 
@@ -565,8 +591,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 193 built-in
-tools (88 read-only, 105 destructive).
+and `run_match` expose the same over MCP, and the counts stay 197 built-in
+tools (91 read-only, 106 destructive).
 
 ### Scaling
 
@@ -700,6 +726,15 @@ thousand functions.
   and the reason it is not available; only an `llm` model can be the target of
   `models.upgrade_analysis`, which re-runs an analysis's stored LLM artifacts
   and journals every replacement rather than re-analysing the binary.
+- External sources follow the same pattern (`src/reportal/external.py`): the
+  built-ins are declared by `builtin_sources()` (the offline `local` derivation
+  and the guarded remote `virustotal` pull) and a third party registers through
+  the `reportal.external_sources` entry-point group, whose value is
+  `module:attr` naming a `Source` or a zero-argument factory returning one.  A
+  broken registration is skipped with a warning and a duplicate name is a
+  `RegistryError`.  `Source.retrieve(context)` returns the payload stored as the
+  analysis's `external:<source>` scan, and `journaled_run` is the one write path
+  the routes, the CLI and the MCP tools share.
 - Knowledge-graph backends follow the same pattern
   (`src/reportal/graph_backends.py`): built-ins are declared in
   `builtin_graph_backends()` (`sqlite`, the default, and the optional `cognee`)

@@ -57,6 +57,7 @@ from reportal import (
     diffview,
     effects,
     engines,
+    external,
     families,
     filetypes,
     firmware,
@@ -7919,6 +7920,107 @@ def upgrade_analysis_model(analysis_id: int, body: dict[str, Any] = Depends(json
                 limit=limit,
             )
     return json_response(log.attach(result))
+
+
+# ── External sources ───────────────────────────────────────────────
+#
+# What a third party says about a stored binary.  The offline source derives an
+# answer from the rows reportal already holds; the remote one pulls a
+# VirusTotal file report and is off unless the workspace opts in and a key
+# resolves.  An answer is stored as the `external:<source>` scan on the
+# analysis, so a re-pull replaces it and a revert removes it.
+
+
+def _external_failure(exc: external.ExternalError) -> Response:
+    """Map an external-source failure onto its JSON status and error name."""
+    if isinstance(exc, external.UnknownSourceError):
+        status = 404
+    elif isinstance(exc, external.DisabledExternalError):
+        status = 403
+    elif isinstance(exc, external.UnavailableExternalError):
+        status = 503
+    elif isinstance(exc, external.NoContentHashError):
+        status = 400
+    elif exc.code == "analysis not found":
+        status = 404
+    else:
+        status = 502
+    return json_error(status, error=exc.code, detail=exc.detail)
+
+
+@router.get("/api/external/sources")
+def list_external_sources() -> Response:
+    """The registered sources with their kind, availability and the remote gate."""
+    return json_response(external.describe())
+
+
+@router.post("/api/analyses/{analysis_id}/external/{source}")
+def run_external_source(analysis_id: int, source: str) -> Response:
+    """Run one source for an analysis and store its answer; journaled.
+
+    The offline source never makes a request.  The remote one is refused 403
+    `external-disabled` while the workspace has not opted in, 503
+    `external-unavailable` when no key resolves, 400 `no-content-hash` when the
+    binary has no SHA-256 to look up, and 502 `external-fetch-failed` when the
+    call itself fails; nothing is stored on a failure.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = external.journaled_run(
+                    conn,
+                    log,
+                    analysis_id=analysis_id,
+                    source_name=source,
+                    description=f"pulled the {source} external report",
+                )
+            except external.ExternalError as exc:
+                return _external_failure(exc)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/analyses/{analysis_id}/external/{source}")
+def get_external_report(analysis_id: int, source: str) -> Response:
+    """The stored answer of one source; 404 `no-scan` before the first pull."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        try:
+            stored = external.stored(conn, analysis_id=analysis_id, source_name=source)
+        except external.UnknownSourceError as exc:
+            return _external_failure(exc)
+    if stored is None:
+        return json_error(
+            404,
+            error="no-scan",
+            detail=(
+                f"the {source} source has not run for analysis {analysis_id}; "
+                f"run POST /api/analyses/{analysis_id}/external/{source}"
+            ),
+        )
+    return json_response(stored)
+
+
+@router.get("/api/analyses/{analysis_id}/external/{source}/status")
+def get_external_status(analysis_id: int, source: str) -> Response:
+    """Whether one source can run for an analysis and what is stored for it."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        try:
+            payload = external.status(conn, analysis_id=analysis_id, source_name=source)
+        except external.ExternalError as exc:
+            return _external_failure(exc)
+    return json_response(payload)
 
 
 # ── Analysis lifecycle ─────────────────────────────────────────────

@@ -999,6 +999,35 @@ export interface AiArtifact<T> {
   created_at?: string;
 }
 
+/** One entry of the external-source registry. */
+export interface ExternalSource {
+  name: string;
+  kind: string;
+  available: boolean;
+  unavailable_reason: string;
+  description: string;
+}
+
+/** The external-source registry as its route serves it. */
+export interface ExternalSourcesPayload {
+  sources: ExternalSource[];
+  count: number;
+  remote_enabled: boolean;
+  key_configured: boolean;
+  note: string;
+}
+
+/** One stored external report, as its route serves it. */
+export interface ExternalReport {
+  analysis_id: number;
+  binary_id: number;
+  source: string;
+  kind: string;
+  fetched_at: string;
+  payload: Record<string, unknown>;
+  journal_action?: string;
+}
+
 /** One stored credential, redacted: the value is never part of a payload. */
 export interface SecretRow {
   name: string;

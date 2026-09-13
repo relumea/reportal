@@ -138,6 +138,8 @@ full below.
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
 | Authenticated API client | Network client; bearer token header | `server.require_auth`, `auth.authenticate` |
 | Team-scoped object request | Network client; object id in the path | `server._scoped_object`, `server._enforce_scope`, `auth.visible_clause` |
+| External-source pull (opt-in) | External service (only when enabled and keyed); the binary's hash | `api.py` external routes, `external.virustotal_source`, `external.fetch_virustotal` |
+| External-source plugin | Third-party package on the host | `external.refresh_sources`, `reportal.external_sources` |
 | Secret read and write | Network client; a credential name, scope and value | `api.py` secret routes, `secret_store.normalize_*`, `secret_store.journaled_set` / `journaled_delete` |
 | Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `api.sandbox_detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
 | Registered sandbox runner | Third-party package on the host | `sandbox.refresh_runners`, `reportal.sandbox_runners` |
@@ -250,6 +252,14 @@ full below.
   lockout after failed attempts or login attempt log.  That is a deliberate
   trade: the credential is a 256-bit random token, which is not guessable, so
   the missing controls defend against nothing an attacker can currently do.
+- **An external pull tells a third party what you are looking at.**  With the
+  remote source enabled and keyed, the binary's SHA-256 is sent to VirusTotal, so
+  the request itself discloses which file is under analysis (and the workspace's
+  key, which identifies the account).  The digest is the only thing sent: no
+  bytes, no name, no path, and the answer is normalized rather than stored
+  whole.  The gate is off by default, a URL a caller controls is impossible (one
+  fixed host, the path built from the hash), a redirect is not followed, and the
+  body is capped; what cannot be undone is the disclosure the request makes.
 - **A stored credential is only as safe as the database file.**  The secret
   store keeps values in plaintext in the workspace SQLite file and reports the
   last four characters of any value long enough to hint, so a stolen database
