@@ -253,12 +253,20 @@ scan with its source and fetch time.
 
 ### I. Config (hosted 1 operation)
 
-**Status:** Planned. Nothing started.
+`GET /v2/config` reports what the hosted instance can do.  reportal had only
+`/api/health`, which reports liveness and row counts.
 
-`GET /v2/config`.  reportal's `/api/health` reports liveness and row counts but
-not what the instance can do.  Planned: `GET /api/config` reporting the enabled
-features (LLM bridge, remote ingest, sandbox, external sources), the caps in
-force, the versions (reportal, rebrew, schema) and the auth mode.
+**Status:** Closed.  `instance.describe()` assembles the payload from the
+modules that own each value (nothing is duplicated): `version`, the engine's
+`available`/`origin`/`backends`/`severities`, the LLM bridge's `configured`
+state and model, the database path and table count, the `features` block
+(`llm`, `remote_ingest`, `similarity`, `graph_backend`, `graph_backends`,
+`auth`, `sandbox`, `external_sources`), 23 entries in `limits` covering every
+cap the server enforces, and the MCP tool counts.  `GET /api/config`,
+`reportal config` and the read-only `get_config` MCP tool expose it, and the
+SPA's Integrations view carries an Instance card.  It is a pure read: no engine
+call, no write, no network request, and describing an instance without a
+database does not create one (`tests/test_instance.py` pins all three).
 
 ### J. Function-level extras (hosted `Functions - Core`, 24 operations)
 
@@ -323,24 +331,123 @@ in `filetypes.py`), and additional details with a status read (`GET
 /v3/binaries/{id}/additional-details[/status]`: rich header, PDB path, overlay,
 version resources).
 
+
+## The hosted surface, as measured
+
+Round three of the gap program measured the product surface directly, not from
+memory.  Every claim below carries its source.
+
+| Source | What it gave |
+|--------|--------------|
+| `https://docs.reveng.ai/openapi.json` | the current spec: **v4.34.0**, 158 paths, 190 operations, 588 schemas, 20 tags |
+| `https://api.reveng.ai/openapi.json` | the deployed snapshot: **v4.1.7**, 65 paths, 79 operations, 230 schemas (a subset of the above) |
+| `https://docs.reveng.ai/mcp` | the hosted MCP server over streamable HTTP: **36 tools**, of which 27 mutate state and only **9 carry a destructive marker** |
+| `https://portal.reveng.ai/changelog` | 117 entries across seven weeks (2026-06-22 to 2026-08-03) |
+| portal JS chunks under `/next/static/chunks/` | the undocumented endpoints the portal itself calls, and the feature-flag names |
+| `github.com/RevEngAI` (16 repos) | SDKs (Python, TypeScript, Java, Go), plugins (Ghidra, IDA, Binary Ninja), `reai-r2`, `reai-rz`, `reait`, `ghcc`, `creail`, `jingle`, `mal_unpack`, `fairseq` |
+| `https://reveng.ai/` and `/blog/introducing-wilbert-and-ventris` | the models (WilBERT, Ventris, BinNet, "Mega Bite") and the roadmap statements |
+
+Two facts from that sweep change the shape of this map:
+
+- **Dynamic execution is shipped.** `POST /v2/analyses/{id}/dynamic-execution`
+  with `GET .../report` and `.../status`; `SandboxOptions` takes
+  `command_line_args`, `start_method` (`standard_user_process` or
+  `administrator_process`), `timeout` (120, 180, 300 or 600), an archive entry
+  path and password.  The report is a DRAKVUF-shaped `AnalysisReport`: the
+  process tree, memory dumps, module loads, registry operations, scheduled
+  tasks, services, mutexes, file activity, console output, `NetworkActivity`
+  (connections, DNS queries, HTTP requests, extracted URLs), artifacts with
+  YARA hits, and TTPs scored against ATT&CK and MBC.  A changelog entry
+  (2026-07-13) adds that statically unsupported files (PDFs, C# binaries,
+  PowerShell scripts) can be analysed dynamically, and that supplementary files
+  can be uploaded beside a sample.
+- **Firmware unpacking is shipped and undocumented.**  The changelog carries a
+  fix ("Firmware unpacking no longer gets stuck while extracting files",
+  PRO-3139) and the portal calls `/v3/files/{hash}:extract` and
+  `/v3/files/{hash}/archive-contents`, neither of which is in either spec.
+  The documented `Firmware` tag exists with **zero operations**, and only the
+  TypeScript and Java SDKs still carry a `FirmwareApi`.
+
+The portal also calls these undocumented endpoints, so each is a shipped
+capability with no public contract: `/v2/analyses/{id}/agent/{slug}` with
+`/status` and `/feedback/{slug}` (a generic agent framework),
+`/v2/analyses/{id}/progress/functions`,
+`/v2/analyses/{id}/info/functions/strings`,
+`/v2/analysis/{id}/external/{type}` (the generic form of the VirusTotal call),
+`/v2/analyses/{id}/dynamic-execution/logs/download` and `/pcap`,
+`/v2/analyses/{id}/binary-export` with `/status/{taskId}`,
+`/v2/iam/{organisations,teams,users}` and `/v2/iam/users/{id}/{credits,profile}`,
+`/v2/reports/users/{id}/{agent-workflows,analyses-count}`,
+`/v2/users/me/api-keys`, `/v3/billing/subscription`,
+`/v3/analyses/{id}/functions/matches/batch`, and a websocket at `/v2/ws`.
+
+Feature flags the portal gates on (exact names, from its own bundle):
+`sentinel_access`, `similar_binaries_tab`, `show_decompilation`, `ai_unstrip`,
+`sandbox_access`, `advanced_analysis`, `allow_windows_analysis`,
+`show_new_analyses_beta`, `show_billing`, `enable_chat_agent`,
+`use_context_ai_decomp`, `individual_pricing`, `composition_page`,
+`reverse_agent`, `security_agent`, `crypto_scan_agent`, `crypto_explain`,
+`execution_scan_agent`, `execution_explain`, `networking_scan_agent`,
+`networking_explain`, `filesystem_scan_agent`, `filesystem_analyse`,
+`protocols_agent`, `secrets_agent`.
+
+Analysis parameters the hosted create call accepts, which reportal must be able
+to record for a run to be reproducible: `analysis_config.no_cache`,
+`generate_capabilities`, `advanced_analysis`, `sandbox_config`, and
+`scrape_third_party_config`; `analysis_scope` is `PRIVATE`, `PUBLIC` or `TEAM`;
+`upload_file_type` is `BINARY`, `DEBUG`, `PACKED` or `FIRMWARE`.
+
+Per-cluster evidence added by that sweep:
+
+- **A**: every scan agent has a `run`, a `status` and a result read, and the
+  security scan also has a `:cancel`; `crypto-explain`, `execution-explain`,
+  `filesystem-analyse` and `networking-explain` are per-function variants of
+  the same queue, and the portal drives all of them through one generic
+  `/v2/analyses/{id}/agent/{slug}` endpoint.
+- **C**: see the DRAKVUF report and `SandboxOptions` above.  The local target is
+  that report's shape, produced by a local sandbox runner rather than a hosted
+  DRAKVUF service.
+- **D**: adds `no_cache` and the other analysis parameters, `analysis_scope`,
+  `binary-export`, `progress/functions`, the dynamic-execution log and pcap
+  downloads, and supplementary sandbox files.
+- **F**: teams are shipped (`analyses and collections are now visible to the
+  members of your team`, PRO-3063) while the documented `IAM - Teams`,
+  `IAM - Organisations` and `Identity` tags carry **zero operations** and only
+  schemas; the portal's own `/v2/iam/*` calls are undocumented.  Credits,
+  subscription tiers (`ENTHUSIAST`, `REVERSER`, `MALWARE_ANALYST`,
+  `SECURITY_RESEARCHER`), API keys and a permission set (`canUsePrivateAnalyses`,
+  `canUseMalwareSandbox`, `canUseAIMalwareAnalysis`, `canUseCompositionAnalysis`,
+  `canGeneratePDFReports`, `canExportSymbols`, `canUseStorage`,
+  `canBypassMaintenance`) all exist with no documented contract.
+- **G**: `GET /v2/models` enumerates nine `binnet-0.7` variants
+  (`{x86-64,x86-32,arm-64}` times `{windows,linux,android}`), and an analysis
+  records the model it ran under plus a `model_upgrade_available` flag.
+- **H**: the portal calls a generic `/v2/analysis/{id}/external/{type}` with
+  `vt` and `MalwareBazaar`, and its binary tags carry origins `RevEng`,
+  `RevEng-Malware`, `RevEng-Library`, `RevEng-Benign`, `RevEng-Heuristic`,
+  `RevEng-Unknown`, `MalwareBazaar` and `VirusTotal`.
+
 ### Beyond parity
 
-**Status:** Planned. Nothing started.
+Capabilities RevEng.AI advertises but has not shipped, or has no public
+implementation of, each with the evidence.  Two of them are already done here,
+which is the point of the list: a local portal can ship what a hosted one has
+only announced.
 
-Capabilities the hosted portal advertises but has not shipped, or has no public
-implementation of, taken from `docs/REVENGAI.md` and from what its own spec
-leaves out.  These are additions, not gap closures:
-
-| # | Capability | Why it is beyond parity | Effort |
-|---|------------|-------------------------|--------|
-| 1 | reportal as an MCP **client**: register external MCP servers and expose their tools beside the local 129 | the hosted server is a tool provider only; nothing consumes it | M |
-| 2 | Equivalence proving between two functions (constraint solver over the IR) beside the textual diff | they publish a diff and a similarity score, not a proof | L |
-| 3 | Ground-truth corpus harness: build a labelled corpus, run matching over it, report precision/recall | no hosted evaluation surface | M |
-| 4 | Signature-equivalence short-circuit and a structured sync summary for any imported name set | named in the survey as a pattern worth adopting, absent from their API | S |
-| 5 | Capability manifest generated from the code, with a drift check in the gate | their plugins carry `.revengai/features.json`; the portal does not | S |
-| 6 | Prefixed search grammar (`sha256:`, `tag:`, `binary:`, `collection:`, comma lists) over the typed search | their SDKs document it for plugins only | S |
-| 7 | Rename review queue: per-row accept/reject, similarity bands, never overwrite an analyst-authored name, pushback suppression | their plugins implement parts of it client-side, the API does not | M |
-| 8 | Offline similarity prefilter with TLSH/ssdeep/import-hash/function-boundary hashes in the fingerprint bundle | their detail models carry these; the local engine's fingerprint does not | S |
+| # | Capability | Evidence that it is not shipped | Local plan |
+|---|------------|--------------------------------|-----------|
+| 1 | **Malware unpacking** (their "Unpack" agent: "unpack encrypted malware") | a "Coming Soon" card with a disabled Generate button in the portal's upcoming-agents list, and no run, status or result endpoint in either spec (`portal.reveng.ai/_next/static/chunks/1hp6wi67r3bhm.js`; changelog PRO-3218) | a local unpack path: packer identification from the stored file-type scan, then UPX and the engine's own `lzexe` case, writing the unpacked image as a new binary with its provenance recorded |
+| 2 | **Cross-architecture symbol matching** | "We will be releasing a cross-architecture model to match symbols between architectures in Q3 2026" (`reveng.ai`) | match across architectures locally by scoring the stored listings instead of a shared model, with the ISA pair recorded on every row |
+| 3 | **Ventris architecture and language coverage** | "we are also planning to release a version of Ventris in the coming months that provides wider architecture support"; "expanding language coverage to Rust and Go, and supporting additional architectures such as MIPS, PowerPC, and RISC-V" (`reveng.ai/blog/introducing-wilbert-and-ventris`) | reportal already reads whatever the engine can decompile; the addition is recording the language and ISA per artifact so a coverage gap is visible instead of silent |
+| 4 | **MCP destructive annotations on every writer** | 27 of the hosted server's 36 tools mutate state but only 9 carry a destructive marker (`docs.reveng.ai/mcp`) | done: all 136 local tools carry `readOnlyHint` or `destructiveHint`, and a test pins the split |
+| 5 | **Lineage, Obfuscation, Anti-Analysis and Detect agents** | all four are "Coming Soon" cards with no endpoint (`portal.reveng.ai/_next/static/chunks/1hp6wi67r3bhm.js`) | done locally already: `lineage.py`, `hardening.py` (anti-analysis and obfuscation domains), `families.py` (detect).  The addition is naming them as one agent surface with a run record, which cluster A's job queue provides |
+| 6 | **A public changelog for the API** | every error resolution points at `docs.reveng.ai/changelog`, which 404s, and `NOT_IMPLEMENTED` (501) tells the caller to check a page that does not exist (`docs.reveng.ai/errors`) | `docs/ERRORS.md` plus the release notes are the local equivalent, and a test asserts every code the API can answer has a documented section |
+| 7 | **A capability manifest generated from the code, with a drift check** | their plugins carry `.revengai/features.json` and a features-drift workflow; the portal publishes nothing equivalent | `GET /api/config` (cluster I) plus a gate step that regenerates the manifest and fails on drift |
+| 8 | **HTTP message-signature auth in the SDKs** | `export type HttpSignatureConfiguration = unknown; // TODO: Implement` (`sdk-typescript/auth/auth.ts`) | local token auth (cluster F) signs the request body with the workspace key, so a request cannot be replayed |
+| 9 | **The documented-but-missing client flags** | `reait`'s README documents `-n` (ANN search), `--symbol`, `--start-vaddr`, `--image-base`, `-C` (open-source component identification) and "YARA++" signatures; none exist in its argparse parser, and `api.py` never calls its ANN or SBOM functions (`github.com/RevEngAI/reait`) | reportal already answers the equivalents over its typed search, the families store and its remediation rules; the addition is an SBOM view over the stored composition and library identification |
+| 10 | **Public limits** | no pricing, tier or rate-limit page exists (`reveng.ai/pricing` 404s; only `TOO_MANY_REQUESTS` with `Retry-After`) | `GET /api/config` publishes every cap in force (cluster I) |
+| 11 | **VeriDecomp as a product surface** | "we are developing an internal benchmark called VeriDecomp" (`reveng.ai/blog/introducing-wilbert-and-ventris`) | a local benchmark harness: build a labelled corpus, run matching and rename proposals over it, report precision and recall |
+| 12 | **WilBERT, Ventris and "Mega Bite" as usable models** | the names appear in their blog and FAQ but **not** in either API spec; the model enum carries only `binnet-0.7` variants | the model registry (cluster G) records any model an artifact was produced with, including a local one, so a reportal install can point at what it has |
 
 Effort is S (hours), M (a day or two), L (a week or more) for a vertical slice
 with tests.

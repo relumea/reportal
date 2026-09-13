@@ -114,6 +114,7 @@ from reportal import (
     graph,
     graph_backends,
     hardening,
+    instance,
     integrations,
     journal,
     knowledge,
@@ -787,6 +788,31 @@ def tag(
         verb = "Tagged" if payload["added"] else "Already tagged"
         console.print(f"[green]{verb}[/green] binary {binary_id} with {name!r}")
     _print_journal_action(log, json_output)
+
+
+@app.command()
+def config(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Report what this instance can do: versions, features, limits and counts."""
+    payload = instance.describe()
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Setting", style="cyan")
+    table.add_column("Value")
+    table.add_row("reportal", str(payload["version"]))
+    table.add_row("engine", "available" if payload["engine"]["available"] else "unavailable")
+    table.add_row("database", f"{payload['database']['tables']} tables")
+    table.add_row("MCP tools", str(payload["mcp"]["total"]))
+    for name, value in sorted(payload["features"].items()):
+        table.add_row(
+            f"feature: {name}", ", ".join(value) if isinstance(value, list) else str(value)
+        )
+    for name, value in sorted(payload["limits"].items()):
+        table.add_row(f"limit: {name}", str(value))
+    console.print(table)
 
 
 # ── collections ────────────────────────────────────────────────────

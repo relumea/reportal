@@ -112,6 +112,13 @@ metric or the dashboard follows these names:
   `ENTROPY_MAX` and `PACKED_ENTROPY_THRESHOLD` (the entropy scale the packer
   card marks).  Every threshold and interval is a named module constant.
 
+The Integrations view (`views/IntegrationsView.tsx`, `#/components` and
+`#/integrations`) reads `GET /api/integrations` for every plugin seam and its
+parts, and ends with an Instance card from `GET /api/config`: the version, the
+engine's availability and origin, its decompiler backends, the LLM bridge's
+state and model, the database's table count, the feature flags and the MCP tool
+counts, over the table of every cap the server enforces.
+
 Hash routes: `#/` (dashboard), `#/binaries`, `#/binaries/<id>`,
 `#/binaries/<id>/functions` (the functions list filtered to that binary),
 `#/functions`, `#/functions/<id>`, `#/diff/<id>/<candidate-id>`, `#/matches`,

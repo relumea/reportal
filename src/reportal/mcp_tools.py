@@ -47,6 +47,7 @@ from reportal import (
     graph,
     graph_backends,
     hardening,
+    instance,
     journal,
     knowledge,
     lineage,
@@ -2811,6 +2812,10 @@ def _tool_untag_binary(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach({"binary_id": binary_id, "tag_id": tag_id, "removed": True})
 
 
+def _tool_get_config(_arguments: dict[str, Any]) -> dict[str, Any]:
+    return instance.describe()
+
+
 def _tool_list_collections(_arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         rows = store.list_collections(conn)
@@ -4735,6 +4740,13 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_untag_binary,
+        ),
+        Tool(
+            "get_config",
+            "Read what this instance can do: versions, features, limits and tool counts.",
+            _object({}),
+            _READ,
+            _tool_get_config,
         ),
         Tool(
             "list_collections",

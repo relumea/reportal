@@ -326,6 +326,9 @@ reportal journal-revert --action ID | --entry ID [--json]
                                            #   stored inverses; a wired command prints its
                                            #   action id to stderr (or in --json output)
 reportal stats [--json]                    # row counts
+reportal config [--json]                   # what this instance can do: versions,
+                                           #   features, limits and MCP tool counts;
+                                           #   needs no workspace
 reportal analyses [--status S] [--search TEXT] [--order newest|oldest]
              [--limit N] [--json]
                                            # list analyses with their binary, status,

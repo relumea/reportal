@@ -2,7 +2,13 @@ import type { ReactNode } from "react";
 
 import { api } from "../api";
 import { Badge, Card, DataTable, Loading, Muted, NA, Panel } from "../components";
-import type { IntegrationInventory, IntegrationPart, IntegrationSeam } from "../types";
+import { KeyValue } from "../components";
+import type {
+  InstanceConfig,
+  IntegrationInventory,
+  IntegrationPart,
+  IntegrationSeam,
+} from "../types";
 import { useAsync } from "../useAsync";
 
 // The flag columns a part may carry, with the reader-facing label and hue.
@@ -67,6 +73,54 @@ function SeamCard({ seam }: { seam: IntegrationSeam }): ReactNode {
   );
 }
 
+/** What this install can do, read from `GET /api/config`. */
+function InstanceCard(): ReactNode {
+  const { data, error } = useAsync(() => api<InstanceConfig>("/config"), []);
+  if (error) {
+    return (
+      <Card title="Instance">
+        <Muted>{String(error)}</Muted>
+      </Card>
+    );
+  }
+  if (data === undefined) {
+    return (
+      <Card title="Instance">
+        <Loading label="Reading the instance config" rows={2} />
+      </Card>
+    );
+  }
+  const features = Object.entries(data.features).map(
+    ([name, value]): [string, string] => [
+      name,
+      Array.isArray(value) ? value.join(", ") : String(value),
+    ],
+  );
+  return (
+    <Card title="Instance">
+      <KeyValue
+        rows={[
+          ["version", data.version],
+          ["engine", data.engine.available ? `available (${data.engine.origin ?? "?"})` : "unavailable"],
+          ["decompilers", data.engine.backends.join(", ")],
+          ["LLM", data.llm.configured ? `configured (${data.llm.model})` : "not configured"],
+          ["database", `${data.database.tables} tables at ${data.database.path}`],
+          ["MCP tools", `${data.mcp.total} (${data.mcp.read_only} read-only, ${data.mcp.destructive} destructive)`],
+          ...features,
+        ]}
+      />
+      <DataTable
+        columns={[
+          { label: "Limit", mono: true, render: (row) => row.name },
+          { label: "Value", numeric: true, render: (row) => row.value.toLocaleString() },
+        ]}
+        rows={Object.entries(data.limits).map(([name, value]) => ({ name, value }))}
+        rowKey={(row) => row.name}
+      />
+    </Card>
+  );
+}
+
 export function IntegrationsView(): ReactNode {
   const { data, error } = useAsync(() => api<IntegrationInventory>("/integrations"), []);
 
@@ -88,6 +142,7 @@ export function IntegrationsView(): ReactNode {
           {data.seams.map((seam) => (
             <SeamCard key={seam.name} seam={seam} />
           ))}
+          <InstanceCard />
         </>
       )}
     </Panel>

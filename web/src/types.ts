@@ -2054,3 +2054,15 @@ export interface IntegrationInventory {
   seams: IntegrationSeam[];
   count: number;
 }
+
+/** One instance's capabilities, the shape `GET /api/config` answers. */
+export interface InstanceConfig {
+  name: string;
+  version: string;
+  engine: { available: boolean; origin: string | null; backends: string[]; severities: string[] };
+  llm: { configured: boolean; model: string; kinds: string[] };
+  database: { path: string; exists: boolean; tables: number };
+  features: Record<string, boolean | string | string[]>;
+  limits: Record<string, number>;
+  mcp: { total: number; read_only: number; destructive: number };
+}

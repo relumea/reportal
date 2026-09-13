@@ -58,6 +58,7 @@ from reportal import (
     graph,
     graph_backends,
     hardening,
+    instance,
     integrations,
     journal,
     knowledge,
@@ -6615,6 +6616,19 @@ def health() -> Response:
             "failures": failures,
         }
     )
+
+
+@router.get("/api/config")
+def config() -> Response:
+    """What this instance can do: versions, features, limits and counts.
+
+    The hosted portal answers ``GET /v2/config`` with the same idea.  Every
+    field is a read: no engine call runs, nothing is written and no network
+    request is made, so a client can fetch this on start.  A feature that is
+    off is reported as off rather than omitted, and the guarded paths (the AI
+    bridge and URL ingestion) are off until the workspace opts in.
+    """
+    return json_response(instance.describe())
 
 
 # ── Binaries ───────────────────────────────────────────────────────
