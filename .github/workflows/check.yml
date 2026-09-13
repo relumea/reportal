@@ -20,25 +20,28 @@ jobs:
         with:
           bun-version: "1.4.0"
 
-      # java runs vnu.jar, shellcheck is a gate step, chromium backs the
-      # headless-Chrome smoke and audit in the `ui` target.
+      # java runs vnu.jar and shellcheck is a gate step.  The runner image
+      # already carries Google Chrome, which backs the `ui` target's headless
+      # smoke and audit; the versions are printed so a missing one fails here
+      # rather than halfway through the gate.
       - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-17-jre-headless shellcheck chromium
+          sudo apt-get install -y openjdk-17-jre-headless shellcheck
+          java -version
+          google-chrome-stable --version
 
-      # The gate runs `vnu` by name.  `bun install -g` writes its shim into
-      # bun's global bin directory, which the runner does not have on PATH and
-      # `bun pm bin -g` did not report, so install it with npm instead: its
-      # global prefix is /usr/local, which is already on PATH.
+      # The gate runs `vnu` by name.  The package's shim goes to npm's global
+      # bin directory, which the runner does not have on PATH, so install it
+      # under an explicit prefix that is on PATH and prove it in this step.
       - name: Install the VNU HTML/CSS validator
         run: |
-          sudo npm install -g vnu
+          sudo npm install -g --prefix /usr/local vnu
           vnu --version
 
-      # `rebrew` is a base dependency and `resembl` backs the optional
-      # similarity extra; both are path sources on the sibling checkouts
-      # (`[tool.uv.sources]`), so the runner checks them out beside the repo.
+      # `rebrew` is a base dependency and `resembl` backs the similarity
+      # extra; both are path sources on sibling checkouts
+      # (`[tool.uv.sources]`), so the runner clones them beside the repo.
       - name: Check out the sibling engines
         run: |
           git clone --depth 1 https://github.com/maci0/rebrew ../rebrew
