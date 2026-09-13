@@ -238,6 +238,12 @@ CREATE TABLE IF NOT EXISTS tags (
     name TEXT NOT NULL UNIQUE
 );
 
+CREATE TABLE IF NOT EXISTS collection_tags (
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    tag_id        INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (collection_id, tag_id)
+);
+
 CREATE TABLE IF NOT EXISTS binary_tags (
     binary_id INTEGER NOT NULL REFERENCES binaries(id) ON DELETE CASCADE,
     tag_id    INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
@@ -1931,6 +1937,163 @@ def remove_collection_binary(conn: sqlite3.Connection, collection_id: int, binar
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+def collection_binaries(conn: sqlite3.Connection, collection_id: int) -> list[dict[str, Any]]:
+    """The members of one collection, each ``{id, name, sha256, size}``, by name."""
+    cur = conn.execute(
+        "SELECT b.id, b.name, b.sha256, b.size FROM binaries b"
+        " JOIN collection_binaries cb ON cb.binary_id = b.id"
+        " WHERE cb.collection_id = ? ORDER BY b.name, b.id",
+        (collection_id,),
+    )
+    return _rows(cur)
+
+
+def collection_tags(conn: sqlite3.Connection, collection_id: int) -> list[dict[str, Any]]:
+    """Tags applied to one collection, each ``{id, name}``, ordered by name."""
+    cur = conn.execute(
+        "SELECT t.id, t.name FROM tags t"
+        " JOIN collection_tags ct ON ct.tag_id = t.id"
+        " WHERE ct.collection_id = ? ORDER BY t.name",
+        (collection_id,),
+    )
+    return _rows(cur)
+
+
+def get_collection(conn: sqlite3.Connection, collection_id: int) -> dict[str, Any] | None:
+    """One collection with its member binaries and tags, or None."""
+    row = conn.execute(
+        """
+        SELECT c.*, (
+            SELECT COUNT(*) FROM collection_binaries cb WHERE cb.collection_id = c.id
+        ) AS binary_count
+        FROM collections c WHERE c.id = ?
+        """,
+        (collection_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    collection = dict(row)
+    collection["binaries"] = collection_binaries(conn, collection_id)
+    collection["tags"] = collection_tags(conn, collection_id)
+    return collection
+
+
+def update_collection(
+    conn: sqlite3.Connection,
+    collection_id: int,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    scope: str | None = None,
+) -> dict[str, Any] | None:
+    """Set the fields given on one collection; None when the id is unknown.
+
+    A name that is empty or already taken raises ``ValueError``, the same rule
+    :func:`create_collection` applies, so a rename cannot break the unique name.
+    A field left out is not touched.
+    """
+    if get_collection(conn, collection_id) is None:
+        return None
+    updates: list[str] = []
+    params: list[Any] = []
+    if name is not None:
+        if not name.strip():
+            raise ValueError("collection name must not be empty")
+        clash = conn.execute(
+            "SELECT 1 FROM collections WHERE name = ? AND id != ?", (name, collection_id)
+        ).fetchone()
+        if clash:
+            raise ValueError(f"collection {name!r} already exists")
+        updates.append("name = ?")
+        params.append(name)
+    if description is not None:
+        updates.append("description = ?")
+        params.append(description)
+    if scope is not None:
+        updates.append("scope = ?")
+        params.append(scope)
+    if updates:
+        params.append(collection_id)
+        conn.execute(f"UPDATE collections SET {', '.join(updates)} WHERE id = ?", tuple(params))
+        conn.commit()
+    return get_collection(conn, collection_id)
+
+
+def delete_collection(conn: sqlite3.Connection, collection_id: int) -> bool:
+    """Delete one collection with its membership and tag links; False when unknown."""
+    if get_collection(conn, collection_id) is None:
+        return False
+    conn.execute("DELETE FROM collection_binaries WHERE collection_id = ?", (collection_id,))
+    conn.execute("DELETE FROM collection_tags WHERE collection_id = ?", (collection_id,))
+    conn.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
+    conn.commit()
+    return True
+
+
+def replace_collection_binaries(
+    conn: sqlite3.Connection, collection_id: int, binary_ids: Sequence[int]
+) -> dict[str, Any]:
+    """Make *binary_ids* the exact members of one collection.
+
+    Every id is checked before anything is written: an id that names no binary
+    raises ``ValueError`` naming it, so a typo cannot silently empty or half
+    rewrite a collection.  Returns the ids added, removed and kept.
+    """
+    known = {c["id"] for c in list_collections(conn)}
+    if collection_id not in known:
+        raise KeyError(f"no collection with id {collection_id}")
+    wanted = list(dict.fromkeys(binary_ids))
+    missing = [binary_id for binary_id in wanted if get_binary(conn, binary_id) is None]
+    if missing:
+        raise ValueError(f"no binary with id {missing[0]}")
+    current = {int(row["id"]) for row in collection_binaries(conn, collection_id)}
+    target = set(wanted)
+    added = sorted(target - current)
+    removed = sorted(current - target)
+    for binary_id in added:
+        conn.execute(
+            "INSERT OR IGNORE INTO collection_binaries (collection_id, binary_id) VALUES (?, ?)",
+            (collection_id, binary_id),
+        )
+    for binary_id in removed:
+        conn.execute(
+            "DELETE FROM collection_binaries WHERE collection_id = ? AND binary_id = ?",
+            (collection_id, binary_id),
+        )
+    conn.commit()
+    return {"added": added, "removed": removed, "kept": sorted(current & target)}
+
+
+def set_collection_tags(
+    conn: sqlite3.Connection, collection_id: int, names: Sequence[str]
+) -> dict[str, Any]:
+    """Replace the tags on one collection, creating the names that are new.
+
+    Returns the tag names added and removed, so a caller can report and journal
+    the change.  An unknown collection raises ``KeyError``.
+    """
+    if get_collection(conn, collection_id) is None:
+        raise KeyError(f"no collection with id {collection_id}")
+    wanted = {name.strip() for name in names if name.strip()}
+    current = {str(tag["name"]) for tag in collection_tags(conn, collection_id)}
+    added = sorted(wanted - current)
+    removed = sorted(current - wanted)
+    for name in added:
+        tag_id = create_tag(conn, name)
+        conn.execute(
+            "INSERT OR IGNORE INTO collection_tags (collection_id, tag_id) VALUES (?, ?)",
+            (collection_id, tag_id),
+        )
+    for name in removed:
+        conn.execute(
+            "DELETE FROM collection_tags WHERE collection_id = ? AND tag_id ="
+            " (SELECT id FROM tags WHERE name = ?)",
+            (collection_id, name),
+        )
+    conn.commit()
+    return {"added": added, "removed": removed}
 
 
 # ── Tags ───────────────────────────────────────────────────────────

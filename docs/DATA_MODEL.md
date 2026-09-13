@@ -334,3 +334,18 @@ date: `render_report` writes the bytes, `write_report` writes them atomically
 and returns `{"path", "bytes", "pages", "sections"}`, and `page_count` counts
 the page objects.  The binary detail Report panel carries a Download PDF link
 and a Generate PDF control that posts the route.
+
+`collections` is a named group of binaries (`name` UNIQUE, plus `description`
+and `scope`), `collection_binaries` is its membership and `collection_tags` is
+its tag links; both link tables cascade with the collection and with the binary
+or tag they point at.  `POST /api/collections` and `reportal collection-new`
+create one, `PATCH` renames it or sets its description and scope, `DELETE`
+removes it with its links, and the membership and tag routes replace the whole
+set rather than toggling one row: `PATCH .../binaries` makes the body's ids the
+exact members, `DELETE .../binaries` removes the ids it names and keeps the
+rest, and `PATCH .../tags` replaces the tags, creating the names that are new.
+A member id that names no binary is refused before anything is written, so a
+typo cannot half rewrite a collection.  Every one of those writes is one journal
+action: a delete records its links before its own row, because a revert replays
+newest-first and a link restored before its parent exists trips the foreign key
+(`tests/test_collections_api.py` pins that order).

@@ -245,6 +245,22 @@ reportal revert <function-id> <history-id> [--json]
                                            # restore the name a history row replaced
 reportal tags [--json]                     # list tags with tagged-binary counts
 reportal tag <binary-id> <name> [--remove] [--json]
+reportal collections [--json]              # list collections with member and tag counts
+reportal collection-show <collection-id> [--json]
+                                           # one collection with its members and tags
+reportal collection-new <name> [--description TEXT] [--scope TEXT] [--json]
+                                           # create a collection
+reportal collection-edit <collection-id> [--name TEXT] [--description TEXT] [--scope TEXT]
+                         [--json]          # set the fields given; absent ones stay
+reportal collection-rm <collection-id> [--json]
+                                           # delete a collection with its membership and tags;
+                                           #   the printed journal action reverts it
+reportal collection-add <collection-id> <binary-id>... [--json]
+                                           # add members, keeping the ones already in it
+reportal collection-remove <collection-id> <binary-id>... [--json]
+                                           # remove members, keeping the others
+reportal collection-tags <collection-id> [tag]... [--json]
+                                           # replace the collection's tags (none clears them)
                                            # add or remove one tag by name
 reportal apply-match <function-id> <candidate-function-id> [--mode name|signature|both]
              [--json]                      # transfer a recorded match candidate onto the

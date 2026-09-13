@@ -5349,6 +5349,186 @@ def add_collection_binary(
     )
 
 
+@router.get("/api/collections/{collection_id}")
+def get_collection(collection_id: int) -> Response:
+    """One collection with its members and tags; 404 for an unknown id."""
+    with contextlib.closing(_open()) as conn:
+        collection = store.get_collection(conn, collection_id)
+        if collection is None:
+            return _no_collection(collection_id)
+    return json_response(collection)
+
+
+@router.patch("/api/collections/{collection_id}")
+def update_collection(collection_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Rename a collection or set its description and scope; absent fields stay."""
+    name = _optional_str(body, "name") if "name" in body else None
+    description = _optional_str(body, "description") if "description" in body else None
+    scope = _optional_str(body, "scope") if "scope" in body else None
+    if name is None and description is None and scope is None:
+        return json_error(
+            400,
+            error="invalid collection",
+            detail="name, description or scope is required",
+        )
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            return _no_collection(collection_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="collections",
+                where="id = ?",
+                params=(collection_id,),
+                description=f"updated collection {collection_id}",
+            )
+            try:
+                collection = store.update_collection(
+                    conn,
+                    collection_id,
+                    name=name,
+                    description=description,
+                    scope=scope,
+                )
+            except ValueError as exc:
+                return json_error(400, error="invalid collection", detail=str(exc))
+    return json_response(log.attach(collection or {}))
+
+
+@router.delete("/api/collections/{collection_id}")
+def delete_collection(collection_id: int) -> Response:
+    """Delete one collection with its membership and tag links; 404 when unknown."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            return _no_collection(collection_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # The links are recorded before the collection row on purpose: a
+            # revert replays newest-first, and a link restored before its parent
+            # row exists trips the foreign key.
+            for table, where in (
+                ("collection_binaries", "collection_id = ?"),
+                ("collection_tags", "collection_id = ?"),
+            ):
+                links = journal.snapshot_rows(
+                    conn, table=table, where=where, params=(collection_id,)
+                )
+                if links:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"links of collection {collection_id} in {table}",
+                        journal.row_restore_descriptor(table, links),
+                    )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="collections",
+                where="id = ?",
+                params=(collection_id,),
+                description=f"deleted collection {collection_id}",
+            )
+            store.delete_collection(conn, collection_id)
+    return json_response(log.attach({"collection_id": collection_id, "deleted": True}))
+
+
+@router.patch("/api/collections/{collection_id}/binaries")
+def replace_collection_binaries(
+    collection_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Make the body's ids the exact members of one collection; 404 for an unknown id."""
+    binary_ids = _optional_int_list(body, "binary_ids")
+    if binary_ids is None:
+        return json_error(400, error="invalid collection", detail="binary_ids is required")
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            return _no_collection(collection_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="collection_binaries",
+                where="collection_id = ?",
+                params=(collection_id,),
+            )
+            try:
+                change = store.replace_collection_binaries(conn, collection_id, binary_ids)
+            except ValueError as exc:
+                return json_error(404, error="binary not found", detail=str(exc))
+            _record_link_change(log, "collection_binaries", before, collection_id)
+    return json_response(log.attach({"collection_id": collection_id, **change}))
+
+
+@router.delete("/api/collections/{collection_id}/binaries")
+def remove_collection_binaries(
+    collection_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Remove the body's ids from one collection, keeping the rest of its members."""
+    binary_ids = _optional_int_list(body, "binary_ids")
+    if binary_ids is None:
+        return json_error(400, error="invalid collection", detail="binary_ids is required")
+    with contextlib.closing(_open()) as conn:
+        collection = store.get_collection(conn, collection_id)
+        if collection is None:
+            return _no_collection(collection_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="collection_binaries",
+                where="collection_id = ?",
+                params=(collection_id,),
+            )
+            kept = [
+                int(row["id"])
+                for row in collection["binaries"]
+                if int(row["id"]) not in set(binary_ids)
+            ]
+            change = store.replace_collection_binaries(conn, collection_id, kept)
+            _record_link_change(log, "collection_binaries", before, collection_id)
+    return json_response(log.attach({"collection_id": collection_id, **change}))
+
+
+@router.patch("/api/collections/{collection_id}/tags")
+def replace_collection_tags(
+    collection_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Replace the tags on one collection, creating the names that are new."""
+    if "tags" not in body:
+        return json_error(400, error="invalid collection", detail="tags is required")
+    names = _optional_str_list(body, "tags")
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            return _no_collection(collection_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn, table="collection_tags", where="collection_id = ?", params=(collection_id,)
+            )
+            change = store.set_collection_tags(conn, collection_id, names)
+            _record_link_change(log, "collection_tags", before, collection_id)
+    return json_response(log.attach({"collection_id": collection_id, **change}))
+
+
+def _no_collection(collection_id: int) -> Response:
+    """The 404 every collection route answers for an unknown id."""
+    return json_error(
+        404, error="collection not found", detail=f"no collection with id {collection_id}"
+    )
+
+
+def _record_link_change(
+    log: journal.Journal, table: str, before: list[dict[str, Any]], collection_id: int
+) -> None:
+    """Journal a collection's links: what was there is restored on revert."""
+    log.record(
+        effects.EFFECT_ROW_RESTORE,
+        f"links of collection {collection_id} in {table}",
+        journal.row_restore_descriptor(table, before),
+    )
+
+
 # ── Tags ───────────────────────────────────────────────────────────
 
 

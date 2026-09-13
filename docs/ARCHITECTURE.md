@@ -1251,7 +1251,7 @@ action's or one entry's stored inverses and is destructive. `get_auto_run`
 reads an auto run and is read-only; `run_auto`, `revert_auto_run` and
 `recover_auto_run` (which closes a stale run and merges what its unfinished
 tasks recorded) are destructive.  The registry
-declares 129 built-in tools, 61 read-only and 68 destructive.
+declares 136 built-in tools, 63 read-only and 73 destructive.
 
 Deliberately not emulated: OAuth/JWT and API keys. The hosted server
 authenticates each request; reportal is a loopback, single-user tool on a local

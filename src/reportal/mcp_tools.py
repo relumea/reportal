@@ -39,6 +39,7 @@ from reportal import (
     conversations,
     data_types,
     diffview,
+    effects,
     engines,
     families,
     filetypes,
@@ -2810,6 +2811,159 @@ def _tool_untag_binary(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach({"binary_id": binary_id, "tag_id": tag_id, "removed": True})
 
 
+def _tool_list_collections(_arguments: dict[str, Any]) -> dict[str, Any]:
+    with contextlib.closing(_open()) as conn:
+        rows = store.list_collections(conn)
+        for row in rows:
+            row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
+        return {"collections": rows, "count": len(rows)}
+
+
+def _tool_get_collection(arguments: dict[str, Any]) -> dict[str, Any]:
+    collection_id = _arg_int(arguments, "collection_id")
+    with contextlib.closing(_open()) as conn:
+        collection = store.get_collection(conn, collection_id)
+        if collection is None:
+            raise ToolError("collection not found", f"no collection with id {collection_id}")
+        return collection
+
+
+def _tool_create_collection(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    description = _arg_optional_str(arguments, "description")
+    scope = _arg_optional_str(arguments, "scope")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                collection_id = store.create_collection(
+                    conn, name=name, description=description, scope=scope
+                )
+            except ValueError as exc:
+                raise ToolError("invalid collection", str(exc)) from exc
+            journal.journaled_create(
+                log,
+                table="collections",
+                key=collection_id,
+                description=f"created collection {collection_id}",
+            )
+            collection = store.get_collection(conn, collection_id) or {}
+            return log.attach(collection)
+
+
+def _tool_update_collection(arguments: dict[str, Any]) -> dict[str, Any]:
+    collection_id = _arg_int(arguments, "collection_id")
+    fields = {
+        key: arguments[key]
+        for key in ("name", "description", "scope")
+        if key in arguments and arguments[key] is not None
+    }
+    if not fields:
+        raise ToolError("invalid params", "provide name, description or scope")
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            raise ToolError("collection not found", f"no collection with id {collection_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="collections",
+                where="id = ?",
+                params=(collection_id,),
+                description=f"updated collection {collection_id}",
+            )
+            try:
+                collection = store.update_collection(conn, collection_id, **fields)
+            except ValueError as exc:
+                raise ToolError("invalid collection", str(exc)) from exc
+            return log.attach(collection or {})
+
+
+def _tool_delete_collection(arguments: dict[str, Any]) -> dict[str, Any]:
+    collection_id = _arg_int(arguments, "collection_id")
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            raise ToolError("collection not found", f"no collection with id {collection_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # Links first: a revert replays newest-first and a link restored
+            # before its parent row exists trips the foreign key.
+            for table in ("collection_binaries", "collection_tags"):
+                links = journal.snapshot_rows(
+                    conn, table=table, where="collection_id = ?", params=(collection_id,)
+                )
+                if links:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"links of collection {collection_id} in {table}",
+                        journal.row_restore_descriptor(table, links),
+                    )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="collections",
+                where="id = ?",
+                params=(collection_id,),
+                description=f"deleted collection {collection_id}",
+            )
+            store.delete_collection(conn, collection_id)
+            return log.attach({"collection_id": collection_id, "deleted": True})
+
+
+def _tool_set_collection_members(arguments: dict[str, Any]) -> dict[str, Any]:
+    collection_id = _arg_int(arguments, "collection_id")
+    binary_ids = _arg_optional_int_list(arguments, "binary_ids")
+    if binary_ids is None:
+        raise ToolError("invalid params", "binary_ids is required")
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            raise ToolError("collection not found", f"no collection with id {collection_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="collection_binaries",
+                where="collection_id = ?",
+                params=(collection_id,),
+            )
+            try:
+                change = store.replace_collection_binaries(conn, collection_id, binary_ids)
+            except (ValueError, KeyError) as exc:
+                raise ToolError("binary not found", str(exc)) from exc
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"members of collection {collection_id}",
+                journal.row_restore_descriptor("collection_binaries", before),
+            )
+            return log.attach({"collection_id": collection_id, **change})
+
+
+def _tool_set_collection_tags(arguments: dict[str, Any]) -> dict[str, Any]:
+    collection_id = _arg_int(arguments, "collection_id")
+    if "tags" not in arguments:
+        raise ToolError("invalid params", "tags is required")
+    names = _arg_str_list(arguments, "tags")
+    with contextlib.closing(_open()) as conn:
+        if store.get_collection(conn, collection_id) is None:
+            raise ToolError("collection not found", f"no collection with id {collection_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="collection_tags",
+                where="collection_id = ?",
+                params=(collection_id,),
+            )
+            change = store.set_collection_tags(conn, collection_id, names)
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"tags of collection {collection_id}",
+                journal.row_restore_descriptor("collection_tags", before),
+            )
+            return log.attach({"collection_id": collection_id, **change})
+
+
 def _tool_add_comment(arguments: dict[str, Any]) -> dict[str, Any]:
     scope_kind = _arg_str(arguments, "scope_kind")
     scope_id = _arg_int(arguments, "scope_id")
@@ -3230,6 +3384,7 @@ _WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
 _FUNCTION_ID = _int("Function id.")
 _BINARY_ID = _int("Binary id.")
+_COLLECTION_ID = _int("Collection id.")
 
 
 def builtin_tools() -> tuple[Tool, ...]:
@@ -4580,6 +4735,82 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_untag_binary,
+        ),
+        Tool(
+            "list_collections",
+            "List collections with their member and tag counts.",
+            _object({}),
+            _READ,
+            _tool_list_collections,
+        ),
+        Tool(
+            "get_collection",
+            "Read one collection with its member binaries and tags.",
+            _object({"collection_id": _COLLECTION_ID}, ("collection_id",)),
+            _READ,
+            _tool_get_collection,
+        ),
+        Tool(
+            "create_collection",
+            "Create a collection from a name, with an optional description and scope.",
+            _object(
+                {
+                    "name": _str("Collection name, unique."),
+                    "description": _str("Free-text description."),
+                    "scope": _str("Scope label."),
+                },
+                ("name",),
+            ),
+            _WRITE,
+            _tool_create_collection,
+        ),
+        Tool(
+            "update_collection",
+            "Rename a collection or set its description and scope; omitted fields stay.",
+            _object(
+                {
+                    "collection_id": _COLLECTION_ID,
+                    "name": _str("New name."),
+                    "description": _str("New description."),
+                    "scope": _str("New scope label."),
+                },
+                ("collection_id",),
+            ),
+            _WRITE,
+            _tool_update_collection,
+        ),
+        Tool(
+            "delete_collection",
+            "Delete a collection with its membership and tag links.",
+            _object({"collection_id": _COLLECTION_ID}, ("collection_id",)),
+            _WRITE,
+            _tool_delete_collection,
+        ),
+        Tool(
+            "set_collection_members",
+            "Make the given binary ids the exact members of a collection.",
+            _object(
+                {
+                    "collection_id": _COLLECTION_ID,
+                    "binary_ids": _array("The complete member list.", _BINARY_ID),
+                },
+                ("collection_id", "binary_ids"),
+            ),
+            _WRITE,
+            _tool_set_collection_members,
+        ),
+        Tool(
+            "set_collection_tags",
+            "Replace a collection's tags with the names given (an empty list clears them).",
+            _object(
+                {
+                    "collection_id": _COLLECTION_ID,
+                    "tags": _array("The complete tag set.", _str("Tag name.")),
+                },
+                ("collection_id", "tags"),
+            ),
+            _WRITE,
+            _tool_set_collection_tags,
         ),
         Tool(
             "add_comment",

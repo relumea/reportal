@@ -20,6 +20,17 @@ runner = CliRunner()
 PLAIN = "unsigned int sub_1005640(unsigned int a0, unsigned int a1)\n{\n  return 0;\n}\n"
 
 
+def _without_timestamp(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """A signature row without ``updated_at``, which a revert rewrites by design.
+
+    The row is otherwise the state the revert restored; comparing the whole row
+    would fail whenever the write and its revert land in different seconds.
+    """
+    if row is None:
+        return None
+    return {key: value for key, value in row.items() if key != "updated_at"}
+
+
 def _seed_binary(conn: sqlite3.Connection, *, sha256: str = "ab" * 32) -> int:
     return store.add_binary(conn, sha256=sha256, name="demo.exe")
 
@@ -120,7 +131,7 @@ class TestRevert:
         assert result["changed"] is True
 
         restored = store.get_signature(conn, function_id)
-        assert restored == before
+        assert _without_timestamp(restored) == _without_timestamp(before)
 
     def test_revert_of_a_delete_puts_the_row_back(self, conn: sqlite3.Connection) -> None:
         _, function_id = _seeded(conn)
@@ -132,7 +143,9 @@ class TestRevert:
         result = signatures.revert_history(conn, function_id, entry_id)
 
         assert result["changed"] is True
-        assert store.get_signature(conn, function_id) == before
+        assert _without_timestamp(store.get_signature(conn, function_id)) == _without_timestamp(
+            before
+        )
 
     def test_second_revert_is_a_no_op(self, conn: sqlite3.Connection) -> None:
         _, function_id = _seeded(conn)
@@ -227,9 +240,11 @@ class TestApiRoutes:
         assert status.startswith("200")
         payload = json_body(body, headers)
         assert payload["changed"] is True
-        assert payload["signature"] == before
+        assert _without_timestamp(payload["signature"]) == _without_timestamp(before)
         assert payload["journal_action"]
-        assert store.get_signature(conn, function_id) == before
+        assert _without_timestamp(store.get_signature(conn, function_id)) == _without_timestamp(
+            before
+        )
 
     def test_revert_route_journal_action_reverts_the_revert(
         self, conn: sqlite3.Connection, fake_engine: FakeEngine
@@ -280,7 +295,9 @@ class TestApiRoutes:
 
         journal.revert_action(conn, action)
 
-        assert store.get_signature(conn, function_id) == before
+        assert _without_timestamp(store.get_signature(conn, function_id)) == _without_timestamp(
+            before
+        )
         assert len(signatures.list_history(conn, function_id)) == count_before
 
     def test_revert_route_unknown_function_404(
@@ -332,7 +349,9 @@ class TestCli:
         assert payload["changed"] is True
         assert payload["journal_action"]
         with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
-            assert store.get_signature(conn, ids["function"]) == before
+            assert _without_timestamp(
+                store.get_signature(conn, ids["function"])
+            ) == _without_timestamp(before)
 
     def test_history_command_unknown_function(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -364,8 +383,10 @@ class TestMcp:
 
         assert is_error is False
         assert payload["changed"] is True
-        assert payload["signature"] == before
-        assert store.get_signature(conn, function_id) == before
+        assert _without_timestamp(payload["signature"]) == _without_timestamp(before)
+        assert _without_timestamp(store.get_signature(conn, function_id)) == _without_timestamp(
+            before
+        )
 
     def test_revert_tool_unknown_history_is_an_error(self, conn: sqlite3.Connection) -> None:
         _, function_id = _seeded(conn)

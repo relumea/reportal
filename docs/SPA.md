@@ -346,6 +346,18 @@ a prefix input with a
 replace-existing-prefix toggle that posts `POST /api/functions/bulk` for the
 selected rows and reports how many renamed and how many were skipped.
 
+The Collections view (`views/CollectionsView.tsx`, `#/collections`) lists the
+collections with their member and tag counts and creates one from a name and a
+description.  Selecting a row opens its detail panel: the collection's name,
+description and scope are editable and saved with `PATCH /api/collections/<id>`,
+its tags are a comma-separated field saved with `PATCH
+/api/collections/<id>/tags` (the set is replaced, so clearing the field removes
+every tag), its members are a table whose Remove button posts `DELETE
+/api/collections/<id>/binaries` with that one id, a binary id field adds a
+member through `POST /api/collections/<id>/binaries`, and Delete sits behind an
+inline confirm (`DELETE /api/collections/<id>`).  Every one of those writes is
+one journal action on the server, so the journal view can revert it.
+
 The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) lists each analysis's
 id, binary (linked to its detail page), platform badges, binary size, engine,
 created time, status badge (the design language's status hues: `done` is the

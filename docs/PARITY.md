@@ -117,12 +117,14 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (182
-method/path pairs) plus the MCP tool registry (129 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (136 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
 
 ### A. Asynchronous operation workflow (hosted `Agent` tag, 35 operations)
+
+**Status:** Planned. Nothing started.
 
 Every long-running hosted capability is queued and polled: `POST
 /v3/analyses/{id}/crypto-scan:run`, `.../execution-scan:run`,
@@ -143,6 +145,8 @@ per-scan POST routes growing a `queued` response form.  CLI: `reportal jobs`,
 `get_job`, `cancel_job`.
 
 ### B. AI decompilation as a first-class artifact (hosted 18 operations)
+
+**Status:** Planned. Nothing started.
 
 reportal stores a summary, inline comments, type suggestions and rename
 suggestions over a decompilation that rebrew produced.  The hosted model is
@@ -167,6 +171,8 @@ prompts.
 
 ### C. Dynamic execution and sandbox detonation (hosted `Analyses - Core`)
 
+**Status:** Planned. Nothing started.
+
 `GET /v2/analyses/{id}/dynamic-execution/report` and `.../status`: the hosted
 portal detonates the sample and reports what it did.  reportal reads bytes and
 never runs a sample (`docs/THREAT_MODEL.md` states that as a guarantee), so this
@@ -181,6 +187,8 @@ Windows-only and orthogonal; the local runner is the general case).
 
 ### D. Analysis lifecycle (hosted `Analyses - Core`, 32 operations)
 
+**Status:** Planned. Nothing started.
+
 reportal has list, create, delete, logs (read), scans.  Missing: read one
 analysis (`GET /v2|v3/analyses/{id}/basic`), update it (`PATCH
 /v2/analyses/{id}`), its status (`.../status`), its recorded parameters
@@ -194,12 +202,19 @@ log entry over HTTP (`POST /v2/analyses/{id}/logs`), analysis tags (`GET|PATCH
 
 ### E. Collections (hosted 16 operations)
 
-reportal has list, create and add binaries.  Missing: read one (`GET
-/v3/collections/{id}`), update (`PATCH`), delete (`DELETE`), remove binaries
-(`DELETE /v3/collections/{id}/binaries`), replace binaries (`PATCH
-.../binaries`) and replace tags (`PATCH .../tags`).
+**Status:** Closed.  The store layer (`get_collection`,
+`update_collection`, `delete_collection`, `collection_binaries`,
+`collection_tags`, `replace_collection_binaries`, `set_collection_tags`), the six
+HTTP routes, the seven CLI commands, the seven MCP tools and the SPA detail
+panel are implemented and tested (41 tests across `tests/test_collections_api.py`
+and `tests/test_collections_cli_mcp.py`), each write journaled and revertible and
+the new `collection_tags` table cascading with its collection.  The SPA lists,
+creates, selects a collection, edits its name/description/scope and tags, adds
+and removes members and deletes it behind an inline confirm.
 
 ### F. Users, auth and IAM (hosted 5 operations)
+
+**Status:** Planned. Nothing started.
 
 `GET /v2/iam/me`, `GET /v2/iam/me/permissions`, `GET /v2/users/{id}`,
 `GET /v2/users/activity`, `POST /v2/users/feedback`.  reportal is
@@ -211,6 +226,8 @@ local feedback notes.  Loopback binds stay unauthenticated so an existing
 single-user install keeps working.
 
 ### G. Models (hosted 1 operation plus analysis parameters)
+
+**Status:** Planned. Nothing started.
 
 `GET /v2/models` lists the hosted models (`binnet-0.7`, `binnet-1.0`) and
 `POST /v3/analyses/{id}/upgrade-model` re-analyses a binary on a newer one; an
@@ -224,6 +241,8 @@ with the before/after both kept.
 
 ### H. External sources (hosted 3 operations)
 
+**Status:** Planned. Nothing started.
+
 `POST /v2/analysis/{id}/external/vt` pulls VirusTotal data, `GET .../vt` reads
 it, `GET .../vt/status` reports the pull.  reportal makes no network call unless
 the user configures one, so the local form is an external-source registry with
@@ -234,12 +253,16 @@ scan with its source and fetch time.
 
 ### I. Config (hosted 1 operation)
 
+**Status:** Planned. Nothing started.
+
 `GET /v2/config`.  reportal's `/api/health` reports liveness and row counts but
 not what the instance can do.  Planned: `GET /api/config` reporting the enabled
 features (LLM bridge, remote ingest, sandbox, external sources), the caps in
 force, the versions (reportal, rebrew, schema) and the auth mode.
 
 ### J. Function-level extras (hosted `Functions - Core`, 24 operations)
+
+**Status:** Planned. Nothing started.
 
 Missing locally: indirect call sites (`GET
 /v3/functions/{id}/indirect-call-sites`), per-function capabilities (`GET
@@ -255,6 +278,8 @@ analyst-supplied strings per function and per analysis (`POST
 
 ### K. Data types and signatures (hosted 11 operations)
 
+**Status:** Planned. Nothing started.
+
 reportal has the editable model, history and revert, and reference indices.
 Missing: copy signatures between functions (`POST
 /v3/analyses/{id}/signatures/copy`), bulk create and bulk update of an
@@ -264,6 +289,8 @@ functions-using-a-data-type read as its own route (`GET
 /v3/analyses/{id}/data-types/{id}/functions`).
 
 ### L. Agentic conversations (hosted 7 operations)
+
+**Status:** Planned. Nothing started.
 
 The hosted conversation is an agent run: `GET /v2/conversations/{id}/events`
 streams it over SSE, `POST .../cancel` stops it, and `POST .../confirm` approves
@@ -276,6 +303,8 @@ kept in the existing tables.
 
 ### M. Reports (hosted 3 operations)
 
+**Status:** Planned. Nothing started.
+
 Hosted PDF generation is a workflow: `POST /v3/analyses/{id}/pdf` starts it,
 `GET .../pdf/status` reports it, `GET .../pdf` downloads it.  reportal renders
 the PDF synchronously and never records that it did.  Planned: the report run
@@ -283,6 +312,8 @@ becomes a stored job with a status and a download route, plus the analysis
 report-analysis agent result beside it.
 
 ### N. Binary extras (hosted `Binaries`, 11 operations)
+
+**Status:** Planned. Nothing started.
 
 Missing locally: a password-protected zipped download (`GET
 /v2/binaries/{id}/download-zipped`; the stdlib cannot write ZipCrypto, so the
@@ -293,6 +324,8 @@ in `filetypes.py`), and additional details with a status read (`GET
 version resources).
 
 ### Beyond parity
+
+**Status:** Planned. Nothing started.
 
 Capabilities the hosted portal advertises but has not shipped, or has no public
 implementation of, taken from `docs/REVENGAI.md` and from what its own spec

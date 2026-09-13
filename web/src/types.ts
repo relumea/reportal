@@ -222,6 +222,12 @@ export interface Collection {
   binary_count: number;
 }
 
+/** One collection's members and tags, the shape `GET /api/collections/<id>` answers. */
+export interface CollectionDetail extends Collection {
+  binaries: Array<{ id: number; name: string; sha256: string; size: number }>;
+  tags: Array<{ id: number; name: string }>;
+}
+
 export interface Health {
   status: string;
   version: string;

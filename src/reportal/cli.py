@@ -789,6 +789,308 @@ def tag(
     _print_journal_action(log, json_output)
 
 
+# ── collections ────────────────────────────────────────────────────
+
+
+def _require_collection(
+    conn: sqlite3.Connection, collection_id: int, json_output: bool
+) -> dict[str, Any]:
+    """Return one collection row or fail the command with its id named."""
+    collection = store.get_collection(conn, collection_id)
+    if collection is None:
+        _fail(f"no collection with id {collection_id}", json_output)
+    return collection
+
+
+@app.command()
+def collections(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List collections with their member and tag counts."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        rows = store.list_collections(conn)
+        for row in rows:
+            row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
+    if json_output:
+        typer.echo(json.dumps({"collections": rows}))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Id", justify="right")
+    table.add_column("Name", style="cyan")
+    table.add_column("Binaries", justify="right")
+    table.add_column("Tags")
+    table.add_column("Description")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            str(row["name"]),
+            str(row["binary_count"]),
+            ", ".join(row["tags"]),
+            str(row["description"]),
+        )
+    console.print(table)
+
+
+@app.command()
+def collection_show(
+    collection_id: int = typer.Argument(..., help="Collection id"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Show one collection with its members and tags."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        collection = _require_collection(conn, collection_id, json_output)
+    if json_output:
+        typer.echo(json.dumps(collection))
+        return
+    console.print(f"[bold]{collection['name']}[/bold] (id {collection['id']})")
+    if collection["description"]:
+        console.print(collection["description"])
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Binary", justify="right")
+    table.add_column("Name", style="cyan")
+    for row in collection["binaries"]:
+        table.add_row(str(row["id"]), str(row["name"]))
+    console.print(table)
+    if collection["tags"]:
+        console.print("Tags: " + ", ".join(str(tag["name"]) for tag in collection["tags"]))
+
+
+@app.command()
+def collection_new(
+    name: str = typer.Argument(..., help="Collection name"),
+    description: str = typer.Option("", "--description", help="Free-text description"),
+    scope: str = typer.Option("", "--scope", help="Scope label"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Create a collection."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                collection_id = store.create_collection(
+                    conn, name=name, description=description, scope=scope
+                )
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+            journal.journaled_create(
+                log,
+                table="collections",
+                key=collection_id,
+                description=f"created collection {collection_id}",
+            )
+            payload = log.attach({"collection_id": collection_id, "name": name})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(f"[green]Created[/green] collection {collection_id} ({name})")
+    _print_journal_action(log, json_output)
+
+
+@app.command()
+def collection_edit(
+    collection_id: int = typer.Argument(..., help="Collection id"),
+    name: str = typer.Option(None, "--name", help="New name"),
+    description: str = typer.Option(None, "--description", help="New description"),
+    scope: str = typer.Option(None, "--scope", help="New scope label"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rename a collection or set its description and scope; omitted fields stay."""
+    if name is None and description is None and scope is None:
+        _fail("nothing to change: pass --name, --description or --scope", json_output)
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        _require_collection(conn, collection_id, json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="collections",
+                where="id = ?",
+                params=(collection_id,),
+                description=f"updated collection {collection_id}",
+            )
+            try:
+                collection = store.update_collection(
+                    conn, collection_id, name=name, description=description, scope=scope
+                )
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+            payload = log.attach(collection or {})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(f"[green]Updated[/green] collection {collection_id}")
+    _print_journal_action(log, json_output)
+
+
+@app.command()
+def collection_rm(
+    collection_id: int = typer.Argument(..., help="Collection id"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete a collection with its membership and tag links."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        _require_collection(conn, collection_id, json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # Links before the parent row: a revert replays newest-first and a
+            # link restored before its parent exists trips the foreign key.
+            for table in ("collection_binaries", "collection_tags"):
+                links = journal.snapshot_rows(
+                    conn, table=table, where="collection_id = ?", params=(collection_id,)
+                )
+                if links:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"links of collection {collection_id} in {table}",
+                        journal.row_restore_descriptor(table, links),
+                    )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="collections",
+                where="id = ?",
+                params=(collection_id,),
+                description=f"deleted collection {collection_id}",
+            )
+            store.delete_collection(conn, collection_id)
+            payload = log.attach({"collection_id": collection_id, "deleted": True})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(f"[green]Deleted[/green] collection {collection_id}")
+    _print_journal_action(log, json_output)
+
+
+@app.command()
+def collection_add(
+    collection_id: int = typer.Argument(..., help="Collection id"),
+    binary_id: list[int] = typer.Argument(..., help="Binary ids to add"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Add binaries to a collection, keeping the ones already in it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        collection = _require_collection(conn, collection_id, json_output)
+        current = [int(row["id"]) for row in collection["binaries"]]
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="collection_binaries",
+                where="collection_id = ?",
+                params=(collection_id,),
+            )
+            try:
+                change = store.replace_collection_binaries(
+                    conn, collection_id, [*current, *binary_id]
+                )
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"members of collection {collection_id}",
+                journal.row_restore_descriptor("collection_binaries", before),
+            )
+            payload = log.attach({"collection_id": collection_id, **change})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        added = len(payload["added"])
+        console.print(f"[green]Added[/green] {added} binary(ies) to collection {collection_id}")
+    _print_journal_action(log, json_output)
+
+
+@app.command()
+def collection_remove(
+    collection_id: int = typer.Argument(..., help="Collection id"),
+    binary_id: list[int] = typer.Argument(..., help="Binary ids to remove"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Remove binaries from a collection, keeping the other members."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    drop = set(binary_id)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        collection = _require_collection(conn, collection_id, json_output)
+        kept = [int(row["id"]) for row in collection["binaries"] if int(row["id"]) not in drop]
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="collection_binaries",
+                where="collection_id = ?",
+                params=(collection_id,),
+            )
+            change = store.replace_collection_binaries(conn, collection_id, kept)
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"members of collection {collection_id}",
+                journal.row_restore_descriptor("collection_binaries", before),
+            )
+            payload = log.attach({"collection_id": collection_id, **change})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(
+            f"[green]Removed[/green] {len(payload['removed'])} binary(ies)"
+            f" from collection {collection_id}"
+        )
+    _print_journal_action(log, json_output)
+
+
+@app.command()
+def collection_tags(
+    collection_id: int = typer.Argument(..., help="Collection id"),
+    tag: list[str] = typer.Argument(None, help="The tag names the collection should carry"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Replace a collection's tags with the names given (none clears them)."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        _require_collection(conn, collection_id, json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn, table="collection_tags", where="collection_id = ?", params=(collection_id,)
+            )
+            change = store.set_collection_tags(conn, collection_id, list(tag or []))
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"tags of collection {collection_id}",
+                journal.row_restore_descriptor("collection_tags", before),
+            )
+            payload = log.attach({"collection_id": collection_id, **change})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(
+            f"[green]Tagged[/green] collection {collection_id}:"
+            f" +{len(payload['added'])} -{len(payload['removed'])}"
+        )
+    _print_journal_action(log, json_output)
+
+
 # ── Comments ───────────────────────────────────────────────────────
 
 

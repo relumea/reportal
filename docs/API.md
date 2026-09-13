@@ -163,6 +163,12 @@
 | `/api/collections` | GET | collections with binary counts |
 | `/api/collections` | POST | create collection; body `{"name": ..., "description": ..., "scope": ...}` |
 | `/api/collections/<id>/binaries` | POST | add a binary; body `{"binary_id": ...}` |
+| `/api/collections/<id>` | GET | one collection with its members (`id`, `name`, `sha256`, `size`) and its tags; 404 `collection not found` |
+| `/api/collections/<id>` | PATCH | rename it or set `description`/`scope` (absent fields stay); 400 `invalid collection` for an empty body, an empty name or a name already taken; journaled |
+| `/api/collections/<id>` | DELETE | delete it with its membership and tag links; 404 `collection not found`; journaled, and a revert puts the links and the row back in that order |
+| `/api/collections/<id>/binaries` | PATCH | make `{"binary_ids": [...]}` the exact member list; 404 `binary not found` naming the first unknown id, and nothing is written; journaled |
+| `/api/collections/<id>/binaries` | DELETE | remove `{"binary_ids": [...]}`, keeping the other members; 400 when the key is absent; journaled |
+| `/api/collections/<id>/tags` | PATCH | replace the tags with `{"tags": [...]}`, creating the new names (`[]` clears them); 400 when the key is absent; journaled |
 | `/api/tags` | GET | all tags with their tagged-binary count |
 | `/api/tags` | POST | create a tag by name; body `{"name": ...}`; idempotent |
 | `/api/binaries/<id>/documents` | POST | ingest a document file into the binary's knowledge scope; `multipart/form-data` with a `file` part and an optional `title` field; 201 on create, 200 with `duplicate: true` on a repeat |
