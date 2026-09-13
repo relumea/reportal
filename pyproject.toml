@@ -25,6 +25,10 @@ dependencies = [
     "fastapi>=0.141",
     "httpx2>=2.12",
     "mcp>=2.2",
+    # `llm.py` imports the SDK at module scope, so the bridge is disabled by
+    # configuration, not by a missing package: without this the wheel cannot be
+    # imported at all in a clean environment.
+    "openai>=2.54",
     "python-multipart>=0.0.9",
     "rebrew",
     "reportlab>=4.2",

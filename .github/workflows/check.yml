@@ -30,9 +30,17 @@ jobs:
       - name: Install the VNU HTML/CSS validator
         run: bun install -g vnu
 
+      # `rebrew` is a base dependency and `resembl` backs the optional
+      # similarity extra; both are path sources on the sibling checkouts
+      # (`[tool.uv.sources]`), so the runner checks them out beside the repo.
+      - name: Check out the sibling engines
+        run: |
+          git clone --depth 1 https://github.com/maci0/rebrew ../rebrew
+          git clone --depth 1 https://github.com/maci0/resembl ../resembl
+
       - name: Install dependencies
         run: |
-          uv sync --frozen --extra dev
+          uv sync --frozen --extra dev --extra similarity
           cd web && bun install --frozen-lockfile
 
       # Lint, types, tests under the coverage floor, the SPA gates and the
