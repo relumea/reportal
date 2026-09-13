@@ -85,11 +85,14 @@ AUTHORIZATION_HEADER = "authorization"
 BEARER_PREFIX = "Bearer "
 
 # The tables identity lives in.  ``teams`` plus ``team_members`` scope an
-# object to the people who work on it: membership is the only attribute, because
-# a team here answers "who can write this" and nothing else.
+# object to the people who work on it; a membership carries a role, so the
+# people who may manage a team are a subset of the people who work in it.
+# ``organisations`` is one level above teams: the hosted hierarchy, with no
+# effect on who may read or write an object.
 TABLE = "users"
 TEAM_TABLE = "teams"
 MEMBER_TABLE = "team_members"
+ORG_TABLE = "organisations"
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS {TABLE} (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -100,19 +103,47 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     disabled   INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS {TEAM_TABLE} (
+CREATE TABLE IF NOT EXISTS {ORG_TABLE} (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL UNIQUE COLLATE NOCASE,
     description TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS {TEAM_TABLE} (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    description     TEXT NOT NULL DEFAULT '',
+    organisation_id INTEGER REFERENCES {ORG_TABLE}(id) ON DELETE SET NULL,
+    created_at      TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS {MEMBER_TABLE} (
     team_id INTEGER NOT NULL REFERENCES {TEAM_TABLE}(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES {TABLE}(id) ON DELETE CASCADE,
+    role    TEXT NOT NULL DEFAULT 'member',
     PRIMARY KEY (team_id, user_id)
 );
+
 """
+
+# Team roles.  ``owner`` manages the team (its name, its description and its
+# membership) and ``member`` works in it.  A user's *portal* role
+# (``viewer``/``analyst``/``admin``) is a separate axis: an admin may act on any
+# team, which is what keeps a lockout recoverable.
+TEAM_ROLE_OWNER = "owner"
+TEAM_ROLE_MEMBER = "member"
+TEAM_ROLES: tuple[str, ...] = (TEAM_ROLE_OWNER, TEAM_ROLE_MEMBER)
+
+ERROR_ORGANISATION_EXISTS = "organisation-exists"
+ERROR_ORGANISATION_NOT_FOUND = "organisation-not-found"
+ERROR_INVALID_ORGANISATION = "invalid-organisation"
+ERROR_INVALID_TEAM_ROLE = "invalid-team-role"
+ERROR_NOT_A_TEAM_OWNER = "not-a-team-owner"
+
+# Length bounds on an organisation name and its description.
+MAX_ORGANISATION_NAME = 64
+MAX_ORGANISATION_DESCRIPTION = 280
 
 # Visibility an object carries: public to every authenticated user, or scoped
 # to the team that owns it.
@@ -184,6 +215,10 @@ class UnknownTeamError(AuthError):
 
 class NotAMemberError(AuthError):
     """The caller is not a member of the team an object is scoped to."""
+
+
+class UnknownOrganisationError(AuthError):
+    """No organisation carries the requested id."""
 
 
 class ScopeForbiddenError(AuthError):
@@ -277,6 +312,8 @@ def _validated_role(role: str) -> str:
 
 def _user_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     """One user as the API reports it: the digest never leaves this module."""
+    keys = set(row.keys())
+    active = row["active_team_id"] if "active_team_id" in keys else None
     return {
         "id": int(row["id"]),
         "name": str(row["name"]),
@@ -284,6 +321,7 @@ def _user_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         "created_at": str(row["created_at"]),
         "disabled": bool(row["disabled"]),
         "has_token": bool(row["token_hash"]),
+        "active_team_id": None if active is None else int(active),
     }
 
 
@@ -400,6 +438,7 @@ def _team_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         "id": int(row["id"]),
         "name": str(row["name"]),
         "description": str(row["description"]),
+        "organisation_id": None if row["organisation_id"] is None else int(row["organisation_id"]),
         "created_at": str(row["created_at"]),
     }
 
@@ -426,8 +465,15 @@ def get_team(conn: sqlite3.Connection, team_id: int) -> dict[str, Any] | None:
     if row is None:
         return None
     team = _team_row(row)
+    organisation = (
+        get_organisation(conn, int(team["organisation_id"]))
+        if team["organisation_id"] is not None
+        else None
+    )
+    team["organisation_name"] = None if organisation is None else organisation["name"]
     members = conn.execute(
-        f"SELECT u.id, u.name, u.role FROM {MEMBER_TABLE} m JOIN {TABLE} u ON u.id = m.user_id"
+        f"SELECT u.id, u.name, u.role AS portal_role, m.role AS team_role"
+        f" FROM {MEMBER_TABLE} m JOIN {TABLE} u ON u.id = m.user_id"
         " WHERE m.team_id = ? ORDER BY u.id",
         (team_id,),
     ).fetchall()
@@ -443,15 +489,18 @@ def find_team(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
 
 
 def list_teams(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every team, oldest first, each with its member count."""
+    """Every team, oldest first, each with its member count and organisation."""
     rows = conn.execute(
-        f"SELECT t.*, (SELECT COUNT(*) FROM {MEMBER_TABLE} m WHERE m.team_id = t.id)"
-        f" AS member_count FROM {TEAM_TABLE} t ORDER BY t.id"
+        f"SELECT t.*, o.name AS organisation_name,"
+        f" (SELECT COUNT(*) FROM {MEMBER_TABLE} m WHERE m.team_id = t.id)"
+        f" AS member_count FROM {TEAM_TABLE} t"
+        f" LEFT JOIN {ORG_TABLE} o ON o.id = t.organisation_id ORDER BY t.id"
     ).fetchall()
     teams: list[dict[str, Any]] = []
     for row in rows:
         team = _team_row(row)
         team["member_count"] = int(row["member_count"])
+        team["organisation_name"] = row["organisation_name"]
         teams.append(team)
     return teams
 
@@ -523,6 +572,190 @@ def remove_member(conn: sqlite3.Connection, team_id: int, user_id: int) -> bool:
     )
     conn.commit()
     return cursor.rowcount > 0
+
+
+def member_role(conn: sqlite3.Connection, team_id: int, user_id: int) -> str | None:
+    """The role a user holds in a team, or None when it is not a member."""
+    row = conn.execute(
+        f"SELECT role FROM {MEMBER_TABLE} WHERE team_id = ? AND user_id = ?",
+        (team_id, user_id),
+    ).fetchone()
+    return None if row is None else str(row["role"])
+
+
+def set_member_role(conn: sqlite3.Connection, team_id: int, user_id: int, role: str) -> bool:
+    """Set one membership's role; False when the membership does not exist.
+
+    Raises :class:`InvalidUserError` for a role outside :data:`TEAM_ROLES`, so
+    the surface maps one code for every bad team-role request.
+    """
+    if role not in TEAM_ROLES:
+        raise InvalidUserError(
+            ERROR_INVALID_TEAM_ROLE,
+            f"unknown team role: {role}; expected one of {', '.join(TEAM_ROLES)}",
+        )
+    cursor = conn.execute(
+        f"UPDATE {MEMBER_TABLE} SET role = ? WHERE team_id = ? AND user_id = ?",
+        (role, team_id, user_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def team_owners(conn: sqlite3.Connection, team_id: int) -> list[dict[str, Any]]:
+    """The members holding the owner role, oldest first."""
+    rows = conn.execute(
+        f"SELECT u.id, u.name FROM {MEMBER_TABLE} m JOIN {TABLE} u ON u.id = m.user_id"
+        " WHERE m.team_id = ? AND m.role = ? ORDER BY u.id",
+        (team_id, TEAM_ROLE_OWNER),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def may_manage_team(conn: sqlite3.Connection, user: Mapping[str, Any] | None, team_id: int) -> bool:
+    """Whether *user* may rename a team, set its members or change its roles.
+
+    With auth off there is no caller and the install is the single local
+    operator, so the answer is yes; otherwise an admin may manage any team,
+    which is what keeps a lockout recoverable, a team's own owner may manage it,
+    and a plain member may not.
+    """
+    if user is None:
+        return True
+    if str(user.get("role") or "") == ROLE_ADMIN:
+        return True
+    return member_role(conn, team_id, int(user["id"])) == TEAM_ROLE_OWNER
+
+
+def _organisation_row(row: Any) -> dict[str, Any]:
+    """One organisation row as the API returns it."""
+    return {
+        "id": int(row["id"]),
+        "name": str(row["name"]),
+        "description": str(row["description"]),
+        "created_at": str(row["created_at"]),
+    }
+
+
+def _validated_organisation_name(name: str) -> str:
+    """A usable organisation name, or :class:`InvalidUserError`."""
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise InvalidUserError(ERROR_INVALID_ORGANISATION, "an organisation name is required")
+    if len(cleaned) > MAX_ORGANISATION_NAME:
+        raise InvalidUserError(
+            ERROR_INVALID_ORGANISATION,
+            f"an organisation name is at most {MAX_ORGANISATION_NAME} characters",
+        )
+    return cleaned
+
+
+def create_organisation(
+    conn: sqlite3.Connection, *, name: str, description: str = ""
+) -> dict[str, Any]:
+    """Create one organisation; a duplicate name is refused.
+
+    An organisation is structure, not access control: it groups teams the way
+    the hosted portal does, and an object's team is still what decides who may
+    read or write it.
+    """
+    cleaned = _validated_organisation_name(name)
+    if find_organisation(conn, cleaned) is not None:
+        raise AuthError(
+            ERROR_ORGANISATION_EXISTS, f"an organisation named {cleaned!r} already exists"
+        )
+    text = (description or "").strip()[:MAX_ORGANISATION_DESCRIPTION]
+    cursor = conn.execute(
+        f"INSERT INTO {ORG_TABLE} (name, description, created_at) VALUES (?, ?, ?)",
+        (cleaned, text, now()),
+    )
+    conn.commit()
+    organisation = get_organisation(conn, int(cursor.lastrowid or 0))
+    assert organisation is not None, "the row was just created"
+    return organisation
+
+
+def get_organisation(conn: sqlite3.Connection, organisation_id: int) -> dict[str, Any] | None:
+    """One organisation by id, with the teams it holds; None when unknown."""
+    row = conn.execute(f"SELECT * FROM {ORG_TABLE} WHERE id = ?", (organisation_id,)).fetchone()
+    if row is None:
+        return None
+    organisation = _organisation_row(row)
+    teams = conn.execute(
+        f"SELECT id, name FROM {TEAM_TABLE} WHERE organisation_id = ? ORDER BY id",
+        (organisation_id,),
+    ).fetchall()
+    organisation["teams"] = [dict(team) for team in teams]
+    organisation["team_count"] = len(organisation["teams"])
+    return organisation
+
+
+def find_organisation(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
+    """One organisation by name (case-insensitive), without its teams."""
+    row = conn.execute(f"SELECT * FROM {ORG_TABLE} WHERE name = ?", (name.strip(),)).fetchone()
+    return _organisation_row(row) if row else None
+
+
+def list_organisations(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Every organisation, oldest first, each with its teams."""
+    rows = conn.execute(f"SELECT id FROM {ORG_TABLE} ORDER BY id").fetchall()
+    found: list[dict[str, Any]] = []
+    for row in rows:
+        organisation = get_organisation(conn, int(row["id"]))
+        if organisation is not None:
+            found.append(organisation)
+    return found
+
+
+def delete_organisation(conn: sqlite3.Connection, organisation_id: int) -> bool:
+    """Delete one organisation; its teams stay, no longer grouped."""
+    cursor = conn.execute(f"DELETE FROM {ORG_TABLE} WHERE id = ?", (organisation_id,))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def set_team_organisation(
+    conn: sqlite3.Connection, team_id: int, organisation_id: int | None
+) -> bool:
+    """Move one team into an organisation, or out of every one with None.
+
+    False when the team does not exist; an organisation id no row carries is
+    refused rather than stored, because a dangling reference would read as a
+    team with a name nobody can resolve.
+    """
+    if get_team(conn, team_id) is None:
+        return False
+    if organisation_id is not None and get_organisation(conn, organisation_id) is None:
+        raise UnknownOrganisationError(
+            ERROR_ORGANISATION_NOT_FOUND, f"no organisation with id {organisation_id}"
+        )
+    conn.execute(
+        f"UPDATE {TEAM_TABLE} SET organisation_id = ? WHERE id = ?", (organisation_id, team_id)
+    )
+    conn.commit()
+    return True
+
+
+def set_active_team(conn: sqlite3.Connection, user_id: int, team_id: int | None) -> bool:
+    """Switch the team a user has selected, or clear it with None.
+
+    Membership is required, so a caller cannot select a team it is not in; the
+    portal's own role is not consulted, because switching is a view preference
+    rather than a permission.  False when the user is unknown.
+    """
+    user = get_user(conn, user_id)
+    if user is None:
+        return False
+    if team_id is not None:
+        if get_team(conn, int(team_id)) is None:
+            raise UnknownTeamError(ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        if member_role(conn, int(team_id), user_id) is None and str(user["role"]) != ROLE_ADMIN:
+            raise NotAMemberError(
+                ERROR_NOT_A_MEMBER, f"user {user_id} is not a member of team {team_id}"
+            )
+    conn.execute(f"UPDATE {TABLE} SET active_team_id = ? WHERE id = ?", (team_id, user_id))
+    conn.commit()
+    return True
 
 
 def teams_of_user(conn: sqlite3.Connection, user_id: int) -> list[dict[str, Any]]:

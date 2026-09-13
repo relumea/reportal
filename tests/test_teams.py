@@ -12,7 +12,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, journal, store
+from reportal import auth, cli, journal, mcp_server, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -510,3 +510,421 @@ class TestMcp:
             assert exc.error == auth.ERROR_TEAM_NOT_FOUND
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("an unknown team must be a tool error")
+
+
+class TestTeamRoles:
+    """A membership carries a role: an owner manages the team, a member works."""
+
+    def _team(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
+        _owner, _token = auth.add_user(conn, name="owner", role="analyst")
+        _member, _token2 = auth.add_user(conn, name="member", role="analyst")
+        users = {user["name"]: int(user["id"]) for user in auth.list_users(conn)}
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, users["owner"])
+        auth.add_member(conn, team, users["member"])
+        return team, users["owner"], users["member"]
+
+    def test_a_new_membership_is_a_member(self, conn: sqlite3.Connection) -> None:
+        team, owner, _member = self._team(conn)
+        assert auth.member_role(conn, team, owner) == auth.TEAM_ROLE_MEMBER
+
+    def test_a_role_is_set_and_read_back(self, conn: sqlite3.Connection) -> None:
+        team, owner, _member = self._team(conn)
+        assert auth.set_member_role(conn, team, owner, auth.TEAM_ROLE_OWNER) is True
+        assert auth.member_role(conn, team, owner) == auth.TEAM_ROLE_OWNER
+        assert [row["name"] for row in auth.team_owners(conn, team)] == ["owner"]
+
+    def test_an_unknown_role_is_refused(self, conn: sqlite3.Connection) -> None:
+        team, owner, _member = self._team(conn)
+        with pytest.raises(auth.InvalidUserError):
+            auth.set_member_role(conn, team, owner, "superuser")
+
+    def test_only_an_owner_or_admin_manages_the_team(self, conn: sqlite3.Connection) -> None:
+        team, owner, member = self._team(conn)
+        users = {user["name"]: user for user in auth.list_users(conn)}
+        assert auth.may_manage_team(conn, users["member"], team) is False
+        auth.set_member_role(conn, team, owner, auth.TEAM_ROLE_OWNER)
+        assert auth.may_manage_team(conn, users["owner"], team) is True
+        _admin, _token = auth.add_user(conn, name="root", role="admin")
+        admin = next(user for user in auth.list_users(conn) if user["name"] == "root")
+        assert auth.may_manage_team(conn, admin, team) is True
+        assert auth.may_manage_team(conn, None, team) is True
+
+    def test_the_member_row_carries_both_roles(self, conn: sqlite3.Connection) -> None:
+        team, owner, _member = self._team(conn)
+        auth.set_member_role(conn, team, owner, auth.TEAM_ROLE_OWNER)
+        team_row = auth.get_team(conn, team)
+        assert team_row is not None
+        entry = next(row for row in team_row["members"] if row["name"] == "owner")
+        assert entry["team_role"] == auth.TEAM_ROLE_OWNER
+        assert entry["portal_role"] == "analyst"
+
+
+class TestOrganisations:
+    """The level above teams: it groups them and decides nothing about access."""
+
+    def test_an_organisation_groups_its_teams(self, conn: sqlite3.Connection) -> None:
+        organisation = auth.create_organisation(conn, name="ACME", description="the org")
+        team = auth.create_team(conn, name="red")
+        assert auth.set_team_organisation(conn, int(team["id"]), int(organisation["id"]))
+        stored = auth.get_organisation(conn, int(organisation["id"]))
+        assert stored is not None
+        assert [entry["name"] for entry in stored["teams"]] == ["red"]
+        assert auth.list_teams(conn)[0]["organisation_name"] == "ACME"
+
+    def test_a_duplicate_name_is_refused(self, conn: sqlite3.Connection) -> None:
+        auth.create_organisation(conn, name="ACME")
+        with pytest.raises(auth.AuthError):
+            auth.create_organisation(conn, name="acme")
+
+    def test_an_unknown_organisation_is_refused(self, conn: sqlite3.Connection) -> None:
+        team = auth.create_team(conn, name="red")
+        with pytest.raises(auth.UnknownOrganisationError):
+            auth.set_team_organisation(conn, int(team["id"]), 999)
+
+    def test_deleting_it_leaves_the_team(self, conn: sqlite3.Connection) -> None:
+        organisation = auth.create_organisation(conn, name="ACME")
+        team = auth.create_team(conn, name="red")
+        auth.set_team_organisation(conn, int(team["id"]), int(organisation["id"]))
+        assert auth.delete_organisation(conn, int(organisation["id"])) is True
+        stored = auth.get_team(conn, int(team["id"]))
+        assert stored is not None
+        assert stored["organisation_id"] is None
+
+
+class TestActiveTeam:
+    """Switching the team a user has selected; membership is required."""
+
+    def test_switching_needs_membership(self, conn: sqlite3.Connection) -> None:
+        user, _token = auth.add_user(conn, name="alice", role="analyst")
+        team = int(auth.create_team(conn, name="red")["id"])
+        with pytest.raises(auth.NotAMemberError):
+            auth.set_active_team(conn, int(user["id"]), team)
+        auth.add_member(conn, team, int(user["id"]))
+        assert auth.set_active_team(conn, int(user["id"]), team) is True
+        switched = auth.get_user(conn, int(user["id"])) or {}
+        assert switched["active_team_id"] == team
+        assert auth.set_active_team(conn, int(user["id"]), None) is True
+        cleared = auth.get_user(conn, int(user["id"])) or {}
+        assert cleared["active_team_id"] is None
+
+    def test_an_unknown_team_is_refused(self, conn: sqlite3.Connection) -> None:
+        user, _token = auth.add_user(conn, name="alice", role="analyst")
+        with pytest.raises(auth.UnknownTeamError):
+            auth.set_active_team(conn, int(user["id"]), 999)
+
+
+class TestTeamRoleAndOrganisationRoutes:
+    """The routes: the role gate, the organisation CRUD and the active team."""
+
+    def test_a_member_cannot_promote_itself_with_auth_on(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        owner, owner_token = auth.add_user(conn, name="owner", role="analyst")
+        member, member_token = auth.add_user(conn, name="member", role="analyst")
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(owner["id"]))
+        auth.add_member(conn, team, int(member["id"]))
+        conn.commit()
+
+        denied = wsgi_request(
+            "PUT",
+            f"/api/teams/{team}/members/{member['id']}/role",
+            body=json.dumps({"role": "owner"}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {member_token}"},
+        )
+        assert denied[0].startswith("403"), denied[2]
+        assert json_body(denied[2], denied[1])["error"] == auth.ERROR_NOT_A_TEAM_OWNER
+
+        allowed = wsgi_request(
+            "PUT",
+            f"/api/teams/{team}/members/{member['id']}/role",
+            body=json.dumps({"role": "owner"}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {owner_token}"},
+        )
+        # The owner is not an owner yet, so the owner cannot promote either.
+        assert allowed[0].startswith("403"), allowed[2]
+
+    def test_the_route_lists_and_creates_organisations(self, portal_db: Path) -> None:
+        created = wsgi_request(
+            "POST",
+            "/api/organisations",
+            body=json.dumps({"name": "ACME"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert created[0].startswith("201"), created[2]
+        organisation = json_body(created[2], created[1])
+        listing = wsgi_request("GET", "/api/organisations")
+        assert json_body(listing[2], listing[1])["count"] == 1
+        removed = wsgi_request("DELETE", f"/api/organisations/{organisation['id']}")
+        assert removed[0].startswith("200"), removed[2]
+        assert json_body(wsgi_request("GET", "/api/organisations")[2], {})["count"] == 0
+
+    def test_a_team_moves_into_an_organisation(self, portal_db: Path) -> None:
+        organisation = json_body(
+            *(lambda response: (response[2], response[1]))(
+                wsgi_request(
+                    "POST",
+                    "/api/organisations",
+                    body=json.dumps({"name": "ACME"}),
+                    headers={"Content-Type": "application/json"},
+                )
+            )
+        )
+        team = json_body(
+            *(lambda response: (response[2], response[1]))(
+                wsgi_request(
+                    "POST",
+                    "/api/teams",
+                    body=json.dumps({"name": "red"}),
+                    headers={"Content-Type": "application/json"},
+                )
+            )
+        )
+        moved = wsgi_request(
+            "PUT",
+            f"/api/teams/{team['id']}/organisation",
+            body=json.dumps({"organisation_id": organisation["id"]}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert moved[0].startswith("200"), moved[2]
+        assert json_body(moved[2], moved[1])["organisation_name"] == "ACME"
+
+    def test_the_active_team_needs_a_caller(self, portal_db: Path) -> None:
+        status, headers, body = wsgi_request(
+            "PUT",
+            "/api/iam/active-team",
+            body=json.dumps({"team_id": 1}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert status.startswith("400"), body
+        assert json_body(body, headers)["error"] == "invalid-team"
+
+
+class TestTeamAdminAndOrganisationEdgeCases:
+    """The role gate's admin path and the organisation routes' refusals."""
+
+    def test_an_admin_may_set_a_member_role(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _admin, token = auth.add_user(conn, name="root", role="admin")
+        member, _member_token = auth.add_user(conn, name="member", role="analyst")
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(member["id"]))
+        conn.commit()
+
+        status, headers, body = wsgi_request(
+            "PUT",
+            f"/api/teams/{team}/members/{member['id']}/role",
+            body=json.dumps({"role": "owner"}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
+        assert status.startswith("200"), body
+        assert auth.member_role(conn, team, int(member["id"])) == auth.TEAM_ROLE_OWNER
+
+        # An unknown role is a 400, and a non-member a 404.
+        bad = wsgi_request(
+            "PUT",
+            f"/api/teams/{team}/members/{member['id']}/role",
+            body=json.dumps({"role": "superuser"}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
+        assert bad[0].startswith("400"), bad[2]
+        assert json_body(bad[2], bad[1])["error"] == auth.ERROR_INVALID_TEAM_ROLE
+
+    def test_the_organisation_routes_refuse_what_they_cannot_do(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        missing = wsgi_request("GET", "/api/organisations/999")
+        assert missing[0].startswith("404"), missing[2]
+        gone = wsgi_request("DELETE", "/api/organisations/999")
+        assert gone[0].startswith("404"), gone[2]
+        duplicate = wsgi_request(
+            "POST",
+            "/api/organisations",
+            body=json.dumps({"name": "ACME"}),
+            headers={"Content-Type": "application/json"},
+        )
+        again = wsgi_request(
+            "POST",
+            "/api/organisations",
+            body=json.dumps({"name": "acme"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert duplicate[0].startswith("201"), duplicate[2]
+        assert again[0].startswith("409"), again[2]
+
+    def test_moving_a_team_to_an_unknown_organisation_is_404(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        team = auth.create_team(conn, name="red")
+        conn.commit()
+        status, headers, body = wsgi_request(
+            "PUT",
+            f"/api/teams/{team['id']}/organisation",
+            body=json.dumps({"organisation_id": 999}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert status.startswith("404"), body
+        assert json_body(body, headers)["error"] == auth.ERROR_ORGANISATION_NOT_FOUND
+
+    def test_the_active_team_route_switches_a_member(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        user, token = auth.add_user(conn, name="alice", role="analyst")
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(user["id"]))
+        conn.commit()
+
+        status, headers, body = wsgi_request(
+            "PUT",
+            "/api/iam/active-team",
+            body=json.dumps({"team_id": team}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
+        assert status.startswith("200"), body
+        assert json_body(body, headers)["active_team_id"] == team
+
+        unknown = wsgi_request(
+            "PUT",
+            "/api/iam/active-team",
+            body=json.dumps({"team_id": 999}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
+        assert unknown[0].startswith("404"), unknown[2]
+
+        cleared = wsgi_request(
+            "PUT",
+            "/api/iam/active-team",
+            body=json.dumps({"team_id": None}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
+        assert cleared[0].startswith("200"), cleared[2]
+        assert json_body(cleared[2], cleared[1])["active_team_id"] is None
+
+
+class TestTeamStructureCli:
+    """The CLI commands entry 2 added: roles, organisations and grouping."""
+
+    def test_the_role_command_promotes_and_refuses(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        user, _token = auth.add_user(conn, name="alice", role="analyst")
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(user["id"]))
+        conn.commit()
+
+        result = runner.invoke(
+            cli.app, ["team-role", str(team), str(user["id"]), "owner", "--json"]
+        )
+        assert result.exit_code == 0, result.output
+        assert auth.member_role(conn, team, int(user["id"])) == auth.TEAM_ROLE_OWNER
+
+        bad_role = runner.invoke(
+            cli.app, ["team-role", str(team), str(user["id"]), "superuser", "--json"]
+        )
+        assert bad_role.exit_code == 1
+        assert auth.ERROR_INVALID_TEAM_ROLE in bad_role.output
+
+        unknown_team = runner.invoke(
+            cli.app, ["team-role", "999", str(user["id"]), "owner", "--json"]
+        )
+        assert unknown_team.exit_code == 1
+
+    def test_the_organisation_commands_round_trip(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        created = runner.invoke(cli.app, ["organisation-add", "ACME", "--json"])
+        assert created.exit_code == 0, created.output
+        organisation_id = json.loads(created.output)["id"]
+
+        team = int(auth.create_team(conn, name="red")["id"])
+        conn.commit()
+        moved = runner.invoke(
+            cli.app, ["team-organisation", str(team), str(organisation_id), "--json"]
+        )
+        assert moved.exit_code == 0, moved.output
+        assert json.loads(moved.output)["organisation_name"] == "ACME"
+
+        listed = runner.invoke(cli.app, ["organisations", "--json"])
+        assert listed.exit_code == 0, listed.output
+        assert json.loads(listed.output)["count"] == 1
+
+        ungrouped = runner.invoke(cli.app, ["team-organisation", str(team), "--json"])
+        assert ungrouped.exit_code == 0, ungrouped.output
+        assert json.loads(ungrouped.output)["organisation_id"] is None
+
+        removed = runner.invoke(cli.app, ["organisation-rm", str(organisation_id), "--json"])
+        assert removed.exit_code == 0, removed.output
+        missing = runner.invoke(cli.app, ["organisation-rm", str(organisation_id), "--json"])
+        assert missing.exit_code == 1
+
+    def test_the_organisation_commands_validate(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        duplicate = runner.invoke(cli.app, ["organisation-add", "ACME", "--json"])
+        assert duplicate.exit_code == 0, duplicate.output
+        again = runner.invoke(cli.app, ["organisation-add", "acme", "--json"])
+        assert again.exit_code == 1
+        assert auth.ERROR_ORGANISATION_EXISTS in again.output
+
+        team = int(auth.create_team(conn, name="red")["id"])
+        conn.commit()
+        unknown = runner.invoke(cli.app, ["team-organisation", str(team), "999", "--json"])
+        assert unknown.exit_code == 1
+        missing_team = runner.invoke(cli.app, ["team-role", "999", "1", "owner", "--json"])
+        assert missing_team.exit_code == 1
+
+
+class TestTeamStructureTools:
+    """The MCP tools entry 2 added, driven through the server."""
+
+    def test_the_role_tool_sets_a_role(self, portal_db: Path, conn: sqlite3.Connection) -> None:
+        user, _token = auth.add_user(conn, name="alice", role="analyst")
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(user["id"]))
+        conn.commit()
+
+        payload, failed = mcp_server.call_tool(
+            "set_team_member_role",
+            {"team_id": team, "user_id": int(user["id"]), "role": "owner"},
+        )
+        assert failed is False, payload
+        assert auth.member_role(conn, team, int(user["id"])) == auth.TEAM_ROLE_OWNER
+        missing, failed = mcp_server.call_tool(
+            "set_team_member_role", {"team_id": 999, "user_id": 1, "role": "owner"}
+        )
+        assert failed is True
+        assert missing["error"] == auth.ERROR_TEAM_NOT_FOUND
+
+    def test_the_organisation_tools_round_trip(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        created, failed = mcp_server.call_tool("create_organisation", {"name": "ACME"})
+        assert failed is False, created
+        organisation_id = int(created["id"])
+        listed, failed = mcp_server.call_tool("list_organisations", {})
+        assert failed is False and listed["count"] == 1
+
+        team = int(auth.create_team(conn, name="red")["id"])
+        conn.commit()
+        moved, failed = mcp_server.call_tool(
+            "set_team_organisation", {"team_id": team, "organisation_id": organisation_id}
+        )
+        assert failed is False, moved
+        assert moved["organisation_name"] == "ACME"
+        bad, failed = mcp_server.call_tool(
+            "set_team_organisation", {"team_id": team, "organisation_id": 999}
+        )
+        assert failed is True
+        removed, failed = mcp_server.call_tool(
+            "delete_organisation", {"organisation_id": organisation_id}
+        )
+        assert failed is False, removed
+        assert (
+            mcp_server.call_tool("delete_organisation", {"organisation_id": organisation_id})[1]
+            is True
+        )

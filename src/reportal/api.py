@@ -9910,11 +9910,16 @@ def delete_secret(name: str, request: Request) -> Response:
 
 
 def _team_failure(exc: auth.AuthError) -> Response:
-    """Map a team validation failure onto its JSON status and error name."""
-    if isinstance(exc, auth.TeamExistsError):
+    """Map a team or organisation failure onto its JSON status and error name."""
+    if isinstance(exc, (auth.TeamExistsError, auth.AuthError)) and exc.code.endswith("-exists"):
         status = 409
-    elif isinstance(exc, auth.UnknownTeamError):
+    elif isinstance(
+        exc,
+        (auth.UnknownTeamError, auth.UnknownOrganisationError, auth.UnknownUserError),
+    ):
         status = 404
+    elif isinstance(exc, auth.NotAMemberError):
+        status = 403
     else:
         status = 400
     return json_error(status, error=exc.code, detail=exc.detail)
@@ -9926,6 +9931,141 @@ def _caller_team_ids(conn: sqlite3.Connection, request: Request) -> list[int]:
     if user is None:
         return []
     return [int(team["id"]) for team in auth.teams_of_user(conn, int(user["id"]))]
+
+
+@router.get("/api/organisations")
+def list_organisations() -> Response:
+    """Every organisation with the teams it holds; a structural read.
+
+    An organisation is the hosted portal's one level above teams and is not
+    access control: an object's team still decides who may read or write it.
+    """
+    with contextlib.closing(_open()) as conn:
+        organisations = auth.list_organisations(conn)
+    return json_response({"organisations": organisations, "count": len(organisations)})
+
+
+@router.post("/api/organisations")
+def create_organisation(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Create an organisation; journaled and revertible."""
+    name = _require_str(body, "name")
+    description = _optional_str(body, "description")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                organisation = auth.create_organisation(conn, name=name, description=description)
+            except auth.AuthError as exc:
+                return _team_failure(exc)
+            journal.journaled_create(
+                log,
+                table=auth.ORG_TABLE,
+                key=int(organisation["id"]),
+                description=f"created organisation {organisation['name']}",
+            )
+    return json_response(log.attach(organisation), status=201)
+
+
+@router.get("/api/organisations/{organisation_id}")
+def get_organisation(organisation_id: int) -> Response:
+    """One organisation with the teams it holds."""
+    with contextlib.closing(_open()) as conn:
+        organisation = auth.get_organisation(conn, organisation_id)
+    if organisation is None:
+        return json_error(
+            404,
+            error=auth.ERROR_ORGANISATION_NOT_FOUND,
+            detail=f"no organisation with id {organisation_id}",
+        )
+    return json_response(organisation)
+
+
+@router.delete("/api/organisations/{organisation_id}")
+def delete_organisation(organisation_id: int) -> Response:
+    """Delete an organisation; its teams stay and simply stop being grouped."""
+    with contextlib.closing(_open()) as conn:
+        if auth.get_organisation(conn, organisation_id) is None:
+            return json_error(
+                404,
+                error=auth.ERROR_ORGANISATION_NOT_FOUND,
+                detail=f"no organisation with id {organisation_id}",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.ORG_TABLE,
+                where="id = ?",
+                params=(organisation_id,),
+                description=f"deleted organisation {organisation_id}",
+            )
+            auth.delete_organisation(conn, organisation_id)
+    return json_response(log.attach({"deleted": organisation_id}))
+
+
+@router.put("/api/teams/{team_id}/organisation")
+def set_team_organisation(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Move a team into an organisation, or out of every one; journaled.
+
+    The body is ``{"organisation_id": <id>|null}``.  Only an organisation owner
+    or an admin may move a team, so a team cannot be filed away by anyone who
+    happens to be in it.
+    """
+    raw = body.get("organisation_id")
+    if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
+        return json_error(
+            400, error=auth.ERROR_INVALID_ORGANISATION, detail="organisation_id must be an integer"
+        )
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TEAM_TABLE,
+                where="id = ?",
+                params=(team_id,),
+                description=f"moved team {team_id} to organisation {raw}",
+            )
+            try:
+                auth.set_team_organisation(conn, team_id, raw)
+            except auth.AuthError as exc:
+                return _team_failure(exc)
+            team = auth.get_team(conn, team_id)
+    return json_response(log.attach(team or {}))
+
+
+@router.put("/api/iam/active-team")
+def set_active_team(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Switch the team the caller has selected, or clear it with null.
+
+    A view preference rather than a permission: the caller sees every team it
+    belongs to either way, and the SPA filters its team lists to the active one
+    when it is set.  Membership is still required, so a caller cannot select a
+    team it is not in.
+    """
+    raw = body.get("team_id")
+    if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
+        return json_error(400, error="team_id must be an integer")
+    with contextlib.closing(_open()) as conn:
+        caller = _caller(request)
+        if caller is None:
+            return json_error(
+                400,
+                error="invalid-team",
+                detail="an active team needs token auth; the local operator sees every team",
+            )
+        try:
+            auth.set_active_team(conn, int(caller["id"]), raw)
+        except auth.AuthError as exc:
+            return _team_failure(exc)
+        user = auth.get_user(conn, int(caller["id"]))
+    return json_response({"active_team_id": None if user is None else user["active_team_id"]})
 
 
 @router.get("/api/teams")
@@ -9955,6 +10095,53 @@ def create_team(body: dict[str, Any] = Depends(json_body)) -> Response:
                 description=f"created team {team['name']}",
             )
     return json_response(log.attach(team), status=201)
+
+
+@router.put("/api/teams/{team_id}/members/{user_id}/role")
+def set_team_member_role(
+    request: Request, team_id: int, user_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Set one membership's team role (owner or member); journaled.
+
+    Only a team's own owner or an admin may promote or demote, which is the one
+    place a team role is enforced; a member may still work on what the team
+    owns.
+    """
+    role = _require_str(body, "role")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        caller = _caller(request)
+        if not auth.may_manage_team(conn, caller, team_id):
+            return json_error(
+                403,
+                error=auth.ERROR_NOT_A_TEAM_OWNER,
+                detail=f"the caller does not own team {team_id}",
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            snapshot = journal.journaled_rows(
+                conn,
+                log,
+                table=auth.MEMBER_TABLE,
+                where="team_id = ? AND user_id = ?",
+                params=(team_id, user_id),
+                description=f"set user {user_id}'s role in team {team_id}",
+            )
+            try:
+                changed = auth.set_member_role(conn, team_id, user_id, role)
+            except auth.AuthError as exc:
+                return _team_failure(exc)
+            team = auth.get_team(conn, team_id)
+    if not snapshot or not changed:
+        return json_error(
+            404,
+            error=auth.ERROR_NOT_A_MEMBER,
+            detail=f"user {user_id} is not in team {team_id}",
+        )
+    return json_response(log.attach(team or {}))
 
 
 @router.get("/api/teams/{team_id}")

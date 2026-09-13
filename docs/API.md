@@ -39,11 +39,18 @@ their pages by the same rule.
 | `/api/users/<id>` | DELETE | delete one user; journaled, so a revert puts the row back |
 | `/api/teams` | GET | every team with its `member_count`; readable by any authenticated caller |
 | `/api/teams` | POST | create a team; body `{"name", "description"?}`; 201, journaled and revertible; 400 `invalid-team` for a blank name, 409 `team-exists` |
-| `/api/teams/<id>` | GET | one team with its members (each `id`, `name`, `role`); 404 `team-not-found` |
+| `/api/teams/<id>` | GET | one team with its members (each `id`, `name`, `portal_role` and `team_role`) and its `organisation_id`/`organisation_name`; 404 `team-not-found` |
 | `/api/teams/<id>` | PATCH | set the team's `name` or `description` (400 `invalid-team` with neither); journaled |
 | `/api/teams/<id>` | DELETE | delete a team; the binaries and collections it owned return to the whole workspace, and the revert restores the team, its members and their scope |
 | `/api/teams/<id>/members` | POST | add a user; body `{"user_id"}`; 201 with the team, 400 `invalid-team` for an unknown or already-member user; journaled |
 | `/api/teams/<id>/members/<user_id>` | DELETE | remove a membership (404 `not-a-team-member` when it does not exist); journaled |
+| `/api/teams/<id>/members/<user_id>/role` | PUT | set one membership's team role; body `{"role": "owner"\|"member"}`; 403 `not-a-team-owner` unless the caller owns the team or is an admin, 404 `not-a-team-member` for a non-member, 400 `invalid-team-role` for an unknown role; journaled |
+| `/api/teams/<id>/organisation` | PUT | move a team into an organisation or out of every one; body `{"organisation_id": <id>\|null}`; 404 `organisation-not-found` for an unknown id, 400 `invalid-organisation` for a non-integer; journaled |
+| `/api/organisations` | GET | every organisation with the teams it holds; an organisation groups teams and is not access control |
+| `/api/organisations` | POST | create an organisation; body `{"name", "description"?}`; 201, journaled; 400 `invalid-organisation` for a blank name, 409 `organisation-exists` |
+| `/api/organisations/<id>` | GET | one organisation with its teams; 404 `organisation-not-found` |
+| `/api/organisations/<id>` | DELETE | delete an organisation; its teams stay and stop being grouped; journaled |
+| `/api/iam/active-team` | PUT | switch the team the caller has selected; body `{"team_id": <id>\|null}`; membership required (403 `not-a-team-member`), 404 `team-not-found` for an unknown team, 400 `invalid-team` while auth is off because there is no caller to switch |
 | `/api/binaries/<id>/scope` | PATCH | set a binary's visibility: body `{"visibility": "public"}` or `{"visibility": "team", "team_id": N}` (400 `invalid-team` for a missing or unknown team, 404 for an unknown binary); if the binary already belongs to a team the caller is not in, 403 `scope-forbidden`; journaled and revertible |
 | `/api/collections/<id>/scope` | PATCH | the same for a collection; journaled and revertible |
 | `/api/health` | GET | status, version, database path, row counts |

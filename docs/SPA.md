@@ -541,6 +541,17 @@ feed reports) and carries the feedback form: a note posts to
 `POST /api/users/feedback` and the stored notes render under it, so the feed and
 the notes are on the page an operator already opens to manage identity.
 
+The Users view's identity half carries the team structure.  Its Teams panel reads
+`GET /api/teams` and renders id, name, member count, the owning organisation and
+the description, with a create form, a per-row organisation select that PUTs
+`/api/teams/<id>/organisation`, an "add member" select and a Delete behind the
+confirm pattern.  A row's `Members` button opens that team's detail
+(`GET /api/teams/<id>`) as a second table whose Team role column is a select per
+member (owner or member) PUTing `/api/teams/<id>/members/<user_id>/role`, so a
+team can be managed from the browser.  Above it, an organisation table reads
+`GET /api/organisations` with a create form and a Delete per row; the panel says
+in place that an organisation groups teams and decides nothing about access.
+
 The Users view also carries the Teams panel: `GET /api/teams` as a table (id,
 name, member count, description) with a create form, a per-row "add member"
 select over the known users and a Delete behind the confirm pattern, so team

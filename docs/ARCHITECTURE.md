@@ -2302,6 +2302,36 @@ so the category view and the table cannot disagree, and `category_notes` states
 that the local `malware` bucket is a match rather than a family verdict, because
 reportal matches by assembly similarity and holds no threat feed.
 
+## Identity, teams and organisations
+
+`auth.py` owns the users, teams, team memberships and organisations, the role
+permission sets, the digest-only token storage and the constant-time comparison.
+Two role axes are deliberately separate.  A user's *portal* role
+(`viewer`/`analyst`/`admin`) decides which `/api` routes the gate admits; a
+membership's *team* role (`owner`/`member`) decides who may manage that team.
+An admin may manage any team (`may_manage_team`), which is the one exception and
+the reason a lockout is recoverable; a team's owner may rename it, set its
+members and change roles; a plain member works on what the team owns.  The
+authorization rule for an object is unchanged and stays in `visible_clause` and
+`may_write`: a public object is readable by everyone and a team object only by
+its team.
+
+An organisation is the hosted portal's level above teams and is *structure, not
+access control*: it groups teams, and `organisations` plus a team's
+`organisation_id` is all it is.  No read or write consults it, which is stated
+where a reader will look rather than left to be discovered.  Deleting an
+organisation leaves its teams in place.
+
+A user's `active_team_id` is a view preference, not a permission: every listing
+still shows everything the caller may see, and the switch exists so the SPA and
+the CLI can filter their team lists to one team.  Membership is required to
+select a team, so the setting cannot point at a team the caller is not in.  None
+of these columns existed when identity first shipped, so all three are in
+`store._ADDED_COLUMNS`: a membership that predates the role column is `member`
+(the only role such an install had), a team that predates the hierarchy belongs
+to no organisation, and a user that predates the switch has no active team,
+which reads as "see every team".
+
 ## Detect
 
 `families.py` is local malware-family matching, behind the Detect panel, the

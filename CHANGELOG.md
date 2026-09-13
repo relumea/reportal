@@ -95,6 +95,9 @@ entry.
 - A conversation about reportal itself: the `docs` scope ingests the shipped
   manual on the first question and answers from it, with a per-scope canned
   prompt list in the Conversations view.
+- Team roles and organisations: a membership carries owner or member (only an
+  owner or an admin may manage a team), an organisation groups teams without
+  deciding access, and a user can switch the team the portal shows.
 - Composition scoping and the hosted categories: a summary can be limited to
   chosen binaries or collections (the match-settings vocabulary), the stored
   scan records the scope it ran under, and the payload groups functions into

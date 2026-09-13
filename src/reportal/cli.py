@@ -780,6 +780,172 @@ def team_member(
     _print_journal_action(log, json_output)
 
 
+@app.command("team-role")
+def team_role(
+    team_id: int = typer.Argument(..., help="Team id"),
+    user_id: int = typer.Argument(..., help="Member to promote or demote"),
+    role: str = typer.Argument("owner", help="owner or member"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Set one member's team role: owner (may manage the team) or member."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_team(conn, team_id) is None:
+            _fail(f"no team with id {team_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.MEMBER_TABLE,
+                where="team_id = ? AND user_id = ?",
+                params=(team_id, user_id),
+                description=f"set user {user_id}'s role in team {team_id}",
+            )
+            try:
+                changed = auth.set_member_role(conn, team_id, user_id, role)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+            team = auth.get_team(conn, team_id)
+    if not changed:
+        _fail(f"user {user_id} is not in team {team_id}", json_output)
+    payload = log.attach(team or {})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Set[/green] user {user_id} to {role} in team {team_id}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("organisations")
+def organisations_command(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The organisations and the teams each holds; structure, not access."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        organisations = auth.list_organisations(conn)
+    if json_output:
+        typer.echo(json.dumps({"organisations": organisations, "count": len(organisations)}))
+        return
+    table = Table(title="organisations", show_header=True, header_style="bold")
+    table.add_column("Id", justify="right", style="magenta")
+    table.add_column("Name")
+    table.add_column("Teams")
+    for organisation in organisations:
+        table.add_row(
+            str(organisation["id"]),
+            str(organisation["name"]),
+            ", ".join(str(team["name"]) for team in organisation["teams"]) or "n/a",
+        )
+    console.print(table)
+
+
+@app.command("organisation-add")
+def organisation_add(
+    name: str = typer.Argument(..., help="Organisation name"),
+    description: str = typer.Option("", "--description", help="Optional description"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Create one organisation; journaled and revertible."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                organisation = auth.create_organisation(conn, name=name, description=description)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+            journal.journaled_create(
+                log,
+                table=auth.ORG_TABLE,
+                key=int(organisation["id"]),
+                description=f"created organisation {organisation['name']}",
+            )
+    payload = log.attach(organisation)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Created[/green] organisation {organisation['name']}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("organisation-rm")
+def organisation_rm(
+    organisation_id: int = typer.Argument(..., help="Organisation id"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete one organisation; its teams stay and stop being grouped."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_organisation(conn, organisation_id) is None:
+            _fail(f"no organisation with id {organisation_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.ORG_TABLE,
+                where="id = ?",
+                params=(organisation_id,),
+                description=f"deleted organisation {organisation_id}",
+            )
+            auth.delete_organisation(conn, organisation_id)
+    if json_output:
+        typer.echo(json.dumps(log.attach({"deleted": organisation_id})))
+        return
+    console.print(f"[green]Deleted[/green] organisation {organisation_id}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("team-organisation")
+def team_organisation(
+    team_id: int = typer.Argument(..., help="Team id"),
+    organisation_id: int = typer.Argument(None, help="Organisation id; omit to ungroup"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Move a team into an organisation, or out of every one; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_team(conn, team_id) is None:
+            _fail(f"no team with id {team_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TEAM_TABLE,
+                where="id = ?",
+                params=(team_id,),
+                description=f"moved team {team_id} to organisation {organisation_id}",
+            )
+            try:
+                auth.set_team_organisation(conn, team_id, organisation_id)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+            team = auth.get_team(conn, team_id)
+    payload = log.attach(team or {})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"[green]Moved[/green] team {team_id} to organisation {organisation_id}"
+        if organisation_id is not None
+        else f"[green]Ungrouped[/green] team {team_id}"
+    )
+    _print_journal_action(log, json_output)
+
+
 def _run_scope(
     portal_db: Path,
     *,

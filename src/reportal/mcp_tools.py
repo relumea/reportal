@@ -4249,6 +4249,99 @@ def _tool_set_binary_scope(arguments: dict[str, Any]) -> dict[str, Any]:
     return _set_object_scope(arguments, kind="binary")
 
 
+def _tool_set_team_member_role(arguments: dict[str, Any]) -> dict[str, Any]:
+    team_id = _arg_int(arguments, "team_id")
+    user_id = _arg_int(arguments, "user_id")
+    role = _arg_str(arguments, "role")
+    with contextlib.closing(_open()) as conn:
+        team = auth.get_team(conn, team_id)
+        if team is None:
+            raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.MEMBER_TABLE,
+                where="team_id = ? AND user_id = ?",
+                params=(team_id, user_id),
+                description=f"set user {user_id}'s role in team {team_id}",
+            )
+            try:
+                changed = auth.set_member_role(conn, team_id, user_id, role)
+            except auth.AuthError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            if not changed:
+                raise ToolError(auth.ERROR_NOT_A_MEMBER, f"user {user_id} is not in team {team_id}")
+            return log.attach(auth.get_team(conn, team_id) or {})
+
+
+def _tool_list_organisations(arguments: dict[str, Any]) -> dict[str, Any]:
+    with contextlib.closing(_open()) as conn:
+        organisations = auth.list_organisations(conn)
+    return {"organisations": organisations, "count": len(organisations)}
+
+
+def _tool_create_organisation(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    description = _arg_optional_str(arguments, "description")
+    with contextlib.closing(_open()) as conn:
+        try:
+            organisation = auth.create_organisation(conn, name=name, description=description)
+        except auth.AuthError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_create(
+                log,
+                table=auth.ORG_TABLE,
+                key=int(organisation["id"]),
+                description=f"created organisation {organisation['name']}",
+            )
+            return log.attach(organisation)
+
+
+def _tool_delete_organisation(arguments: dict[str, Any]) -> dict[str, Any]:
+    organisation_id = _arg_int(arguments, "organisation_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_organisation(conn, organisation_id) is None:
+            raise ToolError(
+                auth.ERROR_ORGANISATION_NOT_FOUND,
+                f"no organisation with id {organisation_id}",
+            )
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.ORG_TABLE,
+                where="id = ?",
+                params=(organisation_id,),
+                description=f"deleted organisation {organisation_id}",
+            )
+            auth.delete_organisation(conn, organisation_id)
+            return log.attach({"deleted": organisation_id})
+
+
+def _tool_set_team_organisation(arguments: dict[str, Any]) -> dict[str, Any]:
+    team_id = _arg_int(arguments, "team_id")
+    organisation_id = _arg_optional_int(arguments, "organisation_id", 0) or None
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.TEAM_TABLE,
+                where="id = ?",
+                params=(team_id,),
+                description=f"moved team {team_id} to organisation {organisation_id}",
+            )
+            try:
+                auth.set_team_organisation(conn, team_id, organisation_id)
+            except auth.AuthError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(auth.get_team(conn, team_id) or {})
+
+
 def _tool_set_collection_scope(arguments: dict[str, Any]) -> dict[str, Any]:
     return _set_object_scope(arguments, kind="collection")
 
@@ -7778,6 +7871,63 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"limit": _int("How many waiting jobs to run (default 1).")}),
             _WRITE,
             _tool_run_jobs,
+        ),
+        Tool(
+            "set_team_member_role",
+            "Set one member's team role: owner (may rename the team, set its members"
+            " and change roles) or member.",
+            _object(
+                {
+                    "team_id": _int("Team id."),
+                    "user_id": _int("The member to set."),
+                    "role": _enum("Team role.", auth.TEAM_ROLES),
+                },
+                ("team_id", "user_id", "role"),
+            ),
+            _WRITE,
+            _tool_set_team_member_role,
+        ),
+        Tool(
+            "list_organisations",
+            "Every organisation with the teams it holds; an organisation groups teams"
+            " and is not access control.",
+            _object({}, ()),
+            _READ,
+            _tool_list_organisations,
+        ),
+        Tool(
+            "create_organisation",
+            "Create an organisation, the level above teams; journaled.",
+            _object(
+                {
+                    "name": _str("Organisation name, unique case-insensitively."),
+                    "description": _str("Optional description."),
+                },
+                ("name",),
+            ),
+            _WRITE,
+            _tool_create_organisation,
+        ),
+        Tool(
+            "delete_organisation",
+            "Delete an organisation; its teams stay and stop being grouped.",
+            _object({"organisation_id": _int("Organisation id.")}, ("organisation_id",)),
+            _WRITE,
+            _tool_delete_organisation,
+        ),
+        Tool(
+            "set_team_organisation",
+            "Move a team into an organisation, or out of every one when"
+            " organisation_id is omitted; journaled.",
+            _object(
+                {
+                    "team_id": _int("Team id."),
+                    "organisation_id": _int("Organisation id; omit to ungroup."),
+                },
+                ("team_id",),
+            ),
+            _WRITE,
+            _tool_set_team_organisation,
         ),
         Tool(
             "list_journal",

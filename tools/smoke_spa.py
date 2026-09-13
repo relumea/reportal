@@ -882,7 +882,15 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
     (
         "users",
         "#/users",
-        (("Identity",), ("single local user",), ("Bearer token",), ("Create user",)),
+        (
+            ("Identity",),
+            ("single local user",),
+            ("Bearer token",),
+            ("Create user",),
+            # The team structure: its roles and the level above teams (entry 2).
+            ("New organisation",),
+            ("An organisation groups teams and decides nothing about access",),
+        ),
     ),
     (
         "external sources",

@@ -35,6 +35,8 @@ import type {
   ActivityPayload,
   FeedbackPayload,
   Me,
+  OrganisationRow,
+  OrganisationsPayload,
   SecretRow,
   SecretsPayload,
   TeamRow,
@@ -136,8 +138,11 @@ function NewUser({ onCreated }: { onCreated: () => void }): ReactNode {
 /** The teams, their membership and the create/delete controls. */
 function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => void }): ReactNode {
   const teams = useAsync(() => api<TeamsPayload>("/teams"), []);
+  const organisations = useAsync(() => api<OrganisationsPayload>("/organisations"), []);
   const [name, setName] = useState("");
+  const [organisationName, setOrganisationName] = useState("");
   const [member, setMember] = useState<Record<number, string>>({});
+  const [open, setOpen] = useState<TeamRow | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
 
@@ -186,7 +191,67 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
         >
           Create team
         </Button>
+        <Field label="New organisation">
+          <input
+            placeholder="organisation name"
+            value={organisationName}
+            onChange={(event) => setOrganisationName(event.target.value)}
+          />
+        </Field>
+        <Button
+          pending={busy === "create-organisation"}
+          disabled={!organisationName.trim()}
+          onClick={() =>
+            act("create-organisation", () =>
+              api("/organisations", {
+                method: "POST",
+                json: { name: organisationName.trim() },
+              }).then(() => {
+                setOrganisationName("");
+                organisations.reload();
+              }),
+            )
+          }
+        >
+          Create organisation
+        </Button>
       </Toolbar>
+      <Muted>
+        An organisation groups teams and decides nothing about access: the team that owns an object
+        is still what permits a read or a write.
+      </Muted>
+      {(organisations.data?.organisations ?? []).length ? (
+        <DataTable
+          columns={[
+            { label: "ID", key: "id", numeric: true },
+            { label: "Organisation", key: "name" },
+            {
+              label: "Teams",
+              render: (row: OrganisationRow) =>
+                row.teams.length ? row.teams.map((team) => team.name).join(", ") : "n/a",
+            },
+            {
+              label: "",
+              render: (row: OrganisationRow) => (
+                <ConfirmButton
+                  label="Delete"
+                  message={`Delete organisation ${row.name}? Its teams stay.`}
+                  pending={busy === `organisation-${row.id}`}
+                  onConfirm={() =>
+                    act(`organisation-${row.id}`, () =>
+                      api(`/organisations/${row.id}`, { method: "DELETE" }).then(() =>
+                        organisations.reload(),
+                      ),
+                    )
+                  }
+                />
+              ),
+            },
+          ]}
+          rows={organisations.data?.organisations ?? []}
+          rowKey={(row: OrganisationRow) => row.id}
+        />
+      ) : null}
       {teams.data === undefined ? (
         <Loading label="Loading teams" />
       ) : rows.length === 0 ? (
@@ -197,6 +262,7 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
             { label: "ID", key: "id", numeric: true },
             { label: "Name", key: "name" },
             { label: "Members", key: "member_count", numeric: true },
+            { label: "Organisation", render: (row: TeamRow) => row.organisation_name ?? "n/a" },
             { label: "Description", key: "description" },
             {
               label: "Add member",
@@ -227,9 +293,40 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
               ),
             },
             {
+              label: "Organisation",
+              render: (row: TeamRow) => (
+                <select
+                  aria-label={`move ${row.name} to an organisation`}
+                  value={row.organisation_id ?? ""}
+                  onChange={(event) =>
+                    act(`organisation-${row.id}`, () =>
+                      api(`/teams/${row.id}/organisation`, {
+                        method: "PUT",
+                        json: {
+                          organisation_id: event.target.value
+                            ? Number(event.target.value)
+                            : null,
+                        },
+                      }).then(() => organisations.reload()),
+                    )
+                  }
+                >
+                  <option value="">none</option>
+                  {(organisations.data?.organisations ?? []).map((organisation) => (
+                    <option key={organisation.id} value={organisation.id}>
+                      {organisation.name}
+                    </option>
+                  ))}
+                </select>
+              ),
+            },
+            {
               label: "Actions",
               render: (row: TeamRow) => (
                 <div className="actions-cell">
+                  <Button size="sm" onClick={() => setOpen(open?.id === row.id ? null : row)}>
+                    {open?.id === row.id ? "Hide members" : "Members"}
+                  </Button>
                   <ConfirmButton
                     label="Delete"
                     message={`Delete team ${row.name}? The objects it owns return to the workspace.`}
@@ -244,7 +341,89 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
           rowKey={(row) => row.id}
         />
       )}
+      {open ? (
+        <TeamMembers
+          team={open}
+          busy={busy}
+          onRole={(userId, role) =>
+            act(`role-${open.id}-${userId}`, () =>
+              api(`/teams/${open.id}/members/${userId}/role`, {
+                method: "PUT",
+                json: { role },
+              }).then(() => setOpen((current) => current)),
+            )
+          }
+          onRemove={(userId) =>
+            act(`remove-${open.id}-${userId}`, () =>
+              api(`/teams/${open.id}/members/${userId}`, { method: "DELETE" }),
+            )
+          }
+        />
+      ) : null}
     </Panel>
+  );
+}
+
+/** One team's members with the role each holds in it. */
+function TeamMembers({
+  team,
+  busy,
+  onRole,
+  onRemove,
+}: {
+  team: TeamRow;
+  busy: string;
+  onRole: (userId: number, role: string) => void;
+  onRemove: (userId: number) => void;
+}): ReactNode {
+  const detail = useAsync(() => api<TeamRow>(`/teams/${team.id}`), [team.id]);
+  const members = detail.data?.members ?? [];
+  return (
+    <>
+      <h3>{team.name} members</h3>
+      <Muted>
+        A team owner may rename the team, set its members and change roles; a member works on what
+        the team owns. An admin may manage any team, which is what keeps a lockout recoverable.
+      </Muted>
+      {detail.error ? <ErrorNote error={detail.error} onRetry={detail.reload} /> : null}
+      <DataTable
+        columns={[
+          { label: "ID", key: "id", numeric: true },
+          { label: "User", key: "name" },
+          { label: "Portal role", key: "portal_role" },
+          {
+            label: "Team role",
+            render: (row) => (
+              <select
+                aria-label={`role of ${row.name} in ${team.name}`}
+                value={row.team_role}
+                disabled={busy.startsWith("role-")}
+                onChange={(event) => onRole(row.id, event.target.value)}
+              >
+                <option value="owner">owner</option>
+                <option value="member">member</option>
+              </select>
+            ),
+          },
+          {
+            label: "",
+            render: (row) => (
+              <Button
+                size="sm"
+                tone="ghost"
+                pending={busy === `remove-${team.id}-${row.id}`}
+                onClick={() => onRemove(row.id)}
+              >
+                Remove
+              </Button>
+            ),
+          },
+        ]}
+        rows={members}
+        rowKey={(row) => row.id}
+        empty={<Muted>No members yet.</Muted>}
+      />
+    </>
   );
 }
 

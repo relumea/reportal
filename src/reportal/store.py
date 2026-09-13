@@ -532,6 +532,16 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # predates the column was written before the registry existed, so the empty
     # default reads as "no model recorded" rather than an invented one.
     ("analyses", "model", "TEXT NOT NULL DEFAULT ''"),
+    # A team member's role inside the team, and the team a user has switched to.
+    # A membership that predates the column was created before team roles
+    # existed, and the only role every such install had was the equal member, so
+    # ``member`` is the one defensible default; no active team means the caller
+    # sees every team it belongs to, which is what every pre-switch install did.
+    ("team_members", "role", "TEXT NOT NULL DEFAULT 'member'"),
+    ("users", "active_team_id", "INTEGER"),
+    # The organisation a team belongs to.  A team that predates the hierarchy
+    # belongs to none, which is what a standalone install meant.
+    ("teams", "organisation_id", "INTEGER"),
 )
 
 # Statements run after the columns above are added, to fill what an existing
@@ -557,9 +567,12 @@ def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.closing(connect(db_path)) as conn:
         conn.executescript(_SCHEMA)
-        _upgrade_schema(conn)
-        analysis_log.ensure_schema(conn)
+        # The identity and log tables come first: the column upgrade below
+        # touches tables they create, so a fresh database has to carry them
+        # before it runs.
         auth.ensure_schema(conn)
+        analysis_log.ensure_schema(conn)
+        _upgrade_schema(conn)
 
 
 def _rows(cursor: sqlite3.Cursor) -> list[dict[str, Any]]:

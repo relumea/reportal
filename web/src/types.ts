@@ -2039,14 +2039,41 @@ export interface DieInfo {
 }
 
 /** One team and, on the detail read, its members. */
+export interface TeamMember {
+  id: number;
+  name: string;
+  /** The member's portal role (viewer/analyst/admin). */
+  portal_role: string;
+  /** The member's role inside this team: owner or member. */
+  team_role: string;
+}
+
 export interface TeamRow {
   id: number;
   name: string;
   description: string;
   created_at: string;
   member_count: number;
+  organisation_id: number | null;
+  organisation_name: string | null;
   /** Present on `GET /api/teams/<id>` only. */
-  members?: { id: number; name: string; role: string }[];
+  members?: TeamMember[];
+}
+
+/** One organisation: the level above teams, a grouping and nothing more. */
+export interface OrganisationRow {
+  id: number;
+  name: string;
+  description: string;
+  created_at: string;
+  teams: Array<{ id: number; name: string }>;
+  team_count: number;
+}
+
+/** `GET /api/organisations`. */
+export interface OrganisationsPayload {
+  organisations: OrganisationRow[];
+  count: number;
 }
 
 /** `GET /api/teams`: every team and the count. */

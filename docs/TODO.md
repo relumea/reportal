@@ -97,14 +97,29 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   `owner_team_id`/`visibility`, membership is managed over HTTP, the CLI and
   MCP, and a non-member's read is a 404 while its write is 403.  Roles exist
   (`viewer`/`analyst`/`admin`).
-- **Status:** Closed for teams, roles and the team scope.  Still open, and
-  stated as such in `docs/PARITY.md` cluster F: organisations and the groups
-  inside them (no hierarchy, no org-level credits), team roles beyond
-  membership (every member is equal inside a team), an active-team setting (a
-  caller sees every team it belongs to, which is the union rather than a
-  switch) and team switching in the SPA.  None of that is access control the
-  current model needs; it is structure the hosted product sells.
-- Size: L for the rest (organisations, groups, per-team roles).
+- **Status:** Closed.  The team scope, team roles, organisations and the
+  active-team switch all shipped.  A `team_members` row carries a `role`
+  (`owner`/`member`): an owner may rename the team, set its members and change
+  roles, a member works on what the team owns, and an admin may manage any
+  team, which is what keeps a lockout recoverable (`may_manage_team`,
+  `PUT /api/teams/<id>/members/<user_id>/role`, `reportal team-role`, the
+  `set_team_member_role` tool, and the Users view's per-team Members table with
+  a role select per row).  An `organisations` table sits one level above teams:
+  `GET`/`POST /api/organisations`, `GET`/`DELETE
+  /api/organisations/<id>`, `PUT /api/teams/<id>/organisation` (the body's
+  `organisation_id` or null to ungroup), the `reportal organisations`,
+  `organisation-add`, `organisation-rm` and `team-organisation` commands, the
+  `list_organisations`/`create_organisation`/`delete_organisation`/
+  `set_team_organisation` tools, and the Users view's organisation table with a
+  per-team select.  `PUT /api/iam/active-team` switches the team a user has
+  selected (membership required, an admin may select any team; null clears it)
+  and `GET /api/iam/me` reports `active_team_id`.  Deliberate gap, stated
+  rather than hidden: an organisation is structure, not access control, which
+  `docs/ARCHITECTURE.md` and the SPA say in place; the hosted per-organisation
+  credits and the groups inside an organisation (org-level teams with their own
+  credits) are a hosted billing concept with no local meaning, and there is no
+  credit model here to attach them to.  Covered by `TestTeamRoles`,
+  `TestOrganisations`, `TestActiveTeam` and `TestTeamRoleAndOrganisationRoutes`.
 
 ### 3. Secret store
 

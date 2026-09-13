@@ -535,6 +535,18 @@ reportal team-rm <team-id> [--yes] [--json]
                                            #   return to the whole workspace
 reportal team-member <team-id> <user-id> [--remove] [--json]
                                            # add or remove a membership; journaled
+reportal team-role <team-id> <user-id> [owner|member] [--json]
+                                           # set one member's team role: an
+                                           #   owner manages the team; journaled
+reportal organisations [--json]            # the organisations and the teams each
+                                           #   holds; a grouping, not access
+reportal organisation-add NAME [--description TEXT] [--json]
+                                           # create an organisation; journaled
+reportal organisation-rm <organisation-id> [--json]
+                                           # delete an organisation; its teams stay
+reportal team-organisation <team-id> [<organisation-id>] [--json]
+                                           # move a team into an organisation, or
+                                           #   ungroup it by omitting the id
 reportal binary-scope <binary-id> [--visibility public|team] [--team ID] [--json]
                                            # who may see one binary; journaled
 reportal collection-scope <collection-id> [--visibility public|team] [--team ID] [--json]
