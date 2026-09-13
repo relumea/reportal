@@ -2254,7 +2254,11 @@ class TestCommentAndBulkTools:
         assert store.list_matches(conn, ids["first"]) == []
 
 
-def test_cli_mcp_help_lists_the_command() -> None:
+def test_cli_mcp_help_lists_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The help is laid out to the terminal width, and a narrow one truncates
+    # the option column with an ellipsis, so the width is pinned rather than
+    # inherited from whichever terminal (or runner) happens to run the suite.
+    monkeypatch.setenv("COLUMNS", "200")
     result = runner.invoke(cli.app, ["mcp", "--help"])
     assert result.exit_code == 0
     assert "stdio" in result.output

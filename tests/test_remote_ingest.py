@@ -736,7 +736,7 @@ class TestCli:
         assert payload["scope_kind"] == "project"
         assert payload["scope_id"] == 0
 
-    def test_an_unknown_binary_exits_non_zero(self, remote_on: None) -> None:
+    def test_an_unknown_binary_exits_non_zero(self, portal_db: Path, remote_on: None) -> None:
         result = runner.invoke(cli.app, ["ingest-url", "404", "http://example.com/notes.md"])
         assert result.exit_code == 1
         assert "no binary with id 404" in result.output
