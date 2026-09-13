@@ -49,6 +49,7 @@ from reportal import (
     graph_backends,
     hardening,
     instance,
+    jobs,
     journal,
     knowledge,
     lineage,
@@ -3321,6 +3322,65 @@ def _tool_list_notifications(arguments: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _tool_list_jobs(arguments: dict[str, Any]) -> dict[str, Any]:
+    limit = _arg_optional_int(arguments, "limit", jobs.DEFAULT_JOB_LIMIT)
+    status = _arg_optional_str(arguments, "status")
+    kind = _arg_optional_str(arguments, "kind")
+    with contextlib.closing(_open()) as conn:
+        try:
+            rows, total = jobs.list_jobs(
+                conn, status=status or None, kind=kind or None, limit=limit
+            )
+        except ValueError as exc:
+            raise ToolError("invalid job query", str(exc)) from exc
+        queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED)
+    return {"jobs": rows, "count": len(rows), "total": total, "queued": queued}
+
+
+def _tool_get_job(arguments: dict[str, Any]) -> dict[str, Any]:
+    job_id = _arg_int(arguments, "job_id")
+    with contextlib.closing(_open()) as conn:
+        job = jobs.get_job(conn, job_id)
+    if job is None:
+        raise ToolError("job not found", f"no job with id {job_id}")
+    return job
+
+
+def _tool_submit_job(arguments: dict[str, Any]) -> dict[str, Any]:
+    kind = _arg_str(arguments, "kind")
+    binary_id = _arg_int(arguments, "binary_id")
+    raw = arguments.get("params")
+    params = raw if isinstance(raw, dict) else {}
+    with contextlib.closing(_open()) as conn:
+        try:
+            job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=params)
+        except ValueError as exc:
+            raise ToolError("invalid job", str(exc)) from exc
+        except KeyError as exc:
+            raise ToolError("binary not found", str(exc.args[0])) from exc
+    jobs.ensure_worker()
+    return job
+
+
+def _tool_cancel_job(arguments: dict[str, Any]) -> dict[str, Any]:
+    job_id = _arg_int(arguments, "job_id")
+    with contextlib.closing(_open()) as conn:
+        try:
+            job = jobs.cancel(conn, job_id)
+        except ValueError as exc:
+            raise ToolError("job-not-cancellable", str(exc)) from exc
+    if job is None:
+        raise ToolError("job not found", f"no job with id {job_id}")
+    return job
+
+
+def _tool_run_jobs(arguments: dict[str, Any]) -> dict[str, Any]:
+    limit = _arg_optional_int(arguments, "limit", 1)
+    with contextlib.closing(_open()) as conn:
+        finished = jobs.run_pending(conn, limit=limit)
+    return {"jobs": finished, "count": len(finished)}
+
+
 def _tool_list_journal(arguments: dict[str, Any]) -> dict[str, Any]:
     limit = _arg_optional_int(arguments, "limit", journal.DEFAULT_LIST_LIMIT)
     action = _arg_optional_str(arguments, "action")
@@ -5116,6 +5176,55 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _READ,
             _tool_list_notifications,
+        ),
+        Tool(
+            "list_jobs",
+            "Queued and finished jobs, newest first, with the waiting count.",
+            _object(
+                {
+                    "status": _str("Only jobs in this status."),
+                    "kind": _str("Only jobs of this kind."),
+                    "limit": _int(f"Maximum jobs (default {jobs.DEFAULT_JOB_LIMIT})."),
+                }
+            ),
+            _READ,
+            _tool_list_jobs,
+        ),
+        Tool(
+            "get_job",
+            "One job with its status, progress and result or error.",
+            _object({"job_id": _int("Job id.")}, ("job_id",)),
+            _READ,
+            _tool_get_job,
+        ),
+        Tool(
+            "submit_job",
+            "Queue one operation (a scan kind) on a binary and answer its run id; the"
+            " server's pool runs it, and list_jobs or get_job reports the outcome.",
+            _object(
+                {
+                    "kind": _str(f"One of: {', '.join(jobs.JOB_KINDS)}."),
+                    "binary_id": _int("Binary to run it on."),
+                    "params": {"type": "object", "description": "Kind-specific parameters."},
+                },
+                ("kind", "binary_id"),
+            ),
+            _WRITE,
+            _tool_submit_job,
+        ),
+        Tool(
+            "cancel_job",
+            "Cancel a job that has not started; a running one cannot be stopped.",
+            _object({"job_id": _int("Job id.")}, ("job_id",)),
+            _WRITE,
+            _tool_cancel_job,
+        ),
+        Tool(
+            "run_jobs",
+            "Run the oldest waiting jobs inline and answer what finished.",
+            _object({"limit": _int("How many waiting jobs to run (default 1).")}),
+            _WRITE,
+            _tool_run_jobs,
         ),
         Tool(
             "list_journal",

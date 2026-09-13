@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from reportal import auto_workers, engines, llm, store
+from reportal import auto_workers, engines, jobs, llm, store
 from reportal._paths import DB_ENV
 from reportal.webapp import app
 
@@ -409,6 +409,24 @@ class FakeEngine(engines.RebrewEngine):
         self.calls.append("identify_library")
         self.identify_arg = str(project_dir)
         return {**IDENTIFY, "candidates": [dict(candidate) for candidate in IDENTIFY["candidates"]]}
+
+
+@pytest.fixture(autouse=True)
+def _no_job_pool() -> Iterator[None]:
+    """Keep the job pool out of the tests: a thread picking a job up mid-assert is a race.
+
+    The environment is patched with a local :class:`pytest.MonkeyPatch` rather
+    than the ``monkeypatch`` fixture on purpose: requesting that fixture here
+    would set it up before every test module's own autouse fixtures and tear it
+    down after them, and ``tests/test_components.py`` relies on the opposite
+    order (its entry-point patch has to be undone before the registry is
+    refreshed again).
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(jobs.POOL_ENV, "0")
+        jobs.stop_worker()
+        yield
+    jobs.stop_worker()
 
 
 @pytest.fixture(autouse=True)

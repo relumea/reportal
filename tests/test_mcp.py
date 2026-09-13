@@ -125,13 +125,18 @@ _READ_ONLY_TOOLS = frozenset(
         "graph_neighbors",
         "list_graph_backends",
         "search",
+        "get_job",
         "list_journal",
+        "list_jobs",
         "list_notifications",
     }
 )
 
 _DESTRUCTIVE_TOOLS = frozenset(
     {
+        "submit_job",
+        "cancel_job",
+        "run_jobs",
         "export_zipped_binary",
         "create_collection",
         "update_collection",
@@ -369,9 +374,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 142
-        assert len(_READ_ONLY_TOOLS) == 68
-        assert len(_DESTRUCTIVE_TOOLS) == 74
+        assert len(names) == 147
+        assert len(_READ_ONLY_TOOLS) == 70
+        assert len(_DESTRUCTIVE_TOOLS) == 77
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():

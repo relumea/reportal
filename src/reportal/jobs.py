@@ -1,0 +1,592 @@
+"""The asynchronous operation workflow: queued jobs with a status and a cancel.
+
+The hosted portal queues every long-running capability and answers a run id, so
+a client polls a status instead of holding a request open.  reportal's scans ran
+synchronously in the request that asked for them: the client waited, a timeout
+lost the run, and nothing recorded that the run had happened.  This module is
+the local equivalent, deliberately small:
+
+- one ``jobs`` table holds a job's kind, its target, its status, its progress
+  and its result or error;
+- :data:`JOB_KINDS` names the operations that may be queued, each a thin
+  wrapper over the scan runner the matching route already calls, wrapped in the
+  same ``journal.journaled_scan`` the route uses, so a queued scan is journaled
+  and revertible exactly like a synchronous one;
+- :func:`submit` queues one, :func:`run_pending` executes the oldest queued job,
+  and the bounded background pool (:func:`ensure_worker`) is what runs them in a
+  serving process, so a route can answer with a run id at once;
+- :func:`events` renders a job's state as server-sent events, so a client can
+  follow a run instead of polling it.
+
+Two ceilings are deliberate and stated rather than hidden.  A job is one step
+today (``steps_total`` is 1 and ``progress`` is 0 or 100): the engine calls a
+scan makes are not interruptible, so there is nothing finer to report.  And
+cancelling a ``running`` job is refused rather than faked: the scan has already
+entered the engine and cannot be stopped, so the caller may cancel only what has
+not started (a ``queued`` job), which is the honest half of the hosted contract.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import sqlite3
+import threading
+import time
+from collections.abc import Callable, Iterator, Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from reportal import (
+    _paths,
+    behavior,
+    capabilities,
+    composition,
+    engines,
+    filetypes,
+    hardening,
+    journal,
+    protocols,
+    secrets,
+    store,
+    unstrip,
+)
+from reportal._paths import WorkspaceNotFound
+
+# Statuses a job moves through.  ``queued`` and ``running`` are the live ones;
+# the other three are terminal and never change again.
+STATUS_QUEUED = "queued"
+STATUS_RUNNING = "running"
+STATUS_DONE = "done"
+STATUS_FAILED = "failed"
+STATUS_CANCELLED = "cancelled"
+LIVE_STATUSES: tuple[str, ...] = (STATUS_QUEUED, STATUS_RUNNING)
+STATUSES: tuple[str, ...] = (
+    STATUS_QUEUED,
+    STATUS_RUNNING,
+    STATUS_DONE,
+    STATUS_FAILED,
+    STATUS_CANCELLED,
+)
+
+# The table, and the bounds a reader or a submitter is held to.
+TABLE = "jobs"
+DEFAULT_JOB_LIMIT = 50
+MAX_JOB_LIMIT = 500
+MAX_QUEUED_JOBS = 100
+# Terminal rows kept per submit; the oldest are pruned, so the table is a
+# bounded operational log rather than an unbounded one.
+MAX_KEPT_JOBS = 500
+
+# The background pool: how many jobs run at once, and how often an idle worker
+# looks for one.
+MAX_WORKERS = 2
+POLL_SECONDS = 0.25
+
+# The event stream's poll interval and its cap, so a stream always ends.
+STREAM_INTERVAL_SECONDS = 0.5
+STREAM_MAX_SECONDS = 30.0
+
+_SCHEMA = f"""
+CREATE TABLE IF NOT EXISTS {TABLE} (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,
+    binary_id   INTEGER REFERENCES binaries(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL,
+    progress    INTEGER NOT NULL DEFAULT 0,
+    steps_total INTEGER NOT NULL DEFAULT 1,
+    message     TEXT NOT NULL DEFAULT '',
+    params_json TEXT NOT NULL DEFAULT '{{}}',
+    result_json TEXT NOT NULL DEFAULT '',
+    error       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    started_at  TEXT NOT NULL DEFAULT '',
+    finished_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON {TABLE}(status, id);
+"""
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create the jobs table when the database predates it."""
+    conn.executescript(_SCHEMA)
+
+
+@dataclass(frozen=True)
+class JobKind:
+    """One queued operation: what it is called and how it runs.
+
+    ``run`` takes the connection, the target binary and the submitted params,
+    and returns the payload the same operation's synchronous route would answer.
+    ``scan_kind`` is the ``scans`` row the run stores (``None`` for an operation
+    that stores something else), which is what the runner journals.
+    """
+
+    name: str
+    label: str
+    scan_kinds: str | Mapping[str, str] | None
+    run: Callable[[sqlite3.Connection, int, Mapping[str, Any]], dict[str, Any]]
+    params: tuple[str, ...] = ()
+
+    def scan_kind_for(self, params: Mapping[str, Any]) -> str | None:
+        """The ``scans`` kind this job stores, or None when it stores another row."""
+        if self.scan_kinds is None:
+            return None
+        if isinstance(self.scan_kinds, str):
+            return self.scan_kinds
+        return self.scan_kinds[_domain_of(params, tuple(self.scan_kinds), f"{self.name} domain")]
+
+
+def _domain_of(params: Mapping[str, Any], domains: tuple[str, ...], what: str) -> str:
+    """The domain a behavior or hardening job names, defaulting to the first."""
+    domain = str(params.get("domain") or domains[0])
+    if domain not in domains:
+        raise ValueError(f"unknown {what} domain: {domain}; expected one of {', '.join(domains)}")
+    return domain
+
+
+def builtin_kinds() -> tuple[JobKind, ...]:
+    """The operations that may be queued, in registry order."""
+    return (
+        JobKind(
+            name="filetype",
+            label="File type, packer and protector detection",
+            scan_kinds=store.SCAN_KIND_FILETYPE,
+            run=lambda conn, binary_id, params: filetypes.run_filetype(
+                conn, binary_id=binary_id, engine=engines.get_engine()
+            ),
+        ),
+        JobKind(
+            name="capabilities",
+            label="Capability classification",
+            scan_kinds=store.SCAN_KIND_CAPABILITIES,
+            run=lambda conn, binary_id, params: capabilities.run_capabilities(
+                conn, binary_id=binary_id, engine=engines.get_engine()
+            ),
+        ),
+        JobKind(
+            name="secrets",
+            label="Secrets and high-entropy value scan",
+            scan_kinds=store.SCAN_KIND_SECRETS,
+            run=lambda conn, binary_id, params: secrets.run_secrets(
+                conn, binary_id=binary_id, engine=engines.get_engine()
+            ),
+        ),
+        JobKind(
+            name="protocols",
+            label="Protocol inference",
+            scan_kinds=store.SCAN_KIND_PROTOCOLS,
+            run=lambda conn, binary_id, params: protocols.scan_protocols(
+                conn, binary_id=binary_id, engine=engines.get_engine()
+            ),
+        ),
+        JobKind(
+            name="composition",
+            label="Composition against the stored matches",
+            scan_kinds=store.SCAN_KIND_COMPOSITION,
+            run=lambda conn, binary_id, params: composition.run_composition(
+                conn, binary_id=binary_id
+            ),
+        ),
+        JobKind(
+            name="unstrip",
+            label="Auto-unstrip identification proposals",
+            scan_kinds=store.SCAN_KIND_UNSTRIP,
+            run=lambda conn, binary_id, params: unstrip.run_unstrip(
+                conn, binary_id=binary_id, engine=engines.get_engine()
+            ),
+        ),
+        JobKind(
+            name="behavior",
+            label="Behavior scan of one domain",
+            scan_kinds=behavior.DOMAIN_SCAN_KINDS,
+            params=("domain",),
+            run=lambda conn, binary_id, params: behavior.scan_domain(
+                conn,
+                binary_id=binary_id,
+                domain=_domain_of(params, behavior.BEHAVIOR_DOMAINS, "behavior"),
+                engine=engines.get_engine(),
+            ),
+        ),
+        JobKind(
+            name="hardening",
+            label="Hardening scan of one domain",
+            scan_kinds=hardening.DOMAIN_SCAN_KINDS,
+            params=("domain",),
+            run=lambda conn, binary_id, params: hardening.scan_hardening(
+                conn,
+                binary_id=binary_id,
+                domain=_domain_of(params, hardening.HARDENING_DOMAINS, "hardening"),
+                engine=engines.get_engine(),
+            ),
+        ),
+    )
+
+
+JOB_KINDS: dict[str, JobKind] = {kind.name: kind for kind in builtin_kinds()}
+
+
+# ── Rows ───────────────────────────────────────────────────────────
+
+
+def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
+    """One stored job as a plain dict, with its payload decoded."""
+    raw_result = str(row["result_json"] or "")
+    return {
+        "id": int(row["id"]),
+        "kind": str(row["kind"]),
+        "label": JOB_KINDS[str(row["kind"])].label if str(row["kind"]) in JOB_KINDS else "",
+        "binary_id": int(row["binary_id"]) if row["binary_id"] is not None else None,
+        "status": str(row["status"]),
+        "progress": int(row["progress"]),
+        "steps_total": int(row["steps_total"]),
+        "message": str(row["message"]),
+        "params": json.loads(str(row["params_json"] or "{}")),
+        "error": str(row["error"]),
+        "result": json.loads(raw_result) if raw_result else None,
+        "created_at": str(row["created_at"]),
+        "started_at": str(row["started_at"]),
+        "finished_at": str(row["finished_at"]),
+        "live": str(row["status"]) in LIVE_STATUSES,
+    }
+
+
+def get_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
+    """One job by id, or None."""
+    ensure_schema(conn)
+    row = conn.execute(f"SELECT * FROM {TABLE} WHERE id = ?", (job_id,)).fetchone()
+    return _row(row) if row else None
+
+
+def count_jobs(conn: sqlite3.Connection, *, status: str | None = None) -> int:
+    """How many jobs there are, optionally of one status."""
+    ensure_schema(conn)
+    sql = f"SELECT COUNT(*) FROM {TABLE}"
+    params: list[Any] = []
+    if status is not None:
+        sql += " WHERE status = ?"
+        params.append(status)
+    return int(conn.execute(sql, params).fetchone()[0])
+
+
+def list_jobs(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    kind: str | None = None,
+    limit: int = DEFAULT_JOB_LIMIT,
+) -> tuple[list[dict[str, Any]], int]:
+    """``(rows, total)`` newest first, optionally narrowed by status and kind.
+
+    *total* is the whole match, so a bounded page never reads as the whole
+    queue.  An unknown status, an unknown kind or an out-of-range limit raises
+    ``ValueError``.
+    """
+    if status is not None and status not in STATUSES:
+        raise ValueError(f"unknown job status: {status}")
+    if kind is not None and kind not in JOB_KINDS:
+        raise ValueError(f"unknown job kind: {kind}")
+    if limit < 1 or limit > MAX_JOB_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_JOB_LIMIT}")
+    ensure_schema(conn)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if status is not None:
+        clauses.append("status = ?")
+        params.append(status)
+    if kind is not None:
+        clauses.append("kind = ?")
+        params.append(kind)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    total = int(conn.execute(f"SELECT COUNT(*) FROM {TABLE}{where}", params).fetchone()[0])
+    rows = conn.execute(
+        f"SELECT * FROM {TABLE}{where} ORDER BY id DESC LIMIT ?", [*params, limit]
+    ).fetchall()
+    return [_row(row) for row in rows], total
+
+
+def _prune(conn: sqlite3.Connection) -> None:
+    """Drop the oldest terminal jobs once the table is past its bound."""
+    conn.execute(
+        f"DELETE FROM {TABLE} WHERE id IN ("
+        f" SELECT id FROM {TABLE} WHERE status NOT IN (?, ?) ORDER BY id DESC LIMIT -1 OFFSET ?)",
+        (STATUS_QUEUED, STATUS_RUNNING, MAX_KEPT_JOBS),
+    )
+
+
+def submit(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    binary_id: int,
+    params: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Queue one job and return it; the caller decides whether to run it.
+
+    Raises :class:`KeyError` for an unknown binary, :class:`ValueError` for an
+    unknown kind, for a parameter a kind does not take, for a parameter a kind
+    needs and for a queue that is already at :data:`MAX_QUEUED_JOBS`.
+    """
+    if kind not in JOB_KINDS:
+        raise ValueError(f"unknown job kind: {kind}")
+    spec = JOB_KINDS[kind]
+    supplied = {str(key) for key in (params or {})}
+    unexpected = sorted(supplied - set(spec.params))
+    if unexpected:
+        raise ValueError(f"job kind {kind} takes no parameter {unexpected[0]}")
+    if store.get_binary(conn, binary_id) is None:
+        raise KeyError(f"no binary with id {binary_id}")
+    # Validate the parameters now rather than when the job runs: a typo should
+    # be a 400 on submit, not a failed job later.
+    for name in spec.params:
+        if name == "domain":
+            what = "behavior" if kind == "behavior" else "hardening"
+            domains = (
+                behavior.BEHAVIOR_DOMAINS if kind == "behavior" else hardening.HARDENING_DOMAINS
+            )
+            _domain_of(params or {}, domains, what)
+    ensure_schema(conn)
+    queued = count_jobs(conn, status=STATUS_QUEUED)
+    if queued >= MAX_QUEUED_JOBS:
+        raise ValueError(f"the queue is full: {queued} jobs are waiting")
+    cur = conn.execute(
+        f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
+        " params_json, created_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?)",
+        (kind, binary_id, STATUS_QUEUED, "queued", json.dumps(dict(params or {})), store.now()),
+    )
+    _prune(conn)
+    conn.commit()
+    job = get_job(conn, int(cur.lastrowid or 0))
+    assert job is not None, "the row was just inserted"
+    return job
+
+
+def cancel(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
+    """Cancel a job that has not started; None when the id is unknown.
+
+    A ``running`` job is refused with :class:`ValueError`: the engine call it
+    already entered cannot be stopped, so pretending to cancel it would leave a
+    scan writing its result after the client was told it had stopped.
+    """
+    job = get_job(conn, job_id)
+    if job is None:
+        return None
+    if job["status"] != STATUS_QUEUED:
+        raise ValueError(f"job {job_id} is {job['status']} and cannot be cancelled")
+    conn.execute(
+        f"UPDATE {TABLE} SET status = ?, message = ?, finished_at = ? WHERE id = ?",
+        (STATUS_CANCELLED, "cancelled before it started", store.now(), job_id),
+    )
+    conn.commit()
+    return get_job(conn, job_id)
+
+
+# ── Running ────────────────────────────────────────────────────────
+
+
+def _claim(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """Take the oldest queued job, marking it running; None when none is queued."""
+    ensure_schema(conn)
+    row = conn.execute(
+        f"SELECT id FROM {TABLE} WHERE status = ? ORDER BY id LIMIT 1", (STATUS_QUEUED,)
+    ).fetchone()
+    if row is None:
+        return None
+    job_id = int(row["id"])
+    cur = conn.execute(
+        f"UPDATE {TABLE} SET status = ?, progress = 0, message = ?, started_at = ?"
+        " WHERE id = ? AND status = ?",
+        (STATUS_RUNNING, "running", store.now(), job_id, STATUS_QUEUED),
+    )
+    conn.commit()
+    if cur.rowcount == 0:  # pragma: no cover - another worker claimed it first
+        return None
+    return get_job(conn, job_id)
+
+
+def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
+    """Run one claimed job to its terminal state and return the stored row.
+
+    The scan runs inside the same journaled action its synchronous route uses,
+    so a queued run is revertible through the journal exactly like a direct one.
+    An operation that fails records the failure and a bounded message; it never
+    raises, because a failed job is a result the caller polls for.
+    """
+    spec = JOB_KINDS[job["kind"]]
+    binary_id = int(job["binary_id"])
+    params = dict(job.get("params") or {})
+    try:
+        scan_kind = spec.scan_kind_for(params)
+        if scan_kind is None:  # pragma: no cover - every kind stores a scan
+            payload = spec.run(conn, binary_id, params)
+        else:
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                payload = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    scan_kind,
+                    lambda: spec.run(conn, binary_id, params),
+                )
+            payload = log.attach(payload)
+        failure = ""
+    except Exception as exc:
+        payload = None
+        failure = f"{type(exc).__name__}: {exc}"
+    status = STATUS_FAILED if failure else STATUS_DONE
+    conn.execute(
+        f"UPDATE {TABLE} SET status = ?, progress = ?, message = ?, result_json = ?,"
+        " error = ?, finished_at = ? WHERE id = ?",
+        (
+            status,
+            100 if not failure else 0,
+            "failed" if failure else "finished",
+            json.dumps(payload) if payload is not None else "",
+            failure[:500],
+            store.now(),
+            int(job["id"]),
+        ),
+    )
+    conn.commit()
+    stored = get_job(conn, int(job["id"]))
+    assert stored is not None, "the row was just updated"
+    return stored
+
+
+def run_pending(conn: sqlite3.Connection, *, limit: int = 1) -> list[dict[str, Any]]:
+    """Run up to *limit* queued jobs inline and return the finished rows.
+
+    This is what the worker loop and the ``reportal job-run`` command call, and
+    what a test drives when it wants a deterministic run with no thread.
+    """
+    finished: list[dict[str, Any]] = []
+    for _ in range(max(limit, 0)):
+        job = _claim(conn)
+        if job is None:
+            break
+        finished.append(execute(conn, job))
+    return finished
+
+
+# ── The background pool ────────────────────────────────────────────
+
+_worker: JobWorker | None = None
+_worker_lock = threading.Lock()
+
+# The pool can be switched off: a test does (so no thread runs a job behind an
+# assertion), and so can an operator who would rather drive the queue with
+# `reportal job-run`.  It is on by default, which is what makes a serving
+# process pick a queued job up on its own.
+POOL_ENV = "REPORTAL_JOBS_POOL"
+_FALSEY = ("0", "false", "no", "off")
+
+
+def pool_disabled() -> bool:
+    """Whether this process was told not to run the background pool."""
+    return os.environ.get(POOL_ENV, "").strip().lower() in _FALSEY
+
+
+class JobWorker:
+    """A bounded pool that drains the queue until it is stopped.
+
+    Each worker opens its own connection: a SQLite connection is not shared
+    across threads, and the queue lives in the database, so the pool needs no
+    memory of its own.  A worker that finds nothing sleeps for
+    :data:`POLL_SECONDS`.
+    """
+
+    def __init__(self, *, workers: int = MAX_WORKERS) -> None:
+        self._stop = threading.Event()
+        self._threads = [
+            threading.Thread(target=self._loop, name=f"reportal-jobs-{index}", daemon=True)
+            for index in range(max(1, workers))
+        ]
+
+    def start(self) -> None:
+        for thread in self._threads:
+            thread.start()
+
+    def stop(self, *, timeout: float = 2.0) -> None:
+        self._stop.set()
+        for thread in self._threads:
+            thread.join(timeout=timeout)
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                with contextlib.closing(store.connect(_paths.db_path())) as conn:
+                    if not run_pending(conn, limit=1):
+                        self._stop.wait(POLL_SECONDS)
+            except (sqlite3.Error, WorkspaceNotFound, OSError):
+                # A database that is not there yet, or a locked one, is not a
+                # reason to kill the worker: the next tick tries again.
+                self._stop.wait(POLL_SECONDS)
+
+
+def ensure_worker() -> JobWorker | None:
+    """Start the process-wide pool once; None when there is no workspace yet."""
+    global _worker
+    if pool_disabled():
+        return None
+    with _worker_lock:
+        if _worker is not None:
+            return _worker
+        try:
+            _paths.db_path()
+        except WorkspaceNotFound:  # pragma: no cover - the server refuses to start outside one
+            return None
+        _worker = JobWorker()
+        _worker.start()
+        return _worker
+
+
+def stop_worker() -> None:
+    """Stop the process-wide pool; a test calls this so no thread outlives it."""
+    global _worker
+    with _worker_lock:
+        if _worker is not None:
+            _worker.stop()
+            _worker = None
+
+
+# ── Events ─────────────────────────────────────────────────────────
+
+
+def event_frame(job: dict[str, Any]) -> str:
+    """One server-sent event carrying a job's state."""
+    return f"event: job\ndata: {json.dumps(job)}\n\n"
+
+
+def events(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    interval: float = STREAM_INTERVAL_SECONDS,
+    max_seconds: float = STREAM_MAX_SECONDS,
+) -> Iterator[str]:
+    """The job's state as server-sent events, ending when it is terminal.
+
+    One frame per observed change (plus the current state at once, so a client
+    that attaches late is not left blank), and a final frame with the terminal
+    state.  The stream is bounded by *max_seconds* so a client can always
+    reconnect rather than hold a socket open forever.
+    """
+    deadline = time.monotonic() + max(0.0, max_seconds)
+    last = ""
+    while True:
+        job = get_job(conn, job_id)
+        if job is None:
+            yield f"event: error\ndata: {json.dumps({'error': 'job not found'})}\n\n"
+            return
+        frame = event_frame(job)
+        if frame != last:
+            yield frame
+            last = frame
+        if not job["live"]:
+            return
+        if time.monotonic() >= deadline:
+            yield "event: timeout\ndata: {}\n\n"
+            return
+        time.sleep(max(interval, 0.0))

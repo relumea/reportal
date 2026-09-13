@@ -341,7 +341,7 @@ description lives in that file.
 
 | Cluster | What it is | Status |
 |---------|------------|--------|
-| A | Asynchronous operation workflow (jobs, status, cancel, progress, SSE) | Planned |
+| A | Asynchronous operation workflow (jobs, status, cancel, progress, SSE) | Closed in PARITY.md |
 | B | AI decompilation as a first-class artifact (tokens, per-line comments, attributions, rating) | Planned |
 | C | Dynamic execution and sandbox detonation | Planned |
 | D | Analysis lifecycle (basic, params, requeue, examples, bytes, tags, bulk, imported functions) | Planned, partly planned elsewhere |

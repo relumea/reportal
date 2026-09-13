@@ -392,6 +392,15 @@ Delete behind the confirm pattern that calls `DELETE /api/analyses/<id>`.  There
 is no owner column: reportal is a single-user loopback tool, the view says so,
 and it links to the Journal view, which is where who did what is recorded.  The
 Binaries view carries a Browse analyses action beside Browse functions.
+The Jobs view (`views/JobsView.tsx`, `#/jobs`) is the async operation workflow:
+a Queue toolbar over the operations `GET /api/jobs` advertises (the kind, the
+binary, the domain a behavior or hardening job needs), the list of queued and
+finished jobs with a status badge, the `progress`/`steps_total` readout, the
+created time and each job's message, result or error, a Cancel button on a job
+that has not started and a Run waiting now control that drains the queue inline.
+It polls while anything is queued and runs nothing itself: what the view shows
+is what the server's pool did.
+
 The topbar carries a Notifications button (`views/NotificationsDialog.tsx`):
 the count of feed items this browser has not dismissed, opening a dialog over
 `GET /api/notifications` with each item's severity badge, time, message and its

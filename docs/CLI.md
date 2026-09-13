@@ -334,6 +334,15 @@ reportal graph-sync <binary-id> [--backend NAME] [--json]
 reportal graph-query <query> [--backend NAME] [--json]
                                            # node id or text search over a backend that
                                            #   supports querying (sqlite does)
+reportal jobs [--status S] [--kind K] [--limit N] [--json]
+                                           # queued and finished operations, newest first,
+                                           #   with the waiting count and the kinds
+reportal job <job-id> [--json]             # one job with its status, progress and result
+reportal job-submit <kind> <binary-id> [--domain D] [--run] [--json]
+                                           # queue one operation; the server's pool runs it,
+                                           #   or --run does it in this process
+reportal job-run [--limit N] [--json]      # run the oldest waiting jobs inline
+reportal job-cancel <job-id> [--json]      # cancel a job that has not started
 reportal notifications [--json] [--since ISO] [--limit N]
                                            # the notification feed derived from the action
                                            #   journal and the analysis log, newest first;

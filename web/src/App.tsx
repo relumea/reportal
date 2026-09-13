@@ -31,6 +31,7 @@ import { DiffView } from "./views/DiffView";
 import { FunctionDetail } from "./views/FunctionDetail";
 import { FunctionsView } from "./views/FunctionsView";
 import { GraphView } from "./views/GraphView";
+import { JobsView } from "./views/JobsView";
 import { JournalView } from "./views/JournalView";
 import { KnowledgeView } from "./views/KnowledgeView";
 import { MatchesView } from "./views/MatchesView";
@@ -271,6 +272,7 @@ export function App(): ReactNode {
       element: <ConversationRoute />,
       handle: { view: "conversations", title: (params) => `Conversation #${params.conversationId}` },
     },
+    { path: "/jobs", element: <JobsView />, handle: { view: "jobs", title: "Jobs" } },
     { path: "/journal", element: <JournalRoute />, handle: { view: "journal", title: "Journal" } },
     {
       path: "/journal/:action",

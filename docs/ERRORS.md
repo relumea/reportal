@@ -360,6 +360,28 @@ function's matches first.
 `400`. The binary has no stored rebrew project directory, which the engine call
 needs as its working directory. Run `reportal import-rebrew` for it.
 
+### job-not-found
+
+`404`. No job has that id. List them with `reportal jobs` or `GET /api/jobs`.
+
+### invalid-job
+
+`400`. A submitted job names an unknown kind, a parameter the kind does not
+take, a value that kind refuses (an unknown behavior or hardening domain) or a
+queue that is already at its waiting bound. The detail names the kind, the
+parameter or the domain that was refused.
+
+### invalid-job-query
+
+`400`. A job listing asked for a status or a kind outside the closed set. The
+detail names the accepted values.
+
+### job-not-cancellable
+
+`409`. The job has already started (or has already finished): a scan that
+entered the engine cannot be stopped, so the cancel would report a stop that
+never happens. Wait for the result, or cancel a job that is still queued.
+
 ### last-analysis
 
 `400`. The request would remove the binary's newest analysis, which every scan

@@ -117,6 +117,7 @@ from reportal import (
     hardening,
     instance,
     integrations,
+    jobs,
     journal,
     knowledge,
     lineage,
@@ -580,6 +581,146 @@ def analysis_delete(
 def _journal_error_text(exc: Exception) -> str:
     """Return a journal failure's message without the KeyError quoting."""
     return str(exc.args[0]) if exc.args else str(exc)
+
+
+@app.command("jobs")
+def jobs_command(
+    status: str | None = typer.Option(None, "--status", help="Only jobs in this status"),
+    kind: str | None = typer.Option(None, "--kind", help="Only jobs of this kind"),
+    limit: int = typer.Option(jobs.DEFAULT_JOB_LIMIT, "--limit", help="How many jobs to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List queued and finished jobs, newest first."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            rows, total = jobs.list_jobs(conn, status=status, kind=kind, limit=limit)
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+        queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED)
+    if json_output:
+        typer.echo(json.dumps({"jobs": rows, "count": len(rows), "total": total, "queued": queued}))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Id", justify="right")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Binary", justify="right")
+    table.add_column("Status")
+    table.add_column("Created")
+    table.add_column("Message")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            str(row["kind"]),
+            str(row["binary_id"]),
+            str(row["status"]),
+            str(row["created_at"]),
+            str(row["error"] or row["message"]),
+        )
+    console.print(table)
+    console.print(f"\n[bold cyan]{queued}[/bold cyan] waiting, {total} matching")
+
+
+@app.command("job")
+def job_command(
+    job_id: int = typer.Argument(..., help="Job id to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Show one job with its status, progress and result or error."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        job = jobs.get_job(conn, job_id)
+    if job is None:
+        _fail(f"no job with id {job_id}", json_output)
+    if json_output:
+        typer.echo(json.dumps(job))
+        return
+    console.print(f"job {job['id']}: {job['kind']} on binary {job['binary_id']}")
+    console.print(f"  status:   {job['status']} ({job['progress']}/{job['steps_total']})")
+    console.print(f"  message:  {job['message'] or '-'}")
+    if job["error"]:
+        console.print(f"  error:    {job['error']}")
+    if job["result"] is not None:
+        typer.echo(json.dumps(job["result"], indent=2))
+
+
+@app.command("job-submit")
+def job_submit_command(
+    kind: str = typer.Argument(..., help=f"One of: {', '.join(jobs.JOB_KINDS)}"),
+    binary_id: int = typer.Argument(..., help="Binary to run it on"),
+    domain: str | None = typer.Option(
+        None, "--domain", help="Domain a behavior or hardening job scans"
+    ),
+    run: bool = typer.Option(False, "--run", help="Run it now instead of leaving it queued"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Queue one operation; the server's pool picks it up, or --run does it now."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    params = {"domain": domain} if domain else {}
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=params)
+        except KeyError as exc:
+            _fail(_journal_error_text(exc), json_output)
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+        if run:
+            job = jobs.run_pending(conn, limit=1)[0]
+    if json_output:
+        typer.echo(json.dumps(job))
+        return
+    console.print(f"job {job['id']}: {job['status']}")
+
+
+@app.command("job-run")
+def job_run_command(
+    limit: int = typer.Option(1, "--limit", help="How many waiting jobs to run"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Run the oldest waiting jobs inline, in this process."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if limit < 1:
+        _fail("limit must be positive", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        finished = jobs.run_pending(conn, limit=limit)
+    if json_output:
+        typer.echo(json.dumps({"jobs": finished, "count": len(finished)}))
+        return
+    if not finished:
+        console.print("no job was waiting")
+        return
+    for job in finished:
+        console.print(f"job {job['id']}: {job['status']} {job['error']}".rstrip())
+
+
+@app.command("job-cancel")
+def job_cancel_command(
+    job_id: int = typer.Argument(..., help="Job id to cancel"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Cancel a job that has not started; a running one cannot be stopped."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            job = jobs.cancel(conn, job_id)
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+    if job is None:
+        _fail(f"no job with id {job_id}", json_output)
+    if json_output:
+        typer.echo(json.dumps(job))
+        return
+    console.print(f"job {job['id']}: {job['status']}")
 
 
 @app.command("notifications")

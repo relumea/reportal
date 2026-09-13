@@ -16,6 +16,7 @@ export type NavView =
   | "conversations"
   | "knowledge"
   | "journal"
+  | "jobs"
   | "components"
   | "integrations";
 
@@ -31,7 +32,7 @@ export const NAV_GROUPS = [
   { label: "Targets", views: ["binaries", "analyses", "functions", "collections"] },
   { label: "Analysis", views: ["matches", "graph", "knowledge"] },
   { label: "Agent", views: ["auto", "conversations"] },
-  { label: "System", views: ["journal", "components", "integrations"] },
+  { label: "System", views: ["jobs", "journal", "components", "integrations"] },
 ] as const satisfies readonly NavGroup[];
 
 export const NAV_VIEWS: readonly NavView[] = NAV_GROUPS.flatMap((group) => group.views);
@@ -50,6 +51,7 @@ export const NAV_LABELS: Record<NavView, string> = {
   components: "Components",
   integrations: "Integrations",
   journal: "Journal",
+  jobs: "Jobs",
   search: "Search",
 };
 

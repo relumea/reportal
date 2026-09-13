@@ -57,6 +57,15 @@ writes a journal row of kind `renames-applied` whose payload carries the
 previous decompilation text and backend, so `revert_renames` restores exactly
 that text and deletes the row.
 
+`jobs` holds one row per queued operation: its `kind`, the `binary_id` it targets, its
+`status` (`queued`/`running`/`done`/`failed`/`cancelled`), `progress` and
+`steps_total`, `message`, the submitted `params_json`, the `result_json` or `error`,
+and its created/started/finished times.  `jobs.ensure_schema` creates it on first use,
+so a database that predates it upgrades in place; `submit` bounds the waiting queue and
+prunes the oldest terminal rows past `MAX_KEPT_JOBS`, so the table is a bounded
+operational log.  The work itself is journaled through the same `journaled_scan` its
+synchronous route uses, which is what makes a queued scan revertible.
+
 The notification feed (`notifications.py`) has no table: it derives its items
 from `journal_entries` (one item per action, described by the action's newest
 entry) and `analysis_log_entries` (one item per entry, joined to its binary),

@@ -1885,6 +1885,34 @@ export interface NotificationItem {
   binary_name?: string | null;
 }
 
+/** One queued or finished operation, the shape `GET /api/jobs/<id>` answers. */
+export interface JobView {
+  id: number;
+  kind: string;
+  label: string;
+  binary_id: number | null;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  progress: number;
+  steps_total: number;
+  message: string;
+  params: Record<string, unknown>;
+  error: string;
+  result: Record<string, unknown> | null;
+  created_at: string;
+  started_at: string;
+  finished_at: string;
+  live: boolean;
+}
+
+/** The `GET /api/jobs` payload, with the operations that may be queued. */
+export interface JobsPayload {
+  jobs: JobView[];
+  count: number;
+  total: number;
+  queued: number;
+  kinds: Array<{ name: string; label: string; params: string[] }>;
+}
+
 /** The `GET /api/notifications` payload. */
 export interface NotificationsPayload {
   notifications: NotificationItem[];

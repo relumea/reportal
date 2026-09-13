@@ -117,7 +117,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (142 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (147 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -130,7 +130,29 @@ clusters here.
 
 ### A. Asynchronous operation workflow (hosted `Agent` tag, 35 operations)
 
-**Status:** Planned. Nothing started.
+**Status:** Closed for the operations reportal has, with its two ceilings stated.
+`jobs.py` holds the `jobs` table (kind, target, status, progress, message, the
+submitted params, the result or the error, and the times) and `JOB_KINDS`, whose
+eight entries wrap the scan runner the matching route already calls, so a queued
+scan is journaled through the same `journal.journaled_scan` and is revertible
+exactly like a synchronous one.  `POST /api/jobs` queues one and answers `202`
+with its run id, the bounded background pool (two workers, switched off with
+`REPORTAL_JOBS_POOL`) drains the queue, `GET /api/jobs` and `GET /api/jobs/<id>`
+report status and progress, `POST /api/jobs/<id>/cancel` cancels what has not
+started, `GET /api/jobs/<id>/events` streams the state as server-sent events,
+and `reportal jobs`/`job`/`job-submit`/`job-run`/`job-cancel`, the `list_jobs`,
+`get_job`, `submit_job`, `cancel_job` and `run_jobs` MCP tools and the SPA Jobs
+view expose the same.  The queued form of a scan is `POST /api/jobs` with its
+kind rather than a flag on each scan route, which is one route for every
+operation in the registry.
+
+Two ceilings are deliberate and stated rather than hidden.  A job is one step
+(`steps_total` is 1, so `progress` is 0 or 100): the engine calls a scan makes
+cannot be interrupted, so there is nothing finer to report, and the hosted
+agents that decompose into many steps are not ported.  And cancelling a
+`running` job is refused with 409 `job-not-cancellable` rather than faked: the
+scan has already entered the engine, and reporting a stop that would not happen
+would leave a result written after the client was told it had stopped.
 
 Every long-running hosted capability is queued and polled: `POST
 /v3/analyses/{id}/crypto-scan:run`, `.../execution-scan:run`,
@@ -335,7 +357,7 @@ write (deflate member, 12-byte header with the CRC check byte, the three-key
 stream cipher, verified by reading the archive back with `zipfile` plus the
 password, and refusing a wrong one).  `GET /api/binaries/<id>/download-zipped`,
 `reportal download --zip [--password]`, the `export_zipped_binary` MCP tool
-(142 tools: 68 read-only, 74 destructive) and a Zipped link in the binaries
+(147 tools: 70 read-only, 77 destructive) and a Zipped link in the binaries
 table expose it; the archive is deflated into a spooled temporary file so a
 256 MiB binary is never held whole, and the password is documented as a shared
 convention rather than a security measure.

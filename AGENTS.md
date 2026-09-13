@@ -262,6 +262,12 @@ reportal/
     │                       #   pe-info/filetype scans and the fingerprint, each
     │                       #   reporting the sources it used and the command that
     │                       #   fills a missing one
+    ├── jobs.py             # the asynchronous operation workflow: the `jobs` table, the
+    │                       #   JOB_KINDS registry (each kind a thin wrapper over the scan
+    │                       #   runner its route calls, journaled the same way), submit/claim/
+    │                       #   run_pending/cancel, the bounded background pool and the
+    │                       #   server-sent event stream; one step per job and no interrupting
+    │                       #   a running engine call are the stated ceilings
     ├── notifications.py    # the notification feed, derived rather than stored: one item
     │                       #   per journaled action from the journal and one per analysis-log
     │                       #   entry, normalized to one shape, newest first, bounded, with
@@ -297,10 +303,11 @@ reportal/
     │                       #   types-revert, signature-history,
     │                       #   signature-revert, memory, section-coverage,
     │                       #   documents, knowledge, ingest-url,
-    │                       #   graph-build, graph, ai-comments, notifications
+    │                       #   graph-build, graph, ai-comments, notifications, jobs,
+    │                       #   job, job-submit, job-run, job-cancel
     ├── mcp_tools.py        # MCP tool registry: Tool (name/description/input_schema/
     │                       #   annotations/handler), register_tool/tools/refresh_tools,
-    │                       #   the 142 built-in tools, `reportal.mcp_tools` entry-point group
+    │                       #   the 147 built-in tools, `reportal.mcp_tools` entry-point group
     ├── mcp_server.py       # stdio MCP server: newline-delimited JSON-RPC 2.0 over stdin/stdout
     │                       #   (initialize, notifications/initialized, tools/list, tools/call)
     └── assets/dist/        # generated Vite build (gitignored; served by ui.py)
@@ -335,7 +342,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 179 source files` is the finish line.
+`Success: no issues found in 181 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -345,7 +352,7 @@ errors (a name another module imports without re-exporting it), and
 `engines.py:302` is a return-value error on the engine's decorator.
 
 **Coverage.** `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.70%, 20986 statements with 1531 missed. `[tool.coverage.report] fail_under`
+92.56%, 21417 statements with 1593 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -457,6 +464,17 @@ exercised end to end.  It is unsafe for production, only tests and the
 `.scratch/` end-to-end script pass it, and it is never exposed as a request
 field.  The guards keep a residual TOCTOU race, documented in
 `docs/ARCHITECTURE.md`.
+
+### Job pool configuration
+
+Queued operations are drained by a bounded background pool that the API starts
+on the first submit.  It can be switched off, which is what a test does so no
+thread runs a job behind an assertion, and what an operator does who would
+rather drive the queue with `reportal job-run`.
+
+| Setting | Env var | Default |
+|---------|---------|---------|
+| Job pool | `REPORTAL_JOBS_POOL` (falsey: `0`, `false`, `no`, `off`) | on |
 
 ### Graph backend configuration
 
@@ -614,7 +632,7 @@ action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 The registry
-declares 142 built-in tools, 68 read-only and 74 destructive.
+declares 147 built-in tools, 70 read-only and 77 destructive.
 
 ## SPA
 
@@ -719,8 +737,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 142 built-in
-tools (68 read-only, 74 destructive).
+and `run_match` expose the same over MCP, and the counts stay 147 built-in
+tools (70 read-only, 77 destructive).
 
 ### Scaling
 

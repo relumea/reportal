@@ -61,6 +61,7 @@ from reportal import (
     hardening,
     instance,
     integrations,
+    jobs,
     journal,
     knowledge,
     lineage,
@@ -7030,3 +7031,155 @@ def delete_comment(comment_id: int) -> Response:
                 )
     payload = {"comment": deleted, "comment_id": comment_id, "deleted": True}
     return json_response(log.attach(payload))
+
+
+# ── Jobs ───────────────────────────────────────────────────────────
+#
+# The asynchronous operation workflow: a queue, a status, a cancel and an
+# event stream over the operations `jobs.JOB_KINDS` names.  The queued form of
+# a scan is `POST /api/jobs` with its kind and binary rather than a flag on
+# every scan route, so one route serves every operation the registry holds.
+
+
+@router.get("/api/jobs")
+def list_jobs(request: Request) -> Response:
+    """Queued and finished jobs, newest first.
+
+    ``?status=`` is one of :data:`reportal.jobs.STATUSES`, ``?kind=`` one of the
+    registered job kinds and ``?limit=`` is bounded by
+    :data:`reportal.jobs.MAX_JOB_LIMIT`; an unknown value is a 400.  ``total``
+    counts every job matching the filters, so a bounded page never reads as the
+    whole queue, and ``queued`` counts what is still waiting.
+    """
+    status = _query_text(request, "status")
+    if status is not None and status not in jobs.STATUSES:
+        return _invalid_query("status", status, jobs.STATUSES)
+    kind = _query_text(request, "kind")
+    if kind is not None and kind not in jobs.JOB_KINDS:
+        return _invalid_query("kind", kind, sorted(jobs.JOB_KINDS))
+    limit = _query_int(request, "limit")
+    if limit is not None and not 1 <= limit <= jobs.MAX_JOB_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {jobs.MAX_JOB_LIMIT}",
+        )
+    with contextlib.closing(_open()) as conn:
+        rows, total = jobs.list_jobs(
+            conn, status=status, kind=kind, limit=limit or jobs.DEFAULT_JOB_LIMIT
+        )
+        queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED)
+    return json_response(
+        {
+            "jobs": rows,
+            "count": len(rows),
+            "total": total,
+            "queued": queued,
+            "kinds": [
+                {"name": spec.name, "label": spec.label, "params": list(spec.params)}
+                for spec in jobs.JOB_KINDS.values()
+            ],
+        }
+    )
+
+
+@router.get("/api/jobs/{job_id}")
+def get_job(job_id: int) -> Response:
+    """One job with its status, progress and result or error."""
+    with contextlib.closing(_open()) as conn:
+        job = jobs.get_job(conn, job_id)
+    if job is None:
+        return json_error(404, error="job not found", detail=f"no job with id {job_id}")
+    return json_response(job)
+
+
+@router.post("/api/jobs")
+def submit_job(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Queue one operation and answer it with its run id.
+
+    The body is ``{"kind", "binary_id", "params"?}``; the response is the queued
+    job, which a client polls on ``GET /api/jobs/<id>`` or follows on
+    ``GET /api/jobs/<id>/events``.  The work runs in the bounded background pool
+    the server starts on the first submit, so the request returns at once.
+    """
+    kind = _require_str(body, "kind")
+    binary_id = _require_int(body, "binary_id")
+    raw_params = body.get("params")
+    if raw_params is not None and not isinstance(raw_params, dict):
+        return json_error(400, error="invalid params", detail="params must be an object")
+    with contextlib.closing(_open()) as conn:
+        try:
+            job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=raw_params or {})
+        except ValueError as exc:
+            return json_error(400, error="invalid job", detail=str(exc))
+        except KeyError as exc:
+            return json_error(404, error="binary not found", detail=str(exc.args[0]))
+    if jobs.ensure_worker() is None and not jobs.pool_disabled():
+        # No pool could start (the process has no workspace yet), so the job
+        # would sit queued forever: run it now and answer the finished row
+        # rather than a run id nothing will pick up.
+        with contextlib.closing(_open()) as conn:
+            job = jobs.run_pending(conn, limit=1)[0]
+    return json_response(job, status=202)
+
+
+@router.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: int) -> Response:
+    """Cancel a job that has not started; 409 ``job-not-cancellable`` once it has.
+
+    A running scan has already entered the engine, so the cancel refuses rather
+    than reporting a stop that would not happen: the caller either waits for the
+    result or leaves it running.
+    """
+    with contextlib.closing(_open()) as conn:
+        try:
+            job = jobs.cancel(conn, job_id)
+        except ValueError as exc:
+            return json_error(409, error="job-not-cancellable", detail=str(exc))
+    if job is None:
+        return json_error(404, error="job not found", detail=f"no job with id {job_id}")
+    return json_response(job)
+
+
+@router.post("/api/jobs/run")
+def run_jobs(request: Request) -> Response:
+    """Run the oldest waiting jobs inline and answer what finished.
+
+    The server runs queued jobs in its own pool, so this is what a script, a
+    test or a process without the pool uses to drain the queue deterministically;
+    ``?limit=`` bounds how many run in the call.
+    """
+    limit = _query_int(request, "limit")
+    if limit is not None and not 1 <= limit <= jobs.MAX_JOB_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {jobs.MAX_JOB_LIMIT}",
+        )
+    with contextlib.closing(_open()) as conn:
+        finished = jobs.run_pending(conn, limit=limit or 1)
+    return json_response({"jobs": finished, "count": len(finished)})
+
+
+@router.get("/api/jobs/{job_id}/events")
+def job_events(job_id: int) -> Response:
+    """The job's state as server-sent events, ending when the job is terminal.
+
+    One ``event: job`` frame per observed change, the current state first so a
+    client that attaches late is not left blank, and a ``timeout`` frame when
+    the stream's cap is reached, which tells a client to reconnect and read the
+    state again rather than hold a socket open.
+    """
+    with contextlib.closing(_open()) as conn:
+        if jobs.get_job(conn, job_id) is None:
+            return json_error(404, error="job not found", detail=f"no job with id {job_id}")
+
+    def stream() -> Any:
+        with contextlib.closing(_open()) as conn:
+            yield from jobs.events(conn, job_id)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
