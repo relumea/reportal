@@ -47,6 +47,7 @@ from reportal import (
     filetypes,
     hardening,
     journal,
+    pdf,
     protocols,
     secrets,
     store,
@@ -128,6 +129,10 @@ class JobKind:
     scan_kinds: str | Mapping[str, str] | None
     run: Callable[[sqlite3.Connection, int, Mapping[str, Any]], dict[str, Any]]
     params: tuple[str, ...] = ()
+    # A kind whose write is not a scan row (a generated file) does its own
+    # journaling through this, and the runner calls it instead of wrapping the
+    # run in `journaled_scan`.
+    perform: Callable[[sqlite3.Connection, int, Mapping[str, Any]], dict[str, Any]] | None = None
 
     def scan_kind_for(self, params: Mapping[str, Any]) -> str | None:
         """The ``scans`` kind this job stores, or None when it stores another row."""
@@ -144,6 +149,37 @@ def _domain_of(params: Mapping[str, Any], domains: tuple[str, ...], what: str) -
     if domain not in domains:
         raise ValueError(f"unknown {what} domain: {domain}; expected one of {', '.join(domains)}")
     return domain
+
+
+def _engine_report(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """Run the engine's report into the workspace report directory.
+
+    The engine call needs the binary's rebrew project context, which a binary
+    imported without one does not have; that is a failed job carrying the
+    reason rather than a job that never ran.
+    """
+    project_dir = store.get_rebrew_context(conn, binary_id)
+    if project_dir is None:
+        raise ValueError(f"binary {binary_id} has no rebrew project context")
+    return engines.get_engine().report(project_dir, _paths.reports_dir(binary_id))
+
+
+def render_pdf(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Render the binary's PDF into one journaled action.
+
+    The route, the CLI and the queued job all call this, so the file is written
+    and journaled once, in one place: a queued report is revertible through the
+    journal the same way a direct one is.
+    """
+    target = _paths.reports_dir(binary_id) / pdf.REPORT_PDF_NAME
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        previous = journal.read_bounded(target) if target.is_file() else None
+        result = pdf.write_report(conn, binary_id=binary_id, path=target, generated=store.now())
+        journal.journaled_file(log, target, previous=previous)
+    return log.attach(result)
 
 
 def builtin_kinds() -> tuple[JobKind, ...]:
@@ -188,6 +224,19 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             run=lambda conn, binary_id, params: composition.run_composition(
                 conn, binary_id=binary_id
             ),
+        ),
+        JobKind(
+            name="report",
+            label="Engine report over the reversed sources",
+            scan_kinds=store.SCAN_KIND_REPORT,
+            run=lambda conn, binary_id, params: _engine_report(conn, binary_id),
+        ),
+        JobKind(
+            name="report-pdf",
+            label="PDF report over the stored scans",
+            scan_kinds=None,
+            run=render_pdf,
+            perform=render_pdf,
         ),
         JobKind(
             name="unstrip",
@@ -259,6 +308,23 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
     return _row(row) if row else None
 
 
+def latest_job(
+    conn: sqlite3.Connection, *, kind: str, binary_id: int | None = None
+) -> dict[str, Any] | None:
+    """The newest job of one kind, optionally for one binary, or None."""
+    if kind not in JOB_KINDS:
+        raise ValueError(f"unknown job kind: {kind}")
+    ensure_schema(conn)
+    sql = f"SELECT * FROM {TABLE} WHERE kind = ?"
+    params: list[Any] = [kind]
+    if binary_id is not None:
+        sql += " AND binary_id = ?"
+        params.append(binary_id)
+    sql += " ORDER BY id DESC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    return _row(row) if row else None
+
+
 def count_jobs(conn: sqlite3.Connection, *, status: str | None = None) -> int:
     """How many jobs there are, optionally of one status."""
     ensure_schema(conn)
@@ -275,9 +341,10 @@ def list_jobs(
     *,
     status: str | None = None,
     kind: str | None = None,
+    binary_id: int | None = None,
     limit: int = DEFAULT_JOB_LIMIT,
 ) -> tuple[list[dict[str, Any]], int]:
-    """``(rows, total)`` newest first, optionally narrowed by status and kind.
+    """``(rows, total)`` newest first, optionally narrowed by status, kind and binary.
 
     *total* is the whole match, so a bounded page never reads as the whole
     queue.  An unknown status, an unknown kind or an out-of-range limit raises
@@ -298,6 +365,9 @@ def list_jobs(
     if kind is not None:
         clauses.append("kind = ?")
         params.append(kind)
+    if binary_id is not None:
+        clauses.append("binary_id = ?")
+        params.append(binary_id)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     total = int(conn.execute(f"SELECT COUNT(*) FROM {TABLE}{where}", params).fetchone()[0])
     rows = conn.execute(
@@ -418,7 +488,9 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     params = dict(job.get("params") or {})
     try:
         scan_kind = spec.scan_kind_for(params)
-        if scan_kind is None:  # pragma: no cover - every kind stores a scan
+        if spec.perform is not None:
+            payload = spec.perform(conn, binary_id, params)
+        elif scan_kind is None:  # pragma: no cover - every other kind stores a scan
             payload = spec.run(conn, binary_id, params)
         else:
             action = journal.new_action()

@@ -6869,15 +6869,45 @@ def report_pdf(
     binary_id: int = typer.Argument(..., help="Binary id to report on"),
     output: Path | None = typer.Option(None, "--output", help="Write the PDF to this path"),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing file"),
+    queue: bool = typer.Option(False, "--queue", help="Queue the render instead of waiting for it"),
+    status: bool = typer.Option(False, "--status", help="Report the stored PDF and its last job"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Render a binary's PDF summary from its stored scans."""
+    """Render a binary's PDF summary from its stored scans, or queue it or read its status."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         if store.get_binary(conn, binary_id) is None:
             _fail(f"no binary with id {binary_id}", json_output)
+        if status:
+            job = jobs.latest_job(conn, kind="report-pdf", binary_id=binary_id)
+            try:
+                target = reports_dir(binary_id) / pdf.REPORT_PDF_NAME
+            except WorkspaceNotFound as exc:
+                _fail(str(exc), json_output)
+            payload = {
+                "binary_id": binary_id,
+                "exists": target.is_file(),
+                "path": str(target),
+                "bytes": target.stat().st_size if target.is_file() else 0,
+                "pages": (job or {}).get("result", {}).get("pages", 0) if job else 0,
+                "job": job,
+            }
+            if json_output:
+                typer.echo(json.dumps(payload))
+                return
+            console.print(f"pdf: {'present' if payload['exists'] else 'absent'} {payload['path']}")
+            if job:
+                console.print(f"job {job['id']}: {job['status']} {job['error']}".rstrip())
+            return
+        if queue:
+            job = jobs.submit(conn, kind="report-pdf", binary_id=binary_id)
+            if json_output:
+                typer.echo(json.dumps(job))
+                return
+            console.print(f"job {job['id']}: {job['status']}")
+            return
         if output is not None:
             target = output.expanduser()
             if target.exists() and not force:

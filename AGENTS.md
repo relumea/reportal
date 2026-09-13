@@ -342,7 +342,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 181 source files` is the finish line.
+`Success: no issues found in 182 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -352,7 +352,7 @@ errors (a name another module imports without re-exporting it), and
 `engines.py:302` is a return-value error on the engine's decorator.
 
 **Coverage.** `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.56%, 21417 statements with 1593 missed. `[tool.coverage.report] fail_under`
+92.55%, 21471 statements with 1599 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 

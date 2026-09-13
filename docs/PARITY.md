@@ -341,13 +341,25 @@ kept in the existing tables.
 
 ### M. Reports (hosted 3 operations)
 
-**Status:** Planned. Nothing started.
+**Status:** Closed for the workflow, which is what the hosted operations are.
 
 Hosted PDF generation is a workflow: `POST /v3/analyses/{id}/pdf` starts it,
-`GET .../pdf/status` reports it, `GET .../pdf` downloads it.  reportal renders
-the PDF synchronously and never records that it did.  Planned: the report run
-becomes a stored job with a status and a download route, plus the analysis
-report-analysis agent result beside it.
+`GET .../pdf/status` reports it and `GET .../pdf` downloads it.  reportal now
+answers all three.  `report-pdf` is a job kind, so `POST /api/jobs` queues the
+render and answers a run id, `GET /api/jobs/<id>` (or the event stream) reports
+it, and `GET /api/binaries/<id>/report/pdf/status` reports the file and the
+newest job together while `GET /api/binaries/<id>/report/pdf` downloads it.  The
+route, the CLI and the queued job all call `jobs.render_pdf`, so the file is
+written and journaled once, in one place, and a queued render is revertible
+through the journal exactly like a direct one.  The engine's HTML report is a
+job kind too (`report`), and `reportal report-pdf --queue`/`--status` plus the
+SPA Report panel's Queue PDF control expose the same.
+
+The hosted *report-analysis agent* result beside the PDF is not ported as an
+agent: reportal's PDF is a deterministic layout over the stored scans rather
+than a model's narrative, so there is nothing for an agent to produce that the
+rendered report does not already carry.  The AI narrative that does exist is the
+threat report's `narrative`, served beside the deterministic payload.
 
 ### N. Binary extras (hosted `Binaries`, 11 operations)
 

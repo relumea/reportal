@@ -40,7 +40,7 @@ def _post(path: str, payload: dict[str, Any] | None = None) -> tuple[str, Any]:
 
 
 class TestRegistry:
-    def test_the_kinds_are_the_documented_scans(self) -> None:
+    def test_the_registry_holds_the_documented_kinds(self) -> None:
         assert set(jobs.JOB_KINDS) == {
             "behavior",
             "capabilities",
@@ -48,18 +48,20 @@ class TestRegistry:
             "filetype",
             "hardening",
             "protocols",
+            "report",
+            "report-pdf",
             "secrets",
             "unstrip",
         }
 
-    def test_every_kind_names_its_label_and_scan_kind(self) -> None:
+    def test_every_kind_names_its_label_and_its_write(self) -> None:
         for spec in jobs.JOB_KINDS.values():
             assert spec.label
-            # A kind either stores one fixed scan kind or one per domain, and it
-            # resolves with the domain vocabulary it declares.
+            # A kind either stores one fixed scan kind, one scan kind per domain,
+            # or journals a write of its own (`perform`) instead of a scan.
             params = dict.fromkeys(spec.params, "")
             params["domain"] = "execution" if spec.name == "behavior" else "obfuscation"
-            assert spec.scan_kind_for(params)
+            assert spec.scan_kind_for(params) or spec.perform is not None
 
     def test_a_domain_kind_resolves_one_scan_kind_per_domain(self) -> None:
         hardening = jobs.JOB_KINDS["hardening"]

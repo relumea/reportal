@@ -33,6 +33,7 @@ import {
 import { ENTROPY_MAX, PACKED_ENTROPY_THRESHOLD, qualityHue } from "../design";
 import type { HueFamily } from "../design";
 import { panelKey, refreshPanel, useLazyPanel, usePanel } from "../panelCache";
+import { useAsync } from "../useAsync";
 import {
   BEHAVIOR_CONFIDENCES,
   BEHAVIOR_DOMAINS,
@@ -84,7 +85,9 @@ import type {
   ImportTable,
   LineageComparison,
   LineageList,
+  JobView,
   PdfReportResult,
+  PdfStatus,
   PeExport,
   PeInfo,
   PeSection,
@@ -1433,8 +1436,32 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [pdf, setPdf] = useState<PdfReportResult | null>(null);
   const [pdfError, setPdfError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
+  const [queued, setQueued] = useState<number | null>(null);
   const path = `/binaries/${binaryId}/report`;
   const pdfPath = `${path}/pdf`;
+  // The queued render: the job is the thing to watch, and the status route is
+  // where the file and the job are read together.
+  const jobStatus = useAsync(
+    () => api<PdfStatus>(`${pdfPath}/status`),
+    [queued ?? 0],
+    queued !== null,
+    (payload) => (payload?.job?.live ? 1500 : false),
+  );
+  const queuePdf = async (): Promise<void> => {
+    setPdfError(null);
+    setBusy("queue");
+    try {
+      const job = await api<JobView>("/jobs", {
+        method: "POST",
+        json: { kind: "report-pdf", binary_id: binaryId },
+      });
+      setQueued(job.id);
+    } catch (error) {
+      setPdfError(error);
+    } finally {
+      setBusy("");
+    }
+  };
   const generatePdf = async (): Promise<void> => {
     setPdfError(null);
     setBusy("pdf");
@@ -1473,6 +1500,9 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
           <Button tone="primary" pending={busy === "pdf"} onClick={() => void generatePdf()}>
             Generate PDF
           </Button>
+          <Button pending={busy === "queue"} onClick={() => void queuePdf()}>
+            Queue PDF
+          </Button>
           <a className="btn btn-ghost" href={`/api${pdfPath}`}>
             Download PDF
           </a>
@@ -1483,6 +1513,15 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
         {(data) => <ReportBody binaryId={binaryId} result={data} />}
       </PanelBody>
       {pdfError ? <ErrorNote error={pdfError} /> : null}
+      {jobStatus.error ? <ErrorNote error={jobStatus.error} /> : null}
+      {jobStatus.data?.job ? (
+        <Muted>
+          {`PDF job ${jobStatus.data.job.id}: ${jobStatus.data.job.status}`}
+          {jobStatus.data.job.error ? ` (${jobStatus.data.job.error})` : ""}
+          {jobStatus.data.exists ? ` · ${jobStatus.data.pages} page(s) on disk` : ""}{" "}
+          <a href={jobStatus.data.download_url}>Download PDF</a>
+        </Muted>
+      ) : null}
       {pdf ? (
         <Muted>
           PDF ready: {pdf.pages} page(s), {pdf.bytes} bytes.{" "}

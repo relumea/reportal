@@ -392,6 +392,11 @@ Delete behind the confirm pattern that calls `DELETE /api/analyses/<id>`.  There
 is no owner column: reportal is a single-user loopback tool, the view says so,
 and it links to the Journal view, which is where who did what is recorded.  The
 Binaries view carries a Browse analyses action beside Browse functions.
+The binary detail Report panel (`panels/BinaryPanels.tsx`) offers Generate PDF (the
+synchronous render) beside Queue PDF, which submits a `report-pdf` job and then
+polls `/binaries/<id>/report/pdf/status` while the job is live, showing the job
+id, its status and the page count once the file is on disk.
+
 The Jobs view (`views/JobsView.tsx`, `#/jobs`) is the async operation workflow:
 a Queue toolbar over the operations `GET /api/jobs` advertises (the kind, the
 binary, the domain a behavior or hardening job needs), the list of queued and

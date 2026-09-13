@@ -243,7 +243,10 @@ reportal stix <binary-id> [--output PATH] [--json]
                                            # scan; --output writes the bundle to PATH
 reportal report <binary-id> [--json]       # generate the rebrew HTML report into the
                                            # workspace and store the engine result
-reportal report-pdf <binary-id> [--output PATH] [--force] [--json]
+reportal report-pdf <binary-id> [--output PATH] [--force] [--queue|--status] [--json]
+                                           # --queue submits a report-pdf job instead of
+                                           #   waiting; --status reports the stored file
+                                           #   and the newest report-pdf job
                                            # render a text-only PDF summary from the
                                            # stored scans; default output is
                                            # <workspace>/reports/<id>/report.pdf, --output

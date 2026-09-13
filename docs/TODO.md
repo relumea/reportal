@@ -351,7 +351,7 @@ description lives in that file.
 | J | Function-level extras (indirect call sites, capabilities, strings, user strings) | Planned |
 | K | Data types and signatures bulk operations | Planned |
 | L | Agentic conversations (tool loop, SSE, cancel, confirm) | Planned |
-| M | Reports as an asynchronous job | Planned |
+| M | Reports as an asynchronous job | Closed in PARITY.md |
 
 Closed in PARITY.md and not reopened here: E (collections), I (config), N
 (binary extras).

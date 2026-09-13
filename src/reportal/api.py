@@ -23,6 +23,7 @@ import sqlite3
 import tempfile
 import threading
 from collections.abc import Iterator, Mapping, Sequence
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -1357,32 +1358,62 @@ def get_binary_report(binary_id: int) -> Response:
 
 @router.post("/api/binaries/{binary_id}/report/pdf")
 def generate_binary_report_pdf(binary_id: int) -> Response:
-    """Render the binary's PDF summary into its workspace report directory."""
+    """Render the binary's PDF summary into its workspace report directory.
+
+    The same call a queued ``report-pdf`` job makes, so the file is written and
+    journaled once whether it is rendered here or by the pool; use
+    ``POST /api/jobs`` to queue it instead of waiting for it.
+    """
     with contextlib.closing(_open()) as conn:
         if store.get_binary(conn, binary_id) is None:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
-        target = reports_dir(binary_id) / pdf.REPORT_PDF_NAME
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            previous = journal.read_bounded(target) if target.is_file() else None
-            result = pdf.write_report(
-                conn,
-                binary_id=binary_id,
-                path=target,
-                generated=store.now(),
-            )
-            journal.journaled_file(log, target, previous=previous)
+        result = jobs.render_pdf(conn, binary_id, {})
     return json_response(
-        log.attach(
-            {
-                "path": result["path"],
-                "bytes": result["bytes"],
-                "pages": result["pages"],
-                "download_url": f"/api/binaries/{binary_id}/report/pdf",
-            }
-        )
+        {
+            "path": result["path"],
+            "bytes": result["bytes"],
+            "pages": result["pages"],
+            "download_url": f"/api/binaries/{binary_id}/report/pdf",
+        }
+        | {key: value for key, value in result.items() if key == "journal_action"}
+    )
+
+
+@router.get("/api/binaries/{binary_id}/report/pdf/status")
+def get_binary_report_pdf_status(binary_id: int) -> Response:
+    """Whether the PDF exists, what it holds, and the job that renders it.
+
+    The hosted workflow answers its status route with the run; locally the file
+    is the artifact, so this reports both: the file's path, size, page count and
+    modification time when it is there, and the newest ``report-pdf`` job with
+    its status, so a caller that queued one can watch it here or on
+    ``GET /api/jobs/<id>``.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        job = jobs.latest_job(conn, kind="report-pdf", binary_id=binary_id)
+    target = reports_dir(binary_id) / pdf.REPORT_PDF_NAME
+    exists = target.is_file()
+    return json_response(
+        {
+            "binary_id": binary_id,
+            "exists": exists,
+            "path": str(target),
+            "bytes": target.stat().st_size if exists else 0,
+            "pages": (job or {}).get("result", {}).get("pages", 0) if exists and job else 0,
+            "generated_at": datetime.fromtimestamp(target.stat().st_mtime, UTC).isoformat(
+                timespec="seconds"
+            )
+            if exists
+            else None,
+            "job": job,
+            "download_url": f"/api/binaries/{binary_id}/report/pdf",
+        }
     )
 
 
@@ -7057,6 +7088,7 @@ def list_jobs(request: Request) -> Response:
     kind = _query_text(request, "kind")
     if kind is not None and kind not in jobs.JOB_KINDS:
         return _invalid_query("kind", kind, sorted(jobs.JOB_KINDS))
+    binary_id = _query_int(request, "binary_id")
     limit = _query_int(request, "limit")
     if limit is not None and not 1 <= limit <= jobs.MAX_JOB_LIMIT:
         return json_error(
@@ -7066,7 +7098,11 @@ def list_jobs(request: Request) -> Response:
         )
     with contextlib.closing(_open()) as conn:
         rows, total = jobs.list_jobs(
-            conn, status=status, kind=kind, limit=limit or jobs.DEFAULT_JOB_LIMIT
+            conn,
+            status=status,
+            kind=kind,
+            binary_id=binary_id,
+            limit=limit or jobs.DEFAULT_JOB_LIMIT,
         )
         queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED)
     return json_response(

@@ -605,6 +605,7 @@ def _tool_get_pdf_status(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
+        job = jobs.latest_job(conn, kind="report-pdf", binary_id=binary_id)
     target = _pdf_path(binary_id)
     if not target.is_file():
         return {
@@ -613,6 +614,7 @@ def _tool_get_pdf_status(arguments: dict[str, Any]) -> dict[str, Any]:
             "path": str(target),
             "bytes": 0,
             "pages": 0,
+            "job": job,
         }
     data = target.read_bytes()
     return {
@@ -621,6 +623,7 @@ def _tool_get_pdf_status(arguments: dict[str, Any]) -> dict[str, Any]:
         "path": str(target),
         "bytes": len(data),
         "pages": pdf.page_count(data),
+        "job": job,
     }
 
 
@@ -628,13 +631,10 @@ def _tool_generate_pdf_report(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
-        target = _pdf_path(binary_id)
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            previous = journal.read_bounded(target) if target.is_file() else None
-            result = pdf.write_report(conn, binary_id=binary_id, path=target, generated=store.now())
-            journal.journaled_file(log, target, previous=previous)
-            return log.attach(result)
+        # Resolves the workspace and raises the same tool error the status read
+        # does when there is none; the render computes the path itself.
+        _pdf_path(binary_id)
+        return jobs.render_pdf(conn, binary_id, {})
 
 
 def _tool_get_structs(arguments: dict[str, Any]) -> dict[str, Any]:

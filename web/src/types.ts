@@ -1904,6 +1904,19 @@ export interface JobView {
   live: boolean;
 }
 
+/** The `GET /api/binaries/<id>/report/pdf/status` payload: the stored file and
+ *  the newest job that renders it. */
+export interface PdfStatus {
+  binary_id: number;
+  exists: boolean;
+  path: string;
+  bytes: number;
+  pages: number;
+  generated_at: string | null;
+  job: JobView | null;
+  download_url: string;
+}
+
 /** The `GET /api/jobs` payload, with the operations that may be queued. */
 export interface JobsPayload {
   jobs: JobView[];
