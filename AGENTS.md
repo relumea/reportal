@@ -75,7 +75,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 189 source files` is the finish line.
+`Success: no issues found in 191 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -89,7 +89,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.10%, 23314 statements with 1841 missed. `[tool.coverage.report] fail_under`
+92.14%, 23554 statements with 1852 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -225,9 +225,13 @@ bind unless it is on and an enabled user exists.
 | Require token auth | `REPORTAL_AUTH` (truthy: `1`, `true`, `yes`, `on`, `required`) | `[auth] required = true` | off |
 
 User management is `reportal user-add <name> [--role viewer|analyst|admin]`
-(which prints the token once), `user-token`, `user-edit`, `user-rm` and `users`.
-Only the token's SHA-256 digest is stored, and the SPA keeps the bearer token in
-`localStorage` (`api.TOKEN_STORAGE_KEY`).
+(which prints the token once), `user-token`, `user-edit`, `user-rm` and `users`;
+teams are `reportal teams`, `team-add`, `team-rm`, `team-member`, `binary-scope`
+and `collection-scope`; and the identity-side reads are `reportal activity
+[--actor] [--since]`, `feedback` and `feedback-add <message>`.  Only the token's
+SHA-256 digest is stored, the SPA keeps the bearer token in `localStorage`
+(`api.TOKEN_STORAGE_KEY`), and each journal entry records the `actor` the server
+set around the request (`server.authenticate` + `journal.acting_as`).
 
 ### Graph backend configuration
 
@@ -391,9 +395,11 @@ serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 `get_firmware_scan` reads the stored carve pass and is read-only;
 `run_firmware_scan` carves and stores one and `extract_firmware_regions` carves
-its regions out as binaries, so both are destructive.
+its regions out as binaries, so both are destructive.  `get_activity` reads the
+activity feed and `list_feedback` the stored notes, so both are read-only;
+`add_feedback` writes one and is destructive.
 The registry
-declares 171 built-in tools, 77 read-only and 94 destructive.
+declares 174 built-in tools, 79 read-only and 95 destructive.
 
 ## SPA
 
@@ -498,8 +504,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 171 built-in
-tools (77 read-only, 94 destructive).
+and `run_match` expose the same over MCP, and the counts stay 174 built-in
+tools (79 read-only, 95 destructive).
 
 ### Scaling
 
@@ -537,14 +543,16 @@ thousand functions.
 - Ruff: line length 100, `select` groups E/F/W/I/UP/B/SIM/A/DTZ/G/N/PGH/TID/RUF100/T10/C4/RET/PIE/ISC/FURB/T20, no ignores.
 - Typer CLI; human output to stderr through `Console(stderr=True)`; `--json` payloads to stdout.
 - FastAPI application served by uvicorn, loopback bind by default, Host-header guard against DNS rebinding.  `server.app` is the ASGI app and `api.router`/`ui.router` are its routes.  A handler is a plain `def` (FastAPI runs it on the threadpool) unless it parses a multipart body itself, takes `request: Request` when it reads the query string and `body: dict[str, Any] = Depends(json_body)` (or `optional_json_body`) when it reads a JSON body.  Nothing 500s on a request error: `json_error` is both a response and an exception, and the handlers in `server.py` keep FastAPI's own refusals (405, a malformed path parameter, an unreadable multipart body) inside the `{"error", "detail", "doc_url"}` envelope.
-- Token auth is one router dependency on `api.router`
-  (`server.require_auth`), armed only by `REPORTAL_AUTH` or `[auth] required`, so a
-  new `/api` route is behind the gate by construction and an install that never
-  enables it behaves exactly as before.  `auth.py` owns the `users` table, the role
-  permission sets (`ROLE_PERMISSIONS`), the digest-only token storage and the
-  constant-time comparison; `cli.serve` refuses a non-loopback bind while the gate is
-  off or no enabled user exists, and `docs/THREAT_MODEL.md` records the boundary.
-  Object authorization is the same dependency: a binary or a collection carries a
+- The API gate is one middleware (`server._reportal_headers` calling
+  `server.authenticate`), not a per-route dependency, because it also sets the
+  `journal.acting_as` actor the request's entries record; a `/api` path is behind it
+  by construction and an install that never enables auth behaves exactly as before.
+  `auth.py` owns the `users` and `teams` tables, the role permission sets
+  (`ROLE_PERMISSIONS`, with `_SELF_PATHS` keeping `users/activity` and
+  `users/feedback` self-service), the digest-only token storage and the constant-time
+  comparison; `cli.serve` refuses a non-loopback bind while the gate is off or no
+  enabled user exists, and `docs/THREAT_MODEL.md` records the boundary.
+  Object authorization rides the same check: a binary or a collection carries a
   `visibility` (`public`/`team`) and an `owner_team_id`, `server._enforce_scope`
   resolves the object a path names (a function or analysis through its binary) and
   `auth.visible_clause` is the SQL rule the listings, the search and the bulk guard

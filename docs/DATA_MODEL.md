@@ -404,3 +404,19 @@ which is what it always meant.  Deleting a team resets the objects it owned to
 public and ownerless rather than leaving a dangling scope, because a stale
 `owner_team_id` would make them invisible to everyone.
 
+`feedback` stores the local notes about reportal itself, the one identity-side
+thing that is stored rather than derived: a nullable `user_id` (the
+authenticated caller, `NULL` for a note written with auth off), the `actor` name
+recorded with it, the trimmed `body` (bounded by `store.MAX_FEEDBACK_CHARS`) and
+`created_at`.  It is written by `store.add_feedback` and read by
+`store.list_feedback`, the notes are journaled like every other write, and the
+activity feed that sits beside them (`src/reportal/activity.py`) stores nothing:
+it merges the journal's actions with the analysis log at read time.
+
+`journal_entries` gained an `actor` column with the same release: the name the
+server recorded the request for (`server.authenticate` and
+`journal.acting_as`), the literal `local` while token auth is off, and empty for
+a write no request made.  An existing database gets the column through
+`journal.ensure_schema`, which adds it before creating its index, and the rows
+written before it read as an empty actor rather than an invented one.
+

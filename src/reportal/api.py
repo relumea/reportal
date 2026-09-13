@@ -37,6 +37,7 @@ from starlette.responses import Response, StreamingResponse
 
 from reportal import (
     __version__,
+    activity,
     analysis_log,
     archive,
     auth,
@@ -88,14 +89,7 @@ from reportal import (
     zipcrypto,
 )
 from reportal._paths import binaries_dir, db_path, reports_dir
-from reportal.server import (
-    db,
-    json_body,
-    json_error,
-    json_response,
-    optional_json_body,
-    require_auth,
-)
+from reportal.server import db, json_body, json_error, json_response, optional_json_body
 from reportal.surface import classified as _classified
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
 from reportal.surface import journaled_signature_write as _journal_signature_write
@@ -119,7 +113,7 @@ _engine = partial(surface.engine, fail=_fail)
 _project_context = partial(surface.project_context, fail=_fail)
 _require_binary = partial(surface.require_binary, fail=_fail)
 
-router = APIRouter(dependencies=[Depends(require_auth)])
+router = APIRouter()
 
 # The disassembly format `disasm_cache` holds.  The cache key is the function
 # id alone, so only this format is cached; a `hex` request runs the engine and
@@ -8298,3 +8292,104 @@ def set_collection_scope(
 ) -> Response:
     """Set a collection's visibility and owning team (`public` or `team`)."""
     return _set_scope(request, body, kind="collection", row_id=collection_id)
+
+
+# ── Activity and feedback ──────────────────────────────────────────
+#
+# The two hosted identity reads reportal had no local answer for: a feed of what
+# was done and by whom, derived from the journal and the analysis log rather
+# than stored, and a local feedback note, which is the one stored half.  Both
+# are self-service paths (`auth._SELF_PATHS`), so an analyst needs no admin role
+# to read its own activity or write a note.
+
+
+def _invalid_feedback(detail: str) -> Response:
+    return json_error(400, error="invalid feedback", detail=detail)
+
+
+@router.get("/api/users/activity")
+def user_activity(request: Request) -> Response:
+    """The activity feed: journaled actions and analysis-log entries, newest first.
+
+    ``?actor=`` narrows it to one name (the empty value means the writes no
+    request made), ``?since=`` is an inclusive ISO timestamp and ``?limit=`` is
+    bounded by :data:`activity.MAX_ACTIVITY_LIMIT`.  ``sources`` names the item
+    kinds to merge.  Nothing is stored: the feed is derived, so a revert or a
+    prune shows at once.
+    """
+    actor = request.query_params.get("actor")
+    since_raw = _query_text(request, "since")
+    since = None
+    if since_raw is not None:
+        try:
+            since = notifications.parse_since(since_raw)
+        except ValueError as exc:
+            return json_error(400, error="invalid since", detail=str(exc))
+    limit = _query_int(request, "limit")
+    limit = activity.DEFAULT_ACTIVITY_LIMIT if limit is None else limit
+    if not 1 <= limit <= activity.MAX_ACTIVITY_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {activity.MAX_ACTIVITY_LIMIT}",
+        )
+    sources: tuple[str, ...] = activity.SOURCES
+    raw_sources = _query_text(request, "sources")
+    if raw_sources is not None:
+        sources = tuple(part.strip() for part in raw_sources.split(",") if part.strip())
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = activity.feed(conn, actor=actor, since=since, limit=limit, sources=sources)
+        except ValueError as exc:
+            return json_error(400, error="invalid sources", detail=str(exc))
+        payload["actors"] = activity.actors(conn)
+    return json_response(payload)
+
+
+@router.get("/api/users/feedback")
+def list_feedback(request: Request) -> Response:
+    """Stored feedback notes, newest first, bounded; read-only."""
+    limit = _query_int(request, "limit")
+    limit = 50 if limit is None else limit
+    if not 1 <= limit <= 500:
+        return json_error(400, error="invalid limit", detail="limit must be between 1 and 500")
+    with contextlib.closing(_open()) as conn:
+        notes = store.list_feedback(conn, limit=limit)
+        total = store.count_feedback(conn)
+    return json_response({"feedback": notes, "count": len(notes), "total": total})
+
+
+@router.post("/api/users/feedback")
+def add_feedback(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Store one feedback note about reportal itself; journaled and revertible.
+
+    The note is attributed to the authenticated caller's name when there is one
+    and to ``local`` while token auth is off, so it is never invented an owner.
+    A blank body or one past :data:`reportal.store.MAX_FEEDBACK_CHARS` is 400
+    ``invalid feedback``.
+    """
+    raw = body.get("message")
+    if not isinstance(raw, str):
+        return _invalid_feedback("message must be a string")
+    caller = _caller(request)
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                feedback_id = store.add_feedback(
+                    conn,
+                    body=raw,
+                    actor=journal.current_actor(),
+                    user_id=None if caller is None else int(caller["id"]),
+                )
+            except store.InvalidFeedbackError as exc:
+                return _invalid_feedback(str(exc))
+            journal.journaled_create(
+                log,
+                table="feedback",
+                key=feedback_id,
+                description=f"wrote feedback note {feedback_id}",
+            )
+    with contextlib.closing(_open()) as conn:
+        stored = store.get_feedback(conn, feedback_id)
+    return json_response(log.attach(stored or {"id": feedback_id}), status=201)

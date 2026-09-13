@@ -131,6 +131,11 @@ choice is a real boundary, and it is what the rest of this document qualifies.
   visible binary.  The comment `author` remains free text kept in the browser
   (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an attribution
   convenience, not a security principal.
+- **The activity feed is derived and unauthenticated in its reads.**  Any
+  authenticated caller reads the whole feed, so an analyst sees the other teams'
+  action descriptions (a description names ids and paths) even when the object's
+  own route would answer 404.  Narrowing the feed to the caller's scope is the
+  next step once per-object scoping covers the journal.
 - **The team scope narrows objects, not aggregates.**  `GET /api/health` counts
   every row and `store.search`'s per-group `total` is the unfiltered match
   count, so a member of the workspace can learn *how many* objects exist that it
@@ -178,10 +183,13 @@ choice is a real boundary, and it is what the rest of this document qualifies.
   (`revert_journal_entry`), which is workspace-wide.  Team members share a
   team's objects fully: there is no per-member ownership inside a team, and an
   object has one owning team rather than a set of collaborators.
-- **The journal is a revert tool, not an audit log.**  It records the write and,
-  once the identity slice lands, no actor column: the authenticated user of a
-  request is not recorded beside the entry it caused (`journal._SCHEMA`).  Who
-  did what is therefore not answerable from the database yet.
+- **The journal is a revert tool that now attributes its entries.**  Each entry
+  carries the `actor` the server recorded the request for (`local` while auth is
+  off, empty for a CLI or MCP write), and `GET /api/users/activity` reports it.
+  What it does not carry is the session: no token, no address, no user agent, so
+  an entry says which identity acted, not from where or with which credential.
+  An actor is a name, and a name is not a principal: renaming or deleting a user
+  leaves the historic entries under the old name.
 - **The user table is not a directory of trust.**  A name is free text and the
   role is the only attribute; there is no password, second factor, expiry,
   lockout after failed attempts or login attempt log.  That is a deliberate

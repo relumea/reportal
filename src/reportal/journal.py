@@ -35,6 +35,7 @@ import re
 import secrets
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,11 @@ from reportal import analysis_log, effects, store
 # existing database picks it up on first use, the way `store._upgrade_schema`
 # handles a column added after the first release.
 _TABLE = "journal_entries"
+
+# The table's name, for a reader outside this module (the activity feed groups
+# by actor with its own query).
+TABLE = _TABLE
+
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS {_TABLE} (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,10 +59,24 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     description     TEXT NOT NULL,
     descriptor_json TEXT NOT NULL,
     created_at      TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'active'
+    status          TEXT NOT NULL DEFAULT 'active',
+    actor           TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_journal_entries_action ON {_TABLE}(action);
 """
+
+# The actor index is created after the column migration below, because an index
+# on a column an older database does not have yet would fail the script.
+_ACTOR_INDEX = f"CREATE INDEX IF NOT EXISTS idx_journal_entries_actor ON {_TABLE}(actor);"
+
+# The actor an action was taken by: the authenticated user's name for a request,
+# ``local`` while token auth is off, and empty for a process with no identity
+# (a CLI invocation or an MCP tool call).  The server sets it around the request
+# it serves, so every entry the request records carries who made it.
+_ACTOR: ContextVar[str] = ContextVar("reportal_journal_actor", default="")
+
+# The actor name a request without an authenticated user records.
+LOCAL_ACTOR = "local"
 
 # Entry statuses.  `active` is a recorded write a revert has not taken back,
 # `reverted` one whose inverse applied, and `partial` one whose inverse could
@@ -116,8 +136,39 @@ def quote_identifier(name: object) -> str:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the journal table when the database predates it."""
+    """Create the journal table when the database predates it.
+
+    A database written before the ``actor`` column existed gets it added here,
+    the way ``store._upgrade_schema`` handles a column added after a release;
+    the backfill leaves those entries with an empty actor, which is the honest
+    reading of a write nobody recorded an identity for.
+    """
     conn.executescript(_SCHEMA)
+    columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({_TABLE})")}
+    if "actor" not in columns:
+        conn.execute(f"ALTER TABLE {_TABLE} ADD COLUMN actor TEXT NOT NULL DEFAULT ''")
+    conn.execute(_ACTOR_INDEX)
+    conn.commit()
+
+
+@contextlib.contextmanager
+def acting_as(actor: str) -> Iterator[None]:
+    """Record *actor* on every entry this block writes, and restore after.
+
+    The value travels in a :class:`contextvars.ContextVar` so a writer deep in a
+    call stack does not have to thread it through; the server sets it around the
+    request it serves, and the worker thread the route runs on inherits it.
+    """
+    token = _ACTOR.set(actor)
+    try:
+        yield
+    finally:
+        _ACTOR.reset(token)
+
+
+def current_actor() -> str:
+    """The actor the current context records, or an empty string."""
+    return _ACTOR.get()
 
 
 def new_action() -> str:
@@ -154,7 +205,14 @@ class Journal:
         instead of the whole batch.
         """
         encoded = json.dumps(dict(descriptor))
-        self._pending.append({"kind": kind, "description": description, "descriptor_json": encoded})
+        self._pending.append(
+            {
+                "kind": kind,
+                "description": description,
+                "descriptor_json": encoded,
+                "actor": current_actor(),
+            }
+        )
 
     def pending(self) -> int:
         """Entries recorded since the last flush."""
@@ -177,12 +235,13 @@ class Journal:
                 entry["descriptor_json"],
                 stamp,
                 STATUS_ACTIVE,
+                entry["actor"],
             )
             for entry in self._pending
         ]
         self.conn.executemany(
-            f"INSERT INTO {_TABLE} (action, kind, description, descriptor_json, created_at, status)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
+            f"INSERT INTO {_TABLE} (action, kind, description, descriptor_json, created_at,"
+            " status, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         self.conn.commit()
@@ -700,6 +759,15 @@ def journaled_analysis_delete(conn: sqlite3.Connection, log: Journal, analysis_i
 # ── Reading and reverting ──────────────────────────────────────────
 
 
+def _columns_of(row: sqlite3.Row | Mapping[str, Any]) -> Any:
+    """The column names of a row, whichever driver type it is.
+
+    ``sqlite3.Row`` and a mapping both answer ``keys()``; ``in`` on the row
+    itself would test its *values*, which is not what the actor lookup means.
+    """
+    return row.keys()
+
+
 def _entry_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     """The metadata of one entry, without its descriptor payload."""
     return {
@@ -709,6 +777,7 @@ def _entry_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "description": str(row["description"]),
         "created_at": str(row["created_at"]),
         "status": str(row["status"]),
+        "actor": str(row["actor"]) if "actor" in _columns_of(row) else "",
     }
 
 
@@ -745,7 +814,11 @@ def count_actions(conn: sqlite3.Connection, *, since: str | None = None) -> int:
 
 
 def list_actions(
-    conn: sqlite3.Connection, *, since: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+    conn: sqlite3.Connection,
+    *,
+    since: str | None = None,
+    actor: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
     """One row per action, newest first, described by its newest entry.
 
@@ -772,6 +845,9 @@ def list_actions(
     if since is not None:
         sql += " AND e.created_at >= ?"
         params.append(since)
+    if actor is not None:
+        sql += " AND e.actor = ?"
+        params.append(actor)
     sql += " ORDER BY e.id DESC LIMIT ?"
     params.append(min(limit, MAX_LIST_LIMIT))
     rows = []

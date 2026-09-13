@@ -1936,6 +1936,49 @@ export interface FirmwareExtraction {
   journal_action?: string;
 }
 
+/** One item of the activity feed, derived from the journal or the analysis log. */
+export interface ActivityItem {
+  /** Stable per source row (or action); a client keys its rendering on it. */
+  id: string;
+  kind: "action" | "log";
+  /** Who made it: a user name, `local`, or empty for a write no request made. */
+  actor: string;
+  at: string;
+  action: string;
+  description: string;
+  status: string;
+  entries: number;
+  severity?: string;
+}
+
+/** `GET /api/users/activity`: the feed plus the actors that appear in it. */
+export interface ActivityPayload {
+  items: ActivityItem[];
+  count: number;
+  total: number;
+  since: string | null;
+  actor: string | null;
+  sources: string[];
+  latest: string | null;
+  actors: { actor: string; actions: number; at: string }[];
+}
+
+/** One stored feedback note about reportal itself. */
+export interface FeedbackNote {
+  id: number;
+  user_id: number | null;
+  actor: string;
+  body: string;
+  created_at: string;
+}
+
+/** `GET /api/users/feedback`: a bounded page and the true total. */
+export interface FeedbackPayload {
+  feedback: FeedbackNote[];
+  count: number;
+  total: number;
+}
+
 /** One local user; the token digest is never part of the answer. */
 export interface UserRow {
   id: number;

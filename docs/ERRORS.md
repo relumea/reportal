@@ -39,7 +39,7 @@ under the hyphenated heading.
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
-- Teams and scope: [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
+- Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 
 ## Request shape
@@ -612,6 +612,12 @@ update with neither `role` nor `disabled`. Roles are `viewer`, `analyst` and
 ### user-not-found
 
 `404`. No user carries that id.
+
+### invalid-feedback
+
+`400`. A feedback note was blank or past `store.MAX_FEEDBACK_CHARS` (2000), or
+the request's `message` was not a string. Send the text `POST
+/api/users/feedback` (or `reportal feedback-add`) should store.
 
 ### invalid-team
 

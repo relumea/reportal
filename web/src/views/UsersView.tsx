@@ -29,7 +29,16 @@ import {
   Toolbar,
 } from "../components";
 import { ROLES } from "../constants";
-import type { Me, TeamRow, TeamsPayload, UserRow, UsersPayload } from "../types";
+import type {
+  ActivityItem,
+  ActivityPayload,
+  FeedbackPayload,
+  Me,
+  TeamRow,
+  TeamsPayload,
+  UserRow,
+  UsersPayload,
+} from "../types";
 import { useAsync } from "../useAsync";
 
 /** The token this browser sends, with the control that sets or clears it. */
@@ -236,6 +245,101 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
   );
 }
 
+/** What was done here and by whom, plus the local feedback notes. */
+function ActivityPanel(): ReactNode {
+  const [actor, setActor] = useState("");
+  const path = `/users/activity?limit=50${actor ? `&actor=${encodeURIComponent(actor)}` : ""}`;
+  const feed = useAsync(() => api<ActivityPayload>(path), [path]);
+  const notes = useAsync(() => api<FeedbackPayload>("/users/feedback?limit=20"), []);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const items: ActivityItem[] = feed.data?.items ?? [];
+  return (
+    <Panel
+      title="Activity"
+      subtitle="Derived from the action journal and the analysis log; the actor is who made each write."
+      actions={
+        <>
+          <select
+            aria-label="filter the activity by actor"
+            value={actor}
+            onChange={(event) => setActor(event.target.value)}
+          >
+            <option value="">every actor</option>
+            {(feed.data?.actors ?? []).map((entry) => (
+              <option key={entry.actor} value={entry.actor}>
+                {entry.actor || "no request"} ({entry.actions})
+              </option>
+            ))}
+          </select>
+          <Button tone="ghost" onClick={feed.reload}>
+            Reload
+          </Button>
+        </>
+      }
+    >
+      {feed.error ? <ErrorNote error={feed.error} onRetry={feed.reload} /> : null}
+      {feed.data === undefined ? (
+        <Loading label="Loading the activity" />
+      ) : items.length === 0 ? (
+        <EmptyState>Nothing recorded yet. A write through the API, the CLI or MCP shows here.</EmptyState>
+      ) : (
+        <DataTable
+          columns={[
+            { label: "When", key: "at", mono: true },
+            { label: "Actor", render: (row) => row.actor || "n/a" },
+            { label: "Kind", render: (row) => <Badge mono>{row.kind}</Badge> },
+            { label: "Description", key: "description" },
+            { label: "Status", key: "status" },
+          ]}
+          rows={items}
+          rowKey={(row) => row.id}
+        />
+      )}
+      <Toolbar>
+        <Field label="Feedback about reportal">
+          <input
+            placeholder="what would help"
+            value={message}
+            onChange={(event) => setMessage(event.target.value)}
+          />
+        </Field>
+        <Button
+          pending={busy}
+          disabled={!message.trim()}
+          onClick={() => {
+            setError(null);
+            setBusy(true);
+            void api("/users/feedback", { method: "POST", json: { message: message.trim() } })
+              .then(() => {
+                setMessage("");
+                feed.reload();
+                notes.reload();
+              })
+              .catch((failure: unknown) => setError(failure))
+              .finally(() => setBusy(false));
+          }}
+        >
+          Store note
+        </Button>
+      </Toolbar>
+      {error ? <ErrorNote error={error} /> : null}
+      {notes.data && notes.data.feedback.length > 0 ? (
+        <DataTable
+          columns={[
+            { label: "When", key: "created_at", mono: true },
+            { label: "Actor", render: (row) => row.actor || "n/a" },
+            { label: "Note", key: "body" },
+          ]}
+          rows={notes.data.feedback}
+          rowKey={(row) => row.id}
+        />
+      ) : null}
+    </Panel>
+  );
+}
+
 export function UsersView(): ReactNode {
   const me = useAsync(() => api<Me>("/iam/me"), []);
   const users = useAsync(() => api<UsersPayload>("/users"), []);
@@ -403,6 +507,7 @@ export function UsersView(): ReactNode {
         ) : null}
       </Panel>
       <TeamsPanel users={rows} onChanged={reload} />
+      <ActivityPanel />
     </>
   );
 }

@@ -125,7 +125,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (171 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (174 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -308,7 +308,8 @@ every write that changed something) through `?order=`.
 
 ### F. Users, auth and IAM (hosted 5 operations)
 
-**Status:** In progress.  Shipped: local identity, roles and the API gate.
+**Status:** Closed.  Shipped: local identity, roles, teams, the object scope and
+the activity and feedback surfaces.
 
 - users, roles and bearer tokens (`src/reportal/auth.py`, the `users` table):
   `viewer` reads, `analyst` reads and writes, `admin` also manages users, with
@@ -359,12 +360,30 @@ every write that changed something) through `?order=`.
   scope select) expose the same.  `docs/THREAT_MODEL.md` records the moved
   boundary and its residual risks.
 
-Still open in this cluster: the activity feed (`GET /v2/users/activity`, derived
-from the action journal once a journal entry records the actor it happened for)
-and local feedback notes (`POST /v2/users/feedback`).  Organisations, groups and
-per-team roles are hosted structure this model deliberately does not carry;
-`docs/TODO.md` entries 2 and 5 record exactly what is left there.  The hosted
-`GET /v2/users/{id}` single-user read is covered by the list.
+- the activity feed (`GET|POST /api/users/activity`, the hosted
+  `GET /v2/users/activity`): **derived, never stored**.  `src/reportal/activity.py`
+  merges one item per journaled action, each carrying the `actor` the server
+  recorded the request for, with one item per analysis-log entry, newest first
+  with the true total, `?actor=`/`?since=`/`?limit=`/`?sources=` filters and the
+  `actors` that actually appear.  The actor comes from a `journal_entries.actor`
+  column (`journal.acting_as`, set by `server.authenticate` around the request:
+  the user's name, `local` while auth is off, empty for a CLI or MCP write), so
+  the journal is attributable as well as revertible.
+- local feedback notes (`POST|GET /api/users/feedback`, the hosted
+  `POST /v2/users/feedback`): the one stored identity-side row, attributed to the
+  authenticated caller, bounded at `store.MAX_FEEDBACK_CHARS` (400
+  `invalid feedback`), journaled and revertible.
+- `reportal activity`/`feedback`/`feedback-add`, the read-only `get_activity` and
+  `list_feedback` MCP tools plus the destructive `add_feedback` (174 tools: 79
+  read-only, 95 destructive) and the SPA Users view's Activity panel with its
+  actor select and feedback form expose the same.  Both new paths are
+  self-service (`auth._SELF_PATHS`): an analyst reads its own activity and writes
+  its own note without an admin role, while `/api/users` stays admin-only.
+
+**Status:** Closed.  Organisations, groups and per-team roles are hosted
+structure this model deliberately does not carry; `docs/TODO.md` entries 2 and 5
+record exactly what is left there.  The hosted `GET /v2/users/{id}` single-user
+read is covered by the list.
 
 ### G. Models (hosted 1 operation plus analysis parameters)
 

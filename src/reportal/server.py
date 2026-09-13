@@ -29,7 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
-from reportal import __version__, auth, error_docs, store
+from reportal import __version__, auth, error_docs, journal, store
 from reportal._paths import WorkspaceNotFound, db_path
 
 app = FastAPI(
@@ -148,59 +148,71 @@ def _enforce_scope(
     conn: sqlite3.Connection,
     request: Request,
     user: Mapping[str, Any],
-) -> None:
+) -> Response | None:
     """Refuse a request for a team-scoped object the caller may not reach.
 
     A read of an object the caller cannot see is a 404 for that object kind,
     because saying "forbidden" would disclose that it exists; a write is a 403
     ``scope-forbidden``, because the caller has already proven it is a member of
-    the workspace and the object is not a secret at that point.
+    the workspace and the object is not a secret at that point.  None means the
+    request may proceed.
     """
     if str(user.get("role")) == auth.ROLE_ADMIN:
-        return
+        return None
     found = _scoped_object(conn, request.url.path)
     if found is None:
-        return
+        return None
     kind, row = found
     if str(row.get("visibility") or auth.VISIBILITY_PUBLIC) != auth.VISIBILITY_TEAM:
-        return
+        return None
     team_ids = [int(team["id"]) for team in auth.teams_of_user(conn, int(user["id"]))]
     if int(row.get("owner_team_id") or 0) in team_ids:
-        return
+        return None
     if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
-        raise json_error(404, error=_NOT_FOUND_NAME[kind], detail=f"no {kind} with that id")
-    raise json_error(
+        return json_error(404, error=_NOT_FOUND_NAME[kind], detail=f"no {kind} with that id")
+    return json_error(
         403,
         error=auth.ERROR_SCOPE_FORBIDDEN,
         detail=f"this {kind} belongs to a team you are not a member of",
     )
 
 
-def require_auth(request: Request) -> None:
-    """Refuse an API request that carries no acceptable token, when auth is on.
+def authenticate(request: Request) -> tuple[str, Response | None]:
+    """Resolve the API caller, and the actor name its writes record.
 
     Auth is off unless the environment or the workspace config turns it on, so
-    the default single-user loopback install is unchanged and this check costs a
+    the default single-user loopback install is unchanged and this costs a
     configuration read.  When it is on, every ``/api`` request needs
     ``Authorization: Bearer <token>``: a missing or unknown token is 401
     ``unauthorized``, a disabled user is 401 as well, and a role that does not
     carry the permission the method and path imply is 403 ``forbidden``.  The
     authenticated user is left on ``request.state.user`` for the routes that
-    report it.
+    report it, and the actor name is what :func:`reportal.journal.acting_as`
+    records on the entries the request writes: the user's name, or ``local``
+    while auth is off.
+
+    It answers an ``(actor, refusal)`` pair rather than raising, because it runs
+    inside a middleware: a raised :class:`JsonError` there would sit outside the
+    app's exception handlers, while the response object it builds is served as
+    is.
     """
     if not auth.required():
-        return
+        return journal.LOCAL_ACTOR, None
     token = auth.token_of(request.headers.get(auth.AUTHORIZATION_HEADER))
     with contextlib.closing(db()) as conn:
         user = auth.authenticate(conn, token)
-    if user is None:
-        raise json_error(401, error=auth.ERROR_UNAUTHORIZED, detail=auth.UNAUTHORIZED_DETAIL)
-    needed = auth.required_permission(request.method, request.url.path)
-    if needed not in auth.permissions_for(str(user["role"])):
-        raise json_error(403, error=auth.ERROR_FORBIDDEN, detail=auth.FORBIDDEN_DETAIL)
-    with contextlib.closing(db()) as conn:
-        _enforce_scope(conn, request, user)
+        if user is None:
+            return "", json_error(
+                401, error=auth.ERROR_UNAUTHORIZED, detail=auth.UNAUTHORIZED_DETAIL
+            )
+        needed = auth.required_permission(request.method, request.url.path)
+        if needed not in auth.permissions_for(str(user["role"])):
+            return "", json_error(403, error=auth.ERROR_FORBIDDEN, detail=auth.FORBIDDEN_DETAIL)
+        refusal = _enforce_scope(conn, request, user)
     request.state.user = user
+    if refusal is not None:
+        return "", refusal
+    return str(user["name"]), None
 
 
 def _accepts_gzip(accept_encoding: str) -> bool:
@@ -316,7 +328,16 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
             if host and _hostname_of(host) not in ALLOWED_HOSTS:
                 _log.warning("Rejected request with Host header %r", host)
                 return json_error(400, error="unexpected Host header", detail="host not allowed")
-        response: Response = await call_next(request)
+        actor = journal.LOCAL_ACTOR
+        if request.url.path.startswith("/api"):
+            actor, refusal = authenticate(request)
+            if refusal is not None:
+                return refusal
+        # The actor is set here, in the async middleware, so the worker thread
+        # the route runs on inherits it; a value set inside a sync dependency
+        # would not reach the handler.
+        with journal.acting_as(actor):
+            response: Response = await call_next(request)
     finally:
         _ACCEPT_ENCODING.reset(token)
     for key, value in SECURITY_HEADERS:

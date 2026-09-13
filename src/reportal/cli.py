@@ -93,6 +93,7 @@ from rich.table import Table
 
 from reportal import (
     __version__,
+    activity,
     analysis_log,
     auth,
     auto_mode,
@@ -412,6 +413,113 @@ def serve(
         pass
     except OSError as exc:
         _fail(f"Failed to start server on {url}: {exc.strerror or exc}", json_output=False)
+
+
+# ── activity and feedback ──────────────────────────────────────────
+
+
+@app.command("activity")
+def activity_command(
+    actor: str | None = typer.Option(None, "--actor", help="Only this actor's actions"),
+    since: str | None = typer.Option(None, "--since", help="Only items at or after this ISO time"),
+    limit: int = typer.Option(
+        activity.DEFAULT_ACTIVITY_LIMIT, "--limit", help="How many items to show"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """What was done here and by whom: the journaled actions and the analysis log.
+
+    Derived, not stored: the actor of an action is the user the server recorded
+    the request for, `local` while token auth is off, and empty for a write no
+    request made (a CLI invocation).
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if limit < 1 or limit > activity.MAX_ACTIVITY_LIMIT:
+        _fail(f"limit must be between 1 and {activity.MAX_ACTIVITY_LIMIT}", json_output)
+    resolved: str | None = None
+    if since is not None:
+        try:
+            resolved = notifications.parse_since(since)
+        except ValueError as exc:
+            _fail(f"invalid since: {exc}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        payload = activity.feed(conn, actor=actor, since=resolved, limit=limit)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("When", style="dim")
+    table.add_column("Actor", style="cyan")
+    table.add_column("Kind")
+    table.add_column("Description")
+    for item in payload["items"]:
+        table.add_row(
+            str(item["at"]),
+            item["actor"] or "n/a",
+            str(item["kind"]),
+            str(item["description"]),
+        )
+    console.print(f"\n[bold cyan]{payload['count']} of {payload['total']} item(s)[/bold cyan]")
+    console.print(table)
+
+
+@app.command()
+def feedback(
+    limit: int = typer.Option(50, "--limit", help="How many notes to show"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the local feedback notes, newest first."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        notes = store.list_feedback(conn, limit=limit)
+        total = store.count_feedback(conn)
+    if json_output:
+        typer.echo(json.dumps({"feedback": notes, "count": len(notes), "total": total}))
+        return
+    if not notes:
+        console.print("no feedback stored")
+        return
+    for note in notes:
+        console.print(f"[dim]{note['created_at']}[/dim] [cyan]{note['actor'] or 'n/a'}[/cyan]")
+        console.print(f"  {note['body']}")
+    console.print(f"\n[bold cyan]{len(notes)} of {total} note(s)[/bold cyan]")
+
+
+@app.command("feedback-add")
+def feedback_add(
+    message: str = typer.Argument(..., help="What to record about reportal itself"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Store one feedback note; journaled, so a revert removes it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                feedback_id = store.add_feedback(
+                    conn, body=message, actor=journal.current_actor() or journal.LOCAL_ACTOR
+                )
+            except store.InvalidFeedbackError as exc:
+                _fail(f"invalid feedback: {exc}", json_output)
+            journal.journaled_create(
+                log,
+                table="feedback",
+                key=feedback_id,
+                description=f"wrote feedback note {feedback_id}",
+            )
+        note = store.get_feedback(conn, feedback_id)
+    payload = log.attach(note or {})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Stored[/green] feedback note {feedback_id}")
+    _print_journal_action(log, json_output)
 
 
 # ── teams ──────────────────────────────────────────────────────────

@@ -330,6 +330,14 @@ CREATE TABLE IF NOT EXISTS comments (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS feedback (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    actor      TEXT NOT NULL DEFAULT '',
+    body       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS auto_runs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     binary_id    INTEGER NOT NULL REFERENCES binaries(id) ON DELETE CASCADE,
@@ -2189,6 +2197,57 @@ def list_collections(
         params.extend(scope[1])
     sql += f" ORDER BY {COLLECTION_ORDERS[order]}"
     return _rows(conn.execute(sql, params))
+
+
+# ── Feedback ───────────────────────────────────────────────────────
+
+# A feedback note is free text; this is the bound the hosted form implies and
+# the one the API, the CLI and the MCP tool all enforce.
+MAX_FEEDBACK_CHARS = 2000
+
+
+class InvalidFeedbackError(ValueError):
+    """The note is blank or past :data:`MAX_FEEDBACK_CHARS`."""
+
+
+def add_feedback(
+    conn: sqlite3.Connection, *, body: str, actor: str = "", user_id: int | None = None
+) -> int:
+    """Store one feedback note; returns its id.
+
+    *actor* is the name the request recorded (empty for a CLI invocation) and
+    *user_id* the authenticated user when there is one, so a note written by a
+    signed-in caller is attributable and one written with auth off is not
+    invented into an owner.
+    """
+    cleaned = (body or "").strip()
+    if not cleaned:
+        raise InvalidFeedbackError("the message must not be blank")
+    if len(cleaned) > MAX_FEEDBACK_CHARS:
+        raise InvalidFeedbackError(f"the message must be at most {MAX_FEEDBACK_CHARS} characters")
+    cursor = conn.execute(
+        "INSERT INTO feedback (user_id, actor, body, created_at) VALUES (?, ?, ?, ?)",
+        (user_id, actor, cleaned, now()),
+    )
+    conn.commit()
+    return int(cursor.lastrowid or 0)
+
+
+def get_feedback(conn: sqlite3.Connection, feedback_id: int) -> dict[str, Any] | None:
+    """One feedback note, or None when the id is unknown."""
+    row = conn.execute("SELECT * FROM feedback WHERE id = ?", (feedback_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_feedback(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Feedback notes, newest first, bounded."""
+    bounded = max(1, min(int(limit), 500))
+    return _rows(conn.execute("SELECT * FROM feedback ORDER BY id DESC LIMIT ?", (bounded,)))
+
+
+def count_feedback(conn: sqlite3.Connection) -> int:
+    """How many feedback notes are stored, whatever a reader's page is."""
+    return int(conn.execute("SELECT COUNT(*) AS n FROM feedback").fetchone()["n"])
 
 
 def set_binary_scope(

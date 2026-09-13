@@ -368,6 +368,11 @@ reportal journal-revert --action ID | --entry ID [--json]
                                            #   stored inverses; a wired command prints its
                                            #   action id to stderr (or in --json output)
 reportal stats [--json]                    # row counts
+reportal activity [--actor NAME] [--since ISO] [--limit N] [--json]
+                                           # what was done here and by whom: the journaled
+                                           #   actions with their actor plus the analysis log
+reportal feedback [--limit N] [--json]     # the local feedback notes, newest first
+reportal feedback-add MESSAGE [--json]     # store one feedback note; journaled
 reportal teams [--json]                    # the teams with their member counts
 reportal team-add NAME [--description TEXT] [--json]
                                            # create a team; journaled

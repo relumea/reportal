@@ -93,6 +93,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "invalid-user": "invalid-user",
     "invalid-body": "invalid-body",
     "invalid-hash": "invalid-hash",
+    "invalid feedback": "invalid-feedback",
     "invalid-kind": "invalid-kind",
     "invalid-limit": "invalid-limit",
     "invalid-url": "invalid-url",

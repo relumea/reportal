@@ -231,12 +231,13 @@ read as a claim:
   that does not exist or that a previous attempt of the same run owns.  The
   contract that would close it is recording the path's prior state in the
   descriptor and refusing to delete a file the run did not write.
-- **The journal is request-scoped state, not a session log.**  One `Journal`
-  per HTTP request or CLI invocation is the unit the paper's revertible effect
-  maps onto here; the authenticated identity of that request is not recorded on
-  the entry (`journal._SCHEMA` has no actor column), so a revert is reversible
-  but not attributable.  The users, teams, memberships and scopes are ordinary
-  journaled rows like any other.
+- **The journal is request-scoped state with an actor, not a session log.**  One
+  `Journal` per HTTP request or CLI invocation is the unit the paper's revertible
+  effect maps onto here, and each entry now records the `actor` the server set
+  around the request (`server.authenticate` + `journal.acting_as`: the user's
+  name, `local` while auth is off, empty for a CLI or MCP write).  It records
+  *which* identity acted, not a session: no token, address or agent, and the
+  actor is a name, so a rename leaves the historic entries under the old one.
 - **App-wide mediation is partial, and the wired set is explicit.**  The
   pipeline journals through a `Context` and auto mode journals per task into its
   run's plan, and both stay run-scoped by design: a run's plan is scoped to the
@@ -314,6 +315,11 @@ read as a claim:
     team create, update and delete, where a team delete journals its members and
     the binaries and collections that lose their scope; membership add and
     remove; and the object scope setter on a binary or a collection.
+  - **Feedback.**  A note is one journaled `feedback` row (`POST
+    /api/users/feedback`, `reportal feedback-add`, the `add_feedback` MCP tool),
+    deleted on revert.  The activity feed beside it stores nothing: it merges the
+    journal's actions with the analysis log at read time, which is why it is not
+    in this list.
   - **Firmware.**  The carve pass journals the `scans` row it creates or
     replaces (and the `analyses` row only when it created it), through the same
     `journal.journaled_scan` every other scan route uses; the region extraction

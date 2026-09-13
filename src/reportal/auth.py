@@ -61,6 +61,11 @@ _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # table, its roles and its tokens is an administrative decision.
 _ADMIN_PREFIXES: tuple[str, ...] = ("/api/users",)
 
+# Paths under an admin prefix that every authenticated caller owns: the hosted
+# portal's `users/activity` and `users/feedback` are self-service, so an analyst
+# reads its own activity and writes its own note rather than needing an admin.
+_SELF_PATHS: tuple[str, ...] = ("/api/users/activity", "/api/users/feedback")
+
 # The authentication mode's environment variable and its workspace spelling.
 REQUIRED_ENV = "REPORTAL_AUTH"
 CONFIG_TABLE = "auth"
@@ -244,6 +249,8 @@ def permissions_for(role: str) -> tuple[str, ...]:
 
 def required_permission(method: str, path: str) -> str:
     """The permission one request needs, from its method and path."""
+    if any(path.startswith(prefix) for prefix in _SELF_PATHS):
+        return PERMISSION_READ if method.upper() in _READ_METHODS else PERMISSION_WRITE
     if any(path.startswith(prefix) for prefix in _ADMIN_PREFIXES):
         return PERMISSION_ADMIN
     return PERMISSION_READ if method.upper() in _READ_METHODS else PERMISSION_WRITE

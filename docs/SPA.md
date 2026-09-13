@@ -400,6 +400,12 @@ posts one region to `/firmware/extract` and reports what it registered, and the
 entropy summary line; before the first run it shows the no-scan hint with the
 same Carve button.
 
+The Users view's Activity panel reads `GET /api/users/activity` (a table of
+when, actor, kind and description, with an actor select built from the names the
+feed reports) and carries the feedback form: a note posts to
+`POST /api/users/feedback` and the stored notes render under it, so the feed and
+the notes are on the page an operator already opens to manage identity.
+
 The Users view also carries the Teams panel: `GET /api/teams` as a table (id,
 name, member count, description) with a create form, a per-row "add member"
 select over the known users and a Delete behind the confirm pattern, so team

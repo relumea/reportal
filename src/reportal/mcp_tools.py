@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from reportal import (
+    activity,
     analysis_log,
     auth,
     auto_mode,
@@ -3445,6 +3446,58 @@ def _tool_extract_firmware_regions(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError(exc.code, exc.detail) from exc
 
 
+def _tool_get_activity(arguments: dict[str, Any]) -> dict[str, Any]:
+    actor = _arg_optional_str(arguments, "actor") or None
+    since_raw = _arg_optional_str(arguments, "since")
+    since = None
+    if since_raw:
+        try:
+            since = notifications.parse_since(since_raw)
+        except ValueError as exc:
+            raise ToolError("invalid since", str(exc)) from exc
+    limit = _arg_optional_int(arguments, "limit", activity.DEFAULT_ACTIVITY_LIMIT)
+    if not 1 <= limit <= activity.MAX_ACTIVITY_LIMIT:
+        raise ToolError(
+            "invalid limit", f"limit must be between 1 and {activity.MAX_ACTIVITY_LIMIT}"
+        )
+    with contextlib.closing(_open()) as conn:
+        payload = activity.feed(conn, actor=actor, since=since, limit=limit)
+        payload["actors"] = activity.actors(conn)
+    return payload
+
+
+def _tool_list_feedback(arguments: dict[str, Any]) -> dict[str, Any]:
+    limit = _arg_optional_int(arguments, "limit", 50)
+    if limit < 1:
+        raise ToolError("invalid limit", "limit must be positive")
+    with contextlib.closing(_open()) as conn:
+        notes = store.list_feedback(conn, limit=limit)
+        total = store.count_feedback(conn)
+    return {"feedback": notes, "count": len(notes), "total": total}
+
+
+def _tool_add_feedback(arguments: dict[str, Any]) -> dict[str, Any]:
+    message = _arg_str(arguments, "message")
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        try:
+            feedback_id = store.add_feedback(
+                conn, body=message, actor=journal.current_actor() or journal.LOCAL_ACTOR
+            )
+        except store.InvalidFeedbackError as exc:
+            raise ToolError("invalid feedback", str(exc)) from exc
+        journal.journaled_create(
+            log,
+            table="feedback",
+            key=feedback_id,
+            description=f"wrote feedback note {feedback_id}",
+        )
+        note = store.get_feedback(conn, feedback_id)
+    return log.attach(note or {"id": feedback_id})
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -5720,6 +5773,35 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_set_collection_scope,
+        ),
+        Tool(
+            "get_activity",
+            "What was done here and by whom: the journaled actions with the actor that made"
+            " each, plus the analysis-log entries.  Derived, never stored.",
+            _object(
+                {
+                    "actor": _str("Only this actor's actions; an empty value means no request."),
+                    "since": _str("Only items at or after this ISO timestamp."),
+                    "limit": _int(f"Maximum items (default {activity.DEFAULT_ACTIVITY_LIMIT})."),
+                }
+            ),
+            _READ,
+            _tool_get_activity,
+        ),
+        Tool(
+            "list_feedback",
+            "The local feedback notes about reportal itself, newest first.",
+            _object({"limit": _int("Maximum notes (default 50).")}),
+            _READ,
+            _tool_list_feedback,
+        ),
+        Tool(
+            "add_feedback",
+            "Store one feedback note about reportal itself, attributed to the caller;"
+            " journaled and revertible.",
+            _object({"message": _str("What to record.")}, ("message",)),
+            _WRITE,
+            _tool_add_feedback,
         ),
         Tool(
             "get_firmware_scan",
