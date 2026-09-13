@@ -214,6 +214,7 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "delete_comment",
         "bulk_binaries",
         "bulk_functions",
+        "bulk_analyses",
         "ingest_document",
         "ingest_url",
         "delete_document",
@@ -382,9 +383,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 155
+        assert len(names) == 156
         assert len(_READ_ONLY_TOOLS) == 74
-        assert len(_DESTRUCTIVE_TOOLS) == 81
+        assert len(_DESTRUCTIVE_TOOLS) == 82
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
@@ -2251,6 +2252,48 @@ class TestCommentAndBulkTools:
         )
         assert is_error is False
         assert payload["applied"] == 1
+
+    def test_bulk_analyses_tags_and_deletes(self, portal_db: Path, conn: Any) -> None:
+        binary_id = store.add_binary(conn, sha256="9" * 64, name="bulk.exe", path="/tmp/bulk.exe")
+        first = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        second = store.create_analysis(conn, binary_id=binary_id, engine="rebrew")
+        tagged, is_error = _call(
+            "bulk_analyses",
+            {"action": "add_tag", "analysis_ids": [first], "tag": "reviewed"},
+        )
+        assert is_error is False
+        assert tagged["applied"] == 1
+        assert [tag["name"] for tag in store.get_binary_tags(conn, binary_id)] == ["reviewed"]
+
+        deleted, is_error = _call(
+            "bulk_analyses", {"action": "delete", "analysis_ids": [first, 999]}
+        )
+
+        assert is_error is False
+        assert deleted["applied"] == 1
+        assert deleted["skipped"] == [{"id": 999, "reason": "not found"}]
+        assert store.get_analysis(conn, first) is None
+        assert store.get_analysis(conn, second) is not None
+
+    def test_bulk_analyses_skips_a_lone_analysis_with_functions(
+        self, portal_db: Path, conn: Any
+    ) -> None:
+        binary_id = store.add_binary(conn, sha256="8" * 64, name="lone.exe", path="/tmp/lone.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        store.add_function(conn, analysis_id=analysis_id, va=0x1000, name="sub_1000", size=8)
+
+        payload, is_error = _call(
+            "bulk_analyses", {"action": "delete", "analysis_ids": [analysis_id]}
+        )
+
+        assert is_error is False
+        assert payload["applied"] == 0
+        assert payload["skipped"] == [{"id": analysis_id, "reason": "only analysis with functions"}]
+
+    def test_bulk_analyses_rejects_an_unknown_action(self, conn: Any) -> None:
+        payload, is_error = _call("bulk_analyses", {"action": "explode", "analysis_ids": [1]})
+        assert is_error is True
+        assert payload["error"] == "invalid bulk request"
 
     def test_bulk_functions_clears_matches(self, conn: Any, tmp_path: Path) -> None:
         ids = _seed_binary(conn, tmp_path)

@@ -1796,6 +1796,63 @@ def bulk_delete(
     _print_bulk_result(result)
 
 
+@app.command("analysis-bulk-tag")
+def analysis_bulk_tag(
+    tag: str = typer.Argument(..., help="Tag name"),
+    analysis_ids: list[int] = typer.Argument(..., help="Analysis ids whose binaries to tag"),
+    remove: bool = typer.Option(False, "--remove", help="Remove the tag instead of adding it"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Add or remove one tag across the binaries many analyses belong to."""
+    action = "remove_tag" if remove else "add_tag"
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    result = _run_bulk(
+        portal_db,
+        lambda conn, log: bulk_actions.apply_analysis_action(
+            conn, action=action, ids=analysis_ids, tag=tag, log=log
+        ),
+        json_output,
+    )
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    _print_bulk_result(result)
+
+
+@app.command("analysis-bulk-delete")
+def analysis_bulk_delete(
+    analysis_ids: list[int] = typer.Argument(..., help="Analysis ids to delete"),
+    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete many analyses with the rows scoped to them.
+
+    A binary's only analysis while it holds functions is skipped with a reason
+    rather than taken with them, exactly as the single-analysis delete refuses
+    it: delete the binary instead.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if not yes:
+        listed = ", ".join(str(analysis_id) for analysis_id in analysis_ids)
+        if not typer.confirm(f"Delete analyses {listed} and the rows scoped to them?"):
+            _fail("aborted", json_output)
+    result = _run_bulk(
+        portal_db,
+        lambda conn, log: bulk_actions.apply_analysis_action(
+            conn, action="delete", ids=analysis_ids, log=log
+        ),
+        json_output,
+    )
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    _print_bulk_result(result)
+
+
 @app.command("bulk-prefix")
 def bulk_prefix(
     prefix: str = typer.Argument(..., help="Prefix to apply to each function name"),

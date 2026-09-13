@@ -391,6 +391,13 @@ reportal analysis-delete <analysis-id> [--json]
                                            # delete one analysis with its functions, scans
                                            #   and log; journaled, and refused (exit 1) for
                                            #   a binary's only analysis while it holds functions
+reportal analysis-bulk-tag TAG <analysis-id>... [--remove] [--json]
+                                           # add or remove one tag across the binaries
+                                           #   many analyses belong to; journaled as one action
+reportal analysis-bulk-delete <analysis-id>... [--yes] [--json]
+                                           # delete many analyses with the rows scoped to
+                                           #   them; a binary's only analysis while it holds
+                                           #   functions is skipped with a reason
 reportal serve [--port 8002] [--host 127.0.0.1] [--no-open]
 reportal mcp [--json]                      # run the stdio MCP server: newline-delimited
                                            #   JSON-RPC 2.0 on stdin/stdout (initialize,

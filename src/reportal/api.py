@@ -5848,6 +5848,36 @@ def bulk_binaries(body: dict[str, Any] = Depends(json_body)) -> Response:
     return json_response(log.attach(result))
 
 
+@router.post("/api/analyses/bulk")
+def bulk_analyses(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Apply one action (``add_tag``, ``remove_tag``, ``delete``) to many analyses.
+
+    A tag action writes each analysis's owning binary, the scope reportal tags
+    at; a delete replays the same journaled snapshot ``DELETE
+    /api/analyses/<id>`` uses, skipping a binary's only analysis while it holds
+    functions with the reason ``only analysis with functions``.
+    """
+    action = body.get("action")
+    if not isinstance(action, str):
+        return json_error(400, error="invalid bulk request", detail="action must be a string")
+    ids = _bulk_ids(body, "analysis_ids")
+    if not isinstance(ids, list):
+        return ids
+    tag = body.get("tag", "")
+    if not isinstance(tag, str):
+        return json_error(400, error="invalid bulk request", detail="tag must be a string")
+    with contextlib.closing(_open()) as conn:
+        action_id = journal.new_action()
+        with journal.journaled(conn, action_id) as log:
+            try:
+                result = bulk_actions.apply_analysis_action(
+                    conn, action=action, ids=ids, tag=tag, log=log
+                )
+            except bulk_actions.BulkError as exc:
+                return _bulk_failure(exc)
+    return json_response(log.attach(result))
+
+
 @router.post("/api/functions/bulk")
 def bulk_functions(body: dict[str, Any] = Depends(json_body)) -> Response:
     """Apply one action (``rename``, ``clear_matches``) to many functions."""

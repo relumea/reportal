@@ -400,7 +400,11 @@ filter that matched nothing says so instead of rendering an empty table.  Each
 row has a View log control that opens an on-demand drawer over
 `GET /api/analyses/<id>/logs` (severity badges on the severity scale, the
 newest entries first, a Load more control while the true total is larger) and a
-Delete behind the confirm pattern that calls `DELETE /api/analyses/<id>`.  There
+Delete behind the confirm pattern that calls `DELETE /api/analyses/<id>`.  Each
+row also carries a selection checkbox and the view's Bulk actions panel applies
+one `POST /api/analyses/bulk` action to the checked rows (add tag, remove tag,
+delete), states how many applied and how many were skipped, and links the
+journal entry the action recorded.  There
 is no owner column: reportal is a single-user loopback tool, the view says so,
 and it links to the Journal view, which is where who did what is recorded.  The
 Binaries view carries a Browse analyses action beside Browse functions.

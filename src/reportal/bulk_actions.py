@@ -38,6 +38,10 @@ BINARY_ACTIONS: tuple[str, ...] = ("add_tag", "remove_tag", "delete")
 # Actions `POST /api/functions/bulk` accepts.
 FUNCTION_ACTIONS: tuple[str, ...] = ("rename", "clear_matches")
 
+# Actions `POST /api/analyses/bulk` accepts.  A tag action writes the tags of
+# each analysis's owning binary, the only scope reportal tags at.
+ANALYSIS_ACTIONS: tuple[str, ...] = ("add_tag", "remove_tag", "delete")
+
 # Ids one bulk request may carry.  A longer list is rejected whole rather than
 # applied in part, so the caller can split it deliberately.
 MAX_BULK_IDS = 500
@@ -57,6 +61,7 @@ BULK_RENAME_ACTOR = "bulk"
 REASON_NOT_FOUND = "not found"
 REASON_NO_TAG = "tag not found"
 REASON_UNCHANGED = "unchanged"
+REASON_LAST_ANALYSIS = "only analysis with functions"
 
 # The functions of one binary, as a subquery binding the binary id once.
 _FUNCTIONS_OF_BINARY = (
@@ -222,6 +227,28 @@ def _tag_result(
         )
 
 
+def _resolve_tag(
+    conn: sqlite3.Connection, log: journal.Journal | None, *, action: str, tag_name: str
+) -> int:
+    """The tag id one tag action works on; 0 when a removal names no known tag.
+
+    ``add_tag`` creates the name when it does not exist yet, journaling the
+    creation so a revert drops it again.
+    """
+    if action == "add_tag":
+        created = store.find_tag(conn, tag_name) is None
+        tag_id = store.create_tag(conn, tag_name)
+        if created and log is not None:
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                f"created tag {tag_id}",
+                journal.row_delete_descriptor("tags", tag_id),
+            )
+        return tag_id
+    known = store.find_tag(conn, tag_name)
+    return int(known["id"]) if known else 0
+
+
 def apply_binary_action(
     conn: sqlite3.Connection,
     *,
@@ -245,18 +272,7 @@ def apply_binary_action(
             else:
                 result["applied"] += 1
         return result
-    if action == "add_tag":
-        created = store.find_tag(conn, tag_name) is None
-        tag_id = store.create_tag(conn, tag_name)
-        if created and log is not None:
-            log.record(
-                effects.EFFECT_ROW_DELETE,
-                f"created tag {tag_id}",
-                journal.row_delete_descriptor("tags", tag_id),
-            )
-    else:
-        known = store.find_tag(conn, tag_name)
-        tag_id = int(known["id"]) if known else 0
+    tag_id = _resolve_tag(conn, log, action=action, tag_name=tag_name)
     for binary_id in resolved:
         if store.get_binary(conn, binary_id) is None:
             _skip(result, binary_id, REASON_NOT_FOUND)
@@ -264,6 +280,60 @@ def apply_binary_action(
             _skip(result, binary_id, REASON_NO_TAG)
         else:
             _tag_result(conn, log, action=action, tag_id=tag_id, binary_id=binary_id)
+            result["applied"] += 1
+    return result
+
+
+def apply_analysis_action(
+    conn: sqlite3.Connection,
+    *,
+    action: str,
+    ids: Sequence[int],
+    tag: str = "",
+    log: journal.Journal | None = None,
+) -> dict[str, Any]:
+    """Apply one bulk action to analyses and return its per-id result.
+
+    A tag action writes each analysis's owning binary, the scope reportal tags
+    at.  A delete replays the same journaled snapshot the single-analysis route
+    uses, and a binary's only analysis while it holds functions is skipped with
+    a reason rather than taken with them (delete the binary instead).
+    """
+    if action not in ANALYSIS_ACTIONS:
+        raise BulkError(f"unsupported action: {action}")
+    resolved = resolve_ids(ids)
+    tag_name = (tag or "").strip()
+    if action != "delete" and not tag_name:
+        raise BulkError(f"tag is required for action {action}")
+    result = _result(action, len(resolved))
+    if action == "delete":
+        for analysis_id in resolved:
+            if store.get_analysis(conn, analysis_id) is None:
+                _skip(result, analysis_id, REASON_NOT_FOUND)
+            elif store.is_last_analysis_with_functions(conn, analysis_id):
+                _skip(result, analysis_id, REASON_LAST_ANALYSIS)
+            else:
+                if log is not None:
+                    journal.journaled_analysis_delete(conn, log, analysis_id)
+                else:
+                    store.delete_analysis(conn, analysis_id)
+                result["applied"] += 1
+        return result
+    tag_id = _resolve_tag(conn, log, action=action, tag_name=tag_name)
+    for analysis_id in resolved:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            _skip(result, analysis_id, REASON_NOT_FOUND)
+        elif not tag_id:
+            _skip(result, analysis_id, REASON_NO_TAG)
+        else:
+            _tag_result(
+                conn,
+                log,
+                action=action,
+                tag_id=tag_id,
+                binary_id=int(analysis["binary_id"]),
+            )
             result["applied"] += 1
     return result
 

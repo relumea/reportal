@@ -3155,6 +3155,24 @@ def _tool_bulk_functions(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach(result)
 
 
+def _tool_bulk_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
+    action = _arg_str(arguments, "action")
+    ids = _arg_optional_int_list(arguments, "analysis_ids")
+    if ids is None:
+        raise ToolError("invalid params", "analysis_ids must be a list of integers")
+    tag = _arg_optional_str(arguments, "tag")
+    with contextlib.closing(_open()) as conn:
+        action_id = journal.new_action()
+        with journal.journaled(conn, action_id) as log:
+            try:
+                result = bulk_actions.apply_analysis_action(
+                    conn, action=action, ids=ids, tag=tag, log=log
+                )
+            except bulk_actions.BulkError as exc:
+                raise ToolError("invalid bulk request", str(exc)) from exc
+            return log.attach(result)
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -3723,6 +3741,7 @@ _WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=True)
 
 _FUNCTION_ID = _int("Function id.")
 _BINARY_ID = _int("Binary id.")
+_ANALYSIS_ID = _int("Analysis id.")
 _COLLECTION_ID = _int("Collection id.")
 
 
@@ -5268,6 +5287,22 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_bulk_functions,
+        ),
+        Tool(
+            "bulk_analyses",
+            "Apply one action (add_tag, remove_tag, delete) to many analyses and report the"
+            " per-id result; a tag action writes the binaries the analyses belong to, and an"
+            " unknown or refused id is skipped, not a batch failure.",
+            _object(
+                {
+                    "action": _enum("Action to apply.", bulk_actions.ANALYSIS_ACTIONS),
+                    "analysis_ids": _array("Analysis ids.", _ANALYSIS_ID),
+                    "tag": _str("Tag name the tag actions apply."),
+                },
+                ("action", "analysis_ids"),
+            ),
+            _WRITE,
+            _tool_bulk_analyses,
         ),
         Tool(
             "ingest_document",

@@ -44,7 +44,7 @@ Status vocabulary:
 | Cross-references | Implemented | rebrew | `reportal xrefs <function-id> [--kind NAME]...` and `GET /api/functions/<id>/xrefs?kind=...` run `rebrew xrefs <hex-va> --json` with the working directory set to the binary's stored rebrew project context, and return the engine's reference list live (never stored). `reportal references <function-id>` and `GET /api/functions/<id>/references` run `rebrew describe <hex-va> --json` in the same context for the hosted portal's three reference tables: globals (the data addresses the function reads, writes or loads, each with the access the instruction makes clear and the section the stored `pe-info` scan places it in), callers (one row per call site, linked to its function) and callees (the function's calls, an import-slot call with no resolved name reported as indirect), each with a count badge in the SPA. |
 | Collections / tags | Implemented | local | Collections and binary tags are end to end. Tags: `GET`/`POST /api/tags`, `GET`/`POST /api/binaries/<id>/tags`, `DELETE /api/binaries/<id>/tags/<tag_id>`, plus `reportal tags` and `reportal tag <binary-id> <name> [--remove]`. The binary detail view renders a binary's tags as chips with add and remove. |
 | Analysis comments | Implemented | local store | Analyst comments are end to end. `GET`/`POST /api/binaries/<id>/comments`, `GET`/`POST /api/functions/<id>/comments` and `PATCH`/`DELETE /api/comments/<id>` back the `comments` table through `src/reportal/comments.py`, and `reportal comments --binary ID` (or `--function ID`), `reportal comment-add --binary ID` (or `--function ID`) `"text"` `[--author NAME]` and `reportal comment-rm <comment-id>` wrap the same store. A comment names a scope (`binary` or `function`) that must exist, an author (default `DEFAULT_AUTHOR` when the caller names none) and a body trimmed and capped at `MAX_COMMENT_CHARS`; a blank or oversized body is 400 `invalid comment`, an unknown scope or comment id 404, and the list is oldest first. An update replaces the body and stamps `updated_at`. The `list_comments` MCP tool is read-only and `add_comment`, `update_comment` and `delete_comment` are destructive; the SPA renders a Comments panel on both detail views with an add box and per-comment edit and delete for the browser's own author, and the Binaries list carries each binary's comment count. reportal's AI inline comments are a separate stored artifact, served at `/api/functions/<id>/ai-comments`. |
-| Bulk actions | Implemented | local store | `POST /api/binaries/bulk` (`add_tag`, `remove_tag`, `delete`) and `POST /api/functions/bulk` (`rename`, `clear_matches`) apply one action to a bounded id list (`MAX_BULK_IDS`), validate the action against a named set, reject an empty list, and answer `{"action", "requested", "applied", "skipped": [{"id", "reason"}]}`; an unknown id is skipped with a reason instead of failing the batch, and a `delete` cascades the binary's analyses, functions, scans, comments, conversations and documents. `reportal bulk-tag <tag> <binary-id>... [--remove]`, `reportal bulk-delete <binary-id>... [--yes]` (an interactive confirmation without `--yes`) and `reportal bulk-prefix <prefix> <function-id>... [--replace]` wrap the same actions, and a prefix rename goes through the normal rename path so every change is recorded in `name_history` with source `bulk-prefix`. The `bulk_binaries` and `bulk_functions` MCP tools are destructive, and the SPA Binaries list carries selection checkboxes with an add-tag, remove-tag and delete bar while the Functions list carries a bulk prefix rename. |
+| Bulk actions | Implemented | local store | `POST /api/binaries/bulk` (`add_tag`, `remove_tag`, `delete`) and `POST /api/functions/bulk` (`rename`, `clear_matches`) apply one action to a bounded id list (`MAX_BULK_IDS`), validate the action against a named set, reject an empty list, and answer `{"action", "requested", "applied", "skipped": [{"id", "reason"}]}`; an unknown id is skipped with a reason instead of failing the batch, and a `delete` cascades the binary's analyses, functions, scans, comments, conversations and documents. `reportal bulk-tag <tag> <binary-id>... [--remove]`, `reportal bulk-delete <binary-id>... [--yes]` (an interactive confirmation without `--yes`) and `reportal bulk-prefix <prefix> <function-id>... [--replace]` wrap the same actions, and a prefix rename goes through the normal rename path so every change is recorded in `name_history` with source `bulk-prefix`. `POST /api/analyses/bulk` applies the same three actions over analysis ids (`reportal analysis-bulk-tag`, `reportal analysis-bulk-delete`, the destructive `bulk_analyses` MCP tool and the analyses view's selection checkbox beside its Bulk actions panel): a tag writes the binaries the analyses belong to, a delete replays the single-analysis snapshot, and a binary's only analysis while it holds functions is skipped as `only analysis with functions`. The `bulk_binaries`, `bulk_functions` and `bulk_analyses` MCP tools are destructive, and the SPA Binaries list carries selection checkboxes with an add-tag, remove-tag and delete bar while the Functions list carries a bulk prefix rename. |
 | Search | Implemented | local | `GET /api/search?q=&kind=&limit=` over binaries, functions, collections and tags, with LIKE escaping. `kind=all` (the default) is the substring behaviour the route always had; `kind=sha256` matches a full hash or a prefix, `kind=binary` a binary name, `kind=collection` a collection name and `kind=tag` a tag name, so every typed query stays a subset of the default. Every row carries the metadata the store holds (a binary's size, format, arch, created and tags; a collection's member count; a tag's tagged-binary count) plus the `match` field that made it hit, and `counts` reports each group's returned count against its matched total so a limited page never reads as a total. A SHA-256 prefix shorter than `store.MIN_SHA256_PREFIX` (8), a non-hex value and a prefix matching more than one binary answer 400 `short-hash`, `invalid-hash` and `ambiguous-hash`; an unknown kind is 400 `invalid-kind`. The SPA carries both surfaces: the Search view's grouped tables (each heading states returned-of-total) and the global `⌘K`/`Ctrl+K` modal, which opens from anywhere, keeps the query input focused, cycles the four query types with Tab, moves a roving highlight with the arrow keys, opens the highlighted hit with Enter, closes on Escape and returns focus where it was, and traps focus while open. Both read `src/views/SearchResults.tsx`'s shared hit model; reportal has no per-collection or per-tag detail route, so those hits lead to the Collections and Binaries lists. This is a local, offline store search; the hosted portal searches its own hosted corpus. |
 | Firmware and archive extraction | Implemented (stdlib formats only) | local | `reportal extract <binary-id> [--password TEXT] [--collection ID]`, `POST /api/binaries/<id>/extract` and the destructive `extract_archive` MCP tool unpack a **stored** archive and register the binaries it holds, reporting each member with the id it became or the reason it was skipped, as one journal action. Supported formats are exactly the ones the standard library reads without an external tool: `.zip` and `.apk` (a zip), `.tar`, `.tar.gz`/`.tgz`, `.tar.bz2`, `.tar.xz` and a single-member `.gz` (a `.gz` whose contents are a tar is read as one, sniffed with `tarfile.is_tarfile`). `.rar` and `.7z` are refused 400 `external-tool-required` naming the unpacker reportal does not ship (`unrar`, `7z`), and reportal never shells out; **firmware unpacking is not implemented** (the hosted portal runs a hosted extractor for firmware images; that is not-applicable locally). Safety comes before the feature: members are extracted into a temporary directory under `<workspace>/binaries/` (removed either way, so nothing is written outside it) and every member is validated before a byte is written. Refused per member with its reason: an absolute name, a `..` component, a path resolving outside the extraction root, a symlink or hardlink, a device, FIFO or socket, a member past `MAX_MEMBER_BYTES` (256 MiB), a total past `MAX_TOTAL_BYTES` (512 MiB), a ratio past `MAX_COMPRESSION_RATIO` (200:1) and an archive past `MAX_MEMBERS` (4096). A password-protected zip extracts with the supplied password (ZipCrypto; the stdlib reads it) and is refused `password-required` without one and `bad-password` with the wrong one; tar archives carry no password. Members register by content hash into one collection (the body's `collection_id`, else one named after the archive, reused when it exists), so a member already stored is reported as a duplicate; the whole request is one journal action. |
 | Firmware upload / sandbox detonation | Planned | none | Planned 1.2: a local carving and extraction path (signature scan, entropy map, squashfs/jffs2/cramfs readers written against the formats, external tools refused by name) plus an off-by-default sandbox runner. reportal never runs target binaries and has no sandbox or dynamic-execution path; rebrew's headless runners (wine, DOSBox) execute compilers, not samples. The hosted portal's firmware flow runs a hosted extractor and its sandbox is a hosted service, neither of which exists locally. |
@@ -125,7 +125,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (154 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (156 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -223,8 +223,8 @@ Windows-only and orthogonal; the local runner is the general case).
 
 ### D. Analysis lifecycle (hosted `Analyses - Core`, 32 operations)
 
-**Status:** In progress.  Closed end to end over the tables that already existed
-(no new table):
+**Status:** Closed.  End to end over the tables that already existed (no new
+table):
 
 - reading one analysis (`GET /api/analyses/<id>`), its lifecycle
   (`.../status`, with the scan and log counts by status and severity) and its
@@ -246,25 +246,26 @@ Windows-only and orthogonal; the local runner is the general case).
 - the engine relabel (`PATCH /api/analyses/<id>`), a log append
   (`POST .../logs`) and a requeue (`POST .../requeue`), each journaled and
   revertible (a requeue revert restores the status, the finish time and the log
-  entry it added).
+  entry it added);
+- bulk delete and bulk tag (`POST /api/analyses/bulk`, the hosted `PATCH
+  /v2/analyses/delete` and `/tags/add`): one action over a bounded analysis id
+  list, one journal action, and a per-id result where an unknown id is skipped
+  `not found` and a binary's only analysis while it holds functions is skipped
+  `only analysis with functions` (the same refusal the single delete makes,
+  because the cascade would take the function table with it).
 
 `reportal analysis`/`analysis-update`/`analysis-log`/`analysis-requeue`/
-`analysis-tags`/`imported-functions` and `reportal download --analysis`, the
-`get_analysis`, `get_analysis_params`, `get_analysis_func_maps`,
-`get_imported_functions`, `update_analysis`, `append_analysis_log`,
-`requeue_analysis` and `set_analysis_tags` MCP tools (155 tools: 74 read-only,
-81 destructive) and the analyses view's log drawer (lifecycle, imported
-functions, raw bytes) expose the same.
+`analysis-tags`/`imported-functions`/`analysis-bulk-tag`/`analysis-bulk-delete`
+and `reportal download --analysis`, the `get_analysis`,
+`get_analysis_params`, `get_analysis_func_maps`, `get_imported_functions`,
+`update_analysis`, `append_analysis_log`, `requeue_analysis`,
+`set_analysis_tags` and `bulk_analyses` MCP tools (156 tools: 74 read-only,
+82 destructive) and the analyses view (the log drawer with the lifecycle, the
+imported functions and the raw bytes, plus the selection checkbox and the Bulk
+actions panel) expose the same.
 
-Still open in this cluster: bulk delete and bulk tag over many analyses
-(`PATCH /v2/analyses/delete`, `PATCH /v2/analyses/tags/add`).  The example
-analyses read is not applicable locally, with the reason in that section above;
-the raw-bytes route and the imported-function read are shipped here.
-
-reportal has list, create, delete, logs (read), scans and now the rest of the
-lifecycle: read one analysis, update it, its status, its recorded parameters,
-requeue, the function map, raw bytes, a log append over HTTP, analysis tags, and
-imported functions with their callers.  Remaining: bulk delete and bulk tag.
+The one hosted read that stays out is example analyses, which is not applicable
+locally with the reason in that section above.
 
 ### E. Collections (hosted 16 operations)
 

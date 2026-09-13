@@ -143,8 +143,9 @@ reportal/
     │                       #   table (SCOPE_KINDS, MAX_COMMENT_CHARS, DEFAULT_AUTHOR,
     │                       #   add/list/get/update/delete, UnknownScopeError)
     ├── bulk_actions.py     # bulk actions shared by the API, the CLI and the MCP tools
-    │                       #   (BINARY_ACTIONS, FUNCTION_ACTIONS, MAX_BULK_IDS,
-    │                       #   apply_binary_action, apply_function_action)
+    │                       #   (BINARY_ACTIONS, FUNCTION_ACTIONS, ANALYSIS_ACTIONS,
+    │                       #   MAX_BULK_IDS, apply_binary_action, apply_function_action,
+    │                       #   apply_analysis_action)
     ├── archive.py          # stdlib-only archive extraction (zip/apk, tar/tar.gz/tgz/tar.bz2/
     │                       #   tar.xz, single-member gz): archive_kind, extract with per-member
     │                       #   outcomes, the traversal/link/device/bomb refusals and the named
@@ -288,7 +289,8 @@ reportal/
     │                       #   collection-edit, collection-rm, collection-add,
     │                       #   collection-remove, collection-tags, apply-match,
     │                       #   analysis, analysis-update, analysis-log, analysis-requeue,
-    │                       #   analysis-tags, imported-functions,
+    │                       #   analysis-tags, imported-functions, analysis-bulk-tag,
+    │                       #   analysis-bulk-delete,
     │                       #   comments, comment-add, comment-rm, bulk-tag, bulk-delete,
     │                       #   bulk-prefix, diff, lineage, related, composition, families,
     │                       #   family-add, family-rm, detect,
@@ -309,7 +311,7 @@ reportal/
     │                       #   job, job-submit, job-run, job-cancel
     ├── mcp_tools.py        # MCP tool registry: Tool (name/description/input_schema/
     │                       #   annotations/handler), register_tool/tools/refresh_tools,
-    │                       #   the 155 built-in tools, `reportal.mcp_tools` entry-point group
+    │                       #   the 156 built-in tools, `reportal.mcp_tools` entry-point group
     ├── mcp_server.py       # stdio MCP server: newline-delimited JSON-RPC 2.0 over stdin/stdout
     │                       #   (initialize, notifications/initialized, tools/list, tools/call)
     └── assets/dist/        # generated Vite build (gitignored; served by ui.py)
@@ -344,7 +346,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 183 source files` is the finish line.
+`Success: no issues found in 184 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -358,7 +360,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.37%, 21916 statements with 1673 missed. `[tool.coverage.report] fail_under`
+92.37%, 22009 statements with 1679 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -630,15 +632,15 @@ function's signature-edit history and is read-only; `revert_signature_history`
 restores the state one history row recorded, is journaled and is destructive.
 `list_comments` reads the analyst
 comment store and is read-only; `add_comment`, `update_comment` and
-`delete_comment` write it and are destructive.  `bulk_binaries` and
-`bulk_functions` apply one action to a bounded id list through
-`bulk_actions`, so both are destructive.  `list_journal` reads the
+`delete_comment` write it and are destructive.  `bulk_binaries`,
+`bulk_functions` and `bulk_analyses` apply one action to a bounded id list through
+`bulk_actions`, so all three are destructive.  `list_journal` reads the
 action-journal entries and is read-only; `revert_journal_entry` replays one
 action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
 assembles the evidence, detects and stores the matches, and is destructive.
 The registry
-declares 155 built-in tools, 74 read-only and 81 destructive.
+declares 156 built-in tools, 74 read-only and 82 destructive.
 
 ## SPA
 
@@ -743,8 +745,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 155 built-in
-tools (74 read-only, 81 destructive).
+and `run_match` expose the same over MCP, and the counts stay 156 built-in
+tools (74 read-only, 82 destructive).
 
 ### Scaling
 

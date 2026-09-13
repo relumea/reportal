@@ -40,6 +40,7 @@ import type {
   AnalysisLogPage,
   AnalysisRow,
   AnalysisStatus,
+  BulkResult,
   ImportedFunctionsPayload,
 } from "../types";
 import { useAsync } from "../useAsync";
@@ -280,10 +281,56 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
   const [logFor, setLogFor] = useState<number | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkTag, setBulkTag] = useState("");
+  const [bulkMessage, setBulkMessage] = useState("");
+  const [bulkError, setBulkError] = useState<unknown>(null);
+  const [bulkAction, setBulkAction] = useState("");
 
   const path = listPath(filters);
   const result = useAsync(() => api<AnalysisList>(path), [path]);
   const analyses = result.data?.analyses;
+
+  const toggleSelected = (analysisId: number): void => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(analysisId)) next.delete(analysisId);
+      else next.add(analysisId);
+      return next;
+    });
+  };
+
+  const runBulk = async (action: string, tag: string): Promise<void> => {
+    setBulkError(null);
+    setBulkMessage("");
+    const ids = Array.from(selected);
+    if (!ids.length) {
+      setBulkError(new Error("Select at least one analysis."));
+      return;
+    }
+    setBusy(action);
+    try {
+      const payload = await api<BulkResult>("/analyses/bulk", {
+        method: "POST",
+        json: { action, analysis_ids: ids, tag },
+      });
+      const skipped = payload.skipped.length;
+      const actionLink = payload.journal_action
+        ? ` Journaled as ${payload.journal_action}.`
+        : "";
+      setBulkMessage(
+        `${payload.applied} of ${payload.requested} applied${skipped ? `, ${skipped} skipped` : ""}.${actionLink}`,
+      );
+      setBulkAction(payload.journal_action ?? "");
+      setSelected(new Set());
+      if (action === "delete" && logFor !== null && ids.includes(logFor)) setLogFor(null);
+      result.reload();
+    } catch (failure) {
+      setBulkError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
 
   const apply = (patch: Partial<AnalysisFilters>): void => {
     navigate({
@@ -394,6 +441,17 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
             </div>
             <DataTable
               columns={[
+                {
+                  label: "",
+                  render: (row) => (
+                    <input
+                      type="checkbox"
+                      aria-label={`select analysis ${row.id}`}
+                      checked={selected.has(row.id)}
+                      onChange={() => toggleSelected(row.id)}
+                    />
+                  ),
+                },
                 { label: "ID", key: "id", numeric: true },
                 {
                   label: "Binary",
@@ -457,6 +515,57 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
       </Panel>
       {logFor !== null ? (
         <LogDrawer analysisId={logFor} onClose={() => setLogFor(null)} />
+      ) : null}
+      {analyses && analyses.length > 0 ? (
+        <Panel
+          title="Bulk actions"
+          subtitle="Applies to the rows checked in the table above; a tag writes the binaries the analyses belong to."
+          actions={
+            <>
+              <span className="muted">{selected.size} selected</span>
+              <Button
+                tone="primary"
+                pending={busy === "add_tag"}
+                onClick={() => void runBulk("add_tag", bulkTag)}
+              >
+                Add tag
+              </Button>
+              <Button
+                pending={busy === "remove_tag"}
+                onClick={() => void runBulk("remove_tag", bulkTag)}
+              >
+                Remove tag
+              </Button>
+              <ConfirmButton
+                label="Delete"
+                message={`Delete ${selected.size}?`}
+                pending={busy === "delete"}
+                disabled={selected.size === 0}
+                onConfirm={() => void runBulk("delete", "")}
+              />
+              <Button tone="ghost" onClick={() => setSelected(new Set())}>
+                Clear selection
+              </Button>
+            </>
+          }
+        >
+          <Toolbar>
+            <Field label="Tag">
+              <input
+                placeholder="tag name"
+                value={bulkTag}
+                onChange={(event) => setBulkTag(event.target.value)}
+              />
+            </Field>
+          </Toolbar>
+          {bulkError ? <ErrorNote error={bulkError} /> : null}
+          {bulkMessage ? <p className="muted">{bulkMessage}</p> : null}
+          {bulkAction ? (
+            <p className="muted">
+              Revert this action: <a href={`#/journal/${bulkAction}`}>{bulkAction}</a>
+            </p>
+          ) : null}
+        </Panel>
       ) : null}
     </>
   );
