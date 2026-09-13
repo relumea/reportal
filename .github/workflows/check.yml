@@ -55,7 +55,11 @@ jobs:
           uv sync --frozen --extra dev --extra similarity
           cd web && bun install --frozen-lockfile
 
-      # Lint, types, tests under the coverage floor, the SPA gates and the
-      # wheel packaging check all run from the one target.
-      - name: make check
-        run: make check
+      # `make check` without its `ui` target.  The headless-Chrome smoke and
+      # audit seed a workspace from `../rebrew-projects/notepad-rebrew`, a
+      # per-binary decompilation project (the target executable plus its
+      # reversed sources and its database) that lives in a local data
+      # directory rather than in any repository, so those two run on a
+      # developer machine; everything else the gate does runs here.
+      - name: make lint, typecheck, test and package-check
+        run: make lint typecheck test package-check

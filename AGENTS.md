@@ -30,7 +30,7 @@ reportal/
 ├── pyproject.toml          # package config, entry point: reportal; mypy, ruff and coverage config
 ├── Makefile                # the gate (make check, see "Gate") and the dev server (make run)
 ├── scripts/                # gate helpers: vnu-html.sh, check_wheel.py
-├── .github/workflows/check.yml  # CI: the same make check target
+├── .github/workflows/check.yml  # CI: every gate target but the two browser ones
 ├── README.md               # user-facing docs
 ├── LICENSE                 # MIT
 ├── docs/README.md          # docs index
@@ -308,8 +308,13 @@ shellcheck over `scripts/`, W3C VNU over `web/index.html` and
 `web/src/styles.css`, mypy, `tsc --noEmit`, pytest under the coverage floor,
 the built SPA smoke (which fails a route that logs a page error, a console
 error or a dropped request) and audit in headless Chrome, and the wheel
-packaging check. Run it before calling anything done; `.github/workflows/check.yml` runs
-the same target. `make check-fast` drops the slow parts for iteration, skipping
+packaging check. Run it before calling anything done. CI runs
+`make lint typecheck test package-check`: the two browser targets are the one
+part of the gate a runner cannot do, because their smoke and audit seed a
+workspace from `../rebrew-projects/notepad-rebrew`, a per-binary
+decompilation project (a target executable plus its reversed sources and its
+database) that lives in a local data directory rather than in any repository.
+`make check-fast` drops the slow parts for iteration, skipping
 the coverage trace (`test-fast` is `pytest --no-cov`) and the browser and wheel
 targets (`ui`, `package-check`).
 

@@ -290,13 +290,17 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
 ### 16. An assistant that answers questions about reportal itself
 
 - Portal: the AI chat assistant answers questions about RevEng.AI and its
-  integrations from the product documentation (changelog, week of 27 Jul 2026).
+  integrations from the product documentation (changelog, week of 27 Jul 2026),
+  and its panel offers a prompt library that changes with the page context
+  (analysis prompts, collection prompts and general ones, 6 to 13 depending on
+  where it is opened).
 - reportal: `conversations.py` scopes a chat to one stored function or binary.
   There is no product-documentation scope, although `knowledge.py` already
   ingests documents and retrieves from them.
 - Build: a `docs` conversation scope that ingests the shipped `docs/*.md` on
-  first use and answers through `knowledge.retrieve` and `as_context`.  Off
-  unless the LLM bridge is configured, like every other AI path.
+  first use and answers through `knowledge.retrieve` and `as_context`, and a
+  short canned-prompt list per scope in `ConversationsView`.  Off unless the LLM
+  bridge is configured, like every other AI path.
 - Size: S.
 
 ### 17. Collections list controls
