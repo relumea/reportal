@@ -10335,6 +10335,24 @@ def get_binary_sandbox(binary_id: int) -> Response:
     return json_response({**report, "detonation": status})
 
 
+@router.get("/api/binaries/{binary_id}/dynamic-execution/status")
+def get_binary_sandbox_status(binary_id: int) -> Response:
+    """Whether this binary can be detonated, by which runner, and its last run.
+
+    The binary-scoped spelling of the analysis status, for the binary detail's
+    Sandbox panel, which knows the binary rather than a chosen analysis.  A
+    binary with no analysis yet reports the install's opt-in state and no run.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        payload = sandbox.status_payload(conn, analysis_id or 0)
+    return json_response({"binary_id": binary_id, **payload})
+
+
 @router.get("/api/analyses/{analysis_id}/dynamic-execution")
 def get_analysis_sandbox(analysis_id: int) -> Response:
     """The newest detonation report of one analysis; the hosted report read."""

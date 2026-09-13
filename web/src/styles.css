@@ -2666,6 +2666,40 @@ kbd.key {
   color: var(--accent-hover);
 }
 
+/* The continuous dump: the scroll container is the viewport and the inner
+   spacer is the whole address span, so the rows absolutely positioned inside it
+   are the only ones the browser has to lay out.  The row height here and
+   ROW_HEIGHT in MemoryPanel.tsx are one number. */
+.memory-scroll {
+  height: 380px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.memory-scroll-inner {
+  position: relative;
+}
+
+.memory-scroll-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18px;
+  line-height: 18px;
+}
+
+.memory-pending {
+  color: var(--text-faint);
+}
+
+.byte-pending {
+  color: var(--text-faint);
+}
+
 /* The dashboard's 30-day series: one bar per day, over a shared peak. */
 .series {
   margin-bottom: 0.6rem;

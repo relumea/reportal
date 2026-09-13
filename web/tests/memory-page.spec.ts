@@ -33,3 +33,43 @@ test("the full-file view pages and copies a selected range as hex", async ({ pag
   // Four bytes selected, so the hex readout is four space-separated pairs.
   await expect(copied).toHaveText(/Copied: [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2}/);
 });
+
+test("the continuous view scrolls the whole binary and links from a section", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const panel = panelByTitle(page, "Memory");
+  const sections = panelByTitle(page, "Sections");
+
+  // The section table's virtual-address column is the link into the dump.
+  const link = sections.locator("a.address-link").first();
+  await expect(link).toBeVisible();
+  const href = await link.getAttribute("href");
+  const target = (href ?? "").split("memory=")[1];
+  expect(target).toMatch(/^0x[0-9a-f]+$/);
+  await link.click();
+
+  // The dump opens in the continuous mode, on the linked address, and reads
+  // bytes rather than placeholders.
+  await expect(panel.getByLabel("Go to address")).toHaveValue(target);
+  await expect(panel.locator(".memory-row").first()).toBeVisible();
+  // The rows above the linked offset are off screen and unread, so the first
+  // rendered line is a placeholder; the bytes that are on screen are real, and
+  // the linked row is the selected one.
+  await expect(panel.locator("button.byte").first()).toBeVisible();
+  await expect(panel.locator(".memory-row .byte-selected").first()).toBeVisible();
+
+  // Scrolling keeps reading: the readout counts the loaded bytes upward as the
+  // dump walks on from the linked address.
+  const readout = panel.getByText(/bytes loaded/);
+  const loaded = async (): Promise<number> =>
+    Number(/(\d+) bytes loaded/.exec(await readout.innerText())?.[1] ?? "0");
+  const before = await loaded();
+  await panel.locator(".memory-scroll").evaluate((node) => {
+    node.scrollTop = node.scrollHeight;
+    node.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect.poll(loaded).toBeGreaterThan(before);
+
+  // The keyboard layer: `G` focuses the address box and Tab switches columns.
+  await panel.locator(".memory-scroll").press("g");
+  await expect(panel.getByLabel("Go to address")).toBeFocused();
+});

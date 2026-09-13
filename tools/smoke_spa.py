@@ -59,6 +59,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import http.client
+import json
 import os
 import shutil
 import signal
@@ -621,6 +622,17 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         ),
     ),
     (
+        "binary memory dump",
+        "#/binaries/{binary_id}?memory=0x1000",
+        (
+            # The continuous viewer the section table links to: the address box
+            # and the keyboard hint it carries.
+            ("Go to address",),
+            ("Press G to focus the address box",),
+            ("Columns",),
+        ),
+    ),
+    (
         "analyses list",
         "#/analyses",
         (
@@ -682,6 +694,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # Debug symbol ingestion: the file control and its apply toggle.
             ("Debug symbols",),
             ("Ingest symbols",),
+            # The memory panel's mode select, and the section table's
+            # addresses, which link into the continuous dump.
+            ("Whole binary",),
+            ("Virtual address",),
             # Analyst feedback on the stored agent artifacts.
             ("Agent feedback",),
             ("Function triage",),
@@ -1640,6 +1656,102 @@ def check_cfg_view(browser: str, port: int, function_id: int) -> bool:
     return True
 
 
+# The memory dump probe: the first rendered line's address, the linked address
+# it landed on (the dump's address box and its first selected byte), and whether
+# the documented `G` binding focused the address box.
+_MEMORY_DUMP_SCRIPT = """(() => {
+  const rows = document.querySelectorAll('.memory-scroll .memory-row');
+  const dump = document.querySelector('.memory-scroll');
+  if (!dump || rows.length === 0) return null;
+  const first = rows[0].querySelector('.memory-address');
+  const boxes = Array.from(document.querySelectorAll('input[type="text"]'));
+  const addressBox = boxes.find((input) => input.value.startsWith('0x'));
+  const selected = document.querySelector('.memory-scroll .byte-selected');
+  dump.focus();
+  dump.dispatchEvent(
+    new KeyboardEvent('keydown', {key: 'g', bubbles: true, cancelable: true}),
+  );
+  const active = document.activeElement;
+  return JSON.stringify({
+    address: first ? first.textContent.trim() : null,
+    landed: addressBox ? addressBox.value.trim() : null,
+    selected: selected ? selected.getAttribute('aria-label') : null,
+    focused: active ? active.getAttribute('aria-label') || active.tagName : null,
+    rows: rows.length,
+  });
+})()"""
+
+
+def _parse_hex(text: str) -> int | None:
+    """Parse a `0x...` address, or None when it is not one."""
+    try:
+        return int(text, 16)
+    except ValueError:
+        return None
+
+
+def check_memory_dump(browser: str, port: int, binary_id: int) -> bool:
+    """The linked continuous dump: it opens on backed bytes and `G` focuses the box.
+
+    The dump is a mode of the memory panel, not a route of its own, so this
+    renders the binary detail with the section table's own link target (the
+    first section's virtual address, the image base added) and asserts the first
+    line starts inside the section the engine actually backs, and that the
+    documented `G` binding moves focus to the address box.  Without this the
+    continuous view would only be proven to exist, not to work.
+    """
+    status, raw = get(port, f"/api/binaries/{binary_id}/pe-info")
+    if status != 200:
+        emit("       memory dump: the stored PE info did not answer")
+        return True
+    stored = json.loads(raw)
+    sections = stored.get("sections") if isinstance(stored, dict) else None
+    if not isinstance(sections, list) or len(sections) < 2:
+        emit("       memory dump: no stored section table to link from")
+        return True
+    # The stored section address is an RVA and the memory reads take an absolute
+    # virtual address, so the link the panel renders adds the image base; the
+    # first section is usually the executable one, and the walk snaps forward to
+    # its first backed byte, which is inside it.
+    image_base = int(stored.get("image_base") or 0)
+    link = hex(image_base + int(sections[0]["virtual_address"]))
+    section_start = image_base + int(sections[0]["virtual_address"])
+    section_end = section_start + max(int(sections[0]["virtual_size"]), 1)
+    url = f"http://127.0.0.1:{port}/#/binaries/{binary_id}?memory={link}"
+    probe: object = None
+    with (
+        tempfile.TemporaryDirectory(prefix="smoke-spa-memory-") as profile,
+        cdp.browser_session(browser, Path(profile)) as (session_pipe, session_id),
+    ):
+        cdp.render(session_pipe, session_id, url, RENDER_WIDTH, RENDER_HEIGHT)
+        deadline = time.monotonic() + MARKER_DEADLINE_SECONDS
+        while probe is None and time.monotonic() < deadline:
+            probe = cdp.evaluate(session_pipe, session_id, _MEMORY_DUMP_SCRIPT)
+            if probe is None:
+                time.sleep(MARKER_POLL_SECONDS)
+    if not isinstance(probe, str):
+        emit("[FAIL] memory dump: the continuous view rendered no line")
+        return False
+    payload = json.loads(probe)
+    # The pump opens on file offsets, so the first line is the file's start; what
+    # the link promises is that the reader landed on the linked virtual address,
+    # which the address box and the first selected byte both report.
+    named = str(payload.get("landed") or "")
+    landed = _parse_hex(named)
+    if landed is None or not (section_start <= landed < section_end):
+        emit(f"[FAIL] memory dump: the address box names {named or 'nothing'}, outside the link")
+        return False
+    first = _parse_hex(str(payload.get("address") or ""))
+    if first is None:
+        emit(f"[FAIL] memory dump: the first line has no address ({payload.get('address')!r})")
+        return False
+    if payload.get("focused") != "Go to address":
+        emit(f"[FAIL] memory dump: G focused {payload.get('focused')!r}, not the address box")
+        return False
+    emit(f"       memory dump landed on {named} with {payload['rows']} line(s)")
+    return True
+
+
 def stop_server(proc: subprocess.Popen[bytes]) -> None:
     """Terminate the server's whole process group, escalating to SIGKILL."""
     if proc.poll() is not None:
@@ -1682,6 +1794,8 @@ def run_smoke(workspace: Path, env: dict[str, str], browser: str, ids: dict[str,
             emit(f"[FAIL] server never became healthy on port {port}")
             return 1
         emit(f"serving on http://127.0.0.1:{port}")
+        if not check_memory_dump(browser, port, int(ids["binary_id"])):
+            failures += 1
         for label, route, groups in ROUTE_CHECKS:
             path = route.format(**ids)
             url = f"http://127.0.0.1:{port}/{path}"

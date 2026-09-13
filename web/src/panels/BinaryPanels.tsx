@@ -1,6 +1,8 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 
+import { Link } from "react-router";
+
 import { api } from "../api";
 import {
   Badge,
@@ -510,7 +512,14 @@ function matchesExport(entry: PeExport, needle: string): boolean {
   return entry.ordinal !== null && String(entry.ordinal).includes(needle);
 }
 
-export function SectionsPanel({ binaryId }: { binaryId: number }): ReactNode {
+export function SectionsPanel({
+  binaryId,
+  basePath,
+}: {
+  binaryId: number;
+  /** The view's path, so a section address links to the memory dump. */
+  basePath?: string;
+}): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
   const coverageKey = panelKey("binary", binaryId, "section-coverage");
   const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
@@ -526,7 +535,7 @@ export function SectionsPanel({ binaryId }: { binaryId: number }): ReactNode {
       subtitle="Section geometry, entropy and the full IMAGE_SCN_* characteristics."
     >
       <PanelBody entry={entry} hint="Loading the sections" noScanHint={NO_SCAN_MESSAGES.peInfo}>
-        {(data) => <SectionsBody result={data} coverage={coverage} />}
+        {(data) => <SectionsBody result={data} coverage={coverage} basePath={basePath} />}
       </PanelBody>
     </Panel>
   );
@@ -561,9 +570,11 @@ function SectionCoverageCell({
 function SectionsBody({
   result,
   coverage,
+  basePath,
 }: {
   result: PeInfo;
   coverage?: SectionCoverage;
+  basePath?: string;
 }): ReactNode {
   const [filter, setFilter] = useState("");
   const sections = Array.isArray(result.sections) ? result.sections : [];
@@ -602,7 +613,23 @@ function SectionsBody({
       <DataTable
         columns={[
           { label: "Name", key: "name", mono: true },
-          { label: "Virtual address", mono: true, render: (row) => hex(row.virtual_address) },
+          {
+            label: "Virtual address",
+            mono: true,
+            // The stored section address is an RVA; the memory reads take an
+            // absolute virtual address, so the link (and the shown address)
+            // add the image base.  That is what makes a section row and a byte
+            // range in the dump the same number.
+            render: (row) => {
+              const va = (result.image_base ?? 0) + row.virtual_address;
+              if (basePath === undefined) return hex(va);
+              return (
+                <Link className="address-link" to={`${basePath}?memory=${hex(va)}`}>
+                  {hex(va)}
+                </Link>
+              );
+            },
+          },
           { label: "File offset", mono: true, render: (row) => hex(row.raw_offset) },
           { label: "Virtual size", key: "virtual_size", numeric: true },
           { label: "Raw size", key: "raw_size", numeric: true },

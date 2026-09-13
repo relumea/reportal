@@ -64,6 +64,10 @@ const NAV_JUMPS: ReadonlyArray<readonly [string, NavView]> = [
   ["p", "components"],
   ["i", "integrations"],
   ["h", "docs"],
+  ["e", "external"],
+  ["u", "users"],
+  ["q", "jobs"],
+  ["l", "models"],
 ];
 
 /** What a matched route contributes to the shell: the sidebar section it

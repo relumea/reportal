@@ -272,6 +272,17 @@ export type MemoryAddressKind = (typeof MEMORY_ADDRESS_KINDS)[number];
 // Bytes one row of the memory grid holds.
 export const MEMORY_BYTES_PER_ROW = 16;
 
+// The continuous hex view's read size and the rows it renders around the
+// viewport.  The window is the same page the paged view reads, so one fetch
+// serves both, and the overscan is what stops a fast scroll from showing
+// nothing before the next window lands.
+export const MEMORY_SCROLL_WINDOW = MEMORY_PAGE_DEFAULT;
+export const MEMORY_SCROLL_OVERSCAN = 6;
+
+// Where the continuous view remembers its address kind (`Offset` or
+// `Virtual`), which the hosted portal keeps across sessions too.
+export const MEMORY_COLUMN_STORAGE_KEY = "reportal.memory.column";
+
 // Analysis statuses, in lifecycle order; mirrors the API's
 // store.ANALYSIS_STATUSES.  The empty select value means "any status".
 export const ANALYSIS_STATUSES = [

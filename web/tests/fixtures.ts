@@ -29,7 +29,15 @@ export const EMPTY_PAGE_ISSUES: PageIssues = {
 };
 
 // The API's 404 codes for "nothing is stored yet" (mirrored in src/constants.ts).
-export const EMPTY_RESULT_CODES = new Set(["no-scan", "no-artifact", "no-run", "no-graph"]);
+export const EMPTY_RESULT_CODES = new Set([
+  "no-scan",
+  "no-artifact",
+  "no-run",
+  "no-graph",
+  "no-symbols",
+  "no-docs",
+  "no-doc",
+]);
 const EMPTY_RESULT_STATUS = 404;
 
 // A navigation cancels requests still in flight; the browser reports those as

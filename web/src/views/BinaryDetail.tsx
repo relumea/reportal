@@ -50,7 +50,7 @@ export function BinaryDetail({
   query = {},
 }: {
   binaryId: number;
-  /** The route hash, which carries the data-type filters. */
+  /** The route hash, which carries the data-type filters and the memory jump. */
   query?: Record<string, string>;
 }): ReactNode {
   const key = panelKey("binary", binaryId);
@@ -65,8 +65,8 @@ export function BinaryDetail({
           <SecurityMitigationsPanel binaryId={binary.id} />
           <ImportsPanel binaryId={binary.id} />
           <ExportsPanel binaryId={binary.id} />
-          <SectionsPanel binaryId={binary.id} />
-          <MemoryPanel binaryId={binary.id} />
+          <SectionsPanel binaryId={binary.id} basePath={`/binaries/${binary.id}`} />
+          <MemoryPanel binaryId={binary.id} focus={query.memory} />
           <CodeSignaturePanel binaryId={binary.id} />
           <DetailCoveragePanel binaryId={binary.id} />
           <PackerPanel binaryId={binary.id} />
