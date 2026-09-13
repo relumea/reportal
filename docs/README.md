@@ -12,6 +12,7 @@
 | [DATA_MODEL.md](DATA_MODEL.md) | the SQLite schema, each table's writer and the caps that bound a read |
 | [ERRORS.md](ERRORS.md) | every error code reportal returns, what it means and what the caller should do; the `doc_url` an error body carries points at the matching section |
 | [PARITY.md](PARITY.md) | portal.reveng.ai capability map, status, and the local engine behind each |
+| [TODO.md](TODO.md) | the running backlog: the gaps a live crawl of the hosted UI found, with evidence and the local shape to build |
 | [REVENGAI.md](REVENGAI.md) | survey of the RevEng.AI open-source repositories and what is reusable here |
 
 The user-facing entry point is the [project README](../README.md); `AGENTS.md`

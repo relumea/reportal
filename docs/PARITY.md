@@ -122,6 +122,12 @@ a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
 
+The clusters below come from the published spec.  A live crawl of the
+authenticated portal UI found surfaces the spec does not carry at all (debug
+symbols, teams and organisations, credits, the secret store, the in-app
+documentation site); those are [TODO.md](TODO.md), which also indexes the open
+clusters here.
+
 ### A. Asynchronous operation workflow (hosted `Agent` tag, 35 operations)
 
 **Status:** Planned. Nothing started.
