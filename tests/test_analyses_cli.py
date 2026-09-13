@@ -55,6 +55,20 @@ class TestAnalysesCommand:
         assert result.exit_code == 0, result.output
         assert [row["id"] for row in json.loads(result.output)["analyses"]] == [ids["first"]]
 
+        # The status option repeats, and the values combine as any-of.
+        both = runner.invoke(
+            cli.app,
+            ["analyses", "--status", "done", "--status", "pending", "--json"],
+        )
+        assert both.exit_code == 0, both.output
+        assert json.loads(both.output)["count"] == 2
+
+        # The named orders sort by the binary's own columns.
+        by_name = runner.invoke(cli.app, ["analyses", "--order", "name", "--json"])
+        assert by_name.exit_code == 0, by_name.output
+        names = [row["binary_name"] for row in json.loads(by_name.output)["analyses"]]
+        assert names == sorted(names)
+
     def test_search_filter(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _seed_portal(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["analyses", "--search", "import", "--json"])

@@ -6148,6 +6148,11 @@ def list_analyses(request: Request) -> Response:
     with ``?binary_id=``) before the filters, so a filter that matched nothing
     says so instead of looking like an empty project.
 
+    ``?status=`` repeats, and the values are combined as any-of, which is the
+    hosted portal's multi-select Status control; a single value and the repeated
+    form answer the same shape.  ``?platform=`` and ``?arch=`` match the stored
+    binary's own `format` and `arch`, the two halves of that control.
+
     ``?workspace=`` is one of :data:`reportal.store.WORKSPACE_FILTERS` and reads
     the owning binary's scope the way the hosted portal's three controls do: an
     object no team owns (`personal`), one a team does (`team`), or one the whole
@@ -6157,8 +6162,18 @@ def list_analyses(request: Request) -> Response:
     stores a team on.
     """
     status = _query_text(request, "status")
-    if status is not None and status not in store.ANALYSIS_STATUSES:
-        return _invalid_query("status", status, store.ANALYSIS_STATUSES)
+    repeated, status_error = _query_list(request, "status", len(store.ANALYSIS_STATUSES))
+    if status_error is not None:
+        return status_error
+    for value in [status, *repeated]:
+        if value is not None and value not in store.ANALYSIS_STATUSES:
+            return _invalid_query("status", value, store.ANALYSIS_STATUSES)
+    # The platform and architecture filters are free text against the stored
+    # binary columns, which are what the crawler's own tags produced; the
+    # payload answers the values the register actually holds so the control
+    # offers only real choices.
+    platform = _query_text(request, "platform")
+    arch = _query_text(request, "arch")
     workspace = _query_text(request, "workspace")
     if workspace is not None and workspace not in store.WORKSPACE_FILTERS:
         return _invalid_query("workspace", workspace, store.WORKSPACE_FILTERS)
@@ -6178,13 +6193,26 @@ def list_analyses(request: Request) -> Response:
             conn,
             binary_id=binary_id,
             status=status,
+            statuses=tuple(value for value in repeated if value is not None),
             search=_query_text(request, "search"),
             workspace=workspace,
+            platform=platform,
+            arch=arch,
             order=order,
             limit=limit,
         )
         total = store.count_analyses(conn, binary_id=binary_id)
-    return json_response({"analyses": analyses, "count": len(analyses), "total": total})
+        values = store.analysis_filter_values(conn)
+    return json_response(
+        {
+            "analyses": analyses,
+            "count": len(analyses),
+            "total": total,
+            "platforms": values["platforms"],
+            "architectures": values["architectures"],
+            "statuses": list(store.ANALYSIS_STATUSES),
+        }
+    )
 
 
 @router.get("/api/analyses/{analysis_id}/logs")

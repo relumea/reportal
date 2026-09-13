@@ -29,6 +29,7 @@ import {
   Toolbar,
 } from "../components";
 import {
+  ANALYSIS_ORDER_LABELS,
   ANALYSIS_ORDERS,
   ANALYSIS_STATUSES,
   ANALYSIS_WORKSPACES,
@@ -51,35 +52,59 @@ const ANALYSES_PATH = "/analyses";
 
 /** The filter values one analyses hash carries; every one is optional. */
 interface AnalysisFilters {
-  status: string;
+  /** The status multi-select: any-of, repeated as the API takes it. */
+  status: string[];
   order: string;
   search: string;
   /** The workspace control: personal, team or public. */
   workspace: string;
+  /** The stored binary format, and its architecture beside it. */
+  platform: string;
+  arch: string;
 }
 
 function filtersFromQuery(query: Record<string, string>): AnalysisFilters {
-  const status = query.status ?? "";
   const order = query.order ?? "";
+  const statuses = (query.status ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => (ANALYSIS_STATUSES as readonly string[]).includes(value));
   return {
-    status: (ANALYSIS_STATUSES as readonly string[]).includes(status) ? status : "",
+    status: statuses,
     order: (ANALYSIS_ORDERS as readonly string[]).includes(order) ? order : "",
     search: query.search ?? "",
     workspace: (ANALYSIS_WORKSPACES as readonly string[]).includes(query.workspace ?? "")
       ? (query.workspace ?? "")
       : "",
+    platform: query.platform ?? "",
+    arch: query.arch ?? "",
   };
 }
 
 /** The API path one filter set reads, with the page bound the view asks for. */
 function listPath(filters: AnalysisFilters): string {
   const params = new URLSearchParams();
-  if (filters.status) params.set("status", filters.status);
+  // The statuses are repeated, which is the any-of form the route accepts.
+  for (const value of filters.status) params.append("status", value);
   if (filters.order) params.set("order", filters.order);
   if (filters.search) params.set("search", filters.search);
   if (filters.workspace) params.set("workspace", filters.workspace);
+  if (filters.platform) params.set("platform", filters.platform);
+  if (filters.arch) params.set("arch", filters.arch);
   params.set("limit", String(DEFAULT_ANALYSIS_LIMIT));
   return `/analyses?${params.toString()}`;
+}
+
+/** The hash one filter set writes; the statuses are comma-joined there. */
+function filterSearch(filters: AnalysisFilters): string {
+  const params = new URLSearchParams();
+  if (filters.status.length) params.set("status", filters.status.join(","));
+  if (filters.order) params.set("order", filters.order);
+  if (filters.search) params.set("search", filters.search);
+  if (filters.workspace) params.set("workspace", filters.workspace);
+  if (filters.platform) params.set("platform", filters.platform);
+  if (filters.arch) params.set("arch", filters.arch);
+  return params.toString();
 }
 
 /** The lifecycle read and the two writes an analyst makes on one analysis. */
@@ -344,12 +369,45 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
   const apply = (patch: Partial<AnalysisFilters>): void => {
     navigate({
       pathname: ANALYSES_PATH,
-      search: createSearchParams({
-        status: patch.status ?? filters.status,
-        order: patch.order ?? filters.order,
-        search: patch.search ?? filters.search,
-      }).toString(),
+      search: createSearchParams(
+        Object.fromEntries(
+          new URLSearchParams(filterSearch({ ...filters, ...patch })),
+        ),
+      ).toString(),
     });
+  };
+
+  /** Toggle one status in the any-of set; the last one off means any status. */
+  const toggleStatus = (value: string): void => {
+    const next = filters.status.includes(value)
+      ? filters.status.filter((entry) => entry !== value)
+      : [...filters.status, value];
+    apply({ status: next });
+  };
+
+  const requeue = async (row: AnalysisRow): Promise<void> => {
+    setActionError(null);
+    setBusy(`requeue-${row.id}`);
+    try {
+      await api(`/analyses/${row.id}/requeue`, { method: "POST" });
+      result.reload();
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /** The hashes of the selected rows, for the bulk copy control. */
+  const copyHashes = async (): Promise<void> => {
+    const hashes = (analyses ?? [])
+      .filter((row) => selected.has(row.id))
+      .map((row) => row.binary_sha256)
+      .filter((hash) => hash !== "");
+    setBulkMessage(hashes.join("\n"));
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(hashes.join("\n")).catch(() => undefined);
+    }
   };
 
   const remove = async (row: AnalysisRow): Promise<void> => {
@@ -367,10 +425,12 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
   };
 
   const filtered =
-    filters.status !== "" ||
+    filters.status.length > 0 ||
     filters.search !== "" ||
     filters.order !== "" ||
-    filters.workspace !== "";
+    filters.workspace !== "" ||
+    filters.platform !== "" ||
+    filters.arch !== "";
 
   return (
     <>
@@ -397,13 +457,36 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               ))}
             </select>
           </Field>
-          <Field label="Status">
+          <div className="chip-row" role="group" aria-label="Status">
+            {ANALYSIS_STATUSES.map((value) => (
+              <Button
+                key={value}
+                size="sm"
+                tone={filters.status.includes(value) ? "primary" : "ghost"}
+                title={`Show ${value} analyses`}
+                onClick={() => toggleStatus(value)}
+              >
+                {value}
+              </Button>
+            ))}
+          </div>
+          <Field label="Platform">
             <select
-              value={filters.status}
-              onChange={(event) => apply({ status: event.target.value })}
+              value={filters.platform}
+              onChange={(event) => apply({ platform: event.target.value })}
             >
-              <option value="">any status</option>
-              {ANALYSIS_STATUSES.map((value) => (
+              <option value="">any platform</option>
+              {(result.data?.platforms ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Architecture">
+            <select value={filters.arch} onChange={(event) => apply({ arch: event.target.value })}>
+              <option value="">any architecture</option>
+              {(result.data?.architectures ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
                 </option>
@@ -415,7 +498,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               <option value="">newest first</option>
               {ANALYSIS_ORDERS.map((value) => (
                 <option key={value} value={value}>
-                  {value === "newest" ? "newest first" : "oldest first"}
+                  {ANALYSIS_ORDER_LABELS[value]}
                 </option>
               ))}
             </select>
@@ -535,6 +618,14 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                       >
                         View log
                       </Button>
+                      <Button
+                        size="sm"
+                        pending={busy === `requeue-${row.id}`}
+                        title="Back to pending with its finish time cleared"
+                        onClick={() => void requeue(row)}
+                      >
+                        Re-analyse
+                      </Button>
                       <ConfirmButton
                         label="Delete"
                         message={`Delete analysis ${row.id}?`}
@@ -567,6 +658,9 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 onClick={() => void runBulk("add_tag", bulkTag)}
               >
                 Add tag
+              </Button>
+              <Button onClick={() => void copyHashes()} disabled={selected.size === 0}>
+                Copy hashes
               </Button>
               <Button
                 pending={busy === "remove_tag"}

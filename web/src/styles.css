@@ -2848,16 +2848,13 @@ kbd.key {
    may not shrink is what made a long item overrun its column. */
 .doc-bullet {
   flex: 0 0 auto;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  min-width: 1.2rem;
 }
 
 .doc-item-text {
   min-width: 0;
-}
-
-.doc-bullet {
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  min-width: 1.2rem;
 }
 
 .doc-quote {
@@ -2920,4 +2917,12 @@ kbd.key {
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+
+/* The analyses status multi-select: one toggle per status, which fits a
+   toolbar row better than a multi-line list box. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
 }

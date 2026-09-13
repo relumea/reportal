@@ -52,6 +52,12 @@ export interface AnalysisList {
   analyses: AnalysisRow[];
   count: number;
   total: number;
+  /** The stored binary formats the platform filter can match. */
+  platforms: string[];
+  /** The stored architectures the architecture filter can match. */
+  architectures: string[];
+  /** Every analysis status, for the multi-select control. */
+  statuses: string[];
 }
 
 /** One structured log entry of an analysis, newest first. */

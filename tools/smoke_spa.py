@@ -643,6 +643,12 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # The owner and scope columns and the workspace filter.
             ("Workspace",),
             ("Seen by",),
+            # The entry 10 controls: the platform and architecture selects,
+            # the status chips, the per-row re-analyse and the bulk copy.
+            ("Platform",),
+            ("Architecture",),
+            ("Re-analyse",),
+            ("Copy hashes",),
         ),
     ),
     (

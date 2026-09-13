@@ -500,3 +500,70 @@ class TestWorkspaceFilter:
         refused, failed = mcp_server.call_tool("list_analyses", {"workspace": "nonsense"})
         assert failed
         assert refused["error"] == "invalid workspace"
+
+
+class TestAnalysisFilters:
+    """The list's multi-status, platform and architecture filters (entry 10)."""
+
+    def _analyse(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        index: int,
+        status: str = "pending",
+        fmt: str = "",
+        arch: str = "",
+    ) -> int:
+        binary_id = store.add_binary(
+            conn, sha256=f"{index:02d}" * 32, name=f"demo{index}.exe", fmt=fmt, arch=arch
+        )
+        return store.create_analysis(conn, binary_id=binary_id, engine="manual", status=status)
+
+    def test_several_statuses_are_any_of(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, index=1, status="pending")
+        self._analyse(conn, index=2, status="done")
+        self._analyse(conn, index=3, status="failed")
+
+        status, headers, body = wsgi_request("GET", "/api/analyses?status=pending&status=done")
+        assert status.startswith("200"), body
+        payload = json_body(body, headers)
+        assert payload["count"] == 2
+        assert {row["status"] for row in payload["analyses"]} == {"pending", "done"}
+
+    def test_one_status_still_answers(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, index=1, status="done")
+        self._analyse(conn, index=2, status="failed")
+        _status, headers, body = wsgi_request("GET", "/api/analyses?status=done")
+        assert json_body(body, headers)["count"] == 1
+
+    def test_an_unknown_status_is_400(self, conn: sqlite3.Connection) -> None:
+        status, headers, body = wsgi_request("GET", "/api/analyses?status=sideways")
+        assert status.startswith("400"), body
+        assert json_body(body, headers)["error"] == "invalid status"
+
+    def test_platform_and_architecture_filter_the_binary(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, index=1, fmt="pe", arch="x86_64")
+        self._analyse(conn, index=2, fmt="elf", arch="aarch64")
+
+        _status, headers, body = wsgi_request("GET", "/api/analyses?platform=pe&arch=x86_64")
+        payload = json_body(body, headers)
+        assert payload["count"] == 1
+        assert payload["analyses"][0]["binary_format"] == "pe"
+        # The payload names the values the register holds, for the controls.
+        assert payload["platforms"] == ["elf", "pe"]
+        assert payload["architectures"] == ["aarch64", "x86_64"]
+
+    def test_the_named_orders_sort_by_name_and_size(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, index=1)
+        self._analyse(conn, index=2)
+        _status, headers, body = wsgi_request("GET", "/api/analyses?order=name")
+        names = [row["binary_name"] for row in json_body(body, headers)["analyses"]]
+        assert names == sorted(names)
+        _status, headers, body = wsgi_request("GET", "/api/analyses?order=name-desc")
+        names = [row["binary_name"] for row in json_body(body, headers)["analyses"]]
+        assert names == sorted(names, reverse=True)
+
+    def test_an_unknown_order_is_400(self, conn: sqlite3.Connection) -> None:
+        status, headers, body = wsgi_request("GET", "/api/analyses?order=sideways")
+        assert status.startswith("400"), body
+        assert json_body(body, headers)["error"] == "invalid order"

@@ -373,6 +373,36 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   workspace filters and multi-status, add the row menu (download exists,
   re-analyse needs cluster D's stored parameters) and the bulk toolbar.
 - Size: M.
+- **Status:** Closed.  `GET /api/analyses` takes `?status=` repeated (any-of),
+  `?platform=` and `?arch=` against the stored binary's own `format`/`arch`, and
+  the six `ANALYSIS_ORDERS` (`newest`, `oldest`, `name`, `name-desc`, `size`,
+  `size-desc`), so the SPA's Order control covers the hosted one; the payload
+  answers the `platforms` and `architectures` the register actually holds, so
+  each filter lists only real choices.  `reportal analyses` takes the same
+  (`--status` repeats, `--platform`, `--arch`, `--order`).  The Analyses view
+  carries a status chip per state (any-of, and the last one off means any), the
+  two selects, a `Clear` control, a per-row `View log` / `Re-analyse` (the
+  cluster D requeue) / `Delete`, and `Copy hashes` in the bulk toolbar beside
+  Add tag, Remove tag and Delete.  Gap: the hosted three-dot menu and the
+  inline tag chips are not built; the actions are buttons in the Actions column
+  and the tag cells are read-only, which is the same information without the
+  menu.  Covered by `TestAnalysisFilters`, the CLI's filter cases and the
+  Analyses e2e.
+- **Status:** Closed.  `GET /api/analyses` takes `?status=` repeated (any-of),
+  `?platform=` and `?arch=` against the stored binary's own `format`/`arch`, and
+  the six `ANALYSIS_ORDERS` (`newest`, `oldest`, `name`, `name-desc`, `size`,
+  `size-desc`), so the SPA's Order control covers the hosted one; the payload
+  answers the `platforms` and `architectures` the register actually holds, so
+  each filter lists only real choices.  `reportal analyses` takes the same
+  (`--status` repeats, `--platform`, `--arch`, `--order`).  The Analyses view
+  carries a status chip per state (any-of, and the last one off means any), the
+  two selects, a `Clear` control, a per-row `View log` / `Re-analyse` (the
+  cluster D requeue) / `Delete`, and `Copy hashes` in the bulk toolbar beside
+  Add tag, Remove tag and Delete.  Gap: the hosted three-dot menu and the
+  inline tag chips are not built; the actions are buttons in the Actions column
+  and the tag cells are read-only, which is the same information without the
+  menu.  Covered by `TestAnalysisFilters`, the CLI's filter cases and the
+  Analyses e2e.
 
 ### 11. Upload panel: drag and drop, per-entry reporting and extraction in place
 

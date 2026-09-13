@@ -95,6 +95,9 @@ entry.
 - A conversation about reportal itself: the `docs` scope ingests the shipped
   manual on the first question and answers from it, with a per-scope canned
   prompt list in the Conversations view.
+- The analyses list's richer controls: a multi-select status filter, platform
+  and architecture filters built from what the register holds, six sort orders,
+  a per-row re-analyse action, and copy-hashes in the bulk toolbar.
 - A continuous whole-binary hex view: one scrollable dump in virtual-address
   order, gaps stated rather than zero-filled, a click-through from a section's
   address, and `G`/`Tab` for the address box and the offset column.

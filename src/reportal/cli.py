@@ -2336,13 +2336,17 @@ def imported_functions(
 
 @app.command()
 def analyses(
-    status: str | None = typer.Option(None, "--status", help="Only analyses in this state"),
+    status: list[str] = typer.Option(
+        [], "--status", help="Only analyses in this state; repeat for any-of"
+    ),
     workspace: str | None = typer.Option(None, "--workspace", help="personal, team or public"),
+    platform: str | None = typer.Option(None, "--platform", help="Only this binary format"),
+    arch: str | None = typer.Option(None, "--arch", help="Only this architecture"),
     search: str | None = typer.Option(
         None, "--search", help="Match the binary name or the engine label"
     ),
     order: str = typer.Option(
-        store.DEFAULT_ANALYSIS_ORDER, "--order", help="Newest or oldest first"
+        store.DEFAULT_ANALYSIS_ORDER, "--order", help="Newest, oldest, name or size, with -desc"
     ),
     limit: int = typer.Option(
         store.DEFAULT_ANALYSIS_LIMIT, "--limit", help="How many rows to list"
@@ -2360,12 +2364,13 @@ def analyses(
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if status is not None and status not in store.ANALYSIS_STATUSES:
-        _fail(
-            f"unknown analysis status: {status};"
-            f" expected one of {', '.join(store.ANALYSIS_STATUSES)}",
-            json_output,
-        )
+    for value in status:
+        if value not in store.ANALYSIS_STATUSES:
+            _fail(
+                f"unknown analysis status: {value};"
+                f" expected one of {', '.join(store.ANALYSIS_STATUSES)}",
+                json_output,
+            )
     if workspace is not None and workspace not in store.WORKSPACE_FILTERS:
         _fail(
             f"unknown workspace: {workspace}; expected one of {', '.join(store.WORKSPACE_FILTERS)}",
@@ -2381,9 +2386,11 @@ def analyses(
     with contextlib.closing(store.connect(portal_db)) as conn:
         rows = store.list_analyses(
             conn,
-            status=status,
+            statuses=tuple(status),
             search=search,
             workspace=workspace,
+            platform=platform,
+            arch=arch,
             order=order,
             limit=limit,
         )

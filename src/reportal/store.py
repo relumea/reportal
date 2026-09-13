@@ -804,7 +804,26 @@ def delete_family(conn: sqlite3.Connection, family_id: int) -> bool:
 # caller names none.  A page is bounded so a listing route cannot be asked for
 # an unbounded result.
 DEFAULT_ANALYSIS_ORDER = "newest"
-ANALYSIS_ORDERS: tuple[str, ...] = ("newest", "oldest")
+# The orders the hosted portal's Order control offers: the newest or oldest
+# first, and the binary's name or size either way.  `list_analyses` turns a pair
+# into one ORDER BY, so a listing route cannot be asked for a column it does not
+# have.
+ANALYSIS_ORDERS: tuple[str, ...] = (
+    "newest",
+    "oldest",
+    "name",
+    "name-desc",
+    "size",
+    "size-desc",
+)
+_ANALYSIS_ORDER_SQL: dict[str, str] = {
+    "newest": "a.id DESC",
+    "oldest": "a.id ASC",
+    "name": "b.name ASC, a.id DESC",
+    "name-desc": "b.name DESC, a.id DESC",
+    "size": "b.size ASC, a.id DESC",
+    "size-desc": "b.size DESC, a.id DESC",
+}
 # The analyses list's workspace filter, which reads the owning binary's scope the
 # way the hosted portal's three controls do: an object no team owns, one a team
 # does, and one the whole workspace may see.
@@ -1125,6 +1144,25 @@ def requeue_analysis(conn: sqlite3.Connection, analysis_id: int) -> dict[str, An
     return get_analysis(conn, analysis_id)
 
 
+def analysis_filter_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """The values the analysis filters can actually match, for the SPA controls.
+
+    The platform and architecture filters read the stored binary's `format` and
+    `arch` columns, which are whatever the crawler derived, so the control is
+    built from the register rather than from a vocabulary written down twice.
+    A blank or NULL column is left out.
+    """
+
+    def distinct(column: str) -> list[str]:
+        cur = conn.execute(
+            f"SELECT DISTINCT {column} AS value FROM binaries"
+            f" WHERE {column} IS NOT NULL AND {column} != '' ORDER BY {column}"
+        )
+        return [str(row["value"]) for row in cur.fetchall()]
+
+    return {"platforms": distinct("format"), "architectures": distinct("arch")}
+
+
 def count_analyses(conn: sqlite3.Connection, *, binary_id: int | None = None) -> int:
     """How many analyses exist, optionally of one binary.
 
@@ -1162,8 +1200,11 @@ def list_analyses(
     *,
     binary_id: int | None = None,
     status: str | None = None,
+    statuses: Sequence[str] = (),
     search: str | None = None,
     workspace: str | None = None,
+    platform: str | None = None,
+    arch: str | None = None,
     order: str = DEFAULT_ANALYSIS_ORDER,
     limit: int | None = None,
 ) -> list[dict[str, Any]]:
@@ -1183,8 +1224,9 @@ def list_analyses(
     object no team owns, ``team`` one a team does, and ``public`` one the whole
     workspace may see.
     """
-    if status is not None and status not in ANALYSIS_STATUSES:
-        raise ValueError(f"unknown analysis status: {status}")
+    for value in (status, *statuses):
+        if value is not None and value not in ANALYSIS_STATUSES:
+            raise ValueError(f"unknown analysis status: {value}")
     if workspace is not None and workspace not in WORKSPACE_FILTERS:
         raise ValueError(f"unknown workspace filter: {workspace}")
     if order not in ANALYSIS_ORDERS:
@@ -1204,9 +1246,17 @@ def list_analyses(
     if binary_id is not None:
         clauses.append("a.binary_id = ?")
         params.append(binary_id)
-    if status is not None:
-        clauses.append("a.status = ?")
-        params.append(status)
+    chosen = [value for value in (status, *statuses) if value is not None]
+    if chosen:
+        placeholders = ", ".join("?" for _ in chosen)
+        clauses.append(f"a.status IN ({placeholders})")
+        params.extend(chosen)
+    if platform is not None:
+        clauses.append("b.format = ?")
+        params.append(platform)
+    if arch is not None:
+        clauses.append("b.arch = ?")
+        params.append(arch)
     if search:
         pattern = _escape_like(search)
         clauses.append("(b.name LIKE ? ESCAPE '\\' OR a.engine LIKE ? ESCAPE '\\')")
@@ -1220,8 +1270,7 @@ def list_analyses(
         params.append("public")
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    direction = "DESC" if order == DEFAULT_ANALYSIS_ORDER else "ASC"
-    sql += f" ORDER BY a.id {direction} LIMIT ?"
+    sql += f" ORDER BY {_ANALYSIS_ORDER_SQL[order]} LIMIT ?"
     params.append(bound)
     rows = _rows(conn.execute(sql, params))
     tags = _tags_for_binaries(conn, [int(row["binary_id"]) for row in rows])

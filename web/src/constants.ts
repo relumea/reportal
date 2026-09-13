@@ -294,7 +294,17 @@ export const ANALYSIS_STATUSES = [
 ] as const;
 
 // Sort orders the analyses listing accepts; mirrors store.ANALYSIS_ORDERS.
-export const ANALYSIS_ORDERS = ["newest", "oldest"] as const;
+export const ANALYSIS_ORDERS = ["newest", "oldest", "name", "name-desc", "size", "size-desc"] as const;
+
+/** The labels the order control shows for those values. */
+export const ANALYSIS_ORDER_LABELS: Record<(typeof ANALYSIS_ORDERS)[number], string> = {
+  newest: "newest first",
+  oldest: "oldest first",
+  name: "name (A to Z)",
+  "name-desc": "name (Z to A)",
+  size: "size (small first)",
+  "size-desc": "size (large first)",
+};
 
 /** The workspace filter's labels; mirrors store.WORKSPACE_FILTERS. */
 export const ANALYSIS_WORKSPACES = ["personal", "team", "public"] as const;

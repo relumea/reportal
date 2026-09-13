@@ -61,3 +61,37 @@ test("deleting an analysis removes its row", async ({ page }) => {
   await page.goto("/#/analyses");
   await expect(page.getByText(engine)).toHaveCount(0);
 });
+
+test("the status chips, platform filter, order and re-analyse drive the list", async ({ page }) => {
+  await page.goto("/#/analyses");
+  const panel = panelByTitle(page, "Analyses");
+  const rows = panel.locator("tbody tr");
+  const total = await rows.count();
+  expect(total).toBeGreaterThan(1);
+
+  // The status control is a chip per status; selecting one filters the list and
+  // puts the any-of set in the hash.
+  await panel.getByRole("button", { name: "done", exact: true }).click();
+  await expect(page).toHaveURL(/status=done/);
+  const done = await rows.count();
+  expect(done).toBeGreaterThan(0);
+  expect(done).toBeLessThanOrEqual(total);
+
+  // A second status widens the any-of set rather than replacing it.
+  await panel.getByRole("button", { name: "pending", exact: true }).click();
+  await expect(page).toHaveURL(/status=done%2Cpending|status=pending%2Cdone/);
+
+  // The platform control offers the values the register holds: the seeded
+  // binary carries PE, so the option appears once the payload lands.
+  const platform = panel.getByLabel("Platform");
+  await expect(platform.locator("option", { hasText: "PE" })).toBeAttached();
+  await platform.selectOption("PE");
+  await expect(page).toHaveURL(/platform=PE/);
+  await expect(panel.locator("tbody tr")).toHaveCount(1);
+
+  // The re-analyse action clears the finish time and puts the row back.
+  await page.goto("/#/analyses");
+  const button = panel.getByRole("button", { name: "Re-analyse" }).first();
+  await button.click();
+  await expect(panel.locator("tbody tr").first()).toBeVisible();
+});

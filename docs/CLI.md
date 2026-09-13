@@ -549,11 +549,16 @@ reportal user-rm <user-id> [--yes] [--json]
 reportal config [--json]                   # what this instance can do: versions,
                                            #   features, limits and MCP tool counts;
                                            #   needs no workspace
-reportal analyses [--status S] [--workspace W] [--search TEXT] [--order O] [--limit N] [--json]
+reportal analyses [--status S]... [--workspace W] [--platform P] [--arch A]
+             [--search TEXT] [--order O] [--limit N] [--json]
                                            # the analyses list with each row's
                                            #   owner team and visibility; the
                                            #   workspace filter is personal,
-                                           #   team or public
+                                           #   team or public, --status repeats
+                                           #   as any-of, --platform/--arch match
+                                           #   the binary and --order takes
+                                           #   newest, oldest, name or size
+                                           #   (with -desc)
 reportal analysis <id> [--status|--params|--func-maps|--tags] [--json]
                                            # one analysis: its detail, or its lifecycle,
                                            #   its re-run parameters, its function map or
