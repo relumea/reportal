@@ -377,6 +377,12 @@ member through `POST /api/collections/<id>/binaries`, and Delete sits behind an
 inline confirm (`DELETE /api/collections/<id>`).  Every one of those writes is
 one journal action on the server, so the journal view can revert it.
 
+The Analyses view's log drawer (`views/AnalysesView.tsx`) opens with the
+lifecycle read for that analysis: its status badge, engine, created and finished
+times and the scan and log counts by status and severity, beside an Add log
+entry control, a Requeue button and links to the function map and the re-run
+parameters.  The writes go through the same routes the CLI and MCP use.
+
 The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) lists each analysis's
 id, binary (linked to its detail page), platform badges, binary size, engine,
 created time, status badge (the design language's status hues: `done` is the

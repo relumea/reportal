@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from reportal import (
+    analysis_log,
     auto_mode,
     auto_store,
     auto_workers,
@@ -3322,6 +3323,176 @@ def _tool_list_notifications(arguments: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _analysis_or_error(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any]:
+    """The analysis row, or a tool error naming the id."""
+    analysis = store.get_analysis(conn, analysis_id)
+    if analysis is None:
+        raise ToolError("analysis not found", f"no analysis with id {analysis_id}")
+    return analysis
+
+
+def _tool_get_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        detail = store.analysis_detail(conn, analysis_id)
+        status = store.analysis_status(conn, analysis_id)
+    assert detail is not None and status is not None, "the row was just read"
+    return {**detail, "lifecycle": status}
+
+
+def _tool_get_analysis_params(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        params = store.analysis_params(conn, analysis_id)
+    assert params is not None, "the row was just read"
+    return params
+
+
+def _tool_get_analysis_func_maps(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        functions = store.list_functions(conn, analysis_id=analysis_id, sort="va", order="asc")
+        total = store.count_functions(conn, analysis_id=analysis_id)
+    return {
+        "analysis_id": analysis_id,
+        "functions": [
+            {
+                "id": int(row["id"]),
+                "va": int(row["va"]),
+                "name": str(row["name"]),
+                "size": int(row["size"] or 0),
+            }
+            for row in functions
+        ],
+        "count": len(functions),
+        "total": total,
+    }
+
+
+def _tool_update_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    engine = _arg_str(arguments, "engine")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="analyses",
+                where="id = ?",
+                params=(analysis_id,),
+                description=f"relabelled analysis {analysis_id}",
+            )
+            updated = store.update_analysis(conn, analysis_id, engine=engine)
+    assert updated is not None, "the row was just read"
+    return log.attach(updated)
+
+
+def _tool_append_analysis_log(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    message = _arg_str(arguments, "message")
+    severity = _arg_optional_str(arguments, "severity", analysis_log.SEVERITY_INFO)
+    if severity not in analysis_log.SEVERITIES:
+        raise ToolError("invalid severity", f"unknown severity: {severity}")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        try:
+            with journal.journaled(conn, journal.new_action()) as log:
+                entry_id = analysis_log.append_entry(
+                    conn, analysis_id, message=message, severity=severity
+                )
+                journal.journaled_create(
+                    log,
+                    table=analysis_log.TABLE,
+                    key=entry_id,
+                    description=f"logged an entry on analysis {analysis_id}",
+                )
+        except ValueError as exc:
+            raise ToolError("invalid message", str(exc)) from exc
+    return log.attach(
+        {"id": entry_id, "analysis_id": analysis_id, "severity": severity, "message": message}
+    )
+
+
+def _tool_requeue_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    with contextlib.closing(_open()) as conn:
+        _analysis_or_error(conn, analysis_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="analyses",
+                where="id = ?",
+                params=(analysis_id,),
+                description=f"requeued analysis {analysis_id}",
+            )
+            logged_before = journal.snapshot_rows(
+                conn, table=analysis_log.TABLE, where="analysis_id = ?", params=(analysis_id,)
+            )
+            updated = store.requeue_analysis(conn, analysis_id)
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table=analysis_log.TABLE,
+                where="analysis_id = ?",
+                params=(analysis_id,),
+                before=logged_before,
+                key=["id"],
+                description=f"logged the requeue of analysis {analysis_id}",
+            )
+    assert updated is not None, "the row was just read"
+    return log.attach(updated)
+
+
+def _tool_set_analysis_tags(arguments: dict[str, Any]) -> dict[str, Any]:
+    analysis_id = _arg_int(arguments, "analysis_id")
+    names = _arg_str_list(arguments, "tags")
+    with contextlib.closing(_open()) as conn:
+        analysis = _analysis_or_error(conn, analysis_id)
+        binary_id = int(analysis["binary_id"])
+        with journal.journaled(conn, journal.new_action()) as log:
+            current = {
+                str(tag["name"]): int(tag["id"]) for tag in store.get_binary_tags(conn, binary_id)
+            }
+            for name in sorted(set(names) - set(current)):
+                created = store.find_tag(conn, name) is None
+                tag_id = store.create_tag(conn, name)
+                if created:
+                    log.record(
+                        effects.EFFECT_ROW_DELETE,
+                        f"created tag {tag_id}",
+                        journal.row_delete_descriptor("tags", tag_id),
+                    )
+                if store.add_binary_tag(conn, binary_id, tag_id):
+                    log.record(
+                        effects.EFFECT_ROW_DELETE,
+                        f"tagged binary {binary_id} with tag {tag_id}",
+                        journal.row_delete_descriptor(
+                            "binary_tags", {"binary_id": binary_id, "tag_id": tag_id}
+                        ),
+                    )
+            for name in sorted(set(current) - set(names)):
+                tag_id = current[name]
+                link = journal.snapshot_rows(
+                    conn,
+                    table="binary_tags",
+                    where="binary_id = ? AND tag_id = ?",
+                    params=(binary_id, tag_id),
+                )
+                if store.remove_binary_tag(conn, binary_id, tag_id) and link:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"untagged binary {binary_id} from tag {tag_id}",
+                        journal.row_restore_descriptor("binary_tags", link),
+                    )
+            tags = [str(tag["name"]) for tag in store.get_binary_tags(conn, binary_id)]
+    return log.attach({"analysis_id": analysis_id, "binary_id": binary_id, "tags": tags})
+
+
 def _tool_list_jobs(arguments: dict[str, Any]) -> dict[str, Any]:
     limit = _arg_optional_int(arguments, "limit", jobs.DEFAULT_JOB_LIMIT)
     status = _arg_optional_str(arguments, "status")
@@ -5176,6 +5347,81 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _READ,
             _tool_list_notifications,
+        ),
+        Tool(
+            "get_analysis",
+            "One analysis with its counts, its scans, its binary's tags and its lifecycle counts.",
+            _object({"analysis_id": _int("Analysis id.")}, ("analysis_id",)),
+            _READ,
+            _tool_get_analysis,
+        ),
+        Tool(
+            "get_analysis_params",
+            "What a re-run of one analysis would need: its engine, its binary's identity and"
+            " content hash, its rebrew project context and the scans it already carries.",
+            _object({"analysis_id": _int("Analysis id.")}, ("analysis_id",)),
+            _READ,
+            _tool_get_analysis_params,
+        ),
+        Tool(
+            "get_analysis_func_maps",
+            "One analysis's function map: every function's id, address, name and size, by address.",
+            _object({"analysis_id": _int("Analysis id.")}, ("analysis_id",)),
+            _READ,
+            _tool_get_analysis_func_maps,
+        ),
+        Tool(
+            "update_analysis",
+            "Relabel one analysis's engine; journaled and revertible.",
+            _object(
+                {"analysis_id": _int("Analysis id."), "engine": _str("The engine label to set.")},
+                ("analysis_id", "engine"),
+            ),
+            _WRITE,
+            _tool_update_analysis,
+        ),
+        Tool(
+            "append_analysis_log",
+            "Append one log entry to an analysis; journaled and revertible.",
+            _object(
+                {
+                    "analysis_id": _int("Analysis id."),
+                    "message": _str("What to record."),
+                    "severity": {
+                        "type": "string",
+                        "enum": list(analysis_log.SEVERITIES),
+                        "description": "Defaults to info.",
+                    },
+                },
+                ("analysis_id", "message"),
+            ),
+            _WRITE,
+            _tool_append_analysis_log,
+        ),
+        Tool(
+            "requeue_analysis",
+            "Put an analysis back to pending and clear its finish time; journaled and revertible.",
+            _object({"analysis_id": _int("Analysis id.")}, ("analysis_id",)),
+            _WRITE,
+            _tool_requeue_analysis,
+        ),
+        Tool(
+            "set_analysis_tags",
+            "Replace the tags on the analysis's binary, which is the scope reportal tags at;"
+            " journaled and revertible.",
+            _object(
+                {
+                    "analysis_id": _int("Analysis id."),
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "The tags the binary should carry.",
+                    },
+                },
+                ("analysis_id", "tags"),
+            ),
+            _WRITE,
+            _tool_set_analysis_tags,
         ),
         Tool(
             "list_jobs",

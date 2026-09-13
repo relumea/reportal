@@ -344,7 +344,7 @@ description lives in that file.
 | A | Asynchronous operation workflow (jobs, status, cancel, progress, SSE) | Closed in PARITY.md |
 | B | AI decompilation as a first-class artifact (tokens, per-line comments, attributions, rating) | Planned |
 | C | Dynamic execution and sandbox detonation | Planned |
-| D | Analysis lifecycle (basic, params, requeue, examples, bytes, tags, bulk, imported functions) | Planned, partly planned elsewhere |
+| D | Analysis lifecycle (basic, params, requeue, examples, bytes, tags, bulk, imported functions) | In progress in PARITY.md: read, status, params, function map, tags, relabel, log append and requeue are closed; examples, imported functions and the bulk routes remain |
 | F | Users, auth and IAM (roles, permissions, activity, feedback) | Planned, extended by entry 2 |
 | G | Models (registry, model per artifact, upgrade) | Planned |
 | H | External sources (VirusTotal), now with the team key in entry 3 | Planned |

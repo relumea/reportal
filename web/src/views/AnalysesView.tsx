@@ -20,8 +20,10 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  KeyValue,
   Loading,
   Muted,
+  NA,
   Panel,
   StatusCell,
   Toolbar,
@@ -33,7 +35,7 @@ import {
   DEFAULT_ANALYSIS_LOG_LIMIT,
 } from "../constants";
 import { logSeverityLevel } from "../design";
-import type { AnalysisList, AnalysisLogPage, AnalysisRow } from "../types";
+import type { AnalysisList, AnalysisLogPage, AnalysisRow, AnalysisStatus } from "../types";
 import { useAsync } from "../useAsync";
 
 const ANALYSES_PATH = "/analyses";
@@ -63,6 +65,92 @@ function listPath(filters: AnalysisFilters): string {
   if (filters.search) params.set("search", filters.search);
   params.set("limit", String(DEFAULT_ANALYSIS_LIMIT));
   return `/analyses?${params.toString()}`;
+}
+
+/** The lifecycle read and the two writes an analyst makes on one analysis. */
+function Lifecycle({ analysisId, onChanged }: { analysisId: number; onChanged: () => void }): ReactNode {
+  const { data, error, reload } = useAsync(
+    () => api<AnalysisStatus>(`/analyses/${analysisId}/status`),
+    [analysisId],
+  );
+  const [note, setNote] = useState("");
+  const [severity, setSeverity] = useState("info");
+  const [busy, setBusy] = useState("");
+  const [actionError, setActionError] = useState<unknown>(null);
+  const act = (work: () => Promise<unknown>): void => {
+    setActionError(null);
+    setBusy("run");
+    void work()
+      .then(() => {
+        setNote("");
+        reload();
+        onChanged();
+      })
+      .catch((failure: unknown) => setActionError(failure))
+      .finally(() => setBusy(""));
+  };
+  return (
+    <>
+      {error ? <ErrorNote error={error} onRetry={reload} /> : null}
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      {data ? (
+        <KeyValue
+          rows={[
+            [
+              "status",
+              data.terminal ? <Badge tone="ok">{data.status}</Badge> : <Badge tone="warn">{data.status}</Badge>,
+            ],
+            ["engine", data.engine || NA],
+            ["created", data.created_at],
+            ["finished", data.finished_at ?? NA],
+            ["scans", Object.entries(data.scans_by_status).map(([key, count]) => `${key} ${count}`).join(", ") || NA],
+            ["logs", Object.entries(data.logs_by_severity).map(([key, count]) => `${key} ${count}`).join(", ") || NA],
+          ]}
+        />
+      ) : null}
+      <Toolbar>
+        <Field label="Log entry">
+          <input placeholder="what you did" value={note} onChange={(event) => setNote(event.target.value)} />
+        </Field>
+        <Field label="Severity">
+          <select value={severity} onChange={(event) => setSeverity(event.target.value)}>
+            {["info", "warn", "error"].map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Button
+          pending={busy === "run"}
+          disabled={!note.trim()}
+          onClick={() =>
+            act(() =>
+              api(`/analyses/${analysisId}/logs`, {
+                method: "POST",
+                json: { message: note, severity },
+              }),
+            )
+          }
+        >
+          Add log entry
+        </Button>
+        <Button
+          tone="ghost"
+          pending={busy === "run"}
+          onClick={() => act(() => api(`/analyses/${analysisId}/requeue`, { method: "POST" }))}
+        >
+          Requeue
+        </Button>
+        <a className="btn btn-ghost" href={`/api/analyses/${analysisId}/func-maps`}>
+          Function map
+        </a>
+        <a className="btn btn-ghost" href={`/api/analyses/${analysisId}/params`}>
+          Re-run parameters
+        </a>
+      </Toolbar>
+    </>
+  );
 }
 
 /** One analysis's log, newest first, with the log's true total. */
@@ -95,6 +183,7 @@ function LogDrawer({ analysisId, onClose }: { analysisId: number; onClose: () =>
         </>
       }
     >
+      <Lifecycle analysisId={analysisId} onChanged={reload} />
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}
       {data === undefined && !error ? (
         <Loading label="Loading the log" />

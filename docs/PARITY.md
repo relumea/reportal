@@ -117,7 +117,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (193
-method/path pairs) plus the MCP tool registry (147 tools).  Every row below is
+method/path pairs) plus the MCP tool registry (154 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -215,7 +215,37 @@ Windows-only and orthogonal; the local runner is the general case).
 
 ### D. Analysis lifecycle (hosted `Analyses - Core`, 32 operations)
 
-**Status:** Planned. Nothing started.
+**Status:** In progress.  Closed in this slice, end to end over the tables that
+already existed (no new table):
+
+- reading one analysis (`GET /api/analyses/<id>`), its lifecycle
+  (`.../status`, with the scan and log counts by status and severity) and its
+  recorded parameters (`.../params`: the engine label, the binary's identity and
+  content hash, the rebrew project context and the scans already stored, which
+  is what makes a re-run reproducible rather than guessed);
+- the function map (`.../func-maps`, ordered by address);
+- its tags (`GET|PATCH .../tags`), which locally are the owning binary's tags,
+  the only scope reportal has, journaled link by link;
+- the engine relabel (`PATCH /api/analyses/<id>`), a log append
+  (`POST .../logs`) and a requeue (`POST .../requeue`), each journaled and
+  revertible (a requeue revert restores the status, the finish time and the log
+  entry it added).
+
+`reportal analysis`/`analysis-update`/`analysis-log`/`analysis-requeue`/
+`analysis-tags`, the `get_analysis`, `get_analysis_params`,
+`get_analysis_func_maps`, `update_analysis`, `append_analysis_log`,
+`requeue_analysis` and `set_analysis_tags` MCP tools (154 tools: 73 read-only,
+81 destructive) and the analyses view's log drawer expose the same.
+
+Still open in this cluster: the example-analyses read (`/v3/analyses/examples`),
+the imported-function read with its callers (`/v3/analyses/{id}/imported-functions`;
+the rows exist, the importer labels them `THUNK_NAME_SOURCE`, but no route groups
+them yet), bulk delete and bulk tag over many analyses (`PATCH
+/v2/analyses/delete`, `PATCH /v2/analyses/tags/add`) and the raw-bytes route
+(`/v3/analyses/{id}/bytes`, which `GET /api/binaries/<id>/download` already
+serves for the analysis's binary).  `docs/TODO.md` records the crawl's view that
+example analyses, per-analysis tags and imported functions are already covered;
+the tags read is shipped here anyway, and the other two are the next slice.
 
 reportal has list, create, delete, logs (read), scans.  Missing: read one
 analysis (`GET /v2|v3/analyses/{id}/basic`), update it (`PATCH
@@ -369,7 +399,7 @@ write (deflate member, 12-byte header with the CRC check byte, the three-key
 stream cipher, verified by reading the archive back with `zipfile` plus the
 password, and refusing a wrong one).  `GET /api/binaries/<id>/download-zipped`,
 `reportal download --zip [--password]`, the `export_zipped_binary` MCP tool
-(147 tools: 70 read-only, 77 destructive) and a Zipped link in the binaries
+(154 tools: 73 read-only, 81 destructive) and a Zipped link in the binaries
 table expose it; the archive is deflated into a spooled temporary file so a
 256 MiB binary is never held whole, and the password is documented as a shared
 convention rather than a security measure.

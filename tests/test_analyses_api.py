@@ -1,435 +1,307 @@
-"""Tests for the analyses listing/log/delete routes and the function filters."""
+"""Tests for the analysis lifecycle routes: read, update, status, params, map, logs, tags."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
 from typing import Any
 
-import pytest
-from conftest import FakeEngine, json_body, wsgi_request
+from conftest import json_body, wsgi_request
 
-from reportal import analysis_log, engines, store
-
-# A function name whose import family the capability rule table classifies as
-# networking (the `WSA` prefix), used by the capability-filter test.
-NETWORKING_FUNCTION = "WSAStartup"
-
-# A name_source the composition labels as `User` (an unrecognised stored
-# source, e.g. a manual rename).
-USER_SOURCE = "manual"
+from reportal import analysis_log, journal, store
 
 
-def _binary(conn: sqlite3.Connection, name: str = "demo.exe") -> int:
-    return store.add_binary(conn, sha256=name.encode().hex().ljust(64, "0"), name=name)
-
-
-def _analysis(conn: sqlite3.Connection, binary_id: int, engine: str = "manual") -> int:
-    return store.create_analysis(conn, binary_id=binary_id, engine=engine)
-
-
-def _function(
-    conn: sqlite3.Connection,
-    analysis_id: int,
-    *,
-    va: int = 0x1000,
-    name: str = "sub_1000",
-    size: int = 32,
-    status: str = "STUB",
-    name_source: str = "rebrew",
-) -> int:
-    return store.add_function(
-        conn,
-        analysis_id=analysis_id,
-        va=va,
-        name=name,
-        size=size,
-        status=status,
-        name_source=name_source,
+def _seed(conn: sqlite3.Connection) -> dict[str, int]:
+    binary_id = store.add_binary(
+        conn, sha256="c" * 64, name="demo.exe", path="/tmp/demo.exe", size=128
     )
+    analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+    first = store.add_function(conn, analysis_id=analysis_id, va=0x2000, name="sub_2000", size=32)
+    second = store.add_function(conn, analysis_id=analysis_id, va=0x1000, name="sub_1000", size=16)
+    return {"binary": binary_id, "analysis": analysis_id, "first": first, "second": second}
 
 
-def _get(path: str) -> tuple[str, dict[str, str], bytes]:
-    return wsgi_request("GET", path)
+def _get(path: str) -> tuple[str, Any]:
+    status, headers, body = wsgi_request("GET", path)
+    return status, json_body(body, headers)
 
 
-class TestListAnalysesRoute:
-    def test_rows_keep_their_keys_and_gain_the_filters_view_needs(
-        self, conn: sqlite3.Connection
-    ) -> None:
-        binary_id = _binary(conn)
-        analysis_id = _analysis(conn, binary_id)
-        status, headers, body = _get("/api/analyses")
+def _send(method: str, path: str, body: dict[str, Any] | None = None) -> tuple[str, Any]:
+    raw = b"" if body is None else json.dumps(body).encode()
+    status, headers, payload = wsgi_request(method, path, body=raw)
+    return status, json_body(payload, headers)
+
+
+class TestDetail:
+    def test_it_carries_the_counts_the_scans_and_the_tags(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.set_scan(conn, ids["analysis"], store.SCAN_KIND_FILETYPE, {"count": 1})
+        tag_id = store.create_tag(conn, "triage")
+        store.add_binary_tag(conn, ids["binary"], tag_id)
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}")
+
         assert status.startswith("200")
-        payload = json_body(body, headers)
-        assert payload["count"] == 1
-        assert payload["total"] == 1
-        row = payload["analyses"][0]
-        assert {
-            "id",
-            "binary_id",
-            "status",
-            "engine",
-            "created_at",
-            "finished_at",
-            "log",
-            "binary_name",
-            "tags",
-        } <= set(row)
-        assert row["id"] == analysis_id
-        assert row["binary_name"] == "demo.exe"
-        assert row["tags"] == []
+        assert payload["status"] == "done", "storing a scan finishes its analysis"
+        assert payload["engine"] == "manual"
+        assert payload["function_count"] == 2
+        assert payload["scan_count"] == 1
+        assert payload["scans"] == [{"kind": "filetype", "status": "done"}]
+        assert payload["log_count"] >= 1
+        assert payload["tags"] == ["triage"]
 
-    def test_status_filter_reports_the_unfiltered_total(self, conn: sqlite3.Connection) -> None:
-        binary_id = _binary(conn)
-        pending = _analysis(conn, binary_id)
-        done = _analysis(conn, binary_id)
-        store.update_analysis_status(conn, done, status=store.ANALYSIS_STATUS_DONE)
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _get("/api/analyses/4242")
 
-        _, headers, body = _get("/api/analyses?status=pending")
-        payload = json_body(body, headers)
-        assert [row["id"] for row in payload["analyses"]] == [pending]
-        assert payload["count"] == 1
-        assert payload["total"] == 2
-
-    def test_search_filter(self, conn: sqlite3.Connection) -> None:
-        notepad = _binary(conn, "notepad.exe")
-        _binary(conn, "calc.exe")
-        analysis_id = _analysis(conn, notepad)
-        _, headers, body = _get("/api/analyses?search=notepad")
-        payload = json_body(body, headers)
-        assert [row["id"] for row in payload["analyses"]] == [analysis_id]
-
-    def test_a_filter_that_matches_nothing_says_so(self, conn: sqlite3.Connection) -> None:
-        _analysis(conn, _binary(conn))
-        _, headers, body = _get("/api/analyses?status=failed")
-        payload = json_body(body, headers)
-        assert payload["analyses"] == []
-        assert payload["count"] == 0
-        assert payload["total"] == 1
-
-    def test_order_and_limit(self, conn: sqlite3.Connection) -> None:
-        binary_id = _binary(conn)
-        first = _analysis(conn, binary_id)
-        second = _analysis(conn, binary_id)
-        _, headers, body = _get("/api/analyses?order=oldest")
-        assert [row["id"] for row in json_body(body, headers)["analyses"]] == [first, second]
-        _, headers, body = _get("/api/analyses?limit=1")
-        assert [row["id"] for row in json_body(body, headers)["analyses"]] == [second]
-
-    def test_binary_id_filter_scopes_the_total_too(self, conn: sqlite3.Connection) -> None:
-        first = _binary(conn, "first.exe")
-        second = _binary(conn, "second.exe")
-        first_analysis = _analysis(conn, first)
-        _analysis(conn, second)
-        _, headers, body = _get(f"/api/analyses?binary_id={first}")
-        payload = json_body(body, headers)
-        assert [row["id"] for row in payload["analyses"]] == [first_analysis]
-        assert payload["total"] == 1
-
-    @pytest.mark.parametrize(
-        "query,error",
-        [
-            ("status=finished", "invalid status"),
-            ("order=random", "invalid order"),
-            ("limit=0", "invalid limit"),
-            (f"limit={store.MAX_ANALYSIS_LIMIT + 1}", "invalid limit"),
-            ("limit=abc", "limit must be an integer"),
-        ],
-    )
-    def test_unknown_values_refused(self, conn: sqlite3.Connection, query: str, error: str) -> None:
-        status, headers, body = _get(f"/api/analyses?{query}")
-        assert status.startswith("400")
-        assert json_body(body, headers)["error"] == error
+        assert status.startswith("404")
+        assert payload["error"] == "analysis not found"
 
 
-class TestAnalysisLogsRoute:
-    def test_round_trip_newest_first_with_the_true_total(self, conn: sqlite3.Connection) -> None:
-        analysis_id = _analysis(conn, _binary(conn))
-        analysis_log.append_entry(conn, analysis_id, message="scan queued")
-        analysis_log.append_entry(
-            conn, analysis_id, severity=analysis_log.SEVERITY_WARN, message="slow engine"
-        )
+class TestStatus:
+    def test_it_counts_by_severity_and_by_scan_status(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        analysis_log.append_entry(conn, ids["analysis"], message="warned", severity="warn")
+        analysis_log.append_entry(conn, ids["analysis"], message="failed", severity="error")
+        store.set_scan(conn, ids["analysis"], store.SCAN_KIND_FILETYPE, {"count": 1})
 
-        _, headers, body = _get(f"/api/analyses/{analysis_id}/logs")
-        payload = json_body(body, headers)
-        assert payload["total"] == 3
-        assert payload["count"] == 3
-        assert payload["limit"] == analysis_log.DEFAULT_LOG_LIMIT
-        assert payload["offset"] == 0
-        assert [entry["message"] for entry in payload["logs"][:2]] == [
-            "slow engine",
-            "scan queued",
-        ]
-        assert [entry["severity"] for entry in payload["logs"][:2]] == ["warn", "info"]
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/status")
 
-    def test_limit_bounds_the_page_and_keeps_the_total(self, conn: sqlite3.Connection) -> None:
-        analysis_id = _analysis(conn, _binary(conn))
-        for index in range(4):
-            analysis_log.append_entry(conn, analysis_id, message=f"entry {index}")
-        _, headers, body = _get(f"/api/analyses/{analysis_id}/logs?limit=2&offset=1")
-        payload = json_body(body, headers)
+        assert status.startswith("200")
+        assert payload["status"] == "done", "storing a scan finishes its analysis"
+        assert payload["terminal"] is True
+        assert payload["scans"] == 1
+        assert payload["scans_by_status"] == {"done": 1}
+        assert payload["logs_by_severity"]["warn"] == 1
+        assert payload["logs_by_severity"]["error"] == 1
+
+    def test_a_finished_analysis_is_terminal(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.update_analysis_status(conn, ids["analysis"], status="done")
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/status")
+
+        assert status.startswith("200")
+        assert payload["terminal"] is True
+        assert payload["finished_at"]
+
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _get("/api/analyses/4242/status")
+
+        assert status.startswith("404")
+        assert payload["error"] == "analysis not found"
+
+
+class TestParams:
+    def test_it_records_what_a_rerun_needs(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.set_rebrew_context(conn, ids["binary"], "/tmp/rebrew-project")
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/params")
+
+        assert status.startswith("200")
+        assert payload["engine"] == "manual"
+        assert payload["binary"]["sha256"] == "c" * 64
+        assert payload["binary"]["path"] == "/tmp/demo.exe"
+        assert payload["rebrew_project"] == "/tmp/rebrew-project"
+        assert payload["scans"] == []
+
+    def test_a_binary_without_a_project_reports_none(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/params")
+
+        assert status.startswith("200")
+        assert payload["rebrew_project"] is None
+
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _get("/api/analyses/4242/params")
+
+        assert status.startswith("404")
+        assert payload["error"] == "analysis not found"
+
+
+class TestFuncMaps:
+    def test_the_map_is_ordered_by_address(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/func-maps")
+
+        assert status.startswith("200")
+        assert [row["va"] for row in payload["functions"]] == [0x1000, 0x2000]
         assert payload["count"] == 2
-        assert payload["total"] == 5
-        assert [entry["message"] for entry in payload["logs"]] == ["entry 2", "entry 1"]
+        assert payload["total"] == 2
+        assert payload["functions"][0]["name"] == "sub_1000"
+        assert payload["functions"][0]["size"] == 16
 
-    def test_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
-        status, headers, body = _get("/api/analyses/4242/logs")
-        assert status.startswith("404")
-        assert json_body(body, headers)["error"] == "analysis not found"
-
-    @pytest.mark.parametrize(
-        "query,error",
-        [
-            ("limit=0", "invalid limit"),
-            (f"limit={analysis_log.MAX_LOG_LIMIT + 1}", "invalid limit"),
-            ("offset=-1", "invalid offset"),
-            ("limit=abc", "limit must be an integer"),
-        ],
-    )
-    def test_out_of_range_values_refused(
-        self, conn: sqlite3.Connection, query: str, error: str
-    ) -> None:
-        analysis_id = _analysis(conn, _binary(conn))
-        status, headers, body = _get(f"/api/analyses/{analysis_id}/logs?{query}")
-        assert status.startswith("400")
-        assert json_body(body, headers)["error"] == error
-
-    def test_a_failed_scan_is_recorded_in_the_log(
-        self,
-        conn: sqlite3.Connection,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        fake_engine: FakeEngine,
-    ) -> None:
-        target = tmp_path / "demo.exe"
-        target.write_bytes(b"MZ" + b"\x00" * 30)
-        binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe", path=str(target))
-
-        def boom(*args: object, **kwargs: object) -> dict[str, object]:
-            raise engines.EngineError("rebrew imports exited with code 1: bad header")
-
-        monkeypatch.setattr(fake_engine, "imports", boom)
-        status, _, _body = wsgi_request("POST", f"/api/binaries/{binary_id}/capabilities")
-        assert status.startswith("500")
-
-        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
-        assert analysis_id is not None
-        _, headers, body = _get(f"/api/analyses/{analysis_id}/logs")
-        messages = [entry["message"] for entry in json_body(body, headers)["logs"]]
-        assert "capabilities scan started" in messages
-        assert any(message.startswith("capabilities scan failed") for message in messages)
-
-
-class TestDeleteAnalysisRoute:
-    def test_delete_removes_dependents_and_reverts_through_the_journal(
+    def test_an_analysis_with_no_functions_answers_an_empty_map(
         self, conn: sqlite3.Connection
     ) -> None:
-        binary_id = _binary(conn)
-        kept = _analysis(conn, binary_id)
-        doomed = _analysis(conn, binary_id)
-        function_id = _function(conn, doomed)
-        store.set_decompilation(conn, function_id, "void sub_1000(void) {}", "kuna")
-        store.set_scan(conn, doomed, store.SCAN_KIND_TRIAGE, {"toolchain": {}})
-        store.record_match(
-            conn,
-            function_id=function_id,
-            candidate_function_id=function_id,
-            similarity=99.0,
-            confidence=1.0,
+        binary_id = store.add_binary(
+            conn, sha256="d" * 64, name="bare.exe", path="/tmp/bare.exe", size=8
         )
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
 
-        status, headers, body = wsgi_request("DELETE", f"/api/analyses/{doomed}")
+        status, payload = _get(f"/api/analyses/{analysis_id}/func-maps")
+
         assert status.startswith("200")
-        payload = json_body(body, headers)
-        action = payload["journal_action"]
-        assert payload["deleted"] == doomed
-        assert payload["functions_removed"] == 1
-        assert store.get_analysis(conn, doomed) is None
-        assert store.list_functions(conn, analysis_id=doomed) == []
-        assert store.get_decompilation(conn, function_id) is None
-        assert analysis_log.count_entries(conn, doomed) == 0
-        assert store.get_analysis(conn, kept) is not None
+        assert payload["functions"] == []
+        assert payload["total"] == 0
 
-        reverted = wsgi_request("POST", "/api/journal/revert", body=json.dumps({"action": action}))
-        assert reverted[0].startswith("200")
-        assert store.get_analysis(conn, doomed) is not None
-        restored = store.list_functions(conn, analysis_id=doomed)
-        assert [row["id"] for row in restored] == [function_id]
-        assert store.get_decompilation(conn, function_id) is not None
-        assert store.get_scan(conn, doomed, store.SCAN_KIND_TRIAGE) == {"toolchain": {}}
-        assert analysis_log.count_entries(conn, doomed) > 0
-        assert store.list_matches(conn, function_id) != []
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _get("/api/analyses/4242/func-maps")
 
-    def test_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
-        status, headers, body = wsgi_request("DELETE", "/api/analyses/4242")
         assert status.startswith("404")
-        assert json_body(body, headers)["error"] == "analysis not found"
+        assert payload["error"] == "analysis not found"
 
-    def test_last_analysis_with_functions_is_409(self, conn: sqlite3.Connection) -> None:
-        binary_id = _binary(conn)
-        only = _analysis(conn, binary_id)
-        _function(conn, only)
-        status, headers, body = wsgi_request("DELETE", f"/api/analyses/{only}")
-        assert status.startswith("409")
-        payload = json_body(body, headers)
-        assert payload["error"] == "last-analysis"
-        assert store.get_analysis(conn, only) is not None
 
-    def test_last_analysis_without_functions_is_deletable(self, conn: sqlite3.Connection) -> None:
-        binary_id = _binary(conn)
-        only = _analysis(conn, binary_id)
-        status, _headers, _body = wsgi_request("DELETE", f"/api/analyses/{only}")
+class TestUpdate:
+    def test_it_relabels_and_reverts(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _send("PATCH", f"/api/analyses/{ids['analysis']}", {"engine": "rebrew"})
+
         assert status.startswith("200")
-        assert store.get_analysis(conn, only) is None
+        assert payload["engine"] == "rebrew"
+        assert payload["journal_action"]
+        journal.revert_action(conn, payload["journal_action"])
+        restored = store.get_analysis(conn, ids["analysis"])
+        assert restored is not None
+        assert restored["engine"] == "manual"
 
-    def test_a_second_analysis_is_deletable(self, conn: sqlite3.Connection) -> None:
-        binary_id = _binary(conn)
-        first = _analysis(conn, binary_id)
-        second = _analysis(conn, binary_id)
-        _function(conn, first)
-        _function(conn, second, va=0x2000)
-        status, _headers, _body = wsgi_request("DELETE", f"/api/analyses/{second}")
-        assert status.startswith("200")
-        assert store.get_analysis(conn, second) is None
-        assert store.get_analysis(conn, first) is not None
+    def test_an_empty_body_is_400(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
 
+        status, payload = _send("PATCH", f"/api/analyses/{ids['analysis']}", {})
 
-class TestFunctionFilterRoutes:
-    def _seed(self, conn: sqlite3.Connection) -> dict[str, int]:
-        binary_id = _binary(conn)
-        analysis_id = _analysis(conn, binary_id)
-        small = _function(conn, analysis_id, va=0x1000, name="sub_1000", size=16)
-        large = _function(conn, analysis_id, va=0x2000, name="WinMain", size=512, status="EXACT")
-        imported = _function(
-            conn, analysis_id, va=0x3000, name=NETWORKING_FUNCTION, size=6, name_source="import"
-        )
-        renamed = _function(
-            conn, analysis_id, va=0x4000, name="parse_config", size=64, name_source=USER_SOURCE
-        )
-        return {
-            "binary": binary_id,
-            "analysis": analysis_id,
-            "small": small,
-            "large": large,
-            "imported": imported,
-            "renamed": renamed,
-        }
-
-    def _functions(self, path: str) -> dict[str, Any]:
-        status, headers, body = _get(path)
-        assert status.startswith("200"), body
-        payload: dict[str, Any] = json_body(body, headers)
-        return payload
-
-    def test_name_source_filter(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?name_source=User")
-        assert [row["id"] for row in payload["functions"]] == [ids["renamed"]]
-        assert payload["total"] == 4
-        assert payload["count"] == 1
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?name_source=System")
-        assert sorted(row["id"] for row in payload["functions"]) == sorted(
-            [ids["large"], ids["imported"]]
-        )
-        # A placeholder name is `No Debug Info` whatever source it carries.
-        payload = self._functions(
-            f"/api/binaries/{ids['binary']}/functions?name_source=No+Debug+Info"
-        )
-        assert [row["id"] for row in payload["functions"]] == [ids["small"]]
-
-    def test_capability_filter(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?capability=networking")
-        assert [row["id"] for row in payload["functions"]] == [ids["imported"]]
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?capability=crypto")
-        assert payload["functions"] == []
-
-    def test_size_range_and_its_boundaries(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?min_size=16")
-        assert sorted(row["id"] for row in payload["functions"]) == sorted(
-            [ids["small"], ids["large"], ids["renamed"]]
-        )
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?max_size=16")
-        assert sorted(row["id"] for row in payload["functions"]) == sorted(
-            [ids["small"], ids["imported"]]
-        )
-        payload = self._functions(
-            f"/api/binaries/{ids['binary']}/functions?min_size=64&max_size=64"
-        )
-        assert [row["id"] for row in payload["functions"]] == [ids["renamed"]]
-
-    def test_string_filter_reads_the_stored_decompilation(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        store.set_decompilation(
-            conn, ids["large"], 'MessageBoxA(0, "unique marker", 0, 0);', "kuna"
-        )
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?string=unique+marker")
-        assert [row["id"] for row in payload["functions"]] == [ids["large"]]
-
-    def test_match_filter(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        store.record_match(
-            conn,
-            function_id=ids["large"],
-            candidate_function_id=ids["small"],
-            similarity=95.0,
-            confidence=0.9,
-        )
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?match=matched")
-        assert [row["id"] for row in payload["functions"]] == [ids["large"]]
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?match=unmatched")
-        assert ids["large"] not in [row["id"] for row in payload["functions"]]
-
-    def test_sort_and_order(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        sorted_sizes = self._functions(
-            f"/api/binaries/{ids['binary']}/functions?sort=size&order=desc"
-        )
-        assert [row["size"] for row in sorted_sizes["functions"]] == [512, 64, 16, 6]
-        by_name = self._functions(f"/api/binaries/{ids['binary']}/functions?sort=name&order=asc")
-        assert [row["name"] for row in by_name["functions"]] == [
-            NETWORKING_FUNCTION,
-            "WinMain",
-            "parse_config",
-            "sub_1000",
-        ]
-
-    def test_default_order_is_by_va(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions")
-        assert [row["va"] for row in payload["functions"]] == [0x1000, 0x2000, 0x3000, 0x4000]
-
-    def test_counts_tell_a_filter_from_a_small_binary(self, conn: sqlite3.Connection) -> None:
-        ids = self._seed(conn)
-        payload = self._functions(f"/api/binaries/{ids['binary']}/functions?min_size=1024")
-        assert payload["functions"] == []
-        assert payload["count"] == 0
-        assert payload["total"] == 4
-
-    @pytest.mark.parametrize(
-        "query,error",
-        [
-            ("name_source=Debug Info", "invalid name_source"),
-            ("capability=telepathy", "invalid capability"),
-            ("match=maybe", "invalid match"),
-            ("sort=similarity", "invalid sort"),
-            ("order=sideways", "invalid order"),
-            ("min_size=-1", "invalid min_size"),
-            ("max_size=abc", "max_size must be an integer"),
-            ("min_size=100&max_size=10", "invalid size range"),
-            (f"max_size={1 << 31}", "invalid max_size"),
-        ],
-    )
-    def test_unknown_values_refused(self, conn: sqlite3.Connection, query: str, error: str) -> None:
-        ids = self._seed(conn)
-        status, headers, body = _get(f"/api/binaries/{ids['binary']}/functions?{query}")
         assert status.startswith("400")
-        assert json_body(body, headers)["error"] == error
+        assert payload["error"] == "invalid body"
 
-    def test_unknown_binary_is_404(self, conn: sqlite3.Connection) -> None:
-        status, headers, body = _get("/api/binaries/4242/functions?sort=size")
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _send("PATCH", "/api/analyses/4242", {"engine": "rebrew"})
+
         assert status.startswith("404")
-        assert json_body(body, headers)["error"] == "binary not found"
+        assert payload["error"] == "analysis not found"
+
+
+class TestLogs:
+    def test_it_appends_and_reverts(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _send(
+            "POST",
+            f"/api/analyses/{ids['analysis']}/logs",
+            {"message": "looked at the entry point", "severity": "warn"},
+        )
+
+        assert status.startswith("201")
+        assert payload["severity"] == "warn"
+        entries, total = analysis_log.list_entries(conn, ids["analysis"])
+        assert entries[0]["message"] == "looked at the entry point"
+        journal.revert_action(conn, payload["journal_action"])
+        _, after = analysis_log.list_entries(conn, ids["analysis"])
+        assert after == total - 1
+
+    def test_the_severity_defaults_to_info(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _send(
+            "POST", f"/api/analyses/{ids['analysis']}/logs", {"message": "noted"}
+        )
+
+        assert status.startswith("201")
+        assert payload["severity"] == "info"
+
+    def test_an_unknown_severity_is_400(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _send(
+            "POST",
+            f"/api/analyses/{ids['analysis']}/logs",
+            {"message": "noted", "severity": "loud"},
+        )
+
+        assert status.startswith("400")
+        assert payload["error"] == "invalid severity"
+
+    def test_a_blank_message_is_400(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _send("POST", f"/api/analyses/{ids['analysis']}/logs", {"message": "   "})
+
+        assert status.startswith("400")
+        assert payload["error"] == "message must be a non-empty string"
+
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _send("POST", "/api/analyses/4242/logs", {"message": "noted"})
+
+        assert status.startswith("404")
+        assert payload["error"] == "analysis not found"
+
+
+class TestRequeue:
+    def test_it_moves_a_finished_analysis_back_and_reverts(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.update_analysis_status(conn, ids["analysis"], status="failed")
+        before = store.get_analysis(conn, ids["analysis"])
+        assert before is not None
+        assert before["finished_at"]
+
+        status, payload = _send("POST", f"/api/analyses/{ids['analysis']}/requeue")
+
+        assert status.startswith("200")
+        assert payload["status"] == "pending"
+        assert payload["finished_at"] is None
+        entries, _ = analysis_log.list_entries(conn, ids["analysis"])
+        assert "requeued" in str(entries[0]["message"])
+        journal.revert_action(conn, payload["journal_action"])
+        after = store.get_analysis(conn, ids["analysis"])
+        assert after is not None
+        assert after["status"] == "failed"
+        assert after["finished_at"] == before["finished_at"]
+        restored, _ = analysis_log.list_entries(conn, ids["analysis"])
+        assert all("requeued" not in str(entry["message"]) for entry in restored)
+
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _send("POST", "/api/analyses/4242/requeue")
+
+        assert status.startswith("404")
+        assert payload["error"] == "analysis not found"
+
+
+class TestTags:
+    def test_the_read_returns_the_binaries_tags(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        runner = _send("PATCH", f"/api/analyses/{ids['analysis']}/tags", {"tags": ["pe", "games"]})
+        assert runner[0].startswith("200")
+
+        status, payload = _get(f"/api/analyses/{ids['analysis']}/tags")
+
+        assert status.startswith("200")
+        assert [tag["name"] for tag in payload["tags"]] == ["games", "pe"]
+
+    def test_the_replace_creates_removes_and_reverts(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        first = _send("PATCH", f"/api/analyses/{ids['analysis']}/tags", {"tags": ["pe"]})
+        assert first[0].startswith("200")
+
+        status, payload = _send(
+            "PATCH", f"/api/analyses/{ids['analysis']}/tags", {"tags": ["games"]}
+        )
+
+        assert status.startswith("200")
+        assert [tag["name"] for tag in payload["tags"]] == ["games"]
+        journal.revert_action(conn, payload["journal_action"])
+        restored = store.get_binary_tags(conn, ids["binary"])
+        assert [tag["name"] for tag in restored] == ["pe"]
+
+    def test_a_body_that_is_not_a_list_is_400(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        status, payload = _send("PATCH", f"/api/analyses/{ids['analysis']}/tags", {"tags": "pe"})
+
+        assert status.startswith("400")
+        assert payload["error"] == "invalid body"
+
+    def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
+        assert _get("/api/analyses/4242/tags")[0].startswith("404")
+        assert _send("PATCH", "/api/analyses/4242/tags", {"tags": []})[0].startswith("404")

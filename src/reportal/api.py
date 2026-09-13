@@ -7219,3 +7219,268 @@ def job_events(job_id: int) -> Response:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Analysis lifecycle ─────────────────────────────────────────────
+#
+# The hosted analyses surface beyond list/create/delete: read one, its status
+# and its recorded parameters, its function map, per-analysis tags (which are
+# the owning binary's tags locally, the only scoping reportal has), an engine
+# relabel, a log append and a requeue.  Every write is journaled and revertible
+# like the rest of the portal.
+
+
+@router.get("/api/analyses/{analysis_id}")
+def get_analysis_detail(analysis_id: int) -> Response:
+    """One analysis with its counts, its scans and its binary's tags.
+
+    The hosted ``basic`` read.  ``scans`` names each stored scan kind and its
+    status, ``function_count`` and ``log_count`` are the true totals and
+    ``tags`` are the owning binary's, since that is the scope reportal tags at.
+    """
+    with contextlib.closing(_open()) as conn:
+        detail = store.analysis_detail(conn, analysis_id)
+    if detail is None:
+        return json_error(
+            404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+        )
+    return json_response(detail)
+
+
+@router.get("/api/analyses/{analysis_id}/status")
+def get_analysis_status(analysis_id: int) -> Response:
+    """The lifecycle read: status, times, scans and log counts by severity."""
+    with contextlib.closing(_open()) as conn:
+        status = store.analysis_status(conn, analysis_id)
+    if status is None:
+        return json_error(
+            404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+        )
+    return json_response(status)
+
+
+@router.get("/api/analyses/{analysis_id}/params")
+def get_analysis_params(analysis_id: int) -> Response:
+    """What a re-run of this analysis would need, read from the stored rows.
+
+    The engine label, the binary with its content hash and identity, the rebrew
+    project context the engine calls resolve against, and the scan kinds already
+    stored, so a re-run is reproducible and a missing input is visible.
+    """
+    with contextlib.closing(_open()) as conn:
+        params = store.analysis_params(conn, analysis_id)
+    if params is None:
+        return json_error(
+            404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+        )
+    return json_response(params)
+
+
+@router.get("/api/analyses/{analysis_id}/func-maps")
+def get_analysis_func_maps(analysis_id: int) -> Response:
+    """The analysis's function map: every function's address, name and size.
+
+    Ordered by address, which is the order a reader walks a binary in.  An
+    analysis with no functions answers an empty map rather than a 404.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        functions = store.list_functions(conn, analysis_id=analysis_id, sort="va", order="asc")
+        total = store.count_functions(conn, analysis_id=analysis_id)
+    return json_response(
+        {
+            "analysis_id": analysis_id,
+            "functions": [
+                {
+                    "id": int(row["id"]),
+                    "va": int(row["va"]),
+                    "name": str(row["name"]),
+                    "size": int(row["size"] or 0),
+                }
+                for row in functions
+            ],
+            "count": len(functions),
+            "total": total,
+        }
+    )
+
+
+@router.patch("/api/analyses/{analysis_id}")
+def update_analysis(analysis_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Relabel one analysis's engine; journaled.
+
+    The engine label is the one field the hosted update route carries that has a
+    local meaning, and it is what tells two analyses of one binary apart.  An
+    empty body is a 400, because an update that changes nothing is a mistake
+    rather than a no-op.
+    """
+    if "engine" not in body:
+        return json_error(400, error="invalid body", detail="provide engine")
+    engine = _require_str(body, "engine")
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="analyses",
+                where="id = ?",
+                params=(analysis_id,),
+                description=f"relabelled analysis {analysis_id}",
+            )
+            updated = store.update_analysis(conn, analysis_id, engine=engine)
+    return json_response(log.attach(updated or {}))
+
+
+@router.post("/api/analyses/{analysis_id}/logs")
+def append_analysis_log(analysis_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Append one log entry to an analysis; journaled.
+
+    ``severity`` is one of :data:`reportal.analysis_log.SEVERITIES` and defaults
+    to ``info``; the message must not be blank.  An analyst records what they
+    did beside what the scans logged.
+    """
+    message = _require_str(body, "message")
+    severity = _optional_str(body, "severity") or analysis_log.SEVERITY_INFO
+    if severity not in analysis_log.SEVERITIES:
+        return _invalid_query("severity", severity, analysis_log.SEVERITIES)
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            entry_id = analysis_log.append_entry(
+                conn, analysis_id, message=message, severity=severity
+            )
+            journal.journaled_create(
+                log,
+                table=analysis_log.TABLE,
+                key=entry_id,
+                description=f"logged an entry on analysis {analysis_id}",
+            )
+    return json_response(
+        log.attach(
+            {"id": entry_id, "analysis_id": analysis_id, "severity": severity, "message": message}
+        ),
+        status=201,
+    )
+
+
+@router.post("/api/analyses/{analysis_id}/requeue")
+def requeue_analysis(analysis_id: int) -> Response:
+    """Put an analysis back to ``pending`` and clear its finish time; journaled.
+
+    Locally the scans are the engine calls, so this moves the lifecycle row and
+    leaves the caller to queue the work it wants (`POST /api/jobs` with a scan
+    kind); the transition is logged.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="analyses",
+                where="id = ?",
+                params=(analysis_id,),
+                description=f"requeued analysis {analysis_id}",
+            )
+            logged_before = journal.snapshot_rows(
+                conn, table=analysis_log.TABLE, where="analysis_id = ?", params=(analysis_id,)
+            )
+            updated = store.requeue_analysis(conn, analysis_id)
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table=analysis_log.TABLE,
+                where="analysis_id = ?",
+                params=(analysis_id,),
+                before=logged_before,
+                key=["id"],
+                description=f"logged the requeue of analysis {analysis_id}",
+            )
+    return json_response(log.attach(updated or {}))
+
+
+@router.get("/api/analyses/{analysis_id}/tags")
+def list_analysis_tags(analysis_id: int) -> Response:
+    """The tags on the analysis's binary, which is the scope reportal tags at."""
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        tags = store.get_binary_tags(conn, int(analysis["binary_id"]))
+    return json_response({"analysis_id": analysis_id, "tags": tags})
+
+
+@router.patch("/api/analyses/{analysis_id}/tags")
+def set_analysis_tags(analysis_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Replace the tags on the analysis's binary, the scope reportal tags at.
+
+    Body ``{"tags": ["name", ...]}``; a name that does not exist yet is created.
+    Journaled tag by tag, so a revert puts the previous set back.
+    """
+    raw = body.get("tags")
+    if not isinstance(raw, list) or any(not isinstance(name, str) for name in raw):
+        return json_error(400, error="invalid body", detail="tags must be a list of names")
+    wanted = [name.strip() for name in raw if name.strip()]
+    with contextlib.closing(_open()) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            return json_error(
+                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
+            )
+        binary_id = int(analysis["binary_id"])
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            current = {
+                str(tag["name"]): int(tag["id"]) for tag in store.get_binary_tags(conn, binary_id)
+            }
+            for name in sorted(set(wanted) - set(current)):
+                created_tag = store.find_tag(conn, name) is None
+                tag_id = store.create_tag(conn, name)
+                if created_tag:
+                    log.record(
+                        effects.EFFECT_ROW_DELETE,
+                        f"created tag {tag_id}",
+                        journal.row_delete_descriptor("tags", tag_id),
+                    )
+                if store.add_binary_tag(conn, binary_id, tag_id):
+                    log.record(
+                        effects.EFFECT_ROW_DELETE,
+                        f"tagged binary {binary_id} with tag {tag_id}",
+                        journal.row_delete_descriptor(
+                            "binary_tags", {"binary_id": binary_id, "tag_id": tag_id}
+                        ),
+                    )
+            for name in sorted(set(current) - set(wanted)):
+                tag_id = current[name]
+                link = journal.snapshot_rows(
+                    conn,
+                    table="binary_tags",
+                    where="binary_id = ? AND tag_id = ?",
+                    params=(binary_id, tag_id),
+                )
+                if store.remove_binary_tag(conn, binary_id, tag_id) and link:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"untagged binary {binary_id} from tag {tag_id}",
+                        journal.row_restore_descriptor("binary_tags", link),
+                    )
+            tags = store.get_binary_tags(conn, binary_id)
+    return json_response(log.attach({"analysis_id": analysis_id, "tags": tags}))

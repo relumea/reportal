@@ -1866,6 +1866,21 @@ export interface DieInfo {
   sources: Record<string, DetailSource>;
 }
 
+/** The `GET /api/analyses/<id>/status` payload. */
+export interface AnalysisStatus {
+  analysis_id: number;
+  binary_id: number;
+  status: string;
+  engine: string;
+  created_at: string;
+  finished_at: string | null;
+  terminal: boolean;
+  scans: number;
+  scans_by_status: Record<string, number>;
+  logs: number;
+  logs_by_severity: Record<string, number>;
+}
+
 /** One item of the notification feed, derived from the journal or the log. */
 export interface NotificationItem {
   /** Stable per source row (or action); what a client keys its dismissal on. */

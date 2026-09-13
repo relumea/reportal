@@ -848,6 +848,144 @@ def ensure_analysis_for_binary(conn: sqlite3.Connection, binary_id: int, *, engi
     return create_analysis(conn, binary_id=binary_id, engine=engine)
 
 
+def analysis_detail(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any] | None:
+    """One analysis with the counts a detail read renders; None when unknown.
+
+    The row itself, its function and scan counts, its log entry count by
+    severity and the owning binary's tags, which is what the hosted ``basic``
+    read answers in one call.
+    """
+    analysis = get_analysis(conn, analysis_id)
+    if analysis is None:
+        return None
+    binary_id = int(analysis["binary_id"])
+    detail = dict(analysis)
+    detail["function_count"] = count_functions(conn, analysis_id=analysis_id)
+    scans = list_scans(conn, analysis_id)
+    detail["scan_count"] = len(scans)
+    detail["scans"] = [{"kind": row["kind"], "status": row["status"]} for row in scans]
+    detail["log_count"] = analysis_log.count_entries(conn, analysis_id)
+    detail["tags"] = [str(tag["name"]) for tag in get_binary_tags(conn, binary_id)]
+    detail["binary_tags_are_analysis_tags"] = True
+    return detail
+
+
+def analysis_params(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any] | None:
+    """What a re-run of *analysis_id* would need, recorded rather than guessed.
+
+    reportal records no parameter blob, so this reads what the tables hold: the
+    engine label, the creation time, the binary with its content hash, size,
+    format and architecture, the rebrew project context the engine calls resolve
+    against, and the scan kinds the analysis already carries.  A re-run is
+    reproducible from those, and a caller can tell what is missing (no project
+    context, no scans) instead of assuming it.
+    """
+    analysis = get_analysis(conn, analysis_id)
+    if analysis is None:
+        return None
+    binary = get_binary(conn, int(analysis["binary_id"]))
+    scans = list_scans(conn, analysis_id)
+    return {
+        "analysis_id": analysis_id,
+        "binary_id": analysis["binary_id"],
+        "engine": analysis["engine"],
+        "status": analysis["status"],
+        "created_at": analysis["created_at"],
+        "finished_at": analysis["finished_at"],
+        "binary": None
+        if binary is None
+        else {
+            "id": int(binary["id"]),
+            "name": str(binary["name"]),
+            "sha256": str(binary["sha256"]),
+            "size": int(binary["size"] or 0),
+            "format": binary["format"],
+            "arch": binary["arch"],
+            "path": str(binary["path"]),
+        },
+        "rebrew_project": get_rebrew_context(conn, int(analysis["binary_id"])),
+        "scans": [str(row["kind"]) for row in scans],
+    }
+
+
+def analysis_status(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any] | None:
+    """The lifecycle read: the status, its times, the scans and the log counts.
+
+    ``scans`` counts the stored scans by their own status, so a run that failed
+    halfway reads differently from one that has not started, and ``logs`` counts
+    the log entries by severity, which is what a reader looks at first.
+    """
+    analysis = get_analysis(conn, analysis_id)
+    if analysis is None:
+        return None
+    scans = list_scans(conn, analysis_id)
+    by_scan_status: dict[str, int] = {}
+    for row in scans:
+        key = str(row["status"])
+        by_scan_status[key] = by_scan_status.get(key, 0) + 1
+    entries, _ = analysis_log.list_entries(conn, analysis_id, limit=analysis_log.MAX_LOG_LIMIT)
+    by_severity: dict[str, int] = {}
+    for entry in entries:
+        key = str(entry["severity"])
+        by_severity[key] = by_severity.get(key, 0) + 1
+    return {
+        "analysis_id": analysis_id,
+        "binary_id": analysis["binary_id"],
+        "status": analysis["status"],
+        "engine": analysis["engine"],
+        "created_at": analysis["created_at"],
+        "finished_at": analysis["finished_at"],
+        "terminal": str(analysis["status"]) in TERMINAL_STATUSES,
+        "scans": len(scans),
+        "scans_by_status": by_scan_status,
+        "logs": analysis_log.count_entries(conn, analysis_id),
+        "logs_by_severity": by_severity,
+    }
+
+
+def update_analysis(
+    conn: sqlite3.Connection, analysis_id: int, *, engine: str | None = None
+) -> dict[str, Any] | None:
+    """Set the engine label of one analysis; None when the id is unknown.
+
+    The engine label is what a reader uses to tell two analyses of one binary
+    apart, which is the only field the hosted update route carries that reportal
+    has a local meaning for; ``status`` moves through
+    :func:`update_analysis_status` and :func:`requeue_analysis` instead.
+    """
+    if get_analysis(conn, analysis_id) is None:
+        return None
+    if engine is not None:
+        conn.execute("UPDATE analyses SET engine = ? WHERE id = ?", (engine, analysis_id))
+        conn.commit()
+    return get_analysis(conn, analysis_id)
+
+
+def requeue_analysis(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any] | None:
+    """Put one analysis back to ``pending`` and clear its finish time.
+
+    The hosted requeue re-runs the analysis; locally the scans are the engine
+    calls, so this only moves the lifecycle row and lets a caller queue the work
+    it wants (``POST /api/jobs`` with a scan kind) with the state left
+    consistent.  A log entry records the transition.
+    """
+    analysis = get_analysis(conn, analysis_id)
+    if analysis is None:
+        return None
+    conn.execute(
+        "UPDATE analyses SET status = ?, finished_at = NULL WHERE id = ?",
+        (ANALYSIS_STATUS_PENDING, analysis_id),
+    )
+    conn.commit()
+    analysis_log.append_entry(
+        conn,
+        analysis_id,
+        message=f"requeued from {analysis['status']}",
+        severity=analysis_log.SEVERITY_INFO,
+    )
+    return get_analysis(conn, analysis_id)
+
+
 def count_analyses(conn: sqlite3.Connection, *, binary_id: int | None = None) -> int:
     """How many analyses exist, optionally of one binary.
 

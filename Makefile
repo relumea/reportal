@@ -14,6 +14,9 @@ UV   ?= uv
 PY   ?= .venv/bin/python
 BUN  ?= bun
 PORT ?= 8002
+# The coverage floor the `test` target enforces; keep it equal to
+# `[tool.coverage.report] fail_under` in pyproject.toml.
+COVERAGE_MIN ?= 92
 
 help: ## Show this help
 	@awk 'BEGIN {FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2} END {printf "\n"}' $(MAKEFILE_LIST)
@@ -55,8 +58,12 @@ typecheck: venv-check bun-check ## mypy (the flag set in pyproject.toml) + tsc -
 	$(PY) -m mypy
 	cd web && $(BUN) run typecheck
 
-test: venv-check ## pytest with coverage (fails under the floor in pyproject.toml)
-	$(PY) -m pytest --cov
+test: venv-check ## pytest with coverage (fails under COVERAGE_MIN)
+	# pytest-cov reads `[tool.coverage.report] fail_under` to report the
+	# shortfall but does not fail the run on it (it prints "FAIL Required test
+	# coverage ... not reached" and still exits 0), so the floor is passed as the
+	# flag that enforces it.  COVERAGE_MIN mirrors that key; a raise moves both.
+	$(PY) -m pytest --cov --cov-fail-under=$(COVERAGE_MIN)
 
 test-fast: venv-check ## pytest without coverage (quicker)
 	$(PY) -m pytest --no-cov -q

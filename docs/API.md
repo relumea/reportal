@@ -169,6 +169,15 @@
 | `/api/conversations/<id>` | GET | one conversation plus its messages |
 | `/api/conversations/<id>` | DELETE | delete a conversation and its messages |
 | `/api/conversations/<id>/messages` | POST | send one message; body `{"content": ...}`; 400 on blank, 503 `llm-unavailable` without a client, 502 `llm-error` on model failure |
+| `/api/analyses/<id>` | GET | one analysis with its `function_count`, its scans (each kind and status), its `log_count` and the owning binary's `tags`; 404 `analysis not found` |
+| `/api/analyses/<id>/status` | GET | the lifecycle read: `status`, `terminal`, the created and finished times, `scans` and `scans_by_status`, `logs` and `logs_by_severity`; 404 `analysis not found` |
+| `/api/analyses/<id>/params` | GET | what a re-run would need, read from the stored rows: the engine label, the times, the binary with its content hash, size, format, arch and path, the rebrew project context and the scan kinds already stored; 404 `analysis not found` |
+| `/api/analyses/<id>/func-maps` | GET | the analysis's function map, ordered by address: each function's `id`, `va`, `name` and `size`, with `count` and the true `total`; an analysis with no functions answers an empty map; 404 `analysis not found` |
+| `/api/analyses/<id>` | PATCH | relabel the analysis's engine; body `{"engine"}` (400 `invalid body` without it), journaled and revertible; 404 `analysis not found` |
+| `/api/analyses/<id>/logs` | POST | append one log entry; body `{"message", "severity"?}` with the severity from the closed set (400 `invalid severity`, 400 `message must be a non-empty string`); 201 with the entry, journaled so a revert removes it; 404 `analysis not found` |
+| `/api/analyses/<id>/requeue` | POST | put the analysis back to `pending`, clear its finish time and log the transition, all journaled (a revert restores the status, the time and the log); 404 `analysis not found` |
+| `/api/analyses/<id>/tags` | GET | the tags on the analysis's binary, which is the scope reportal tags at; 404 `analysis not found` |
+| `/api/analyses/<id>/tags` | PATCH | replace those tags; body `{"tags": [name, ...]}` (400 `invalid body` for anything else), creating the names that are new, journaled per link so a revert restores the previous set; 404 `analysis not found` |
 | `/api/analyses` | GET | analyses with the binary name, size, format, arch and its tags; `?status=` (one of `store.ANALYSIS_STATUSES`), `?search=` (binary name or engine), `?order=` (`newest`/`oldest`), `?limit=` (default and cap `store.MAX_ANALYSIS_LIMIT`) and `?binary_id=`; an unknown value is 400; the body carries `count` (returned) and `total` (unfiltered) so a filter that matched nothing is distinguishable from an empty project |
 | `/api/analyses` | POST | create analysis; body `{"binary_id": ..., "engine": ...}` |
 | `/api/analyses/<id>/logs` | GET | the analysis's structured log, newest first; `?limit=` (default `analysis_log.DEFAULT_LOG_LIMIT`, cap `MAX_LOG_LIMIT`) and `?offset=`; returns `{"logs", "count", "total", "limit", "offset"}` with the log's true total; 404 `analysis not found`, 400 for an out-of-range or non-integer bound; read-only |

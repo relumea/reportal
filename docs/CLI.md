@@ -362,6 +362,17 @@ reportal stats [--json]                    # row counts
 reportal config [--json]                   # what this instance can do: versions,
                                            #   features, limits and MCP tool counts;
                                            #   needs no workspace
+reportal analysis <id> [--status|--params|--func-maps|--tags] [--json]
+                                           # one analysis: its detail, or its lifecycle,
+                                           #   its re-run parameters, its function map or
+                                           #   the tags on its binary
+reportal analysis-update <id> --engine TEXT [--json]
+                                           # relabel the analysis's engine; journaled
+reportal analysis-log <id> MESSAGE [--severity info|warn|error] [--json]
+                                           # append one log entry; journaled
+reportal analysis-requeue <id> [--json]    # back to pending, finish time cleared, logged
+reportal analysis-tags <id> NAME... [--json]
+                                           # replace the tags on the analysis's binary
 reportal analyses [--status S] [--search TEXT] [--order newest|oldest]
              [--limit N] [--json]
                                            # list analyses with their binary, status,

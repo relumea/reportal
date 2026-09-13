@@ -440,6 +440,228 @@ def stats(
 # ── analyses ───────────────────────────────────────────────────────
 
 
+@app.command("analysis")
+def analysis_command(
+    analysis_id: int = typer.Argument(..., help="Analysis id to read"),
+    status: bool = typer.Option(False, "--status", help="The lifecycle read instead of the detail"),
+    params: bool = typer.Option(False, "--params", help="What a re-run would need"),
+    func_maps: bool = typer.Option(False, "--func-maps", help="The function map instead"),
+    tags: bool = typer.Option(False, "--tags", help="Only the tags on the analysis's binary"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """One analysis: its counts, or its status, params, function map or tags."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        if status:
+            payload: dict[str, Any] = store.analysis_status(conn, analysis_id) or {}
+        elif params:
+            payload = store.analysis_params(conn, analysis_id) or {}
+        elif func_maps:
+            functions = store.list_functions(conn, analysis_id=analysis_id, sort="va", order="asc")
+            payload = {
+                "analysis_id": analysis_id,
+                "functions": [
+                    {"va": int(row["va"]), "name": str(row["name"]), "size": int(row["size"] or 0)}
+                    for row in functions
+                ],
+                "total": store.count_functions(conn, analysis_id=analysis_id),
+            }
+        elif tags:
+            analysis = store.get_analysis(conn, analysis_id)
+            binary_id = int(analysis["binary_id"]) if analysis else 0
+            payload = {
+                "analysis_id": analysis_id,
+                "tags": [tag["name"] for tag in store.get_binary_tags(conn, binary_id)],
+            }
+        else:
+            payload = store.analysis_detail(conn, analysis_id) or {}
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    for key, value in payload.items():
+        if key in {"scans", "functions"} and isinstance(value, list):
+            console.print(f"{key}: {len(value)}")
+            continue
+        console.print(f"{key}: {value}")
+
+
+@app.command("analysis-update")
+def analysis_update_command(
+    analysis_id: int = typer.Argument(..., help="Analysis id to relabel"),
+    engine: str = typer.Option(..., "--engine", help="The engine label to set"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Relabel one analysis's engine; journaled and revertible."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="analyses",
+                where="id = ?",
+                params=(analysis_id,),
+                description=f"relabelled analysis {analysis_id}",
+            )
+            updated = store.update_analysis(conn, analysis_id, engine=engine) or {}
+    if json_output:
+        typer.echo(json.dumps(log.attach(updated)))
+        return
+    console.print(f"analysis {analysis_id}: engine {updated.get('engine')}")
+
+
+@app.command("analysis-log")
+def analysis_log_command(
+    analysis_id: int = typer.Argument(..., help="Analysis id to log against"),
+    message: str = typer.Argument(..., help="What to record"),
+    severity: str = typer.Option(
+        analysis_log.SEVERITY_INFO, "--severity", help="info, warn or error"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Append one log entry to an analysis; journaled and revertible."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if severity not in analysis_log.SEVERITIES:
+        _fail(
+            f"unknown severity: {severity}; expected one of {', '.join(analysis_log.SEVERITIES)}",
+            json_output,
+        )
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                entry_id = analysis_log.append_entry(
+                    conn, analysis_id, message=message, severity=severity
+                )
+                journal.journaled_create(
+                    log,
+                    table=analysis_log.TABLE,
+                    key=entry_id,
+                    description=f"logged an entry on analysis {analysis_id}",
+                )
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+    payload = {"id": entry_id, "analysis_id": analysis_id, "severity": severity, "message": message}
+    if json_output:
+        typer.echo(json.dumps(log.attach(payload)))
+        return
+    console.print(f"logged entry {entry_id} on analysis {analysis_id}")
+
+
+@app.command("analysis-requeue")
+def analysis_requeue_command(
+    analysis_id: int = typer.Argument(..., help="Analysis id to requeue"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Put an analysis back to pending and clear its finish time; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_analysis(conn, analysis_id) is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="analyses",
+                where="id = ?",
+                params=(analysis_id,),
+                description=f"requeued analysis {analysis_id}",
+            )
+            logged_before = journal.snapshot_rows(
+                conn, table=analysis_log.TABLE, where="analysis_id = ?", params=(analysis_id,)
+            )
+            updated = store.requeue_analysis(conn, analysis_id) or {}
+            journal.journaled_new_rows(
+                conn,
+                log,
+                table=analysis_log.TABLE,
+                where="analysis_id = ?",
+                params=(analysis_id,),
+                before=logged_before,
+                key=["id"],
+                description=f"logged the requeue of analysis {analysis_id}",
+            )
+    if json_output:
+        typer.echo(json.dumps(log.attach(updated)))
+        return
+    console.print(f"analysis {analysis_id}: {updated.get('status')}")
+
+
+@app.command("analysis-tags")
+def analysis_tags_command(
+    analysis_id: int = typer.Argument(..., help="Analysis id whose binary's tags to set"),
+    names: list[str] = typer.Argument(..., help="The tags the binary should carry"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Replace the tags on the analysis's binary, the scope reportal tags at."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            _fail(f"no analysis with id {analysis_id}", json_output)
+        binary_id = int(analysis["binary_id"])
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            current = {
+                str(tag["name"]): int(tag["id"]) for tag in store.get_binary_tags(conn, binary_id)
+            }
+            for name in sorted(set(names) - set(current)):
+                created_tag = store.find_tag(conn, name) is None
+                tag_id = store.create_tag(conn, name)
+                if created_tag:
+                    log.record(
+                        effects.EFFECT_ROW_DELETE,
+                        f"created tag {tag_id}",
+                        journal.row_delete_descriptor("tags", tag_id),
+                    )
+                if store.add_binary_tag(conn, binary_id, tag_id):
+                    log.record(
+                        effects.EFFECT_ROW_DELETE,
+                        f"tagged binary {binary_id} with tag {tag_id}",
+                        journal.row_delete_descriptor(
+                            "binary_tags", {"binary_id": binary_id, "tag_id": tag_id}
+                        ),
+                    )
+            for name in sorted(set(current) - set(names)):
+                tag_id = current[name]
+                link = journal.snapshot_rows(
+                    conn,
+                    table="binary_tags",
+                    where="binary_id = ? AND tag_id = ?",
+                    params=(binary_id, tag_id),
+                )
+                if store.remove_binary_tag(conn, binary_id, tag_id) and link:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"untagged binary {binary_id} from tag {tag_id}",
+                        journal.row_restore_descriptor("binary_tags", link),
+                    )
+            tags = [tag["name"] for tag in store.get_binary_tags(conn, binary_id)]
+    payload = {"analysis_id": analysis_id, "binary_id": binary_id, "tags": tags}
+    if json_output:
+        typer.echo(json.dumps(log.attach(payload)))
+        return
+    console.print(f"binary {binary_id} tags: {', '.join(tags) or 'none'}")
+
+
 @app.command()
 def analyses(
     status: str | None = typer.Option(None, "--status", help="Only analyses in this state"),
