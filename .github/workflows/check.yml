@@ -31,12 +31,15 @@ jobs:
           java -version
           google-chrome-stable --version
 
-      # The gate runs `vnu` by name.  The package's shim goes to npm's global
-      # bin directory, which the runner does not have on PATH, so install it
-      # under an explicit prefix that is on PATH and prove it in this step.
+      # The gate runs `vnu` by name.  The `vnu` package is a meta package whose
+      # own manifest declares no bin, so nothing links a command for it; the
+      # `vnu-jar` package is what carries the wrapper and the jar.  It is
+      # installed under an explicit prefix that is on PATH and pinned to the
+      # release the local gate validates against, so the two agree on the
+      # findings, and the version is printed in this step.
       - name: Install the VNU HTML/CSS validator
         run: |
-          sudo npm install -g --prefix /usr/local vnu
+          sudo npm install -g --prefix /usr/local vnu-jar@26.8.21
           vnu --version
 
       # `rebrew` is a base dependency and `resembl` backs the similarity
