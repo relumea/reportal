@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- An analysis row's tags are editable in place: each tag is a chip with its own
+  remove control and the cell carries an add field, both of which post the
+  binary's whole tag set through `PATCH /api/analyses/<id>/tags`.  The hosted
+  analyses list offers the same inline editing, and the list and the binary's
+  Tags panel now write the same row, so the two cannot disagree.
+
 - Tags can be maintained: `PATCH /api/tags/<id>` renames one and
   `DELETE /api/tags/<id>` removes one with every binary and collection link to
   it, both journaled (a revert restores the old name, or the tag and its links

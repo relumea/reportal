@@ -414,11 +414,15 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   carries a status chip per state (any-of, and the last one off means any), the
   two selects, a `Clear` control, a per-row `View log` / `Re-analyse` (the
   cluster D requeue) / `Delete`, and `Copy hashes` in the bulk toolbar beside
-  Add tag, Remove tag and Delete.  Gap: the hosted three-dot menu and the
-  inline tag chips are not built; the actions are buttons in the Actions column
-  and the tag cells are read-only, which is the same information without the
-  menu.  Covered by `TestAnalysisFilters`, the CLI's filter cases and the
-  Analyses e2e.
+  Add tag, Remove tag and Delete.  The hosted inline tag chips shipped later:
+  each row's tag cell is an editor (a chip with a remove control per tag plus an
+  add field) posting the whole set through `PATCH /api/analyses/<id>/tags`, so
+  the list and the binary's own Tags panel write the same row.  Gap, stated
+  rather than built: the hosted three-dot menu is not built, because its four
+  actions (View Log, Download, Re-analyse, Delete) are the buttons in the
+  Actions column, and the tag cell was the piece that carried information the
+  other surfaces did not.  Covered by `TestAnalysisFilters`, the CLI's filter
+  cases and the Analyses e2e.
 
 ### 11. Upload panel: drag and drop, per-entry reporting and extraction in place
 

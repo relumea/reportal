@@ -62,6 +62,27 @@ test("deleting an analysis removes its row", async ({ page }) => {
   await expect(page.getByText(engine)).toHaveCount(0);
 });
 
+test("a row's tags are added and removed inline", async ({ page }) => {
+  const name = uniqueName("e2e-rowtag");
+  await page.goto("/#/analyses");
+  const panel = panelByTitle(page, "Analyses");
+  const row = rowContaining(panel, "notepad.exe");
+  await expect(row).toBeVisible();
+
+  // The add field is per row, and Enter posts the whole set through the
+  // analysis's own tags route (the scope reportal tags at).
+  await row.getByLabel(/^Add tag to analysis/).fill(name);
+  await row.getByLabel(/^Add tag to analysis/).press("Enter");
+  await expect(row.getByText(name, { exact: true })).toBeVisible();
+
+  // Removing it takes the chip away again, and the binary's own Tags panel
+  // agrees, which is what makes the two surfaces one store.
+  await row.getByLabel(`Remove tag ${name}`).click();
+  await expect(row.getByText(name, { exact: true })).toHaveCount(0);
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await expect(panelByTitle(page, "Tags").getByText(name, { exact: true })).toHaveCount(0);
+});
+
 test("the status chips, platform filter, order and re-analyse drive the list", async ({ page }) => {
   await page.goto("/#/analyses");
   const panel = panelByTitle(page, "Analyses");

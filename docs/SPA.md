@@ -740,7 +740,10 @@ The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) lists each analysis's
 id, binary (linked to its detail page), platform badges, binary size, engine,
 created time, status badge (the design language's status hues: `done` is the
 match green, `failed` the fail red, `processing` the live hue) and the owning
-binary's tags.  A status select, an order select and a search box write the
+binary's tags as an editor: each tag is a chip with its own remove control and
+the cell carries an add field, both of which post the whole set through
+`PATCH /api/analyses/<id>/tags` (the binary's tags are what reportal tags, so a
+change here and a change in the binary's Tags panel are one write).  A status select, an order select and a search box write the
 hash query (`#/analyses?status=failed&search=notepad`), the table states
 `N of M analyses` so a filter is distinguishable from a small project, and a
 filter that matched nothing says so instead of rendering an empty table.  Each

@@ -832,6 +832,21 @@ input[type="file"]::file-selector-button:hover {
   color: var(--surface);
 }
 
+/* A table cell whose tags are editable: the chips and the add field stay on one
+   line while they fit, and the field collapses to a few characters. */
+.row-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-wrap: wrap;
+}
+
+.tag-add {
+  width: 5rem;
+  padding: 1px var(--space-1);
+  font-size: var(--text-xs);
+}
+
 /* ── Match settings sheet ─────────────────────────────────────────── */
 
 .settings-grid {

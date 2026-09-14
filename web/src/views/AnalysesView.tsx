@@ -308,6 +308,69 @@ function LogDrawer({ analysisId, onClose }: { analysisId: number; onClose: () =>
   );
 }
 
+/** One row's tags: the chips with a remove control each, and a field that adds
+ *  one.  A change replaces the binary's whole set through the analysis route,
+ *  which is the scope reportal tags at, so the chips and the analytic's own
+ *  Tags panel cannot disagree. */
+function RowTags({ row, onChanged }: { row: AnalysisRow; onChanged: () => void }): ReactNode {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<unknown>(null);
+
+  const save = (names: string[]): void => {
+    setBusy(true);
+    setFailure(null);
+    void api(`/analyses/${row.id}/tags`, { method: "PATCH", json: { tags: names } })
+      .then(() => {
+        setDraft("");
+        onChanged();
+      })
+      .catch((error: unknown) => setFailure(error))
+      .finally(() => setBusy(false));
+  };
+
+  const add = (): void => {
+    const name = draft.trim();
+    if (name === "" || row.tags.includes(name)) return;
+    save([...row.tags, name]);
+  };
+
+  return (
+    <span className="row-tags">
+      {row.tags.map((tag) => (
+        <span key={tag} className="chip">
+          <span className="chip-label">{tag}</span>
+          <button
+            type="button"
+            className="chip-clear"
+            aria-label={`Remove tag ${tag}`}
+            disabled={busy}
+            onClick={() => save(row.tags.filter((entry) => entry !== tag))}
+          >
+            x
+          </button>
+        </span>
+      ))}
+      <input
+        className="tag-add"
+        size={6}
+        placeholder="tag"
+        aria-label={`Add tag to analysis ${row.id}`}
+        value={draft}
+        disabled={busy}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            add();
+          }
+        }}
+      />
+      {failure ? <ErrorNote error={failure} /> : null}
+    </span>
+  );
+}
+
 export function AnalysesView({ query }: { query: Record<string, string> }): ReactNode {
   const navigate = useNavigate();
   const filters = filtersFromQuery(query);
@@ -597,16 +660,14 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 },
                 {
                   label: "Tags",
-                  render: (row) =>
-                    row.tags.length ? (
-                      <span className="toolbar">
-                        {row.tags.map((tag) => (
-                          <Badge key={tag}>{tag}</Badge>
-                        ))}
-                      </span>
-                    ) : (
-                      "n/a"
-                    ),
+                  render: (row) => (
+                    <RowTags
+                      row={row}
+                      onChanged={() => {
+                        result.reload();
+                      }}
+                    />
+                  ),
                 },
                 {
                   label: "Actions",
