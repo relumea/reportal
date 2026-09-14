@@ -360,6 +360,35 @@ def _entry(name: str) -> components.Registration:
     return entry
 
 
+class TestUniqueProviders:
+    """The paper's precondition: one writer per context name."""
+
+    def test_a_single_provider_is_accepted(self) -> None:
+        components.assert_unique_providers(
+            [
+                components.Component("a", frozenset(), frozenset({"thing"}), lambda ctx: None),
+                components.Component("b", frozenset({"thing"}), frozenset(), lambda ctx: None),
+            ]
+        )
+
+    def test_two_providers_of_one_name_are_refused(self) -> None:
+        first = components.Component("a", frozenset(), frozenset({"thing"}), lambda ctx: None)
+        second = components.Component("b", frozenset(), frozenset({"thing"}), lambda ctx: None)
+        try:
+            components.assert_unique_providers([first, second])
+        except components.RegistryError as exc:
+            assert "thing" in str(exc)
+            assert "'a'" in str(exc) and "'b'" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("two providers of one name must be refused")
+
+    def test_the_built_ins_are_a_valid_composition(self) -> None:
+        # The guard is not vacuous: it accepts the composition reportal ships.
+        from reportal import pipeline
+
+        components.assert_unique_providers(pipeline.builtin_components())
+
+
 class TestRegistration:
     def test_builtin_records_its_declaring_module(self) -> None:
         entry = _entry(pipeline.COMPONENT_PREPARE)

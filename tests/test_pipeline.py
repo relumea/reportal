@@ -272,6 +272,65 @@ class TestRun:
             _run(conn, ids)
 
 
+class TestUniqueProviders:
+    """One writer per context name, checked before any effect runs."""
+
+    def _two_providers(self) -> tuple[Component, Component]:
+        return (
+            _provider("first", provides={"shared"}),
+            _provider("second", provides={"shared"}),
+        )
+
+    def test_a_run_refuses_a_duplicate_provider(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        composition = self._two_providers()
+        monkeypatch.setattr(components, "components", lambda: composition)
+
+        with pytest.raises(pipeline.PipelineUnavailable) as failure:
+            _run(conn, ids)
+
+        assert "shared" in str(failure.value)
+
+    def test_a_disabled_provider_is_not_a_writer(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        composition = self._two_providers()
+        monkeypatch.setattr(components, "components", lambda: composition)
+
+        # Disabling the second one leaves a single writer, so the run is valid
+        # and the disabled component is recorded as a skipped step rather than
+        # an error.
+        run = _run(conn, ids, disabled=frozenset({"second"}))
+
+        assert run["status"] == pipeline.RUN_DONE
+        steps = {step["name"]: step["status"] for step in run["steps"]}
+        assert steps == {"first": pipeline.STEP_DONE, "second": pipeline.STEP_SKIPPED}
+
+    def test_the_host_refuses_a_duplicate_provider(self) -> None:
+        composition = self._two_providers()
+        with pytest.raises(components.RegistryError) as failure:
+            pipeline.ComponentHost({}, registered=list(composition))
+        assert "shared" in str(failure.value)
+
+    def test_the_host_checks_the_composition_a_reload_brings_in(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = _provider("first", provides={"shared"})
+        host = pipeline.ComponentHost({}, registered=[first])
+        monkeypatch.setattr(
+            components, "components", lambda: (first, _provider("second", provides={"shared"}))
+        )
+
+        with pytest.raises(components.RegistryError):
+            host.sync()
+
+        # The live composition is untouched by a refused reload.
+        assert [component.name for component in host.registered()] == ["first"]
+
+
 class TestReactiveActivation:
     def test_a_component_activates_when_its_requirement_appears_mid_run(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

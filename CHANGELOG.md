@@ -7,6 +7,18 @@ view renders it from here.
 
 ## Unreleased
 
+- A composition in which two enabled components provide the same context name
+  is now refused before any effect runs (`components.assert_unique_providers`,
+  checked by `run_pipeline`, `ComponentHost.__init__` and `ComponentHost.sync`),
+  instead of the first declaration silently winning the provider map while both
+  components ran and the second's binding outlived the provider's revert.  The
+  rule is the paper's coeffect precondition (one writer per key is exactly what
+  its independence condition needs), and `docs/COMPONENTS.md` now maps the
+  paper's mechanisms it does not implement (fibers, coeffect isolation and
+  interception, derived realization, inertia) and the two deliberate deviations
+  it keeps (an overwritten context name, and a revert that is idempotent rather
+  than invertible off the paths whose revert writes rows).
+
 - `reportal fingerprint <binary-id>` prints a binary's fingerprint: the stored
   bundle when `reportal enrich` kept one, else a live compute through the engine
   that is not stored.  The read half of the pair existed in the HTTP route and

@@ -37,7 +37,7 @@ from __future__ import annotations
 import importlib
 import logging
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import CodeType
 from typing import Any
@@ -407,6 +407,30 @@ def components() -> tuple[Component, ...]:
     _ensure_builtins()
     _ensure_entry_points()
     return tuple(entry.component for entry in _registry.values())
+
+
+def assert_unique_providers(registered: Iterable[Component]) -> None:
+    """Refuse two components that provide the same context name.
+
+    The paper's coeffect context makes a second provision of an already bound
+    key an error that produces no transition (Definitions 19 and 20), and one
+    writer per key is what its independence property needs (Section 3.4.1):
+    with two writers a revert walks back through both.  reportal held the
+    single-source discipline for component *names* only, so a plugin claiming a
+    name another component provides still ran and its binding outlived the
+    provider's revert.  The caller passes the composition it is about to run,
+    so a component the configuration disables is not a writer here.
+    """
+    provider: dict[str, str] = {}
+    for component in registered:
+        for name in sorted(component.provides):
+            other = provider.setdefault(name, component.name)
+            if other != component.name:
+                raise RegistryError(
+                    f"context name {name!r} is provided by both {other!r} and"
+                    f" {component.name!r}; one writer per name is what makes the"
+                    " two components' effects independent"
+                )
 
 
 def registrations() -> tuple[Registration, ...]:

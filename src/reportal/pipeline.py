@@ -949,9 +949,16 @@ class ComponentHost:
             list(registered) if registered is not None else list(components.components())
         )
         self._disabled = frozenset(disabled) if disabled is not None else configured_disabled()
+        self._check_providers()
         self._active: list[str] = []
         self._decisions: dict[str, str] = {}
         self._journal: list[dict[str, Any]] = []
+
+    def _check_providers(self) -> None:
+        """Refuse a live composition in which two enabled components share a name."""
+        components.assert_unique_providers(
+            [component for component in self._registered if component.name not in self._disabled]
+        )
 
     @property
     def context(self) -> Context:
@@ -975,8 +982,17 @@ class ComponentHost:
         return list(self._journal)
 
     def sync(self) -> tuple[Component, ...]:
-        """Re-read the component registry after a reload, keeping the live state."""
-        self._registered = list(components.components())
+        """Re-read the component registry after a reload, keeping the live state.
+
+        The re-read composition is checked the way the constructor checks it: a
+        reloaded declaration that claims a name another component provides is
+        refused here rather than running beside it.
+        """
+        candidate = list(components.components())
+        components.assert_unique_providers(
+            [component for component in candidate if component.name not in self._disabled]
+        )
+        self._registered = candidate
         return tuple(self._registered)
 
     def activate(self, name: str) -> dict[str, Any]:
@@ -1271,6 +1287,12 @@ def run_pipeline(
 
     try:
         registered = components.components()
+        # A name two enabled components both provide is refused before any
+        # effect runs: one writer per key is what the composition's guarantee
+        # needs, and a disabled component is not a writer.
+        components.assert_unique_providers(
+            [component for component in registered if component.name not in disabled_names]
+        )
     except components.RegistryError as exc:
         raise PipelineUnavailable(str(exc)) from exc
 

@@ -748,7 +748,10 @@ thousand functions.
   party registers one through the `reportal.components` entry-point group,
   whose value is `module:attr` naming a `Component` or a zero-argument factory
   returning one.  A broken registration is skipped with a warning; a duplicate
-  name is a `RegistryError`.  Every registration records its origin, declaring
+  name is a `RegistryError`, and a name two *enabled* components both provide is
+  refused before any effect runs (`components.assert_unique_providers`, checked
+  by `run_pipeline`, `ComponentHost.__init__` and `ComponentHost.sync`), because
+  the paper's composition guarantee needs one writer per key.  Every registration records its origin, declaring
   module and reloadability (`components.registrations()`):
   `components.reload_component(name)` re-imports the declaring module through
   `importlib.reload` (re-initializing module-level state) and swaps the live
