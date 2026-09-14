@@ -148,6 +148,7 @@ from reportal import (
     jobs,
     journal,
     knowledge,
+    library,
     lineage,
     llm,
     matching,
@@ -10186,6 +10187,124 @@ def report_pdf(
         f" to {result['path']}"
     )
     console.print(f"Sections: {', '.join(result['sections']) or 'none'}")
+
+
+# ── library identification and the bill of materials ───────────────
+
+
+@app.command("library")
+def library_command(
+    binary_id: int = typer.Argument(..., help="Binary id to identify library functions for"),
+    min_confidence: float = typer.Option(
+        library.DEFAULT_MIN_CONFIDENCE,
+        "--min-confidence",
+        help="Minimum engine confidence a candidate must reach",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Identify which libraries a binary is built from and store the reading."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    engine = engines.get_engine()
+    if not engine.available():
+        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        try:
+            log, result = _run_scan_command(
+                conn,
+                binary_id,
+                library.SCAN_KIND,
+                lambda: library.run_library(
+                    conn, binary_id=binary_id, engine=engine, min_confidence=min_confidence
+                ),
+            )
+        except library.LibraryError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+        except engines.EngineError as exc:
+            _fail(str(exc), json_output)
+
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    _print_library(result)
+
+
+def _print_library(payload: dict[str, Any]) -> None:
+    """Print the components of one library reading, most functions first."""
+    components = payload.get("components") or []
+    console.print(
+        f"\n[bold cyan]binary {payload.get('binary_id')}[/bold cyan]"
+        f" {payload.get('candidates', 0)} candidate(s) in {len(components)} module(s)"
+    )
+    for note in payload.get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+    if not components:
+        console.print("[yellow]No library modules identified.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Module", style="cyan")
+    table.add_column("Kind")
+    table.add_column("Functions", justify="right")
+    table.add_column("Bytes", justify="right")
+    table.add_column("Conf", justify="right")
+    table.add_column("Linkage")
+    for entry in components:
+        table.add_row(
+            str(entry["module"]),
+            ", ".join(str(kind) for kind in entry["kinds"]),
+            str(entry["functions"]),
+            str(entry["size"]),
+            f"{float(entry['confidence']):.2f}",
+            str(entry["linkage"]),
+        )
+    console.print(table)
+
+
+@app.command("sbom")
+def sbom_command(
+    binary_id: int = typer.Argument(..., help="Binary whose stored reading to export"),
+    format_kind: str = typer.Option(
+        library.FORMAT_CYCLONEDX, "--format", help="cyclonedx, spdx or csv"
+    ),
+    output: str = typer.Option("", "--output", help="Write here instead of stdout"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Export a binary's stored library reading as a bill of materials.
+
+    The document comes from the stored scan, so exporting never runs the engine
+    again; run ``reportal library <binary-id>`` first.  The CycloneDX and SPDX
+    shapes are the published JSON schemas and the CSV is one row per module.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    kind = format_kind.strip().lower()
+    if kind not in library.SBOM_FORMATS:
+        _fail(f"format must be one of {', '.join(library.SBOM_FORMATS)}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = library.sbom(conn, binary_id, fmt=kind)
+        except library.LibraryError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if kind == library.FORMAT_CSV:
+        text = library.render_csv(payload)
+    else:
+        text = json.dumps(payload["document"], indent=2)
+    if output.strip():
+        try:
+            Path(output).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            _fail(f"cannot write {output}: {exc}", json_output)
+        if json_output:
+            typer.echo(json.dumps({"path": output, "format": kind, "bytes": len(text)}))
+            return
+        console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
+        return
+    typer.echo(text, nl=False)
 
 
 # ── unstrip ────────────────────────────────────────────────────────

@@ -78,6 +78,7 @@ import type {
   CompositionFunctionRow,
   CompositionCategory,
   CompositionResult,
+  LibraryResult,
   CryptoResult,
   DetectResult,
   DetailsStatus,
@@ -3425,5 +3426,153 @@ function CompositionBody({ result }: { result: CompositionResult }): ReactNode {
       ) : null}
       <ScanNotes notes={result.notes} />
     </>
+  );
+}
+
+// ── Library identification and the bill of materials ───────────────
+//
+// The engine's signature match says which libraries a binary is built from.
+// The panel shows the module rollup, exports the same reading as CycloneDX,
+// SPDX or CSV, and links each identified function back to the function view.
+
+export function LibraryPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "library");
+  const path = `/binaries/${binaryId}/library`;
+  const entry = usePanel(key, () => api<LibraryResult>(path));
+  const [minConfidence, setMinConfidence] = useState("0");
+  const [format, setFormat] = useState("cyclonedx");
+  const [busy, setBusy] = useState("");
+  const [exported, setExported] = useState("");
+  const [actionError, setActionError] = useState<unknown>(null);
+
+  const run = (): void => {
+    const parsed = Number.parseFloat(minConfidence);
+    const bound = Number.isNaN(parsed) ? 0 : parsed;
+    setBusy("run");
+    refreshPanel(key, () =>
+      api<LibraryResult>(path, { method: "POST", json: { min_confidence: bound } }).finally(() =>
+        setBusy(""),
+      ),
+    );
+  };
+
+  const download = async (): Promise<void> => {
+    setActionError(null);
+    setBusy("export");
+    try {
+      const response = await fetch(`/api/binaries/${binaryId}/sbom?format=${format}`);
+      if (!response.ok) throw new Error(`export failed: ${response.status}`);
+      const text = await response.text();
+      setExported(text.slice(0, 4000));
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <Panel
+      title="Library identification"
+      subtitle="Which libraries the engine's signature match found in this binary, and the bill of materials it feeds."
+      actions={
+        <Button tone="primary" pending={busy === "run"} onClick={run}>
+          Identify libraries
+        </Button>
+      }
+    >
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      <Toolbar>
+        <Field label="Minimum confidence" hint="0 keeps every candidate the engine reports.">
+          <input
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value={minConfidence}
+            onChange={(event) => setMinConfidence(event.target.value)}
+          />
+        </Field>
+        <Field label="Export format">
+          <select value={format} onChange={(event) => setFormat(event.target.value)}>
+            <option value="cyclonedx">CycloneDX</option>
+            <option value="spdx">SPDX</option>
+            <option value="csv">CSV</option>
+          </select>
+        </Field>
+        <Button pending={busy === "export"} onClick={() => void download()}>
+          Export
+        </Button>
+      </Toolbar>
+      {entry === undefined ? (
+        <Loading label="Loading the library reading" rows={3} />
+      ) : entry.state === "error" ? (
+        <ErrorNote
+          error={entry.error}
+          onRetry={() => refreshPanel(key, () => api<LibraryResult>(path))}
+        />
+      ) : entry.state !== "ready" ? null : entry.data.stored === false ? (
+        <Muted>{entry.data.notes[0] ?? "No stored library reading."}</Muted>
+      ) : (
+        <>
+          <Muted>
+            {entry.data.candidates} identified function(s) in {entry.data.count} module(s).
+            {entry.data.already_annotated
+              ? ` ${entry.data.already_annotated} already annotated.`
+              : ""}
+          </Muted>
+          {(entry.data.notes ?? []).map((note) => (
+            <Muted key={note}>{note}</Muted>
+          ))}
+          <DataTable
+            columns={[
+              { label: "Module", key: "module", mono: true },
+              { label: "Kinds", render: (row) => row.kinds.join(", ") },
+              { label: "Functions", numeric: true, render: (row) => row.functions },
+              { label: "Bytes", numeric: true, render: (row) => row.size.toLocaleString() },
+              {
+                label: "Confidence",
+                numeric: true,
+                render: (row) => row.confidence.toFixed(2),
+              },
+              { label: "Linkage", render: (row) => row.linkage },
+            ]}
+            rows={entry.data.components}
+            rowKey={(row) => row.module}
+            empty={<Muted>No library module was identified.</Muted>}
+          />
+          {entry.data.functions?.length ? (
+            <DataTable
+              columns={[
+                { label: "VA", mono: true, render: (row) => row.va },
+                { label: "Identified name", key: "name", mono: true },
+                { label: "Module", key: "module", mono: true },
+                { label: "Kind", key: "kind" },
+                {
+                  label: "Confidence",
+                  numeric: true,
+                  render: (row) => row.confidence.toFixed(2),
+                },
+                {
+                  label: "Function",
+                  render: (row) =>
+                    row.function_id === null ? (
+                      <Muted>not a stored function</Muted>
+                    ) : (
+                      <a href={`#/functions/${row.function_id}`}>
+                        #{row.function_id}
+                      </a>
+                    ),
+                },
+              ]}
+              rows={entry.data.functions}
+              rowKey={(row) => row.va}
+              empty={<Muted>No candidate survived the threshold.</Muted>}
+            />
+          ) : null}
+        </>
+      )}
+      {exported ? <CodeBlock text={exported} title={format} /> : null}
+    </Panel>
   );
 }

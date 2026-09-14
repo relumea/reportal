@@ -82,6 +82,8 @@ reportal/
 │   │                         #   content-addressed store, the import and the export
 │   ├── pdb.py                # the PDB 7.0 reader: MSF container, DBI section map and
 │   │                         #   symbol record stream
+│   ├── library.py            # library identification and the bill of materials
+│   │                         #   (CycloneDX, SPDX, CSV) it feeds
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
 │   │                         #   derived callees, analyst-declared edges, canonical names
 │   ├── user_strings.py       # analyst strings at function or analysis scope, plus
@@ -2331,6 +2333,32 @@ of these columns existed when identity first shipped, so all three are in
 (the only role such an install had), a team that predates the hierarchy belongs
 to no organisation, and a user that predates the switch has no active team,
 which reads as "see every team".
+
+## Library identification and the bill of materials
+
+`library.py` keeps what the engine's own `identify_library` call found.  The
+call reports matches by virtual address with a module, a kind and a confidence,
+and reportal used to run it only as the first half of auto-unstrip, keeping the
+rename proposal and discarding the module.  The stored `library` scan keeps the
+whole reading: one row per identified function, joined to the stored function
+when one exists at that address, and a rollup of one component per module with
+its kinds, function count, byte total and best confidence.
+
+The join deliberately keeps a candidate whose VA is not a stored function.  The
+identification is a statement about the binary, and dropping the unmatched ones
+would make the component list understate what the engine found; the stored
+function id is what lets a reader open the function a component came from.
+`min_confidence` filters before the rollup, so the threshold and the module
+counts cannot disagree, and the cap (`MAX_COMPONENTS`) names itself in the
+notes rather than truncating silently.
+
+`sbom` renders the stored reading, never a fresh run, in one of three shapes:
+CycloneDX 1.5, SPDX 2.3, or a CSV component list.  Both schema documents carry
+the analysed binary as their subject component and one entry per module, with
+the reportal-specific facts (function count, byte total, confidence, linkage and
+kinds) as CycloneDX properties or as CSV columns.  The engine reports a module
+name and not a version, so no version is invented and the package URL carries
+none.
 
 ## Detect
 

@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 220 source files` is the finish line.
+`Success: no issues found in 222 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.11%, 30124 statements with 2376 missed. `[tool.coverage.report] fail_under`
+92.09%, 30391 statements with 2403 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -485,7 +485,11 @@ signatures in one call and `get_data_type_functions` reads the functions using
 one type, so both are read-only; `copy_signature` copies one function's
 signature onto others in its analysis and `import_type_definitions` creates or
 updates an analysis's types from C declarations, so both are destructive.
-`get_symbols` reads a binary's ingested debug symbol
+`get_library` reads a binary's stored library identification (the module
+rollup and the per-candidate list) and `export_sbom` renders it as CycloneDX,
+SPDX or CSV, so both are read-only; `run_library` runs the engine's signature
+match over the binary's rebrew project and stores the reading, and is
+destructive.  `get_symbols` reads a binary's ingested debug symbol
 files (kind, counts, notes and the parse) and is read-only; `import_symbols`
 parses a PDB or an ELF/DWARF file, renames the functions whose VA matches a
 symbol and adds the aggregate types it declares as one journaled action, and
@@ -523,7 +527,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 233 built-in tools, 109 read-only and 124 destructive.
+declares 236 built-in tools, 111 read-only and 125 destructive.
 
 ## SPA
 
@@ -628,8 +632,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 233 built-in
-tools (109 read-only, 124 destructive).
+and `run_match` expose the same over MCP, and the counts stay 236 built-in
+tools (111 read-only, 125 destructive).
 
 ### Scaling
 

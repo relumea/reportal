@@ -389,6 +389,15 @@ reportal report-pdf <binary-id> [--output PATH] [--force] [--queue|--status] [--
                                            # <workspace>/reports/<id>/report.pdf, --output
                                            # writes elsewhere and refuses to overwrite
                                            # without --force
+reportal library <binary-id> [--min-confidence F] [--json]
+                                           # identify which libraries the
+                                           #   engine's signature match finds in
+                                           #   a binary and store the module
+                                           #   rollup; needs a rebrew project
+reportal sbom <binary-id> [--format cyclonedx|spdx|csv] [--output PATH] [--json]
+                                           # export the stored library reading
+                                           #   as a bill of materials; stored-only,
+                                           #   it never re-runs the engine
 reportal unstrip <binary-id> [--min-confidence F] [--json]
                                            # store rename proposals for library-identified
                                            # functions (rebrew identify-library --dry-run)

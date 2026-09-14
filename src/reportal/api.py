@@ -74,6 +74,7 @@ from reportal import (
     jobs,
     journal,
     knowledge,
+    library,
     lineage,
     llm,
     matching,
@@ -3616,6 +3617,86 @@ def get_binary_function_triage(binary_id: int) -> Response:
         if stored is not None:
             return json_response(stored)
     return _no_scan(binary_id, "function-triage")
+
+
+@router.post("/api/binaries/{binary_id}/library")
+def store_binary_library(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Identify a binary's library functions and store the reading.
+
+    The engine's own signature match runs in the binary's stored rebrew project
+    context, so a binary without one answers 400 `no-engine-context`; 404
+    `binary not found` for an unknown id and 500 `engine-error` when the
+    identification fails.  The body's optional ``min_confidence`` drops the
+    candidates below it before the components are derived, so the threshold and
+    the module counts cannot disagree.
+    """
+    min_confidence = _optional_number(body, "min_confidence", library.DEFAULT_MIN_CONFIDENCE)
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        _project_context(conn, binary_id)
+        engine = _engine()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                result = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    library.SCAN_KIND,
+                    lambda: library.run_library(
+                        conn, binary_id=binary_id, engine=engine, min_confidence=min_confidence
+                    ),
+                )
+            except engines.EngineError as exc:
+                return json_error(500, error="engine-error", detail=str(exc))
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/library")
+def get_binary_library(binary_id: int) -> Response:
+    """The stored library reading, empty rather than 404 before the first run."""
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = library.describe(conn, binary_id)
+        except library.LibraryError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+    return json_response(payload)
+
+
+@router.get("/api/binaries/{binary_id}/sbom")
+def get_binary_sbom(request: Request, binary_id: int) -> Response:
+    """Render the stored library reading as a component list.
+
+    ``?format=`` is one of :data:`reportal.library.SBOM_FORMATS` (`cyclonedx`,
+    `spdx` or `csv`); JSON is answered for the two schema shapes and text for
+    the CSV.  The reading comes from the stored scan, so exporting never runs
+    the engine again, and a binary that was never identified answers an empty
+    document rather than a 404 so an automated consumer gets a valid file.
+    """
+    fmt = (_query_text(request, "format") or library.FORMAT_CYCLONEDX).lower()
+    if fmt not in library.SBOM_FORMATS:
+        return json_error(
+            400,
+            error="invalid format",
+            detail=f"format must be one of {', '.join(library.SBOM_FORMATS)}",
+        )
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = library.sbom(conn, binary_id, fmt=fmt)
+        except library.LibraryError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+    if fmt == library.FORMAT_CSV:
+        return Response(
+            content=library.render_csv(payload),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'inline; filename="sbom.csv"'},
+        )
+    return json_response(payload)
 
 
 @router.post("/api/binaries/{binary_id}/unstrip")

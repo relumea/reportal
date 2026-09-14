@@ -61,6 +61,8 @@ _READ_ONLY_TOOLS = frozenset(
     {
         "list_analyses",
         "list_artifact_ratings",
+        "get_library",
+        "export_sbom",
         "list_organisations",
         "get_stats_series",
         "list_docs",
@@ -284,6 +286,7 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "remove_team_member",
         "set_binary_scope",
         "set_collection_scope",
+        "run_library",
         "set_team_member_role",
         "create_organisation",
         "delete_organisation",
@@ -460,9 +463,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 233
-        assert len(_READ_ONLY_TOOLS) == 109
-        assert len(_DESTRUCTIVE_TOOLS) == 124
+        assert len(names) == 236
+        assert len(_READ_ONLY_TOOLS) == 111
+        assert len(_DESTRUCTIVE_TOOLS) == 125
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():

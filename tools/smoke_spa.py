@@ -711,6 +711,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # The composition scope fields (entry 15).
             ("Scope to binaries",),
             ("Scope to collections",),
+            # The library identification panel (entry 15's SBOM half).
+            ("Library identification",),
+            ("Identify libraries",),
             # Analyst feedback on the stored agent artifacts.
             ("Agent feedback",),
             ("Function triage",),

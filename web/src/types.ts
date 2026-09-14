@@ -2901,6 +2901,42 @@ export interface ExtractResult {
   journal_action?: string;
 }
 
+/** One module the library identification found in a binary. */
+export interface LibraryComponent {
+  module: string;
+  kinds: string[];
+  functions: number;
+  size: number;
+  confidence: number;
+  linkage: string;
+}
+
+/** One identified function, joined to the stored function when it is one. */
+export interface LibraryCandidate {
+  va: string;
+  name: string;
+  module: string;
+  kind: string;
+  confidence: number;
+  function_id: number | null;
+  size: number;
+}
+
+/** `GET /api/binaries/<id>/library`: the stored reading, empty before a run. */
+export interface LibraryResult {
+  binary_id: number;
+  binary_name: string;
+  stored: boolean;
+  components: LibraryComponent[];
+  count: number;
+  candidates: number;
+  identified?: number;
+  already_annotated?: number;
+  min_confidence?: number;
+  functions?: LibraryCandidate[];
+  notes: string[];
+}
+
 /** One entry of the documentation index (`GET /api/docs`). */
 export interface DocPage {
   slug: string;

@@ -140,7 +140,7 @@ sources, all re-runnable:
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
 reportal's own surface for the comparison is its FastAPI schema (209
-paths, 299 operations) plus the MCP tool registry (233 tools).  Every row below is
+paths, 302 operations) plus the MCP tool registry (236 tools).  Every row below is
 a capability the hosted spec has and reportal does not, with the hosted
 operations that prove it.  Batching is by cluster, not by route: one cluster is
 one vertical slice (store, API, CLI, MCP, SPA, tests, docs).
@@ -657,7 +657,7 @@ The editable model, its history and its revert existed; this is the bulk half.
 `reportal signature-copy`, `data-types-import` (with `--definition`, `--file`
 and `--update-only`), `signatures-batch` and `data-type-functions`; the
 `copy_signature`, `import_type_definitions`, `get_signature_batch` and
-`get_data_type_functions` MCP tools (233 tools: 109 read-only, 124 destructive);
+`get_data_type_functions` MCP tools (236 tools: 111 read-only, 125 destructive);
 and the signature panel's copy control plus the data types panel's declaration
 box (create or update) expose the same.
 
@@ -711,8 +711,8 @@ write, and the payload says so.
 `conversation-confirm`/`conversation-cancel`/`conversation-events`; the
 `run_conversation_agent`, `confirm_conversation_run` and
 `cancel_conversation_run` destructive MCP tools with the read-only
-`list_conversation_runs` and `get_conversation_run` (233 tools: 109 read-only,
-124 destructive); and the conversation detail's Agent run panel (the question
+`list_conversation_runs` and `get_conversation_run` (236 tools: 111 read-only,
+125 destructive); and the conversation detail's Agent run panel (the question
 box, the event list, the pending call with Approve and Reject, the cancel
 control and the answer) expose the same.
 
@@ -796,7 +796,7 @@ announced.
 | 6 | **A public changelog for the API** | every error resolution points at `docs.reveng.ai/changelog`, which 404s, and `NOT_IMPLEMENTED` (501) tells the caller to check a page that does not exist (`docs.reveng.ai/errors`) | Done: `CHANGELOG.md` is served by the in-app documentation view and `GET /api/docs`, `docs/ERRORS.md` documents every code, and a test asserts it |
 | 7 | **A capability manifest generated from the code, with a drift check** | their plugins carry `.revengai/features.json` and a features-drift workflow; the portal publishes nothing equivalent | Done: `GET /api/config` publishes the features, limits and every plugin seam with its parts, and a test pins the numbers against the registries |
 | 8 | **HTTP message-signature auth in the SDKs** | `export type HttpSignatureConfiguration = unknown; // TODO: Implement` (`sdk-typescript/auth/auth.ts`) | Open: local token auth carries a bearer token over TLS-less loopback, so body signing buys nothing an attacker on the loopback already has.  Recorded rather than built. |
-| 9 | **The documented-but-missing client flags** | `reait`'s README documents `-n` (ANN search), `--symbol`, `--start-vaddr`, `--image-base`, `-C` (open-source component identification) and "YARA++" signatures; none exist in its argparse parser, and `api.py` never calls its ANN or SBOM functions (`github.com/RevEngAI/reait`) | Partly done: the equivalents are answered by the typed search, the families store, the data-type model and the remediation rules.  Open: an SBOM view over the stored composition. |
+| 9 | **The documented-but-missing client flags** | `reait`'s README documents `-n` (ANN search), `--symbol`, `--start-vaddr`, `--image-base`, `-C` (open-source component identification) and "YARA++" signatures; none exist in its argparse parser, and `api.py` never calls its ANN or SBOM functions (`github.com/RevEngAI/reait`) | Done: the equivalents are answered by the typed search, the families store, the data-type model and the remediation rules, and the SBOM is `library.py` plus `GET /api/binaries/<id>/sbom`, which renders the stored library identification as CycloneDX, SPDX or CSV. |
 | 10 | **Public limits** | no pricing, tier or rate-limit page exists (`reveng.ai/pricing` 404s; only `TOO_MANY_REQUESTS` with `Retry-After`) | Done: `GET /api/config` publishes every cap in force, and `docs/API.md` names each one |
 | 11 | **VeriDecomp as a product surface** | "we are developing an internal benchmark called VeriDecomp" (`reveng.ai/blog/introducing-wilbert-and-ventris`) | Open: a local benchmark harness over a labelled corpus would report precision and recall for matching and rename proposals.  Recorded rather than built. |
 | 12 | **WilBERT, Ventris and "Mega Bite" as usable models** | the names appear in their blog and FAQ but **not** in either API spec; the model enum carries only `binnet-0.7` variants | Done: the model registry records any model an artifact was produced with, including a local one, so a reportal install can point at what it has |
@@ -808,7 +808,7 @@ best-effort comparison `scope_notes` states), and 3 is the per-artifact model
 and name-source provenance records (the model registry, the data-type source
 labels and the symbols reader's `symbol` source).
 
-Rows 1, 8, 9 and 11 stay open on purpose, each with the reason stated in its
+Rows 1, 8 and 11 stay open on purpose, each with the reason stated in its
 row, and none of them is a capability the hosted portal ships, so none is a
 parity gap and none is tracked in `docs/TODO.md` (no crawl entry asked for
 one).  Row 1 is the standing one: reportal's `reportal extract` and the upload

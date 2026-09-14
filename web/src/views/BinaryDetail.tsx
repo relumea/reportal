@@ -8,6 +8,7 @@ import {
   CapabilitiesPanel,
   CodeSignaturePanel,
   CompositionPanel,
+  LibraryPanel,
   CryptoPanel,
   DetailCoveragePanel,
   DetectPanel,
@@ -78,6 +79,7 @@ export function BinaryDetail({
           <FirmwarePanel binaryId={binary.id} />
           <SandboxPanel binaryId={binary.id} />
           <RelatedPanel binaryId={binary.id} />
+          <LibraryPanel binaryId={binary.id} />
           <CompositionPanel binaryId={binary.id} />
           <TriagePanel binaryId={binary.id} />
           <FunctionTriagePanel binaryId={binary.id} />

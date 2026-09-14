@@ -511,6 +511,16 @@ and selects that row; the smoke's `check_memory_dump` and
 `web/tests/memory-page.spec.ts` assert the landing, the reading and the `G`
 binding.
 
+The binary detail's Library identification panel
+(`panels/BinaryPanels.tsx`) reads `GET /api/binaries/<id>/library`, runs the
+identification over `POST` with an optional minimum confidence, and renders the
+module rollup (module, kinds, functions, bytes, confidence, linkage) over a
+second table of the identified functions, each linking to its function view when
+it is one.  The `Export` control fetches `/api/binaries/<id>/sbom?format=`, the
+shape chosen in the select (CycloneDX, SPDX or CSV), and shows the document in a
+code block.  Before the first run the panel names the command that fills it
+rather than showing an empty table.
+
 The binary detail's Composition panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/composition` and runs it over `POST`, whose body is the
 panel's two scope fields: a comma-separated binary id list and a collection id

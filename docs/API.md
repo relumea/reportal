@@ -166,6 +166,9 @@ their pages by the same rule.
 | `/api/binaries/<id>/remediation/stix` | GET | stored STIX 2.1 bundle as `application/json`; 404 `no-artifact` when the payload has none |
 | `/api/binaries/<id>/unstrip` | GET | stored unstrip proposals; 404 `no-scan` without one |
 | `/api/binaries/<id>/unstrip` | POST | run `rebrew identify-library --dry-run --json` in the binary's rebrew project context, join the candidates to its functions, and store the proposals; body `{"min_confidence": ...}` optional |
+| `/api/binaries/<id>/library` | POST | identify which libraries the binary is built from through the engine's signature match and store the reading (the module rollup and the per-candidate list); body `{"min_confidence"?}` drops the candidates below it before the rollup; the binary needs a rebrew project context (400 `no-engine-context`), 404 unknown binary, 500 `engine-error`; journaled |
+| `/api/binaries/<id>/library` | GET | the stored library reading: the modules with their kinds, function counts, byte totals and best confidence, plus the candidates; `stored: false` with an empty list and the command that fills it before the first run, rather than 404 |
+| `/api/binaries/<id>/sbom` | GET | render the stored library reading as a component list: `?format=cyclonedx` (the default), `spdx` or `csv`; JSON for the two schema shapes and text for the CSV; 400 `invalid format`, 404 unknown binary; stored-only, it never runs the engine again |
 | `/api/binaries/<id>/unstrip/apply` | POST | apply one stored proposal by `function_id`, recording the rename with source `unstrip`; body `{"function_id": ..., "name": ...}` (`name` optional) |
 | `/api/analyses/<id>/scans` | GET | stored scans of one analysis, newest first, without their payloads |
 | `/api/functions/<id>` | GET | one function |

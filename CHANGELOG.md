@@ -5,6 +5,14 @@ reportal is versioned in `src/reportal/__init__.py`; the same string is what
 report. This file is the human summary, newest first, and the SPA's changelog
 view renders it from here.
 
+## Unreleased
+
+- Library identification and the bill of materials: the engine's signature match
+  is stored as its own reading (one component per module with its kinds,
+  function count, byte total and best confidence, plus the per-candidate list),
+  and the same reading exports as CycloneDX 1.5, SPDX 2.3 or CSV.  Before this
+  the module a function came from was discarded after auto-unstrip used it.
+
 ## 1.2.0
 
 Closes every capability gap the parity inventory found and the crawl backlog

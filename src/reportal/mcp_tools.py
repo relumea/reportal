@@ -62,6 +62,7 @@ from reportal import (
     jobs,
     journal,
     knowledge,
+    library,
     lineage,
     llm,
     matching,
@@ -2360,6 +2361,56 @@ def _tool_run_hardening_scan(arguments: dict[str, Any]) -> dict[str, Any]:
             except engines.EngineError as exc:
                 raise ToolError("engine-error", str(exc)) from exc
             return log.attach(results if domain is None else results[domain])
+
+
+def _tool_get_library(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        return library.describe(conn, binary_id)
+
+
+def _tool_run_library(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    min_confidence = _arg_optional_number(
+        arguments, "min_confidence", library.DEFAULT_MIN_CONFIDENCE
+    )
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        _project_context(conn, binary_id)
+        try:
+            return _journaled_scan_run(
+                conn,
+                binary_id,
+                library.SCAN_KIND,
+                lambda: library.run_library(
+                    conn,
+                    binary_id=binary_id,
+                    engine=_engine(),
+                    min_confidence=min_confidence,
+                ),
+            )
+        except library.LibraryError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        except engines.EngineError as exc:
+            raise ToolError("engine-error", str(exc)) from exc
+
+
+def _tool_export_sbom(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    fmt = _arg_optional_str(arguments, "format", library.FORMAT_CYCLONEDX).strip().lower()
+    if fmt not in library.SBOM_FORMATS:
+        raise ToolError(
+            "invalid format", f"format must be one of {', '.join(library.SBOM_FORMATS)}"
+        )
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = library.sbom(conn, binary_id, fmt=fmt)
+        except library.LibraryError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+    if fmt == library.FORMAT_CSV:
+        return {"format": fmt, "csv": library.render_csv(payload)}
+    return {"format": fmt, "document": payload["document"]}
 
 
 def _tool_run_unstrip(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6315,6 +6366,43 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_run_hardening_scan,
+        ),
+        Tool(
+            "get_library",
+            "The stored library reading of a binary: the modules the engine's signature match"
+            " found, each with its kinds, function count, byte total and best confidence, plus"
+            " the per-candidate list.  stored=false when it was never identified.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_library,
+        ),
+        Tool(
+            "run_library",
+            "Identify which libraries a binary is built from through the engine's signature"
+            " match and store the reading; the binary needs a rebrew project context.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "min_confidence": _number("Minimum engine confidence a candidate must reach."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_run_library,
+        ),
+        Tool(
+            "export_sbom",
+            "Render a binary's stored library reading as a bill of materials: CycloneDX or"
+            " SPDX JSON, or a CSV component list.  Stored-only; it runs no engine.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "format": _enum("Document shape.", library.SBOM_FORMATS),
+                },
+                ("binary_id",),
+            ),
+            _READ,
+            _tool_export_sbom,
         ),
         Tool(
             "run_unstrip",
