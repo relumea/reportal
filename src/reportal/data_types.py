@@ -1787,6 +1787,56 @@ def import_definitions(
 
 # ── Filtering and the namespace tree ───────────────────────────────
 
+# The orders the type list accepts and the two directions it reads in.  ``name``
+# is the order the model has always been read in, so it stays the default.
+TYPE_SORTS: tuple[str, ...] = ("name", "size")
+DEFAULT_TYPE_SORT = "name"
+SORT_DIRECTIONS: tuple[str, ...] = ("asc", "desc")
+DEFAULT_SORT_DIRECTION = "asc"
+
+
+def sort_types(
+    types: Sequence[dict[str, Any]],
+    *,
+    sort: str = DEFAULT_TYPE_SORT,
+    direction: str = DEFAULT_SORT_DIRECTION,
+) -> list[dict[str, Any]]:
+    """Order *types* by name or size, in *direction*.
+
+    A size the model could not state is zero (:func:`recompute` records an
+    unknown base that way), and such a type sorts last in either direction: a
+    type whose size is unknown would otherwise claim the head of a descending
+    list, which reads as "the largest thing in this binary".  The name and the
+    id break ties, so the order is the same for two types of one size.
+
+    An unknown sort or direction raises ``ValueError``, which the API, the CLI
+    and the MCP tools map to their own error vocabulary.
+    """
+    if sort not in TYPE_SORTS:
+        raise ValueError(f"unknown type sort: {sort}")
+    if direction not in SORT_DIRECTIONS:
+        raise ValueError(f"unknown sort direction: {direction}")
+    reverse = direction == "desc"
+    if sort == "size":
+        known = [row for row in types if _stated_size(row) > 0]
+        unknown = [row for row in types if _stated_size(row) <= 0]
+        known.sort(
+            key=lambda row: (_stated_size(row), str(row["name"]).lower(), int(row["id"])),
+            reverse=reverse,
+        )
+        unknown.sort(key=lambda row: (str(row["name"]).lower(), int(row["id"])))
+        return known + unknown
+    return sorted(
+        types,
+        key=lambda row: (str(row["name"]).lower(), int(row["id"])),
+        reverse=reverse,
+    )
+
+
+def _stated_size(data_type: Mapping[str, Any]) -> int:
+    """The size a row states, which is zero for one the model could not compute."""
+    return int(data_type.get("size") or 0)
+
 
 def filter_types(
     types: Sequence[dict[str, Any]],

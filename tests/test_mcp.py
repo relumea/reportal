@@ -1398,6 +1398,33 @@ class TestDataTypeTools:
         assert payload["types"][0]["size"] == 0x17 + 4
         assert payload["types"][0]["members"][0]["offset"] == 0
 
+    def test_list_data_types_orders_and_refuses_an_unknown_sort(
+        self, conn: Any, tmp_path: Path
+    ) -> None:
+        ids = _seed_binary(conn, tmp_path)
+        _seed_data_type(conn, ids["binary"])
+        store.add_data_type(
+            conn,
+            binary_id=ids["binary"],
+            name="NoSize",
+            size=0,
+            members=[],
+            kind="typedef",
+            target="unsigned int",
+        )
+
+        payload, is_error = _call(
+            "list_data_types", {"binary_id": ids["binary"], "sort": "size", "direction": "desc"}
+        )
+
+        assert is_error is False
+        assert payload["sort"] == "size"
+        assert [row["name"] for row in payload["types"]] == ["PlayerInfo", "NoSize"]
+
+        payload, is_error = _call("list_data_types", {"binary_id": ids["binary"], "sort": "weight"})
+        assert is_error is True
+        assert payload["error"] == "invalid sort"
+
     def test_import_data_types_seeds_from_the_stored_scan(self, conn: Any, tmp_path: Path) -> None:
         ids = _seed_binary(conn, tmp_path)
         _seed_structs_scan(conn, ids["analysis"])

@@ -116,8 +116,22 @@ export function DataTypesPanel({
   const namespace = query.namespace ?? "";
   const search = query.search ?? "";
   const source = query.source ?? "";
+  const sort = (TYPE_SORTS as readonly string[]).includes(query.sort ?? "")
+    ? (query.sort as string)
+    : "name";
+  const direction = (SORT_DIRECTIONS as readonly string[]).includes(query.direction ?? "")
+    ? (query.direction as string)
+    : "asc";
   const apply = (patch: Record<string, string>): void => {
-    const next: Record<string, string> = { kind, namespace, search, source, ...patch };
+    const next: Record<string, string> = {
+      kind,
+      namespace,
+      search,
+      source,
+      sort,
+      direction,
+      ...patch,
+    };
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(next)) {
       if (value !== "") params.set(key, value);
@@ -129,6 +143,8 @@ export function DataTypesPanel({
   const setNamespace = (value: string): void => apply({ namespace: value });
   const setSearch = (value: string): void => apply({ search: value });
   const setSource = (value: string): void => apply({ source: value });
+  const setSort = (value: string): void => apply({ sort: value });
+  const setDirection = (value: string): void => apply({ direction: value });
   // Progressive load: the model is fetched whole, and the list renders a page
   // at a time so a binary with thousands of types does not block the view.
   const [shown, setShown] = useState(DATA_TYPE_PAGE);
@@ -158,6 +174,8 @@ export function DataTypesPanel({
   if (namespace) filterParams.set("namespace", namespace);
   if (search.trim()) filterParams.set("search", search.trim());
   if (source) filterParams.set("source", source);
+  filterParams.set("sort", sort);
+  filterParams.set("direction", direction);
   const queryString = filterParams.toString();
   const listPath = queryString ? `${typesPath}?${queryString}` : typesPath;
   const typesKey = panelKey("binary", binaryId, "data-types", queryString);
@@ -431,6 +449,24 @@ export function DataTypesPanel({
             ))}
           </select>
         </Field>
+        <Field label="Sort">
+          <select value={sort} onChange={(event) => setSort(event.target.value)}>
+            {TYPE_SORTS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Direction">
+          <select value={direction} onChange={(event) => setDirection(event.target.value)}>
+            {SORT_DIRECTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Field label="Filter">
           <input
             type="search"
@@ -486,6 +522,11 @@ const DATA_TYPE_PAGE = 50;
 
 /** The four provenance labels the API reports, in its own order. */
 const DATA_TYPE_SOURCES = ["System", "User", "Auto Unstrip", "AI"] as const;
+
+// The orders the type list accepts and the two directions; mirrors
+// `data_types.TYPE_SORTS` and `data_types.SORT_DIRECTIONS`.
+const TYPE_SORTS = ["name", "size"] as const;
+const SORT_DIRECTIONS = ["asc", "desc"] as const;
 
 /**
  * The provenance strip: how many types came from each source, each count a

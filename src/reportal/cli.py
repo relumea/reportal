@@ -8160,6 +8160,16 @@ def structs(
 def types(
     binary_id: int = typer.Argument(..., help="Binary id whose type model to list"),
     source: str = typer.Option("", "--source", help="System, User, Auto Unstrip or AI"),
+    sort: str = typer.Option(
+        data_types.DEFAULT_TYPE_SORT,
+        "--sort",
+        help=f"Order by one of: {', '.join(data_types.TYPE_SORTS)}",
+    ),
+    direction: str = typer.Option(
+        data_types.DEFAULT_SORT_DIRECTION,
+        "--direction",
+        help=f"One of: {', '.join(data_types.SORT_DIRECTIONS)}",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """List the binary's editable type model with sizes, offsets and provenance."""
@@ -8175,7 +8185,14 @@ def types(
         if store.get_binary(conn, binary_id) is None:
             _fail(f"no binary with id {binary_id}", json_output)
         all_types = data_types.list_types(conn, binary_id=binary_id)
-    model = data_types.filter_types(all_types, source=source or None)
+    try:
+        model = data_types.sort_types(
+            data_types.filter_types(all_types, source=source or None),
+            sort=sort,
+            direction=direction,
+        )
+    except ValueError as exc:
+        _fail(str(exc), json_output)
 
     if json_output:
         typer.echo(
@@ -8185,6 +8202,8 @@ def types(
                     "count": len(model),
                     "total": len(all_types),
                     "sources": data_types.source_totals(all_types),
+                    "sort": sort,
+                    "direction": direction,
                     "types": [data_types.encode_type(row) for row in model],
                 }
             )

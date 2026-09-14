@@ -382,10 +382,17 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   shown-of-matching counter.  The filters live in the route hash
   (`#/binaries/<id>?kind=&namespace=&search=&source=`), which is the convention
   the Analyses view already uses, so a filtered model is a link that survives a
-  reload.  A sort-by-size control is the one part of the hosted panel not
-  ported: reportal's list is grouped by namespace, which is a better ordering
-  for the model it stores, and the hosted panel's size sort was not in the
-  crawl's evidence list.
+  reload.  The sort shipped later, and the note that first closed this entry was
+  wrong to say the hosted panel's size sort was not in the crawl's evidence: the
+  data-types page the crawl captured documents it (`Sort — order by Name or
+  Size`, with a type of unknown size last in either direction).
+  `data_types.sort_types` orders by name or size, `GET
+  /api/binaries/<id>/data-types` takes `?sort=name|size&direction=asc|desc`
+  (400 `invalid sort`/`invalid direction`), `reportal types --sort/--direction`
+  and the `list_data_types` tool take the same pair, and the panel carries the
+  two selects in its route hash.  A type whose size the model states as zero
+  (how `recompute` records an unknown base) sorts last in either direction, so
+  it cannot claim the head of a descending list.
 
 ### 10. Analyses list: per-row actions, bulk mode, richer filters
 

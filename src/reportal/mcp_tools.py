@@ -687,15 +687,27 @@ def _tool_list_data_types(arguments: dict[str, Any]) -> dict[str, Any]:
             "invalid source",
             f"source must be one of {', '.join(data_types.SOURCE_LABELS)}",
         )
+    sort = _arg_optional_str(arguments, "sort", data_types.DEFAULT_TYPE_SORT)
+    direction = _arg_optional_str(arguments, "direction", data_types.DEFAULT_SORT_DIRECTION)
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
         all_types = data_types.list_types(conn, binary_id=binary_id)
-    selected = data_types.filter_types(all_types, source=source or None)
+    try:
+        selected = data_types.sort_types(
+            data_types.filter_types(all_types, source=source or None),
+            sort=sort,
+            direction=direction,
+        )
+    except ValueError as exc:
+        code = "invalid sort" if "sort" in str(exc) else "invalid direction"
+        raise ToolError(code, str(exc)) from exc
     return {
         "binary_id": binary_id,
         "count": len(selected),
         "total": len(all_types),
         "sources": data_types.source_totals(all_types),
+        "sort": sort,
+        "direction": direction,
         "types": [data_types.encode_type(row) for row in selected],
     }
 
@@ -5573,7 +5585,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "list_data_types",
             "List a binary's editable type model with each type's size, members and provenance"
-            " (System, User, Auto Unstrip or AI), optionally filtered by that source.",
+            " (System, User, Auto Unstrip or AI), optionally filtered by that source and"
+            " ordered by name or size.",
             _object(
                 {
                     "binary_id": _BINARY_ID,
@@ -5581,6 +5594,16 @@ def builtin_tools() -> tuple[Tool, ...]:
                         "type": "string",
                         "enum": list(data_types.SOURCE_LABELS),
                         "description": "Keep only types with this provenance.",
+                    },
+                    "sort": {
+                        "type": "string",
+                        "enum": list(data_types.TYPE_SORTS),
+                        "description": "name (default) or size; a type of unknown size sorts last.",
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": list(data_types.SORT_DIRECTIONS),
+                        "description": "asc (default) or desc.",
                     },
                 },
                 ("binary_id",),

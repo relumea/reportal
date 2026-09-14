@@ -488,7 +488,7 @@ software-type totals and any note the payload carries.  The bars read
 `GET /api/stats/series` and are computed from stored rows only, so the panel
 never runs an engine and cannot disagree with the lists beside it.
 
-The Data types panel opens with a provenance strip (one toggle per label, carrying the count over the whole model), a Source filter beside the kind and search filters, and a page-at-a-time list with a Load more control; its four filters live in the route hash, so a filtered model is a link.  It also carries a declaration box with Create from declarations and
+The Data types panel opens with a provenance strip (one toggle per label, carrying the count over the whole model), a Source filter beside the kind and search filters, a Sort select (name or size) with an asc/desc Direction select, and a page-at-a-time list with a Load more control; its six controls live in the route hash, so a filtered and ordered model is a link.  The order is the route's (`?sort=&direction=`), and a type whose size the model states as zero, which is how an unknown one reads, sorts last in either direction.  It also carries a declaration box with Create from declarations and
 Update from declarations, posting the pasted C to `POST` or `PUT
 /api/analyses/<id>/data-types` for the binary's latest analysis (the route is
 analysis-scoped) and rendering the created/updated/skipped counts.  The External view

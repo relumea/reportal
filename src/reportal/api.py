@@ -1965,6 +1965,11 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
     ``?source=`` filters by provenance (`System`, `User`, `Auto Unstrip`, `AI`)
     and the payload always carries ``sources``: the count per label over the
     whole model, which is the strip the panel renders above the list.
+    ``?sort=`` is one of :data:`reportal.data_types.TYPE_SORTS` (``name``, the
+    default, or ``size``) and ``?direction=`` one of
+    :data:`reportal.data_types.SORT_DIRECTIONS`; a type whose size the model
+    states as zero (an unknown one) sorts last in either direction.  An unknown
+    value of any of the four is a 400.
     """
     kind = (request.query_params.get("kind") or "").strip()
     if kind:
@@ -1977,24 +1982,36 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
     source = (request.query_params.get("source") or "").strip()
     if source and source not in data_types.SOURCE_LABELS:
         return _invalid_query("source", source, data_types.SOURCE_LABELS)
+    sort = (request.query_params.get("sort") or data_types.DEFAULT_TYPE_SORT).strip()
+    if sort not in data_types.TYPE_SORTS:
+        return _invalid_query("sort", sort, data_types.TYPE_SORTS)
+    direction = (request.query_params.get("direction") or data_types.DEFAULT_SORT_DIRECTION).strip()
+    if direction not in data_types.SORT_DIRECTIONS:
+        return _invalid_query("direction", direction, data_types.SORT_DIRECTIONS)
     with contextlib.closing(_open()) as conn:
         if store.get_binary(conn, binary_id) is None:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
         types = data_types.list_types(conn, binary_id=binary_id)
-    selected = data_types.filter_types(
-        types,
-        namespace=namespace or None,
-        kind=kind or None,
-        search=search or None,
-        source=source or None,
+    selected = data_types.sort_types(
+        data_types.filter_types(
+            types,
+            namespace=namespace or None,
+            kind=kind or None,
+            search=search or None,
+            source=source or None,
+        ),
+        sort=sort,
+        direction=direction,
     )
     return json_response(
         {
             "binary_id": binary_id,
             "count": len(selected),
             "total": len(types),
+            "sort": sort,
+            "direction": direction,
             "types": [data_types.encode_type(data_type) for data_type in selected],
             "namespaces": data_types.namespace_tree(types),
             "sources": data_types.source_totals(types),

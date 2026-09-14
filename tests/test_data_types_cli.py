@@ -69,6 +69,40 @@ class TestTypesCommands:
         assert result.exit_code == 0
         assert "PlayerInfo" in result.output
 
+    def test_types_sort_by_size_puts_the_unknown_size_last(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+        _invoke("types-import", str(ids["binary"]))
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            store.add_data_type(
+                conn,
+                binary_id=ids["binary"],
+                name="NoSize",
+                size=0,
+                members=[],
+                kind="typedef",
+                target="unsigned int",
+            )
+
+        result = _invoke("types", str(ids["binary"]), "--sort", "size", "--json")
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["sort"] == "size"
+        assert payload["direction"] == "asc"
+        assert [row["name"] for row in payload["types"]] == ["PlayerInfo", "NoSize"]
+
+    def test_types_refuses_an_unknown_sort(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+
+        result = _invoke("types", str(ids["binary"]), "--sort", "weight", "--json")
+
+        assert result.exit_code == 1
+        assert "unknown type sort" in result.stdout
+
     def test_types_unknown_binary_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -91,3 +91,59 @@ class TestNamespaceTree:
     def test_no_namespaces_is_empty_when_every_type_is_program_defined(self) -> None:
         tree = data_types.namespace_tree([_type("Only")])
         assert [node["path"] for node in tree] == [data_types.PROGRAM_NAMESPACE]
+
+
+def _sized(name: str, size: int, namespace: str = "") -> dict[str, Any]:
+    row = _type(name, namespace=namespace)
+    row["size"] = size
+    return row
+
+
+class TestSortTypes:
+    SIZED: list[dict[str, Any]] = [
+        _sized("Beta", 16),
+        _sized("alpha", 0),
+        _sized("Gamma", 8),
+        _sized("delta", 0),
+    ]
+
+    def _names(self, **kwargs: Any) -> list[str]:
+        return [row["name"] for row in data_types.sort_types(self.SIZED, **kwargs)]
+
+    def test_name_ascending_is_case_insensitive(self) -> None:
+        assert self._names() == ["alpha", "Beta", "delta", "Gamma"]
+
+    def test_name_descending_reverses_it(self) -> None:
+        assert self._names(direction="desc") == ["Gamma", "delta", "Beta", "alpha"]
+
+    def test_size_ascending_puts_the_unknown_ones_last(self) -> None:
+        assert self._names(sort="size") == ["Gamma", "Beta", "alpha", "delta"]
+
+    def test_size_descending_also_puts_the_unknown_ones_last(self) -> None:
+        # A type whose size the model could not state is not the largest one.
+        assert self._names(sort="size", direction="desc") == ["Beta", "Gamma", "alpha", "delta"]
+
+    def test_the_default_is_the_order_the_model_was_read_in(self) -> None:
+        assert data_types.DEFAULT_TYPE_SORT == "name"
+        assert data_types.DEFAULT_SORT_DIRECTION == "asc"
+        assert self._names() == self._names(sort="name", direction="asc")
+
+    def test_a_missing_size_reads_as_unknown(self) -> None:
+        rows = [{"id": 1, "name": "no-size"}, _sized("sized", 4)]
+
+        assert [row["name"] for row in data_types.sort_types(rows, sort="size")] == [
+            "sized",
+            "no-size",
+        ]
+
+    def test_an_unknown_sort_or_direction_is_a_value_error(self) -> None:
+        for kwargs, message in (
+            ({"sort": "weight"}, "unknown type sort"),
+            ({"direction": "up"}, "unknown sort direction"),
+        ):
+            try:
+                data_types.sort_types(self.SIZED, **kwargs)
+            except ValueError as exc:
+                assert message in str(exc)
+            else:  # pragma: no cover - the assertion is the point
+                raise AssertionError(f"{kwargs} must be refused")

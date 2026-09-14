@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- The data types list sorts: `GET /api/binaries/<id>/data-types` takes
+  `?sort=name|size` (400 `invalid sort`) and `?direction=asc|desc` (400
+  `invalid direction`), a type whose size the model states as zero (an unknown
+  one) sorts last in either direction so it cannot claim the head of a
+  descending list, `reportal types --sort/--direction` and the `list_data_types`
+  MCP tool take the same pair, and the panel carries Sort and Direction selects
+  in the route hash beside its other filters.  The hosted data-types panel
+  offers that control; reportal's list was grouped by name only.
+
 - An analysis row's tags are editable in place: each tag is a chip with its own
   remove control and the cell carries an add field, both of which post the
   binary's whole tag set through `PATCH /api/analyses/<id>/tags`.  The hosted

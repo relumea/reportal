@@ -350,6 +350,58 @@ def _seed_filter_model(conn: sqlite3.Connection, binary_id: int) -> None:
     )
 
 
+class TestSort:
+    def test_size_orders_by_size_with_the_unknown_ones_last(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        _seed_filter_model(conn, binary_id)
+        # A parameterless typedef is the model's unknown-size case (size 0).
+        status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{binary_id}/data-types?sort=size"
+        )
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert payload["sort"] == "size"
+        names = [data_type["name"] for data_type in payload["types"]]
+        assert names[-1] == "WIN_DWORD"
+        sizes = [data_type["size"] for data_type in payload["types"]]
+        assert sizes == sorted(sizes, key=lambda size: (size == 0, size))
+
+    def test_name_descending_is_the_reverse(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        _seed_filter_model(conn, binary_id)
+        _, _, ascending = wsgi_request("GET", f"/api/binaries/{binary_id}/data-types")
+        status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{binary_id}/data-types?direction=desc"
+        )
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert payload["direction"] == "desc"
+        assert [row["name"] for row in payload["types"]] == [
+            row["name"] for row in reversed(json_body(ascending, headers)["types"])
+        ]
+
+    def test_the_filter_and_the_sort_compose(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        _seed_filter_model(conn, binary_id)
+        status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{binary_id}/data-types?kind=struct&sort=size&direction=desc"
+        )
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert [row["name"] for row in payload["types"]] == ["NP_HEADER"]
+        assert payload["total"] == 3
+
+    def test_unknown_sort_and_direction_are_400(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        cases = (("sort=weight", "invalid sort"), ("direction=up", "invalid direction"))
+        for query, error in cases:
+            status, headers, body = wsgi_request(
+                "GET", f"/api/binaries/{binary_id}/data-types?{query}"
+            )
+            assert status.startswith("400")
+            assert json_body(body, headers)["error"] == error
+
+
 class TestListFilters:
     def test_kind_filter_narrows_and_counts(self, conn: sqlite3.Connection) -> None:
         binary_id = _seed_binary(conn)
