@@ -192,7 +192,12 @@ class TestLegacyRow:
         result = signatures.revert_history(conn, function_id, entry_id)
 
         assert result["changed"] is True
-        assert signatures.get_signature(conn, function_id) == legacy
+        # `updated_at` is stamped by the write this test makes, so it is the one
+        # field a revert cannot restore to the second; every field that
+        # describes the signature itself has to come back unchanged.
+        assert _without_timestamp(
+            signatures.get_signature(conn, function_id)
+        ) == _without_timestamp(legacy)
 
 
 class TestApiRoutes:
