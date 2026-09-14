@@ -1055,21 +1055,58 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+# The two shapes a rebrew project carries its function list in: the text list an
+# older project left (`<va> <name> <size>` per line) and the discovery inventory
+# `rebrew init` writes now (`src/<target>/function_structure.json`).  The
+# fixtures read whichever the project has, so a regenerated project does not
+# strand the browser targets on a file the engine no longer scaffolds.
+FUNCTION_TEXT_NAME = "functions.txt"
+FUNCTION_JSON_NAME = "function_structure.json"
+TARGET_SUBDIR = "NP"
+
+
+def function_seed_file(project_dir: Path) -> Path:
+    """The function list *project_dir* carries, in either shape."""
+    target = project_dir / "src" / TARGET_SUBDIR
+    for name in (FUNCTION_TEXT_NAME, FUNCTION_JSON_NAME):
+        candidate = target / name
+        if candidate.is_file():
+            return candidate
+    return target / FUNCTION_TEXT_NAME
+
+
 def read_functions(path: Path, limit: int) -> list[tuple[int, str, int]]:
-    """Return up to *limit* ``(va, name, size)`` rows from a rebrew function list."""
+    """Return up to *limit* ``(va, name, size)`` rows from a rebrew function list.
+
+    A `.json` list is the discovery inventory (`va`, `name`, `size` keys); any
+    other path is the text list (`0x<va> <name> <size>` per line).
+    """
     functions: list[tuple[int, str, int]] = []
     seen: set[int] = set()
-    for line in path.read_text(encoding="utf-8").splitlines():
-        parts = line.split()
-        if len(parts) < 3 or not parts[0].startswith("0x"):
-            continue
-        va = int(parts[0], 16)
-        if va in seen:
-            continue
-        seen.add(va)
-        functions.append((va, parts[1], int(parts[2])))
-        if len(functions) >= limit:
-            break
+    if path.suffix == ".json":
+        rows = json.loads(path.read_text(encoding="utf-8"))
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            va = int(row.get("va") or 0)
+            if va in seen:
+                continue
+            seen.add(va)
+            functions.append((va, str(row.get("name") or ""), int(row.get("size") or 0)))
+            if len(functions) >= limit:
+                break
+    else:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parts = line.split()
+            if len(parts) < 3 or not parts[0].startswith("0x"):
+                continue
+            va = int(parts[0], 16)
+            if va in seen:
+                continue
+            seen.add(va)
+            functions.append((va, parts[1], int(parts[2])))
+            if len(functions) >= limit:
+                break
     if not functions:
         raise SystemExit(f"no functions parsed from {path}")
     return functions
@@ -1903,7 +1940,7 @@ def main() -> int:
     rebrew_bin = sibling(REBREW_RELATIVE)
     project_dir = sibling(NOTEPAD_PROJECT_RELATIVE)
     binary_path = project_dir / "original" / "notepad.exe"
-    functions_file = project_dir / "src" / "NP" / "functions.txt"
+    functions_file = function_seed_file(project_dir)
     for required in (rebrew_bin, binary_path, functions_file):
         if not required.is_file():
             emit(f"missing prerequisite: {required}")

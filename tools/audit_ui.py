@@ -479,7 +479,7 @@ def main(argv: list[str] | None = None) -> int:
                 workspace,
                 project_dir,
                 project_dir / "original" / "notepad.exe",
-                project_dir / "src" / "NP" / "functions.txt",
+                smoke_spa.function_seed_file(project_dir),
             )
             env = {
                 **os.environ,
@@ -526,7 +526,7 @@ def _missing_prerequisites() -> Path | None:
     for required in (
         smoke_spa.sibling(smoke_spa.REBREW_RELATIVE),
         project_dir / "original" / "notepad.exe",
-        project_dir / "src" / "NP" / "functions.txt",
+        smoke_spa.function_seed_file(project_dir),
     ):
         if not required.is_file():
             return required

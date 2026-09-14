@@ -126,7 +126,7 @@ def seed(workspace: Path) -> dict[str, object]:
     """Build *workspace* and return the ids and collections the suite needs."""
     project_dir = smoke_spa.sibling(smoke_spa.NOTEPAD_PROJECT_RELATIVE)
     binary_path = project_dir / "original" / "notepad.exe"
-    functions_file = project_dir / "src" / "NP" / "functions.txt"
+    functions_file = smoke_spa.function_seed_file(project_dir)
     rebrew_bin = smoke_spa.sibling(smoke_spa.REBREW_RELATIVE)
     for required in (binary_path, functions_file, rebrew_bin):
         if not required.is_file():

@@ -23,7 +23,7 @@ def _prerequisites() -> tuple[Path, Path, Path, Path]:
     return (
         project_dir,
         project_dir / "original" / "notepad.exe",
-        project_dir / "src" / "NP" / "functions.txt",
+        smoke_spa.function_seed_file(project_dir),
         smoke_spa.sibling(str(smoke_spa.REBREW_RELATIVE)),
     )
 
