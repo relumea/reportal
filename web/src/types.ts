@@ -657,6 +657,33 @@ export interface FunctionSignatureDetail extends FunctionSignature {
   prototype: string;
 }
 
+/** The signature state a history row records having replaced. */
+export interface SignatureState {
+  name: string;
+  return_type: string;
+  calling_convention: string;
+  parameters: SignatureParameter[];
+  source: string;
+}
+
+/** One recorded signature state, from `GET /api/functions/<id>/signature/history`. */
+export interface SignatureHistoryEntry {
+  id: number;
+  function_id: number;
+  previous: SignatureState | null;
+  /** The recorded state rendered as a prototype; null when the write created it. */
+  prototype: string | null;
+  source: string;
+  actor: string;
+  created_at: string;
+}
+
+export interface SignatureHistory {
+  function_id: number;
+  count: number;
+  history: SignatureHistoryEntry[];
+}
+
 export interface SignatureImportResult {
   binary_id: number;
   created: number;

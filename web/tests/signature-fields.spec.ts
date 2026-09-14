@@ -20,3 +20,28 @@ test("editing the arrival location changes the rendered prototype", async ({ pag
   // The rendered prototype annotates the field the model now carries.
   await expect(panel.getByText(/at \[esp\+4\]/)).toBeVisible();
 });
+
+test("the signature history lists a recorded version and reverts it", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const panel = panelByTitle(page, "Signature");
+  const shown = panel.locator(".code-block pre").first();
+  const before = await shown.innerText();
+
+  // Record a version to revert to: a convention the signature does not carry.
+  await panel.getByRole("combobox", { name: "Convention", exact: true }).selectOption("stdcall");
+  await panel.getByRole("button", { name: "Save head" }).click();
+  await expect(shown).toContainText("__stdcall");
+
+  await panel.getByRole("button", { name: "History", exact: true }).click();
+  const newest = panel.locator(".type-history li").first();
+  // The newest row is the write just made, carrying the prototype it replaced.
+  await expect(newest.locator("code")).toHaveText(before);
+
+  // The confirm control of a ConfirmButton carries the same label.
+  await newest.getByRole("button", { name: "Revert", exact: true }).click();
+  await newest.getByRole("button", { name: "Revert", exact: true }).click();
+
+  // The revert restored the head and refreshed the panel, and recorded itself.
+  await expect(shown).not.toContainText("__stdcall");
+  await expect(panel.locator(".type-history li").first()).toContainText("revert");
+});

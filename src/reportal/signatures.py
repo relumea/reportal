@@ -227,14 +227,22 @@ def _signature_view(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _history_view(entry: Mapping[str, Any]) -> dict[str, Any]:
-    """A history row whose recorded state has its parameters normalized."""
+    """A history row whose recorded state has its parameters normalized.
+
+    The recorded state also carries its rendered ``prototype``, through the same
+    renderer the CLI, the header export and the function's own signature read
+    use, so a reader (the SPA history panel) never re-implements the rendering.
+    A row with no previous state created the signature, so its prototype is null.
+    """
     previous = entry.get("previous")
+    prototype: str | None = None
     if isinstance(previous, Mapping):
         previous = {
             **previous,
             "parameters": _parameters_view(previous.get("parameters") or []),
         }
-    return {**entry, "previous": previous}
+        prototype = render_prototype(previous)
+    return {**entry, "previous": previous, "prototype": prototype}
 
 
 def describe_parameters(row: Mapping[str, Any]) -> list[dict[str, Any]]:

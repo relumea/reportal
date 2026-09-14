@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 
 import { api, isApiErrorCode } from "../api";
 import {
+  Badge,
   Button,
   CodeBlock,
   ConfirmButton,
@@ -10,6 +11,7 @@ import {
   ErrorNote,
   Field,
   Loading,
+  Muted,
   Note,
   Panel,
   Toolbar,
@@ -17,7 +19,7 @@ import {
 import { CALLING_CONVENTIONS, PARAMETER_KINDS, SIGNATURE_NOT_FOUND } from "../constants";
 import type { ParameterKind } from "../constants";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
-import type { FunctionSignatureDetail, SignatureParameter } from "../types";
+import type { FunctionSignatureDetail, SignatureHistory, SignatureParameter } from "../types";
 
 const NO_SIGNATURE_HINT =
   "No signature stored for this function. Import signatures from the binary detail view.";
@@ -34,6 +36,7 @@ export function SignaturePanel({
   const loader = (): Promise<FunctionSignatureDetail> =>
     api<FunctionSignatureDetail>(`/functions/${functionId}/signature`);
   const entry = usePanel(key, loader);
+  const [showHistory, setShowHistory] = useState(false);
 
   let body: ReactNode;
   if (!entry || entry.state === "loading") body = <Loading label="Loading the signature" />;
@@ -57,14 +60,98 @@ export function SignaturePanel({
     <Panel
       title="Signature"
       subtitle="Seeded from the stored decompilation; edits are stored locally."
+      actions={
+        <Button size="sm" tone="ghost" onClick={() => setShowHistory((value) => !value)}>
+          {showHistory ? "Hide history" : "History"}
+        </Button>
+      }
     >
       {body}
+      {showHistory ? (
+        <SignatureHistorySection
+          functionId={functionId}
+          onChange={() => refreshPanel(key, loader)}
+        />
+      ) : null}
       <SignatureCopy
         functionId={functionId}
         analysisId={analysisId}
         onCopied={() => refreshPanel(key, loader)}
       />
     </Panel>
+  );
+}
+
+/** One function's signature-edit history: a version list with its prototype and a revert each. */
+function SignatureHistorySection({
+  functionId,
+  onChange,
+}: {
+  functionId: number;
+  onChange: () => void;
+}): ReactNode {
+  const key = panelKey("fn", functionId, "signature-history");
+  const load = (): Promise<SignatureHistory> =>
+    api<SignatureHistory>(`/functions/${functionId}/signature/history`);
+  const entry = usePanel(key, load);
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+
+  const revert = (historyId: number): void => {
+    setError(null);
+    setBusy(`revert-${historyId}`);
+    api(`/functions/${functionId}/signature/history/${historyId}/revert`, { method: "POST" })
+      .then(() => {
+        refreshPanel(key, load);
+        onChange();
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(""));
+  };
+
+  if (!entry || entry.state === "loading") {
+    return <Loading label="Loading the signature history" rows={2} />;
+  }
+  if (entry.state === "error") {
+    return <ErrorNote error={entry.error} onRetry={() => refreshPanel(key, load)} />;
+  }
+  const data = entry.data;
+  return (
+    <>
+      <h4>History</h4>
+      <Muted>
+        {data.count} recorded {data.count === 1 ? "edit" : "edits"}; a revert restores the state a
+        version replaced and is itself revertible through its journal action.
+      </Muted>
+      {data.count === 0 ? (
+        <EmptyState>No signature edits recorded for this function yet.</EmptyState>
+      ) : (
+        <ul className="type-history">
+          {data.history.map((version) => (
+            <li key={version.id}>
+              <div className="toolbar">
+                <Badge mono>#{version.id}</Badge>
+                <Muted>
+                  {version.source || "manual"} ({version.actor || "manual"}) {version.created_at}
+                </Muted>
+                <ConfirmButton
+                  label="Revert"
+                  message="Restore this version?"
+                  pending={busy === `revert-${version.id}`}
+                  onConfirm={() => revert(version.id)}
+                />
+              </div>
+              {version.prototype === null ? (
+                <Muted>created this signature</Muted>
+              ) : (
+                <code>{version.prototype}</code>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {error ? <ErrorNote error={error} /> : null}
+    </>
   );
 }
 

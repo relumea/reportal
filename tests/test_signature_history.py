@@ -115,6 +115,22 @@ class TestHistoryRecording:
         assert history[0]["previous"] is not None
         assert history[0]["previous"]["name"] == "sub_1005640"
 
+    def test_a_history_row_carries_the_prototype_it_replaced(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        _, function_id = _seeded(conn)
+        before = signatures.get_signature(conn, function_id)
+        assert before is not None
+
+        signatures.set_return_type(conn, function_id, return_type="char *")
+
+        history = signatures.list_history(conn, function_id)
+        # Rendered through the same renderer the CLI and the header export use.
+        assert history[0]["prototype"] == signatures.render_prototype(before)
+        assert history[0]["prototype"].startswith("unsigned int sub_1005640(")
+        # The seeding row replaced no state, so it has nothing to render.
+        assert history[1]["prototype"] is None
+
 
 class TestRevert:
     def test_revert_restores_the_stored_row_exactly(self, conn: sqlite3.Connection) -> None:
@@ -214,6 +230,8 @@ class TestApiRoutes:
         assert payload["function_id"] == function_id
         assert payload["count"] == 2
         assert payload["history"][0]["previous"]["return_type"] == "unsigned int"
+        assert payload["history"][0]["prototype"].startswith("unsigned int sub_1005640(")
+        assert payload["history"][1]["prototype"] is None
 
     def test_history_route_unknown_function_404(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("GET", "/api/functions/999/signature/history")

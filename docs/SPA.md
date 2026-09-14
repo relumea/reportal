@@ -380,7 +380,11 @@ own GET, shows the returned `prototype`, a `signature-not-found` answer showing
 the nothing-stored hint, edits the return type and calling convention with a
 Save, and lists the parameters in a table with inline type/name/`at`/`kind`/`bits`
 edit, per-row reorder controls that recompute the arrival locations the
-convention implies, Save, Remove and an add-parameter row); the code panel
+convention implies, Save, Remove and an add-parameter row, and a `History`
+toggle revealing the function's signature-edit history: one row per recorded
+version with its id, source, actor and timestamp, the prototype that version
+replaced, `created this signature` for the row whose previous state was nothing,
+and a Revert that restores it and refreshes the signature panel); the code panel
 (auto-loaded, a Disassembly / Control flow toggle; Disassembly renders the
 listing with the nasm/hex toggle wired to the `format` query and a Reload, and
 Control flow renders the engine's basic-block graph through

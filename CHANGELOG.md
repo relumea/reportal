@@ -7,6 +7,18 @@ view renders it from here.
 
 ## Unreleased
 
+- The signature panel can show its edit history and revert a version.  The
+  history model, the revert, the journal, the CLI (`signature-history`,
+  `signature-revert`) and the `get_signature_history`/`revert_signature_history`
+  tools all existed and the SPA rendered none of it, while the data-type editor
+  one panel away had exactly that.  The panel's `History` toggle lists one row
+  per recorded version (its id, source, actor, timestamp and the prototype that
+  version replaced, or `created this signature` for the row whose previous state
+  was nothing) with a Revert that restores it.  Each history row now carries
+  that prototype rendered by `signatures.render_prototype`, the same renderer
+  the CLI, the header export and the function's own signature read use, so the
+  panel does not re-implement the rendering.
+
 - The function detail renders the engine's cross-references.  `GET
   /api/functions/<id>/xrefs`, `reportal xrefs` and the `get_xrefs` tool all
   reached the live scan and the SPA had no panel for it, so the page showed the
