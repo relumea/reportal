@@ -275,7 +275,8 @@ verdict from `/binaries/<id>/die-info`); scans (the stored scans of the
 binary's newest analysis from `/binaries/<id>/scans`, newest first, badged with
 the count: one row per scan naming its kind, its status, the inputs it ran with
 (a scan that recorded none says `none recorded`) and when it ran, with the
-result itself left to the panel that shows that scan); unpacked files (the unpack panel, see
+result itself left to the panel that shows that scan, through the table
+`panels/ScansPanel.tsx` shares with the analyses log drawer); unpacked files (the unpack panel, see
 below); strings (loaded on demand,
 a client-side filter with the filtered-of-total count, capped at
 `MAX_STRINGS_SHOWN` with the true total stated, server-side `sort`/`order`
@@ -785,7 +786,11 @@ functions (`GET /api/analyses/<id>/imported-functions`): one row per import stub
 with its address and the functions whose stored decompilation mentions it, the
 first `caller_limit` of them as name badges with a `+n more` count, and a line
 saying the callers come from the decompilation text because reportal stores no
-call graph.
+call graph.  Below those, a `Scans` section reads
+`GET /api/analyses/<id>/scans`: one row per stored scan of **that** analysis with
+its kind, status, the inputs it ran with and when it ran, rendered by the same
+table the binary detail's Scans panel uses (`panels/ScansPanel.tsx`), which is
+what makes an analysis that is not the newest one inspectable.
 
 The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) lists each analysis's
 id, binary (linked to its detail page), platform badges, binary size, engine,

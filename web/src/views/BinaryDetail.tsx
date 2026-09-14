@@ -26,7 +26,6 @@ import {
   RelatedPanel,
   RemediationPanel,
   ReportPanel,
-  ScansPanel,
   SecretsPanel,
   SectionsPanel,
   SecurityMitigationsPanel,
@@ -41,6 +40,7 @@ import {
 } from "../panels/BinaryPanels";
 import { DataTypesPanel } from "../panels/DataTypesPanel";
 import { CommentsPanel } from "../panels/CommentsPanel";
+import { ScansPanel } from "../panels/ScansPanel";
 import { MemoryPanel } from "../panels/MemoryPanel";
 import { ArtifactRatingsPanel } from "../panels/BinaryPanels";
 import { SymbolsPanel } from "../panels/SymbolsPanel";

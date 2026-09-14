@@ -48,6 +48,7 @@ import type {
 } from "../types";
 import { AnalysisStringsPanel } from "../panels/FunctionExtrasPanel";
 import { useAsync } from "../useAsync";
+import { AnalysisScans } from "../panels/ScansPanel";
 
 const ANALYSES_PATH = "/analyses";
 
@@ -289,6 +290,7 @@ function LogDrawer({ analysisId, onClose }: { analysisId: number; onClose: () =>
       <Lifecycle analysisId={analysisId} onChanged={reload} />
       <ImportedFunctions analysisId={analysisId} />
       <AnalysisStringsPanel analysisId={analysisId} />
+      <AnalysisScans analysisId={analysisId} />
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}
       {data === undefined && !error ? (
         <Loading label="Loading the log" />

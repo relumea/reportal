@@ -32,6 +32,13 @@ test("the list filters to the seeded analysis and its log opens on demand", asyn
   // The seed stores the structs scan first, so its finish is a real entry.
   await expect(drawer.getByText("structs scan finished")).toBeVisible();
   await expect(drawer.getByText(/showing \d+ of \d+ entries/)).toBeVisible();
+
+  // The drawer lists the analysis's own stored scans with the inputs they ran
+  // with, which is the read the binary detail's panel cannot make for an older
+  // analysis.
+  await expect(drawer.getByText("Scans", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("structs", { exact: true })).toBeVisible();
+  await expect(drawer.getByText("min_severity=low")).toBeVisible();
 });
 
 test("a filter that matches nothing says so instead of showing an empty table", async ({

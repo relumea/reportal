@@ -74,7 +74,6 @@ import type {
   ArtifactRatings,
   BehaviorScan,
   Binary,
-  BinaryScans,
   CapabilitiesResult,
   CompositionFunctionRow,
   CompositionCategory,
@@ -913,69 +912,6 @@ export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNo
             ]}
           />
         )}
-      </PanelBody>
-    </Panel>
-  );
-}
-
-/** The inputs a scan ran with, as one line; a scan that recorded none says so. */
-function scanInputs(params: Record<string, unknown>): string {
-  const entries = Object.entries(params).filter(([, value]) => value !== null && value !== "");
-  if (entries.length === 0) return "none recorded";
-  return entries
-    .map(([name, value]) => `${name}=${Array.isArray(value) ? value.join("/") : String(value)}`)
-    .join(", ");
-}
-
-/** Every stored scan of the binary's newest analysis, with the inputs it ran with. */
-export function ScansPanel({ binaryId }: { binaryId: number }): ReactNode {
-  const key = panelKey("binary", binaryId, "scans");
-  const entry = usePanel(key, () => api<BinaryScans>(`/binaries/${binaryId}/scans`));
-  const count = entry?.state === "ready" ? entry.data.count : undefined;
-  return (
-    <Panel
-      title={
-        <>
-          Scans <Badge>{count === undefined ? NA : String(count)}</Badge>
-        </>
-      }
-      subtitle="Every stored scan of the newest analysis, with the inputs each ran with; the result itself is read where that scan is shown."
-    >
-      <PanelBody entry={entry} hint="Loading the stored scans">
-        {(data) =>
-          data.scans.length === 0 ? (
-            <EmptyState>
-              No scan stored for this binary&apos;s newest analysis yet.
-            </EmptyState>
-          ) : (
-            <div className="table-scroll">
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Kind</th>
-                    <th>Status</th>
-                    <th>Inputs</th>
-                    <th>Ran</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.scans.map((scan) => (
-                    <tr key={scan.id}>
-                      <td>
-                        <Badge mono>{scan.kind}</Badge>
-                      </td>
-                      <td>
-                        <StatusCell status={scan.status} />
-                      </td>
-                      <td className="mono">{scanInputs(scan.params)}</td>
-                      <td className="muted">{scan.created_at}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
-        }
       </PanelBody>
     </Panel>
   );

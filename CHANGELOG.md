@@ -7,6 +7,14 @@ view renders it from here.
 
 ## Unreleased
 
+- The analyses log drawer lists that analysis's stored scans.  `GET
+  /api/analyses/<id>/scans` was reached by the CLI and the MCP tool only, and
+  the binary detail's Scans panel reads the *newest* analysis, so an older
+  analysis could not be asked what ran in it.  The drawer's `Scans` section
+  renders one row per stored scan with its kind, status, the inputs it ran with
+  and when it ran, through the table the binary panel now shares
+  (`panels/ScansPanel.tsx`).
+
 - An agent can register a binary.  The MCP registry had no tool for the portal's
   own entry point: `reportal add-binary` registers a local file by content hash
   and nothing over MCP did, so an agent could only work with binaries somebody

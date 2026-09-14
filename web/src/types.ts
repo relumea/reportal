@@ -2076,6 +2076,11 @@ export interface BinaryScans {
   count: number;
 }
 
+/** `GET /api/analyses/<id>/scans`. */
+export interface AnalysisScans {
+  scans: BinaryScan[];
+}
+
 /** The `GET /api/binaries/<id>/additional-details` payload, composed from the
  *  stored pe-info scan.  404 `no-scan` without one. */
 export interface AdditionalDetails {
