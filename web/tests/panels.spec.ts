@@ -51,3 +51,20 @@ test("filtering the type list narrows it and counts stay exact", async ({ page }
   await types.getByLabel("Filter", { exact: true }).fill("no-such-type-anywhere");
   await expect(types.getByText("No type matches", { exact: false })).toBeVisible();
 });
+
+test("the cross-references panel scans on demand and renders what the engine found", async ({
+  page,
+}) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  // Located by its control, not its heading: the title carries the count badge.
+  const xrefs = page
+    .locator(".panel")
+    .filter({ has: page.getByRole("button", { name: "Load cross-references" }) });
+
+  await xrefs.getByRole("button", { name: "Load cross-references" }).click();
+  await expect(xrefs.getByRole("button", { name: "Reload cross-references" })).toBeVisible();
+  // A live engine scan, so the panel settles on its table or its explicit
+  // empty state, and the fixture's guard already fails the test on a refusal.
+  await expect(xrefs.locator("table, .empty-state")).toBeVisible();
+  await expect(xrefs.getByRole("alert")).toHaveCount(0);
+});

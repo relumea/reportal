@@ -397,6 +397,11 @@ Decompile or Recompute, stored backend shown); globals, callers and callees
 count; a caller's `from_va` and a callee's target link to that function detail
 when the binary has one at that VA, an import-slot call with no resolved name
 renders as `indirect`, and a global names its address, section and access);
+cross-references (its own on-demand load of `GET /api/functions/<id>/xrefs`,
+the engine's live scan rather than the stored dossier, badged with the engine's
+count and carrying one row per referencing instruction: its `from_va` as hex,
+its kind as a badge and the instruction text, with a note when the target is an
+import slot and an empty state naming the address when nothing points at it);
 matches (Apply per row, a Diff link per row to
 `#/diff/<function-id>/<candidate-id>`, candidate linked to its function detail)
 and history (Revert per row), plus the same Comments panel with the function
@@ -938,10 +943,13 @@ a table's rows and the `g` prefix jumping to a view), the threat report's
 software-type badge and score meter with its MITRE link, the function page's
 control-flow view (the Disassembly / Control flow toggle swapping the panel,
 a block's address, byte size, instruction count and labelled instruction text,
-an edge's labelled jump control moving focus to its target block), and the batch
+an edge's labelled jump control moving focus to its target block), the function
+page's cross-references panel (its on-demand engine scan settling on the
+referencing-instruction table or the explicit empty state), and the batch
 upload control (one row per file, per-file tags, the per-file result lines and
 the duplicate answer).  A shared fixture fails every test on a console
 error, an uncaught page error, a dropped request or an error response; the
 only filtered noise is a 404 carrying a documented empty-result code
-(`no-scan`, `no-artifact`, `no-run`, `no-graph`) on a stored-only read, which
+(`no-scan`, `no-artifact`, `no-run`, `no-graph`, `no-symbols`, `no-docs`,
+`no-doc`) on a stored-only read, which
 the affected panel renders as its nothing-stored hint.

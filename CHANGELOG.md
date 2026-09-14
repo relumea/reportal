@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- The function detail renders the engine's cross-references.  `GET
+  /api/functions/<id>/xrefs`, `reportal xrefs` and the `get_xrefs` tool all
+  reached the live scan and the SPA had no panel for it, so the page showed the
+  stored globals, callers and callees and not the instructions the binary
+  actually points at the address with.  The panel loads on demand, like the
+  other engine-backed reads on that page, and renders one row per reference:
+  the referencing address, its kind and the instruction text, plus a note when
+  the target is an import slot.
+
 - A composition in which two enabled components provide the same context name
   is now refused before any effect runs (`components.assert_unique_providers`,
   checked by `run_pipeline`, `ComponentHost.__init__` and `ComponentHost.sync`),

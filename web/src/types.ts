@@ -2687,6 +2687,21 @@ export interface IndirectCallSite {
   instruction: string;
 }
 
+/** One instruction that points at a target address, from the engine's scan. */
+export interface Xref {
+  kind: string;
+  from_va: number;
+  instruction: string | null;
+}
+
+/** `GET /api/functions/<id>/xrefs`. */
+export interface Xrefs {
+  target: number;
+  import_name: string | null;
+  count: number;
+  refs: Xref[];
+}
+
 /** `GET /api/functions/<id>/indirect-call-sites`. */
 export interface IndirectCallSites {
   function_id: number;

@@ -57,6 +57,7 @@ import type {
   RenameSuggestion,
   TransferMode,
   TransferRowReport,
+  Xrefs,
 } from "../types";
 
 function toDisasmFormat(value: string): DisasmFormat {
@@ -479,7 +480,7 @@ export function CalleesPanel({
   );
 }
 
-/** The three reference tables of one function, sharing one engine dossier fetch. */
+/** The reference tables of one function: three share one stored dossier fetch, the cross-references panel runs the engine's own scan on demand. */
 export function ReferencesSection({
   functionId,
   binaryId,
@@ -492,7 +493,71 @@ export function ReferencesSection({
       <GlobalsPanel functionId={functionId} binaryId={binaryId} />
       <CallersPanel functionId={functionId} binaryId={binaryId} />
       <CalleesPanel functionId={functionId} binaryId={binaryId} />
+      <XrefsPanel functionId={functionId} />
     </>
+  );
+}
+
+/** The engine's own scan of the instructions that point at one address. */
+export function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
+  const key = panelKey("fn", functionId, "xrefs");
+  const [entry, run] = useLazyPanel<Xrefs>(key);
+  const [busy, setBusy] = useState(false);
+  const load = (): void => {
+    setBusy(true);
+    run(() => api<Xrefs>(`/functions/${functionId}/xrefs`).finally(() => setBusy(false)));
+  };
+  const data = entry?.state === "ready" ? entry.data : undefined;
+  return (
+    <Panel
+      title={
+        <>
+          Cross-references <Badge>{data === undefined ? NA : String(data.count)}</Badge>
+        </>
+      }
+      subtitle="Load cross-references to scan the binary for the instructions that point at this address."
+      actions={
+        <Button pending={busy} onClick={load}>
+          {data === undefined ? "Load cross-references" : "Reload cross-references"}
+        </Button>
+      }
+    >
+      <PanelBody entry={entry} hint="Loading cross-references">
+        {(payload) =>
+          payload.refs.length === 0 ? (
+            <EmptyState>
+              No instruction in the binary references 0x{payload.target.toString(16)}.
+            </EmptyState>
+          ) : (
+            <>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>From</th>
+                    <th>Kind</th>
+                    <th>Instruction</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payload.refs.map((ref) => (
+                    <tr key={`${ref.from_va}:${ref.kind}`}>
+                      <td className="mono">{hex(ref.from_va)}</td>
+                      <td>
+                        <Badge mono>{ref.kind}</Badge>
+                      </td>
+                      <td className="mono">{ref.instruction ?? ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {payload.import_name === null ? null : (
+                <Muted>The target is the import slot {payload.import_name}.</Muted>
+              )}
+            </>
+          )
+        }
+      </PanelBody>
+    </Panel>
   );
 }
 
