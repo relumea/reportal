@@ -36,6 +36,10 @@ reportal extract <binary-id> [--password TEXT] [--collection ID] [--json]
                                            #   register each member by content hash into one
                                            #   collection and report each member and refusal;
                                            #   one journal action, reverted with the printed id
+reportal scans <binary-id> [--json]        # each stored scan of the binary's
+                                           #   newest analysis with the inputs it
+                                           #   ran with, so a reading can be run
+                                           #   again the same way
 reportal config [--json]                  # what this install can do, and every
                                            #   setting reportal reads with the
                                            #   origin that answered; names the keys

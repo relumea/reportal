@@ -7,6 +7,18 @@ view renders it from here.
 
 ## Unreleased
 
+- Recorded scan inputs: a stored scan now carries the inputs the caller named
+  beside its result (`scans.params_json`), so a reading can be run again the same
+  way instead of guessed at: the decompiler and limit of a struct recovery, the
+  severity floor of a security scan, the confidence floor of an unstrip or
+  library identification, the selected functions of a triage, the limit of a
+  related-binary run, whether a threat report asked for a narrative, and the
+  partner binary and settings of a benchmark.  `GET /api/binaries/<id>/scans`,
+  `reportal scans <binary-id>` and the read-only `list_scans` MCP tool report
+  them; the result payload is left out of the listing and the inputs are never
+  injected into it (an engine payload is still stored exactly as it came back).
+  A scan that records none reads as an empty object.
+
 - One read of every setting: `reportal config` now prints the instance
   description and then each setting reportal reads with the value in force and
   whether the environment, the workspace `reportal.toml`, the secret store or a

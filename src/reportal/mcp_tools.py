@@ -377,12 +377,21 @@ def _journaled_scan_run(
 
 
 def _journaled_scan_store(
-    conn: sqlite3.Connection, binary_id: int, kind: str, result: dict[str, Any]
+    conn: sqlite3.Connection,
+    binary_id: int,
+    kind: str,
+    result: dict[str, Any],
+    *,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Store one computed scan through a journal; returns the attached result."""
+    """Store one computed scan through a journal; returns the attached result.
+
+    *params* are the caller-named inputs the run used, recorded beside the result
+    so the scan can be replayed with the same ones.
+    """
     action = journal.new_action()
     with journal.journaled(conn, action) as log:
-        journal.journaled_scan_result(conn, log, binary_id, kind, result)
+        journal.journaled_scan_result(conn, log, binary_id, kind, result, params=params)
         return log.attach(result)
 
 
@@ -2170,7 +2179,13 @@ def _tool_run_structs(arguments: dict[str, Any]) -> dict[str, Any]:
         result = _run_engine(
             lambda: _engine().structs(project_dir, decompiler=decompiler, limit=limit)
         )
-        return _journaled_scan_store(conn, binary_id, store.SCAN_KIND_STRUCTS, result)
+        return _journaled_scan_store(
+            conn,
+            binary_id,
+            store.SCAN_KIND_STRUCTS,
+            result,
+            params={"decompiler": decompiler, "limit": limit},
+        )
 
 
 def _tool_run_crypto_scan(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2215,7 +2230,13 @@ def _tool_run_security_scan(arguments: dict[str, Any]) -> dict[str, Any]:
         _require_binary(conn, binary_id)
         project_dir = _project_context(conn, binary_id)
         result = _run_engine(lambda: _engine().security_scan(project_dir, min_severity))
-        return _journaled_scan_store(conn, binary_id, store.SCAN_KIND_SECURITY, result)
+        return _journaled_scan_store(
+            conn,
+            binary_id,
+            store.SCAN_KIND_SECURITY,
+            result,
+            params={"min_severity": min_severity},
+        )
 
 
 def _tool_run_capabilities(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2439,6 +2460,20 @@ def _tool_run_unpack(arguments: dict[str, Any]) -> dict[str, Any]:
             return unpack_binary(conn, binary_id, packer=packer, name=name)
         except ExtractError as exc:
             raise ToolError(exc.code, exc.detail) from None
+
+
+def _tool_list_scans(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        scans = [] if analysis_id is None else store.list_scans(conn, analysis_id)
+        return {
+            "binary_id": binary_id,
+            "analysis_id": analysis_id,
+            "scans": scans,
+            "count": len(scans),
+        }
 
 
 def _tool_get_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6566,6 +6601,15 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_run_benchmark,
+        ),
+        Tool(
+            "list_scans",
+            "Every stored scan of a binary's newest analysis, newest first, with the inputs"
+            " each one ran with (the decompiler, the severity floor, the other binary of a"
+            " comparison).  The result payload is left out.  Read-only.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_list_scans,
         ),
         Tool(
             "get_rename_benchmark",

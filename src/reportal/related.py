@@ -461,7 +461,13 @@ def find_related(
         "notes": notes,
     }
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
-    store.set_scan(conn, analysis_id, store.SCAN_KIND_RELATED, payload)
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_RELATED,
+        payload,
+        params={"limit": limit, "include_unrelated": include_unrelated},
+    )
     return payload
 
 

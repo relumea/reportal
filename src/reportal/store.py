@@ -261,6 +261,7 @@ CREATE TABLE IF NOT EXISTS scans (
     kind        TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'pending',
     result_json TEXT NOT NULL DEFAULT '',
+    params_json TEXT NOT NULL DEFAULT '{}',
     created_at  TEXT NOT NULL
 );
 
@@ -520,6 +521,11 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # this column existed was recorded outside a match run, so the empty
     # default reads as "no recorded settings" rather than an invented scope.
     ("matches", "settings_json", "TEXT NOT NULL DEFAULT ''"),
+    # The inputs a scan ran with.  A stored scan is its result; the caller-named
+    # input behind an engine result is not part of it (the engine's payload is
+    # stored as it came back), so without this column the scan that produced a
+    # reading cannot be replayed with the same parameters.
+    ("scans", "params_json", "TEXT NOT NULL DEFAULT '{}'"),
     # The last time a collection's own fields, its membership or its tags
     # changed.  A row that predates the column takes its creation time below,
     # so the sort never puts an untouched collection before a touched one.
@@ -2000,8 +2006,26 @@ def _artifact_row(row: sqlite3.Row) -> dict[str, Any] | None:
 # ── Scans ──────────────────────────────────────────────────────────
 
 
-def set_scan(conn: sqlite3.Connection, analysis_id: int, kind: str, result: dict[str, Any]) -> None:
+def _scan_params_json(params: Mapping[str, Any] | None) -> str:
+    """The recorded inputs as a JSON object, so a reader can always index it."""
+    return json.dumps(dict(params)) if params else "{}"
+
+
+def set_scan(
+    conn: sqlite3.Connection,
+    analysis_id: int,
+    kind: str,
+    result: dict[str, Any],
+    *,
+    params: Mapping[str, Any] | None = None,
+) -> None:
     """Store *result* as the scan of *kind* on *analysis_id*, replacing any earlier one.
+
+    *params* are the caller-named inputs the run used (a decompiler, a severity
+    floor, the other binary of a comparison).  They are stored beside the result
+    rather than inside it: an engine payload is stored exactly as the engine
+    returned it, so a reader that wants to replay a scan needs the inputs the
+    caller chose, which the payload does not carry.
 
     A stored scan is a finished scan, so this records the finish in the
     analysis's log and leaves the analysis `done`: the scan ran to completion.
@@ -2009,11 +2033,12 @@ def set_scan(conn: sqlite3.Connection, analysis_id: int, kind: str, result: dict
     it with :func:`scan_span` records the failure instead.
     """
     conn.execute(
-        "INSERT INTO scans (analysis_id, kind, status, result_json, created_at)"
-        " VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO scans (analysis_id, kind, status, result_json, params_json, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(analysis_id, kind) DO UPDATE SET status = excluded.status,"
-        " result_json = excluded.result_json, created_at = excluded.created_at",
-        (analysis_id, kind, SCAN_STATUS_DONE, json.dumps(result), now()),
+        " result_json = excluded.result_json, params_json = excluded.params_json,"
+        " created_at = excluded.created_at",
+        (analysis_id, kind, SCAN_STATUS_DONE, json.dumps(result), _scan_params_json(params), now()),
     )
     conn.commit()
     analysis_log.append_entry(conn, analysis_id, message=f"{kind} scan finished")
@@ -2035,14 +2060,38 @@ def get_scan(conn: sqlite3.Connection, analysis_id: int, kind: str) -> dict[str,
     return stored if isinstance(stored, dict) else None
 
 
+def get_scan_params(conn: sqlite3.Connection, analysis_id: int, kind: str) -> dict[str, Any]:
+    """The inputs a stored scan recorded, or {} when it recorded none."""
+    row = conn.execute(
+        "SELECT params_json FROM scans WHERE analysis_id = ? AND kind = ?",
+        (analysis_id, kind),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        stored = json.loads(str(row["params_json"]) or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return dict(stored) if isinstance(stored, dict) else {}
+
+
 def list_scans(conn: sqlite3.Connection, analysis_id: int) -> list[dict[str, Any]]:
-    """Scans of *analysis_id*, newest first, without their result payloads."""
+    """Scans of *analysis_id*, newest first, with their recorded inputs.
+
+    The result payload is left out (it can be large and the caller that wants it
+    asks for the scan); the recorded inputs are included, which is what makes a
+    listing answer "what ran here, and with what".
+    """
     cur = conn.execute(
-        "SELECT id, analysis_id, kind, status, created_at FROM scans"
+        "SELECT id, analysis_id, kind, status, params_json, created_at FROM scans"
         " WHERE analysis_id = ? ORDER BY id DESC",
         (analysis_id,),
     )
-    return _rows(cur)
+    rows = _rows(cur)
+    for row in rows:
+        row["params"] = get_scan_params(conn, analysis_id, str(row["kind"]))
+        del row["params_json"]
+    return rows
 
 
 # ── Pipeline runs ──────────────────────────────────────────────────

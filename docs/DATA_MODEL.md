@@ -199,7 +199,13 @@ and `delete_graph` are the CRUD the graph module and the routes use, and each
 row's parsed `meta` is the JSON object its builder wrote (a node's VA, status
 or chunk count, and the `truncated` flag on the binary node).
 
-`scans` stores one result per `(analysis_id, kind)` pair(`SCAN_KIND_TRIAGE`, `SCAN_KIND_REPORT`, `SCAN_KIND_STRUCTS`, `SCAN_KIND_CRYPTO`,
+`scans` stores one result per `(analysis_id, kind)` pair, beside the inputs the
+caller named when it ran (`params_json`, an object: a decompiler, a severity
+floor, the other binary of a comparison).  The result is stored exactly as the
+producer returned it, so the inputs stay a column of their own rather than
+fields injected into an engine payload; a scan that predates the column, or one
+whose kind takes no input, reads as an empty object rather than a guessed set.
+The kinds are `SCAN_KIND_TRIAGE`, `SCAN_KIND_REPORT`, `SCAN_KIND_STRUCTS`, `SCAN_KIND_CRYPTO`,
 `SCAN_KIND_SECURITY`, `SCAN_KIND_UNSTRIP`, `SCAN_KIND_CAPABILITIES`,
 `SCAN_KIND_THREAT`, `SCAN_KIND_REMEDIATION`, `SCAN_KIND_EXECUTION`,
 `SCAN_KIND_NETWORKING`, `SCAN_KIND_FILESYSTEM`, `SCAN_KIND_SECRETS`,
@@ -207,7 +213,8 @@ or chunk count, and the `truncated` flag on the binary node).
 `SCAN_KIND_ANTI_ANALYSIS`, `SCAN_KIND_OBFUSCATION`, `SCAN_KIND_LINEAGE`,
 `SCAN_KIND_DETECT`, `SCAN_KIND_FUNCTION_TRIAGE`, `SCAN_KIND_RELATED`,
 `SCAN_KIND_PE_INFO`, `SCAN_KIND_FILETYPE`, `SCAN_KIND_COMPOSITION`,
-`SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`, `SCAN_KIND_BENCHMARK`); the unique index
+`SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`, `SCAN_KIND_BENCHMARK`); `list_scans`
+returns each row's recorded inputs and leaves the payload out, and the unique index
 makes `set_scan` an upsert, so a re-run refreshes the stored dossier, report or
 struct recovery instead of adding a row.  A scan hangs off an analysis, so
 `ensure_analysis_for_binary` reuses the binary's newest analysis and creates one

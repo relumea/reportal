@@ -605,12 +605,17 @@ def journaled_scan_result(
     result: dict[str, Any],
     *,
     engine: str = store.SCAN_ENGINE,
+    params: Mapping[str, Any] | None = None,
 ) -> None:
-    """Store one scan *result*, journaling the row it replaced and the analysis it created."""
+    """Store one scan *result*, journaling the row it replaced and the analysis it created.
+
+    *params* are the caller-named inputs the run used, recorded beside the
+    result so the scan can be replayed with the same ones.
+    """
     analysis_before = store.latest_analysis_for_binary(conn, binary_id)
     replaced = _snapshot_scan(conn, log, analysis_before, binary_id, kind)
     analysis_id = journaled_analysis(conn, log, binary_id, engine=engine)
-    store.set_scan(conn, analysis_id, kind, result)
+    store.set_scan(conn, analysis_id, kind, result, params=params)
     if not replaced:
         journaled_create(
             log,

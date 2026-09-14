@@ -389,7 +389,13 @@ def summarize_functions(
         "notes": notes,
     }
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
-    store.set_scan(conn, analysis_id, store.SCAN_KIND_FUNCTION_TRIAGE, payload)
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_FUNCTION_TRIAGE,
+        payload,
+        params={"function_ids": list(function_ids or ()), "limit": limit},
+    )
     return payload
 
 

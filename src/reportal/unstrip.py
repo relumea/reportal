@@ -170,7 +170,13 @@ def run_unstrip(
     ]
     payload = {"candidates": len(candidates), "proposals": proposals, "applied": False}
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
-    store.set_scan(conn, analysis_id, store.SCAN_KIND_UNSTRIP, payload)
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_UNSTRIP,
+        payload,
+        params={"min_confidence": min_confidence},
+    )
     return payload
 
 

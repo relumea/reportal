@@ -571,12 +571,36 @@ class TestScans:
         _, analysis_id = _seed_analysis(conn)
         store.set_scan(conn, analysis_id, store.SCAN_KIND_TRIAGE, {"a": 1})
         store.set_scan(conn, analysis_id, store.SCAN_KIND_REPORT, {"b": 2})
-        store.set_scan(conn, analysis_id, "custom", {"c": 3})
+        store.set_scan(conn, analysis_id, store.SCAN_KIND_STRUCTS, {"c": 3}, params={"limit": 5})
         scans = store.list_scans(conn, analysis_id)
-        assert [scan["kind"] for scan in scans] == ["custom", store.SCAN_KIND_REPORT, "triage"]
-        assert set(scans[0]) == {"id", "analysis_id", "kind", "status", "created_at"}
+        assert [scan["kind"] for scan in scans] == [
+            store.SCAN_KIND_STRUCTS,
+            store.SCAN_KIND_REPORT,
+            "triage",
+        ]
+        assert set(scans[0]) == {
+            "id",
+            "analysis_id",
+            "kind",
+            "status",
+            "created_at",
+            "params",
+        }
         assert {scan["status"] for scan in scans} == {store.SCAN_STATUS_DONE}
         assert all("result_json" not in scan for scan in scans)
+        # The recorded inputs come back with the row, and a scan that recorded
+        # none answers an empty object rather than a missing key.
+        assert scans[0]["params"] == {"limit": 5}
+        assert scans[1]["params"] == {}
+        assert store.get_scan_params(conn, analysis_id, store.SCAN_KIND_STRUCTS) == {"limit": 5}
+        assert store.get_scan_params(conn, analysis_id, store.SCAN_KIND_REPORT) == {}
+
+    def test_a_replaced_scan_replaces_its_inputs(self, conn: sqlite3.Connection) -> None:
+        _, analysis_id = _seed_analysis(conn)
+        store.set_scan(conn, analysis_id, store.SCAN_KIND_STRUCTS, {"a": 1}, params={"limit": 5})
+        store.set_scan(conn, analysis_id, store.SCAN_KIND_STRUCTS, {"a": 2}, params={"limit": 9})
+        assert store.get_scan_params(conn, analysis_id, store.SCAN_KIND_STRUCTS) == {"limit": 9}
+        assert store.get_scan(conn, analysis_id, store.SCAN_KIND_STRUCTS) == {"a": 2}
 
     def test_list_unknown_analysis_is_empty(self, conn: sqlite3.Connection) -> None:
         assert store.list_scans(conn, 999) == []

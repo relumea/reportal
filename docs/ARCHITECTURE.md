@@ -1193,7 +1193,7 @@ small binary),
 `.../secrets`, `.../protocols`,
 `.../behavior` (all three domains) and `.../behavior/<domain>`,
 `.../hardening` (both domains) and `.../hardening/<domain>`,
-`.../security-scan`, `.../unstrip`, `.../unpack`, `.../benchmark`, `.../rename-benchmark`, `.../threat`, `.../remediation` and
+`.../security-scan`, `.../unstrip`, `.../unpack`, `.../benchmark`, `.../rename-benchmark`, `.../scans`, `.../threat`, `.../remediation` and
 `.../remediation/<yara|snort|stix>`,
 `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../data-types`, `.../signatures`,
 `.../comments`, `.../auto`, `.../documents`, `.../knowledge` and `.../graph`;
@@ -1204,7 +1204,7 @@ the graph node route is `GET /api/graph/nodes/<node_id>`, and
 |-------|--------|
 | Health | `GET /api/health` |
 | Jobs | `GET`/`POST /api/jobs`, `GET /api/jobs/<id>`, `POST /api/jobs/<id>/cancel`, `GET /api/jobs/<id>/events` (server-sent events), `POST /api/jobs/run` |
-| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `GET`/`POST /api/binaries/<id>/unpack`, `GET`/`POST /api/binaries/<id>/benchmark`, `GET /api/binaries/<id>/rename-benchmark`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
+| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `GET`/`POST /api/binaries/<id>/unpack`, `GET`/`POST /api/binaries/<id>/benchmark`, `GET /api/binaries/<id>/rename-benchmark`, `GET /api/binaries/<id>/scans`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
 | Families | `GET`/`POST /api/families`, `GET`/`DELETE /api/families/<id>` |
 | Data types | `GET`/`POST /api/binaries/<id>/data-types[/import\|/export]` (the GET takes `?kind=&namespace=&search=`), `PATCH`/`DELETE /api/data-types/<id>`, `POST`/`DELETE /api/data-types/<id>/members[/<member>]`, `POST /api/data-types/<id>/members/<member>/gap`, `POST /api/data-types/<id>/members/<member>/ungap`, `POST`/`PATCH`/`DELETE /api/data-types/<id>/values[/<value>]`, `GET /api/data-types/<id>/references`, `GET /api/data-types/<id>/history`, `POST /api/data-types/<id>/history/<history_id>/revert` |
 | Signatures | `GET`/`POST /api/binaries/<id>/signatures[/import\|/export]`, `GET`/`PATCH`/`DELETE /api/functions/<id>/signature`, `POST`/`PATCH`/`DELETE /api/functions/<id>/signature/parameters[/<index>]`, `GET /api/functions/<id>/signature/history`, `POST /api/functions/<id>/signature/history/<history_id>/revert` |
@@ -2423,6 +2423,24 @@ half-restored workspace never looks complete.  A path that lived outside the
 archived workspace is left where it points and reported: that is the user's own
 rebrew project, which reportal never owned.  An existing database is refused
 unless the caller asks to overwrite, which the CLI confirms.
+
+### Recorded scan inputs
+
+A scan row carries the result the producer returned, unchanged (an engine payload
+is stored exactly as the engine reported it), and beside it the inputs the caller
+named when the scan ran: `scans.params_json`, written by `store.set_scan(...,
+params=...)` and reported by `store.list_scans` and `store.get_scan_params`.  The
+inputs are not injected into the payload, which is what keeps "nothing is
+re-shaped" true while still answering "what did this run with".
+
+The domains that take a caller-named input record it: `structs` (the decompiler
+and the limit), `security-scan` (the severity floor), `unstrip` and `library`
+(the confidence floor), `function-triage` (the selected functions and the limit),
+`related` (the limit and whether unrelated binaries were kept), `threat`
+(whether a narrative was asked for) and `benchmark` (the partner binary and the
+run settings).  A scan whose kind takes no input, and one stored before the
+column existed, read as an empty object rather than a guessed set, which is what
+`GET /api/binaries/<id>/scans`, `reportal scans` and `list_scans` report.
 
 ## Configuration
 

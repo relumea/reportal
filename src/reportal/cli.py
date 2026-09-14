@@ -2697,6 +2697,55 @@ def imported_functions(
     console.print(table)
 
 
+@app.command("scans")
+def scans_command(
+    binary_id: int = typer.Argument(..., help="Binary whose stored scans to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List a binary's stored scans with the inputs each one ran with.
+
+    A stored scan is its result; the inputs the caller named (a decompiler, a
+    severity floor, the other binary of a comparison) are recorded beside it, so
+    a reading can be run again the same way.  A scan stored before that was
+    recorded reports no inputs rather than a guessed set.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        scans = [] if analysis_id is None else store.list_scans(conn, analysis_id)
+    payload = {
+        "binary_id": binary_id,
+        "analysis_id": analysis_id,
+        "scans": scans,
+        "count": len(scans),
+    }
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if not scans:
+        console.print(f"[yellow]binary {binary_id} has no stored scan[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Status")
+    table.add_column("Ran", style="green")
+    table.add_column("Inputs")
+    for scan in scans:
+        params = scan.get("params") or {}
+        rendered = ", ".join(f"{key}={value}" for key, value in sorted(params.items()))
+        table.add_row(
+            str(scan["kind"]),
+            str(scan["status"]),
+            str(scan["created_at"]),
+            rendered or "[yellow]not recorded[/yellow]",
+        )
+    console.print(table)
+
+
 @app.command()
 def analyses(
     status: list[str] = typer.Option(
@@ -7973,7 +8022,14 @@ def structs(
             _fail(str(exc), json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_STRUCTS, result)
+            journal.journaled_scan_result(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_STRUCTS,
+                result,
+                params={"decompiler": decompiler, "limit": limit},
+            )
 
     if json_output:
         typer.echo(json.dumps(log.attach(result)))
@@ -10065,7 +10121,14 @@ def security_scan(
             _fail(str(exc), json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_SECURITY, result)
+            journal.journaled_scan_result(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_SECURITY,
+                result,
+                params={"min_severity": min_severity},
+            )
 
     if json_output:
         typer.echo(json.dumps(log.attach(result)))

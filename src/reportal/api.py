@@ -1891,7 +1891,14 @@ def store_binary_structs(binary_id: int, body: dict[str, Any] = Depends(json_bod
         with journal.journaled(conn, action) as log:
             with _scan_span(conn, binary_id, store.SCAN_KIND_STRUCTS):
                 result = _run_structs(project_dir, decompiler, limit)
-            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_STRUCTS, result)
+            journal.journaled_scan_result(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_STRUCTS,
+                result,
+                params={"decompiler": decompiler, "limit": limit},
+            )
     return json_response(log.attach(result))
 
 
@@ -3229,7 +3236,14 @@ def store_binary_security_scan(
         with journal.journaled(conn, action) as log:
             with _scan_span(conn, binary_id, store.SCAN_KIND_SECURITY):
                 result = _run_security_scan(project_dir, min_severity)
-            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_SECURITY, result)
+            journal.journaled_scan_result(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_SECURITY,
+                result,
+                params={"min_severity": min_severity},
+            )
     return json_response(log.attach(result))
 
 
@@ -4039,7 +4053,14 @@ def store_binary_benchmark(
             return json_error(500, error="engine-error", detail=str(exc))
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_BENCHMARK, result)
+            journal.journaled_scan_result(
+                conn,
+                log,
+                binary_id,
+                store.SCAN_KIND_BENCHMARK,
+                result,
+                params={"right_binary_id": right_binary_id, **settings.payload()},
+            )
     return json_response(log.attach(result))
 
 
@@ -4172,6 +4193,33 @@ def list_analysis_scans(analysis_id: int) -> Response:
             )
         scans = store.list_scans(conn, analysis_id)
     return json_response({"scans": scans})
+
+
+@router.get("/api/binaries/{binary_id}/scans")
+def list_binary_scans(binary_id: int) -> Response:
+    """Every stored scan of a binary's newest analysis, with the inputs each ran with.
+
+    The result payload is left out (it can be large, and the route for that scan
+    serves it); ``params`` is what the caller named when the scan ran, which is
+    what a reader needs to run the scan again the same way.  A scan whose
+    parameters predate that recording reports an empty object rather than a
+    guessed one, and a binary with no analysis answers an empty list.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        scans = [] if analysis_id is None else store.list_scans(conn, analysis_id)
+    return json_response(
+        {
+            "binary_id": binary_id,
+            "analysis_id": analysis_id,
+            "scans": scans,
+            "count": len(scans),
+        }
+    )
 
 
 # ── Malware families and detection ─────────────────────────────────

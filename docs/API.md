@@ -175,7 +175,8 @@ their pages by the same rule.
 | `/api/binaries/<id>/unpack` | POST | rebuild a packed binary's image and register it as a new binary; body `{"packer"?, "name"?}` names the packer (else the file's own stub decides) and the new binary's display name; the packed source is untouched; 404 unknown binary, 400 `binary not on disk`, `no-packer` when nothing is packed, `unknown-packer` for a name outside `unpack.PACKERS`, `no-unpacker` for UPX without the external tool, `unpack-failed` when the rebuild itself fails, 503 `engine-unavailable` for an LZEXE image without the engine; journaled, so one revert removes the scan, the row and the file |
 | `/api/binaries/<id>/unpack` | GET | the stored provenance of a binary reportal unpacked: the packed source and its hash, the packer and what identified it, the method, the sizes and the moment; `stored: false` with the command that produces one, rather than 404 |
 | `/api/binaries/<id>/unstrip/apply` | POST | apply one stored proposal by `function_id`, recording the rename with source `unstrip`; body `{"function_id": ..., "name": ...}` (`name` optional) |
-| `/api/analyses/<id>/scans` | GET | stored scans of one analysis, newest first, without their payloads |
+| `/api/analyses/<id>/scans` | GET | stored scans of one analysis, newest first, without their payloads, each with the `params` the caller named when it ran (an empty object for a scan that records none) |
+| `/api/binaries/<id>/scans` | GET | the same listing for the binary's newest analysis: `binary_id`, `analysis_id`, `scans` and `count`; a binary with no analysis answers an empty list, and 404 `binary not found` for an unknown id |
 | `/api/functions/<id>` | GET | one function |
 | `/api/functions/<id>/rename` | POST | rename; body `{"name": ..., "actor": ...}`; records history |
 | `/api/functions/<id>/history` | GET | rename history, newest first |

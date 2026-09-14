@@ -1379,7 +1379,14 @@ class TestAnalysisScansRoute:
         assert status.startswith("200")
         scans = json_body(body, headers)["scans"]
         assert [scan["kind"] for scan in scans] == [store.SCAN_KIND_REPORT, store.SCAN_KIND_TRIAGE]
-        assert set(scans[0]) == {"id", "analysis_id", "kind", "status", "created_at"}
+        assert set(scans[0]) == {
+            "id",
+            "analysis_id",
+            "kind",
+            "status",
+            "created_at",
+            "params",
+        }
 
 
 class TestWorkspaceFailure:

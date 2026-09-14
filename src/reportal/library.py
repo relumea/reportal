@@ -270,7 +270,7 @@ def run_library(
         "notes": notes,
     }
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
-    store.set_scan(conn, analysis_id, SCAN_KIND, payload)
+    store.set_scan(conn, analysis_id, SCAN_KIND, payload, params={"min_confidence": min_confidence})
     return payload
 
 
