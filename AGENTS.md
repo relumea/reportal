@@ -88,8 +88,8 @@ would silently weaken `src/reportal`. Plain `mypy` reads the config;
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
-5 errors, none of them about the HTTP layer: `journal.py:749` and
-`journal.py:750` plus `pdf.py:619` and `pdf.py:620` are module-attribute
+5 errors, none of them about the HTTP layer: `journal.py:933` and
+`journal.py:934` plus `pdf.py:619` and `pdf.py:620` are module-attribute
 errors (a name another module imports without re-exporting it), and
 `engines.py:302` is a return-value error on the engine's decorator.
 
@@ -98,7 +98,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.18%, 31798 statements with 2487 missed. `[tool.coverage.report] fail_under`
+92.13%, 32285 statements with 2540 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 

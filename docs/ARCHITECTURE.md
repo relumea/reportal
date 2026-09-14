@@ -2159,8 +2159,8 @@ source, size, chunk count and a Delete action, and searches the scope through
 `GET /api/knowledge/search`, rendering each ranked hit with its document title,
 score and ranking method.
 The build step is the accepted tradeoff
-for a UI-heavy portal; packaging the built UI is a follow-up (package-data
-still ships only `assets/*`).
+for a UI-heavy portal; package-data ships `assets/dist/` and its `assets/`
+bundles, and `make package-check` reads the built wheel back to assert them.
 
 ## Matching
 

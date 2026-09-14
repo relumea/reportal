@@ -9,8 +9,9 @@ assets, with `base: "/static/"` set in `vite.config.ts`.  A checkout with no
 build answers `GET /` with 503
 `{"error": "ui-not-built", "detail": "run 'bun install && bun run build' in web/"}`
 instead of a broken page.  The build step is the accepted tradeoff for a
-UI-heavy portal; package-data still ships only `assets/*`, so packaging the
-built UI is a follow-up.
+UI-heavy portal; `package-data` ships `assets/dist/` and its `assets/`
+bundles, and `make package-check` reads the built wheel back to assert the
+entry asset and one JavaScript and one CSS bundle are in it.
 
 ### What loads when
 
