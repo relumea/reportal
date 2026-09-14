@@ -556,9 +556,10 @@ reportal graph-sync <binary-id> [--backend NAME] [--json]
 reportal graph-query <query> [--backend NAME] [--json]
                                            # node id or text search over a backend that
                                            #   supports querying (sqlite does)
-reportal jobs [--status S] [--kind K] [--limit N] [--json]
+reportal jobs [--status S] [--kind K] [--binary-id N] [--limit N] [--json]
                                            # queued and finished operations, newest first,
-                                           #   with the waiting count and the kinds
+                                           #   with the waiting count and the kinds; each
+                                           #   option narrows the list
 reportal job <job-id> [--json]             # one job with its status, progress and result
 reportal job-submit <kind> <binary-id> [--domain D] [--run] [--json]
                                            # queue one operation; the server's pool runs it,

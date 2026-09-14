@@ -437,7 +437,7 @@ DWARF one renames the functions it places.
   events) report its status and progress, `POST /api/jobs/<id>/cancel` cancels
   what has not started, and `reportal jobs`/`job`/`job-run`/`job-cancel` plus the
   `list_jobs`, `get_job`, `submit_job`, `cancel_job` and `run_jobs` MCP tools and
-  the SPA Jobs view expose the same. A queued scan is journaled and revertible
+  the SPA Jobs view, whose Status, Kind, Binary and Show controls sit in the route hash, expose the same. A queued scan is journaled and revertible
   exactly like a direct one. The PDF report is one of the kinds, with its file
   and its newest job read together on `GET /api/binaries/<id>/report/pdf/status`.
 - Notification feed: `reportal notifications [--since ISO] [--limit N]` (or

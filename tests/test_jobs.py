@@ -376,6 +376,9 @@ class TestRoute:
         assert status.startswith("200")
         assert payload["queued"] >= 1
         assert any(entry["name"] == "composition" for entry in payload["kinds"])
+        # Both closed vocabularies travel, so a client's controls cannot drift.
+        assert list(payload["statuses"]) == list(jobs.STATUSES)
+        assert "composition" in {entry["name"] for entry in payload["kinds"]}
 
     def test_an_unknown_status_filter_is_400(self, conn: sqlite3.Connection) -> None:
         status, payload = _get("/api/jobs?status=nope")
@@ -537,6 +540,10 @@ class TestMcp:
         assert ran["jobs"][0]["id"] == queued["id"]
         assert get.handler({"job_id": queued["id"]})["status"] == jobs.STATUS_DONE
         assert listing.handler({})["total"] == 1
+        # The tool takes the same binary filter the route and the CLI do.
+        assert listing.handler({"binary_id": binary_id})["count"] == 1
+        assert listing.handler({"binary_id": 4242})["count"] == 0
+        assert listing.handler({})["statuses"] == list(jobs.STATUSES)
 
     def test_an_unknown_kind_is_a_tool_error(
         self, portal_db: Path, conn: sqlite3.Connection, tmp_path: Path

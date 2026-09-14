@@ -8793,6 +8793,9 @@ def list_jobs(request: Request) -> Response:
             "count": len(rows),
             "total": total,
             "queued": queued,
+            # Both closed vocabularies the listing accepts, so the SPA's
+            # controls are built from the registry rather than written twice.
+            "statuses": list(jobs.STATUSES),
             "kinds": [
                 {"name": spec.name, "label": spec.label, "params": list(spec.params)}
                 for spec in jobs.JOB_KINDS.values()

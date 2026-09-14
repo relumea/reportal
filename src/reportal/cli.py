@@ -2924,6 +2924,7 @@ def _journal_error_text(exc: Exception) -> str:
 def jobs_command(
     status: str | None = typer.Option(None, "--status", help="Only jobs in this status"),
     kind: str | None = typer.Option(None, "--kind", help="Only jobs of this kind"),
+    binary_id: int | None = typer.Option(None, "--binary-id", help="Only jobs on this binary"),
     limit: int = typer.Option(jobs.DEFAULT_JOB_LIMIT, "--limit", help="How many jobs to list"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
@@ -2933,7 +2934,9 @@ def jobs_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
-            rows, total = jobs.list_jobs(conn, status=status, kind=kind, limit=limit)
+            rows, total = jobs.list_jobs(
+                conn, status=status, kind=kind, binary_id=binary_id, limit=limit
+            )
         except ValueError as exc:
             _fail(str(exc), json_output)
         queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED)

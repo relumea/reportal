@@ -5250,15 +5250,26 @@ def _tool_list_jobs(arguments: dict[str, Any]) -> dict[str, Any]:
     limit = _arg_optional_int(arguments, "limit", jobs.DEFAULT_JOB_LIMIT)
     status = _arg_optional_str(arguments, "status")
     kind = _arg_optional_str(arguments, "kind")
+    binary_id = _arg_optional_int(arguments, "binary_id", 0)
     with contextlib.closing(_open()) as conn:
         try:
             rows, total = jobs.list_jobs(
-                conn, status=status or None, kind=kind or None, limit=limit
+                conn,
+                status=status or None,
+                kind=kind or None,
+                binary_id=binary_id or None,
+                limit=limit,
             )
         except ValueError as exc:
             raise ToolError("invalid job query", str(exc)) from exc
         queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED)
-    return {"jobs": rows, "count": len(rows), "total": total, "queued": queued}
+    return {
+        "jobs": rows,
+        "count": len(rows),
+        "total": total,
+        "queued": queued,
+        "statuses": list(jobs.STATUSES),
+    }
 
 
 def _tool_get_job(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -8320,6 +8331,7 @@ def builtin_tools() -> tuple[Tool, ...]:
                 {
                     "status": _str("Only jobs in this status."),
                     "kind": _str("Only jobs of this kind."),
+                    "binary_id": _int("Only jobs on this binary."),
                     "limit": _int(f"Maximum jobs (default {jobs.DEFAULT_JOB_LIMIT})."),
                 }
             ),

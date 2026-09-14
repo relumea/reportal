@@ -2383,6 +2383,8 @@ export interface JobsPayload {
   count: number;
   total: number;
   queued: number;
+  /** The two closed vocabularies the filters accept, from the server. */
+  statuses: string[];
   kinds: Array<{ name: string; label: string; params: string[] }>;
 }
 

@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- The job queue is filterable from every surface.  `GET /api/jobs` already took
+  `?status=`, `?kind=`, `?binary_id=` and `?limit=`, but the CLI's `jobs` command
+  had no binary filter, the `list_jobs` tool had none either, and the Jobs view
+  carried only a status select held in component state, so a filtered queue
+  could not be linked or reloaded.  The command and the tool take `--binary-id`
+  and `binary_id`, the payload now names the `statuses` beside the `kinds` so
+  the view's two selects are built from the registry, and the view's Status,
+  Kind, Binary and Show controls live in the route hash with a Clear.
+
 - A function list is filterable by name and address, and `reportal functions`
   exists: `GET /api/binaries/<id>/functions` takes `?name=` (a case-insensitive
   substring, with the LIKE wildcards escaped) and `?va=` (one exact address,

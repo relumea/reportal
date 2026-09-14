@@ -779,13 +779,18 @@ polls `/binaries/<id>/report/pdf/status` while the job is live, showing the job
 id, its status and the page count once the file is on disk.
 
 The Jobs view (`views/JobsView.tsx`, `#/jobs`) is the async operation workflow:
-a Queue toolbar over the operations `GET /api/jobs` advertises (the kind, the
-binary, the domain a behavior or hardening job needs), the list of queued and
-finished jobs with a status badge, the `progress`/`steps_total` readout, the
-created time and each job's message, result or error, a Cancel button on a job
-that has not started and a Run waiting now control that drains the queue inline.
-It polls while anything is queued and runs nothing itself: what the view shows
-is what the server's pool did.
+a filter toolbar (Status, Kind, Binary and Show) whose four controls live in
+the route hash (`#/jobs?status=&kind=&binary_id=&limit=`) with a Clear that
+resets them, a Queue toolbar over the operations `GET /api/jobs` advertises (the
+kind, the binary, the domain a behavior or hardening job needs), the list of
+queued and finished jobs with a status badge, the `progress`/`steps_total`
+readout, the created time and each job's message, result or error, a Cancel
+button on a job that has not started and a Run waiting now control that drains
+the queue inline.  It polls while anything is queued and runs nothing itself:
+what the view shows is what the server's pool did.  The status and kind controls
+are built from the `statuses` and `kinds` the payload carries, so neither can
+drift from the registry, and the line above the table reads
+`N waiting, M shown of T`.
 
 The topbar carries a Notifications button (`views/NotificationsDialog.tsx`):
 the count of feed items this browser has not dismissed, opening a dialog over

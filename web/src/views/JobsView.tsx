@@ -8,6 +8,7 @@
 // server did.
 
 import { useState } from "react";
+import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
@@ -54,20 +55,68 @@ function JobDetail({ job }: { job: JobView }): ReactNode {
   );
 }
 
-export function JobsView(): ReactNode {
+/** The listing filters, every one optional and all of them in the route hash. */
+interface JobFilters {
+  status: string;
+  kind: string;
+  binaryId: string;
+  limit: string;
+}
+
+const LIST_FILTER = "limit";
+
+function filtersFromQuery(query: Record<string, string>): JobFilters {
+  return {
+    status: query.status ?? "",
+    kind: query.kind ?? "",
+    binaryId: query.binary_id ?? "",
+    limit: query[LIST_FILTER] ?? "",
+  };
+}
+
+/** The API path one filter set reads. */
+function listPath(filters: JobFilters): string {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.kind) params.set("kind", filters.kind);
+  if (filters.binaryId.trim()) params.set("binary_id", filters.binaryId.trim());
+  if (filters.limit.trim()) params.set("limit", filters.limit.trim());
+  const search = params.toString();
+  return search ? `/jobs?${search}` : "/jobs";
+}
+
+export function JobsView({
+  query = {},
+}: {
+  /** The route hash, whose keys are the filters this view applies. */
+  query?: Record<string, string>;
+}): ReactNode {
+  const navigate = useNavigate();
+  const filters = filtersFromQuery(query);
   const [kind, setKind] = useState("");
   const [binaryId, setBinaryId] = useState("");
   const [domain, setDomain] = useState("");
-  const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
-  const query = status ? `?status=${status}` : "";
+  const path = listPath(filters);
   const { data, error, reload } = useAsync(
-    () => api<JobsPayload>(`/jobs${query}`),
-    [status],
+    () => api<JobsPayload>(path),
+    [path],
     true,
     (payload) => (payload && payload.queued > 0 ? 2000 : false),
   );
+
+  const apply = (patch: Partial<JobFilters>): void => {
+    const next = { ...filters, ...patch };
+    const params = new URLSearchParams();
+    if (next.status) params.set("status", next.status);
+    if (next.kind) params.set("kind", next.kind);
+    if (next.binaryId.trim()) params.set("binary_id", next.binaryId.trim());
+    if (next.limit.trim()) params.set(LIST_FILTER, next.limit.trim());
+    navigate({ pathname: "/jobs", search: createSearchParams(params).toString() });
+  };
+  const filtered =
+    filters.status !== "" || filters.kind !== "" || filters.binaryId !== "" || filters.limit !== "";
 
   const act = (work: () => Promise<unknown>): void => {
     setActionError(null);
@@ -101,6 +150,53 @@ export function JobsView(): ReactNode {
       }
     >
       <Toolbar>
+        <Field label="Status filter">
+          <select
+            value={filters.status}
+            onChange={(event) => apply({ status: event.target.value })}
+          >
+            <option value="">any status</option>
+            {(data?.statuses ?? []).map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Kind filter">
+          <select value={filters.kind} onChange={(event) => apply({ kind: event.target.value })}>
+            <option value="">any kind</option>
+            {(data?.kinds ?? []).map((entry) => (
+              <option key={entry.name} value={entry.name}>
+                {entry.label}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Binary filter" hint="job's binary id">
+          <input
+            inputMode="numeric"
+            placeholder="binary id"
+            value={filters.binaryId}
+            onChange={(event) => apply({ binaryId: event.target.value })}
+          />
+        </Field>
+        <Field label="Show" hint="how many jobs">
+          <input
+            type="number"
+            min={1}
+            placeholder="50"
+            value={filters.limit}
+            onChange={(event) => apply({ limit: event.target.value })}
+          />
+        </Field>
+        {filtered ? (
+          <Button tone="ghost" onClick={() => navigate({ pathname: "/jobs", search: "" })}>
+            Clear
+          </Button>
+        ) : null}
+      </Toolbar>
+      <Toolbar>
         <Field label="Operation">
           <select value={kind} onChange={(event) => setKind(event.target.value)}>
             <option value="">choose one</option>
@@ -124,16 +220,6 @@ export function JobsView(): ReactNode {
             value={domain}
             onChange={(event) => setDomain(event.target.value)}
           />
-        </Field>
-        <Field label="Status">
-          <select value={status} onChange={(event) => setStatus(event.target.value)}>
-            <option value="">all</option>
-            {["queued", "running", "done", "failed", "cancelled"].map((value) => (
-              <option key={value} value={value}>
-                {value}
-              </option>
-            ))}
-          </select>
         </Field>
         <Button tone="primary" pending={busy} disabled={!kind || !binaryId} onClick={submit}>
           Queue

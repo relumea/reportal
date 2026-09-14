@@ -184,6 +184,11 @@ function AnalysesRoute(): ReactNode {
   return <AnalysesView query={Object.fromEntries(params)} />;
 }
 
+function JobsRoute(): ReactNode {
+  const [params] = useSearchParams();
+  return <JobsView query={Object.fromEntries(params)} />;
+}
+
 function BinariesRoute(): ReactNode {
   const [params] = useSearchParams();
   return <BinariesView query={Object.fromEntries(params)} />;
@@ -473,7 +478,7 @@ export function App(): ReactNode {
       element: <ConversationRoute />,
       handle: { view: "conversations", title: (params) => `Conversation #${params.conversationId}` },
     },
-    { path: "/jobs", element: <JobsView />, handle: { view: "jobs", title: "Jobs" } },
+    { path: "/jobs", element: <JobsRoute />, handle: { view: "jobs", title: "Jobs" } },
     { path: "/models", element: <ModelsView />, handle: { view: "models", title: "Models" } },
     { path: "/external", element: <ExternalView />, handle: { view: "external", title: "External" } },
     { path: "/journal", element: <JournalRoute />, handle: { view: "journal", title: "Journal" } },

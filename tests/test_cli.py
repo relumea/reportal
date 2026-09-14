@@ -23,7 +23,7 @@ from conftest import (
 )
 from typer.testing import CliRunner
 
-from reportal import __version__, cli, engines, llm, similarity, store
+from reportal import __version__, cli, engines, jobs, llm, similarity, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -469,6 +469,28 @@ class TestImportRebrew:
         assert result.exit_code == 0, result.output
         assert "Stubs" in result.output
         assert "2" in result.output
+
+
+class TestJobsCommand:
+    def test_lists_the_queue_and_filters_by_binary(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            jobs.submit(conn, kind="composition", binary_id=ids["binary"])
+            other = store.add_binary(conn, sha256="cd" * 32, name="other.exe")
+            jobs.submit(conn, kind="composition", binary_id=other)
+
+        listed = runner.invoke(cli.app, ["jobs", "--json"])
+        assert listed.exit_code == 0, listed.output
+        assert json.loads(listed.stdout)["count"] == 2
+
+        filtered = runner.invoke(cli.app, ["jobs", "--binary-id", str(ids["binary"]), "--json"])
+        assert filtered.exit_code == 0, filtered.output
+        payload = json.loads(filtered.stdout)
+        assert payload["count"] == 1
+        assert payload["jobs"][0]["binary_id"] == ids["binary"]
+        assert payload["total"] == 1
 
 
 class TestFunctionsCommand:
