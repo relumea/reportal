@@ -176,7 +176,8 @@ function AutoRoute(): ReactNode {
 
 function JournalRoute(): ReactNode {
   const { action } = useParams();
-  return <JournalView action={action ?? null} />;
+  const [params] = useSearchParams();
+  return <JournalView action={action ?? null} query={Object.fromEntries(params)} />;
 }
 
 function AnalysesRoute(): ReactNode {

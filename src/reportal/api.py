@@ -7472,7 +7472,14 @@ def list_notifications(request: Request) -> Response:
 
 @router.get("/api/journal")
 def list_journal(request: Request) -> Response:
-    """Recent journal entries, newest first, without their descriptor payload."""
+    """Recent journal entries, newest first, without their descriptor payload.
+
+    ``?action=`` narrows to one action id and ``?actor=`` to the identity that
+    wrote the entry (the name the server set around the request, ``local`` while
+    auth is off and empty for a CLI or MCP write); ``?limit=`` bounds the page.
+    The body echoes what it applied and names the ``actors`` the journal holds,
+    which is what the SPA's control is built from.
+    """
     raw_limit = request.query_params.get("limit")
     limit = journal.DEFAULT_LIST_LIMIT
     if raw_limit is not None:
@@ -7484,9 +7491,21 @@ def list_journal(request: Request) -> Response:
         return json_error(400, error="limit must be positive", detail="limit is at least 1")
     raw_action = request.query_params.get("action")
     action = raw_action.strip() if isinstance(raw_action, str) and raw_action.strip() else None
+    raw_actor = request.query_params.get("actor")
+    actor = raw_actor.strip() if isinstance(raw_actor, str) and raw_actor.strip() else None
     with contextlib.closing(_open()) as conn:
-        entries = journal.list_entries(conn, action=action, limit=limit)
-    return json_response({"entries": entries, "count": len(entries), "limit": limit})
+        entries = journal.list_entries(conn, action=action, actor=actor, limit=limit)
+        actors = journal.list_actors(conn)
+    return json_response(
+        {
+            "entries": entries,
+            "count": len(entries),
+            "limit": limit,
+            "action": action,
+            "actor": actor,
+            "actors": actors,
+        }
+    )
 
 
 @router.get("/api/journal/{action}")

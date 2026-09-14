@@ -444,6 +444,32 @@ class TestListAndPrune:
         entries = journal.list_entries(conn, action="act-1")
         assert [entry["description"] for entry in entries] == ["first"]
 
+    def test_list_entries_filters_by_actor(self, conn: sqlite3.Connection) -> None:
+        with journal.acting_as("ana"):
+            _log_with(
+                conn,
+                "act-1",
+                (effects.EFFECT_ROW_DELETE, "first", journal.row_delete_descriptor("tags", 1)),
+            )
+        with journal.acting_as("bo"):
+            _log_with(
+                conn,
+                "act-2",
+                (effects.EFFECT_ROW_DELETE, "second", journal.row_delete_descriptor("tags", 2)),
+            )
+
+        assert [entry["description"] for entry in journal.list_entries(conn, actor="ana")] == [
+            "first"
+        ]
+        assert [entry["description"] for entry in journal.list_entries(conn, actor="bo")] == [
+            "second"
+        ]
+        assert journal.list_entries(conn, actor="nobody") == []
+        # The two filters compose, and the facet names what the journal holds.
+        assert journal.list_entries(conn, action="act-2", actor="bo") != []
+        assert journal.list_entries(conn, action="act-1", actor="bo") == []
+        assert journal.list_actors(conn) == ["ana", "bo"]
+
     def test_list_entries_honours_the_limit(self, conn: sqlite3.Connection) -> None:
         for index in range(3):
             _log_with(
@@ -520,6 +546,35 @@ class TestApiRoutes:
         payload = json_body(body, headers)
         assert payload["count"] == 1
         assert payload["entries"][0]["action"] == "act-1"
+
+    def test_list_route_filters_by_actor_and_names_the_ones_it_holds(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        with journal.acting_as("ana"):
+            _log_with(
+                conn,
+                "act-1",
+                (effects.EFFECT_ROW_DELETE, "first", journal.row_delete_descriptor("tags", 1)),
+            )
+        with journal.acting_as("bo"):
+            _log_with(
+                conn,
+                "act-2",
+                (effects.EFFECT_ROW_DELETE, "second", journal.row_delete_descriptor("tags", 2)),
+            )
+
+        status, headers, body = wsgi_request("GET", "/api/journal?actor=ana")
+        payload = json_body(body, headers)
+
+        assert status.startswith("200")
+        assert [entry["description"] for entry in payload["entries"]] == ["first"]
+        assert payload["actor"] == "ana"
+        assert payload["actors"] == ["ana", "bo"]
+        assert payload["action"] is None
+
+        # The action and the actor compose, which the per-action route cannot.
+        _status, headers, body = wsgi_request("GET", "/api/journal?action=act-2&actor=bo")
+        assert [entry["description"] for entry in json_body(body, headers)["entries"]] == ["second"]
 
     def test_list_route_rejects_a_bad_limit(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("GET", "/api/journal?limit=0")
@@ -794,6 +849,28 @@ class TestApiRoutes:
 
 
 class TestCli:
+    def test_journal_filters_by_actor(self, conn: sqlite3.Connection) -> None:
+        with journal.acting_as("ana"):
+            _log_with(
+                conn,
+                "act-1",
+                (effects.EFFECT_ROW_DELETE, "first", journal.row_delete_descriptor("tags", 1)),
+            )
+        with journal.acting_as("bo"):
+            _log_with(
+                conn,
+                "act-2",
+                (effects.EFFECT_ROW_DELETE, "second", journal.row_delete_descriptor("tags", 2)),
+            )
+
+        result = runner.invoke(cli.app, ["journal", "--actor", "ana", "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert [entry["description"] for entry in payload["entries"]] == ["first"]
+        assert payload["actor"] == "ana"
+        assert payload["actors"] == ["ana", "bo"]
+
     def test_journal_lists_entries_as_json(self, conn: sqlite3.Connection) -> None:
         _log_with(
             conn,
@@ -884,6 +961,26 @@ class TestMcp:
         payload, is_error = _call_tool("list_journal", {"limit": 5})
         assert not is_error
         assert payload["entries"][0]["action"] == "act-1"
+
+    def test_list_journal_filters_by_actor(self, conn: sqlite3.Connection) -> None:
+        with journal.acting_as("ana"):
+            _log_with(
+                conn,
+                "act-1",
+                (effects.EFFECT_ROW_DELETE, "first", journal.row_delete_descriptor("tags", 1)),
+            )
+        with journal.acting_as("bo"):
+            _log_with(
+                conn,
+                "act-2",
+                (effects.EFFECT_ROW_DELETE, "second", journal.row_delete_descriptor("tags", 2)),
+            )
+
+        payload, is_error = _call_tool("list_journal", {"actor": "ana"})
+
+        assert not is_error
+        assert [entry["description"] for entry in payload["entries"]] == ["first"]
+        assert payload["actors"] == ["ana", "bo"]
 
     def test_revert_journal_entry_reverts_an_action(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)

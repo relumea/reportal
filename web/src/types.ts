@@ -1837,12 +1837,19 @@ export interface JournalEntry {
   description: string;
   created_at: string;
   status: string;
+  /** The identity the server set around the write; empty for a CLI or MCP one. */
+  actor: string;
 }
 
 /** `GET /api/journal` and `GET /api/journal/<action>`. */
 export interface JournalList {
   entries: JournalEntry[];
   count: number;
+  limit?: number;
+  action?: string | null;
+  actor?: string | null;
+  /** The actors the journal holds, which is what the filter offers. */
+  actors?: string[];
 }
 
 /** One entry of a revert report. */

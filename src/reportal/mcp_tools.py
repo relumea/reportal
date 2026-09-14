@@ -5339,9 +5339,19 @@ def _tool_run_jobs(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_list_journal(arguments: dict[str, Any]) -> dict[str, Any]:
     limit = _arg_optional_int(arguments, "limit", journal.DEFAULT_LIST_LIMIT)
     action = _arg_optional_str(arguments, "action")
+    actor = _arg_optional_str(arguments, "actor")
     with contextlib.closing(_open()) as conn:
-        entries = journal.list_entries(conn, action=action or None, limit=limit)
-    return {"entries": entries, "count": len(entries)}
+        entries = journal.list_entries(
+            conn, action=action or None, actor=actor or None, limit=limit
+        )
+        actors = journal.list_actors(conn)
+    return {
+        "entries": entries,
+        "count": len(entries),
+        "action": action or None,
+        "actor": actor or None,
+        "actors": actors,
+    }
 
 
 def _tool_revert_journal_entry(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -8434,10 +8444,11 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "list_journal",
             "List recorded action-journal entries newest first, optionally narrowed to one"
-            " action id; the descriptor payload is not returned.",
+            " action id or one actor; the descriptor payload is not returned.",
             _object(
                 {
                     "action": _str("Only the entries of this action id."),
+                    "actor": _str("Only the entries this identity wrote."),
                     "limit": _int(f"Maximum entries (default {journal.DEFAULT_LIST_LIMIT})."),
                 }
             ),

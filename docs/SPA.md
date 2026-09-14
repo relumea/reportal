@@ -771,7 +771,7 @@ one `POST /api/analyses/bulk` action to the checked rows (add tag, remove tag,
 delete), states how many applied and how many were skipped, and links the
 journal entry the action recorded.  There
 is no owner column: reportal is a single-user loopback tool, the view says so,
-and it links to the Journal view, which is where who did what is recorded.  The
+and it links to the Journal view, which is where who did what is recorded: that view lists each entry with its action, kind, status, actor, time and description, filters by the actor the server recorded and by page size (`#/journal?actor=&limit=`, both in the hash), and reverts one entry or a whole action behind the confirm pattern.  The
 Binaries view carries a Browse analyses action beside Browse functions.
 The binary detail Report panel (`panels/BinaryPanels.tsx`) offers Generate PDF (the
 synchronous render) beside Queue PDF, which submits a `report-pdf` job and then

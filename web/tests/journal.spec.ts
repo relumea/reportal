@@ -39,3 +39,40 @@ test("a UI write appears in the journal and its revert restores the state", asyn
   await expect(tagsAfter.getByRole("button", { name: "Add tag" })).toBeVisible();
   await expect(rowContaining(tagsAfter, name)).toHaveCount(0);
 });
+
+test("the journal filters by actor and by page size", async ({ page }) => {
+  // A write through the UI records the local operator as the entry's actor.
+  const name = uniqueName("e2e-journal-actor");
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const tags = panelByTitle(page, "Tags");
+  await tags.getByLabel("Tag", { exact: true }).fill(name);
+  await tags.getByRole("button", { name: "Add tag" }).click();
+  await expect(rowContaining(tags, name)).toBeVisible();
+
+  await page.goto("/#/journal");
+  const panel = panelByTitle(page, "Journal");
+  const rows = panel.locator("table.data-table tbody tr");
+  await expect(rows.first()).toBeVisible();
+  await expect(panel.getByRole("columnheader", { name: "Actor" })).toBeVisible();
+
+  // The actor is read from the API rather than assumed, and every row the
+  // filter keeps carries it (the column is the fifth: Entry, Action, Kind,
+  // Status, Actor).
+  const listed = (await (await page.request.get("/api/journal?limit=100")).json()) as {
+    actors: string[];
+  };
+  expect(listed.actors.length).toBeGreaterThan(0);
+  const actor = listed.actors[0];
+  await panel.getByRole("combobox", { name: /^Actor/ }).selectOption(actor);
+  await expect(page).toHaveURL(new RegExp(`actor=${actor}`));
+  await expect(rows.first()).toBeVisible();
+  const shown = await rows.locator("td:nth-child(5)").allTextContents();
+  expect([...new Set(shown.map((text) => text.trim()))]).toEqual([actor]);
+
+  // The page size is a filter too, and Clear resets both.
+  await panel.getByRole("spinbutton", { name: /^Show/ }).fill("1");
+  await expect(page).toHaveURL(/limit=1/);
+  await expect(rows).toHaveCount(1);
+  await panel.getByRole("button", { name: "Clear" }).click();
+  await expect(page).toHaveURL(/#\/journal$/);
+});

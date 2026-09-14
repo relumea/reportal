@@ -571,9 +571,10 @@ reportal notifications [--json] [--since ISO] [--limit N]
                                            #   journal and the analysis log, newest first;
                                            #   reads only, stores nothing, and prints the
                                            #   latest time to pass back as --since
-reportal journal [--json] [--action ID] [--limit N]
+reportal journal [--json] [--action ID] [--actor NAME] [--limit N]
                                            # list recorded action-journal entries, newest
                                            #   first, optionally narrowed to one action
+                                           #   or to the entries one actor wrote
 reportal journal-revert --action ID | --entry ID [--json]
                                            # replay one recorded action's or one entry's
                                            #   stored inverses; a wired command prints its

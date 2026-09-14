@@ -810,24 +810,49 @@ def _entry_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
 
 
 def list_entries(
-    conn: sqlite3.Connection, *, action: str | None = None, limit: int = DEFAULT_LIST_LIMIT
+    conn: sqlite3.Connection,
+    *,
+    action: str | None = None,
+    actor: str | None = None,
+    limit: int = DEFAULT_LIST_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Entries newest first, optionally narrowed to one action.
+    """Entries newest first, optionally narrowed to one action and one actor.
 
     The descriptor payload is not returned: a file descriptor can carry bytes,
-    and the metadata is what a listing renders.
+    and the metadata is what a listing renders.  *actor* is the name the server
+    set around the request that wrote the entry (``local`` while auth is off and
+    empty for a CLI or MCP write), which is the one identity the journal
+    records.
     """
     if limit < 1:
         raise ValueError("limit must be positive")
     ensure_schema(conn)
     sql = f"SELECT * FROM {_TABLE}"
     params: list[Any] = []
+    clauses: list[str] = []
     if action is not None:
-        sql += " WHERE action = ?"
+        clauses.append("action = ?")
         params.append(action)
+    if actor is not None:
+        clauses.append("actor = ?")
+        params.append(actor)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(min(limit, MAX_LIST_LIMIT))
     return [_entry_row(row) for row in conn.execute(sql, params)]
+
+
+def list_actors(conn: sqlite3.Connection) -> list[str]:
+    """The actors the journal recorded, ordered by name.
+
+    A listing's actor control is built from this, so it offers only names that
+    can match something; an entry written before the column existed, or by a CLI
+    or MCP write, carries the empty string and is left out.
+    """
+    ensure_schema(conn)
+    rows = conn.execute(f"SELECT DISTINCT actor FROM {_TABLE} WHERE actor != '' ORDER BY actor")
+    return [str(row["actor"]) for row in rows]
 
 
 def count_actions(conn: sqlite3.Connection, *, since: str | None = None) -> int:

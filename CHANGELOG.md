@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- The journal filters by the actor it recorded.  `GET /api/journal` takes
+  `?actor=` beside its existing `?action=` and `?limit=`, echoes what it applied
+  and names the `actors` the journal holds (the same facet idea as the job
+  queue's `statuses`), `reportal journal --actor` and the `list_journal` tool
+  take the same filter, and the Journal view lists an Actor column with an actor
+  select and a page-size control in the route hash.  The per-action route stays
+  as it is (every entry of one action, no filters); the view now asks the
+  listing for one action as well, so the two new controls keep working while an
+  action is selected.
+
 - The job queue is filterable from every surface.  `GET /api/jobs` already took
   `?status=`, `?kind=`, `?binary_id=` and `?limit=`, but the CLI's `jobs` command
   had no binary filter, the `list_jobs` tool had none either, and the Jobs view

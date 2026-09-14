@@ -3129,6 +3129,7 @@ def notifications_command(
 @app.command("journal")
 def journal_command(
     action: str | None = typer.Option(None, "--action", help="Only the entries of one action id"),
+    actor: str | None = typer.Option(None, "--actor", help="Only the entries one actor wrote"),
     limit: int = typer.Option(
         journal.DEFAULT_LIST_LIMIT, "--limit", help="How many entries to list"
     ),
@@ -3141,14 +3142,25 @@ def journal_command(
     if limit < 1:
         _fail("limit must be positive", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        entries = journal.list_entries(conn, action=action, limit=limit)
+        entries = journal.list_entries(conn, action=action, actor=actor, limit=limit)
+        actors = journal.list_actors(conn)
     if json_output:
-        typer.echo(json.dumps({"entries": entries, "count": len(entries)}))
+        typer.echo(
+            json.dumps(
+                {
+                    "entries": entries,
+                    "count": len(entries),
+                    "actor": actor,
+                    "actors": actors,
+                }
+            )
+        )
         return
     table = Table(show_header=True, header_style="bold")
     table.add_column("Action", style="cyan")
     table.add_column("Kind")
     table.add_column("Status")
+    table.add_column("Actor")
     table.add_column("Created")
     table.add_column("Description")
     for entry in entries:
@@ -3156,6 +3168,7 @@ def journal_command(
             str(entry["action"]),
             str(entry["kind"]),
             str(entry["status"]),
+            str(entry["actor"] or "-"),
             str(entry["created_at"]),
             str(entry["description"]),
         )

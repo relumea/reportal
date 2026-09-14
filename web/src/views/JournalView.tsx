@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
@@ -9,10 +9,12 @@ import {
   DataTable,
   EmptyState,
   ErrorNote,
+  Field,
   Loading,
   Muted,
   Panel,
   StatusCell,
+  Toolbar,
 } from "../components";
 import { clearPanels } from "../panelCache";
 import type { JournalEntry, JournalList, JournalRevertResult } from "../types";
@@ -21,10 +23,45 @@ import { useAsync } from "../useAsync";
 // Entries the list view asks for; the server clamps its own hard cap.
 const LIST_LIMIT = 100;
 
-export function JournalView({ action }: { action: string | null }): ReactNode {
+/** The listing's own filters, both in the route hash. */
+interface JournalFilters {
+  actor: string;
+  limit: string;
+}
+
+export function JournalView({
+  action,
+  query = {},
+}: {
+  action: string | null;
+  /** The route hash: the actor filter and the page size live there. */
+  query?: Record<string, string>;
+}): ReactNode {
   const navigate = useNavigate();
-  const query = action ? `/journal/${encodeURIComponent(action)}` : `/journal?limit=${LIST_LIMIT}`;
-  const { data, error, reload } = useAsync(() => api<JournalList>(query), [query]);
+  const filters: JournalFilters = {
+    actor: query.actor ?? "",
+    limit: query.limit ?? "",
+  };
+  // One listing route answers both modes: the per-action route serves every
+  // entry of an action and takes no filters, so selecting an action asks the
+  // listing for that action instead and the actor and page size keep working.
+  const params = new URLSearchParams();
+  params.set("limit", filters.limit.trim() || String(LIST_LIMIT));
+  if (action) params.set("action", action);
+  if (filters.actor) params.set("actor", filters.actor);
+  const path = `/journal?${params.toString()}`;
+  const { data, error, reload } = useAsync(() => api<JournalList>(path), [path]);
+
+  const apply = (patch: Partial<JournalFilters>): void => {
+    const next = { ...filters, ...patch };
+    const nextParams = new URLSearchParams();
+    if (next.actor) nextParams.set("actor", next.actor);
+    if (next.limit.trim()) nextParams.set("limit", next.limit.trim());
+    navigate({
+      pathname: action ? `/journal/${encodeURIComponent(action)}` : "/journal",
+      search: createSearchParams(nextParams).toString(),
+    });
+  };
   const [message, setMessage] = useState("");
   const [failure, setFailure] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
@@ -81,6 +118,40 @@ export function JournalView({ action }: { action: string | null }): ReactNode {
         ) : null
       }
     >
+      <Toolbar>
+        <Field label="Actor" hint="who wrote the entry">
+          <select value={filters.actor} onChange={(event) => apply({ actor: event.target.value })}>
+            <option value="">any actor</option>
+            {(data?.actors ?? []).map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Show" hint="how many entries">
+          <input
+            type="number"
+            min={1}
+            placeholder={String(LIST_LIMIT)}
+            value={filters.limit}
+            onChange={(event) => apply({ limit: event.target.value })}
+          />
+        </Field>
+        {filters.actor !== "" || filters.limit !== "" ? (
+          <Button
+            tone="ghost"
+            onClick={() =>
+              navigate({
+                pathname: action ? `/journal/${encodeURIComponent(action)}` : "/journal",
+                search: "",
+              })
+            }
+          >
+            Clear
+          </Button>
+        ) : null}
+      </Toolbar>
       {action ? (
         <p className="muted">
           Action <span className="mono">{action}</span>
@@ -102,6 +173,7 @@ export function JournalView({ action }: { action: string | null }): ReactNode {
             },
             { label: "Kind", key: "kind" },
             { label: "Status", render: (row) => <StatusCell status={row.status} /> },
+            { label: "Actor", render: (row) => row.actor || "-" },
             { label: "Created", key: "created_at", mono: true },
             { label: "Description", key: "description" },
             {
