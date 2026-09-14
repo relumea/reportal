@@ -1208,7 +1208,13 @@ def _seed_security_scan(
     if not engine.available():
         raise SystemExit(f"missing prerequisite: {rebrew_bin}")
     result = engine.security_scan(project_dir)
-    store.set_scan(conn, analysis_id, store.SCAN_KIND_SECURITY, result)
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_SECURITY,
+        result,
+        params={"min_severity": engines.DEFAULT_SECURITY_MIN_SEVERITY},
+    )
     return result
 
 

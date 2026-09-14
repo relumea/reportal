@@ -2042,6 +2042,24 @@ export interface DetailsStatus {
   sources: Record<string, DetailSource>;
 }
 
+/** One stored scan of an analysis, from `GET /api/binaries/<id>/scans`:
+ *  the kind, the status and the inputs it ran with, never its result payload. */
+export interface BinaryScan {
+  id: number;
+  analysis_id: number;
+  kind: string;
+  status: string;
+  params: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface BinaryScans {
+  binary_id: number;
+  analysis_id: number | null;
+  scans: BinaryScan[];
+  count: number;
+}
+
 /** The `GET /api/binaries/<id>/additional-details` payload, composed from the
  *  stored pe-info scan.  404 `no-scan` without one. */
 export interface AdditionalDetails {

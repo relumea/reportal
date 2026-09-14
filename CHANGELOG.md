@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- The binary detail lists the stored scans with the inputs each ran with.
+  `GET /api/binaries/<id>/scans`, `GET /api/analyses/<id>/scans`, `reportal
+  scans` and the `list_scans` tool served the listing (the recorded inputs
+  beside every scan, which is what a reader needs to run one again the same
+  way) and the SPA only said which scans were present, through the detail
+  coverage panel.  The `Scans` panel lists one row per scan of the newest
+  analysis: its kind, its status, its recorded inputs (a scan that recorded
+  none says `none recorded`) and when it ran.
+
 - The signature panel can show its edit history and revert a version.  The
   history model, the revert, the journal, the CLI (`signature-history`,
   `signature-revert`) and the `get_signature_history`/`revert_signature_history`

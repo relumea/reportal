@@ -68,3 +68,16 @@ test("the cross-references panel scans on demand and renders what the engine fou
   await expect(xrefs.locator("table, .empty-state")).toBeVisible();
   await expect(xrefs.getByRole("alert")).toHaveCount(0);
 });
+
+test("the scans panel lists the stored scans and the inputs they ran with", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  // Located by its heading shape, not `panelByTitle`: the badge is part of the name.
+  const scans = page
+    .locator(".panel")
+    .filter({ has: page.getByRole("heading", { name: /^Scans \d+$/ }) });
+
+  await expect(scans.getByText("filetype", { exact: true })).toBeVisible();
+  await expect(scans.getByText("pe-info", { exact: true })).toBeVisible();
+  // The security scan is the seeded one that recorded the floor it ran with.
+  await expect(scans.getByText("min_severity=low", { exact: false })).toBeVisible();
+});

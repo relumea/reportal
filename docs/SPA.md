@@ -270,7 +270,11 @@ reports what is missing rather than an empty panel; the overlay size and
 offset, the Rich header's entry count and build ids, the debug entry count and
 the section-table packer hint from `/binaries/<id>/additional-details`; and the
 Detect-It-Easy identity with the by-category match counts and the packed
-verdict from `/binaries/<id>/die-info`); unpacked files (the unpack panel, see
+verdict from `/binaries/<id>/die-info`); scans (the stored scans of the
+binary's newest analysis from `/binaries/<id>/scans`, newest first, badged with
+the count: one row per scan naming its kind, its status, the inputs it ran with
+(a scan that recorded none says `none recorded`) and when it ran, with the
+result itself left to the panel that shows that scan); unpacked files (the unpack panel, see
 below); strings (loaded on demand,
 a client-side filter with the filtered-of-total count, capped at
 `MAX_STRINGS_SHOWN` with the true total stated, server-side `sort`/`order`

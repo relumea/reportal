@@ -26,6 +26,7 @@ import {
   RelatedPanel,
   RemediationPanel,
   ReportPanel,
+  ScansPanel,
   SecretsPanel,
   SectionsPanel,
   SecurityMitigationsPanel,
@@ -71,6 +72,7 @@ export function BinaryDetail({
           <MemoryPanel binaryId={binary.id} focus={query.memory} />
           <CodeSignaturePanel binaryId={binary.id} />
           <DetailCoveragePanel binaryId={binary.id} />
+          <ScansPanel binaryId={binary.id} />
           <PackerPanel binaryId={binary.id} />
           <UnpackedFilesPanel binaryId={binary.id} />
           <StringsPanel binaryId={binary.id} />
