@@ -36,6 +36,10 @@ JACCARD_WEIGHT = 0.4
 # produces the same stored value.
 SCORE_DECIMALS = 1
 
+# The scale a blended score lives on: the Jaccard term is JACCARD_WEIGHT of it
+# and the text ratio the rest, so the ratio alone can carry (1 - weight) * this.
+SCORE_SCALE = 100.0
+
 # Distinct listings whose prepared fingerprint stays resident.  Bounded
 # because the key is the listing text itself and an unbounded cache would pin
 # a whole corpus of listings in memory for the process lifetime.
@@ -130,6 +134,37 @@ def similarity(left: str, right: str) -> float:
     ratio = float(fuzz.ratio(left, right))
     blended = scoring.score_hybrid(float(jaccard), ratio, JACCARD_WEIGHT)
     return float(round(blended, SCORE_DECIMALS))
+
+
+def jaccard(left: str, right: str) -> float:
+    """The MinHash Jaccard of two listings (0-1), without the text ratio.
+
+    The cheap half of :func:`similarity`'s blend: tokenizing and packing are
+    cached per listing, and the comparison walks the packed fingerprints, so a
+    caller that only needs the structural term pays a fraction of a full score.
+    The early answers mirror :func:`similarity`: an empty side has no structure
+    to compare, and identical non-empty text is a perfect match.
+    """
+    if not left or not right:
+        return 0.0
+    if left == right:
+        return 1.0
+    scoring, _ = _load_modules()
+    return float(scoring.minhash_jaccard(_prepare(left), _prepare(right)))
+
+
+def jaccard_floor(min_score: float) -> float:
+    """The smallest Jaccard a pair can carry and still reach *min_score*.
+
+    A blended score is ``JACCARD_WEIGHT`` of the Jaccard term on a 0-100 scale
+    plus the rest of the text ratio, and that ratio is at most 100, so a pair
+    scoring at least *min_score* has a Jaccard of at least
+    ``(min_score - (1 - JACCARD_WEIGHT) * 100) / (JACCARD_WEIGHT * 100)``.  A
+    floor of zero proves nothing (a threshold the ratio alone can reach) and
+    means no pair may be ruled out by this bound.
+    """
+    floor = (min_score - (1.0 - JACCARD_WEIGHT) * SCORE_SCALE) / (JACCARD_WEIGHT * SCORE_SCALE)
+    return max(0.0, floor)
 
 
 def confidence_scores(scores: list[float]) -> list[float]:

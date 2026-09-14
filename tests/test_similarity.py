@@ -51,6 +51,63 @@ class TestAvailable:
         assert similarity.available() is False
 
 
+class TestJaccardFloor:
+    """The bound that makes the matching prefilter exact."""
+
+    def test_a_threshold_the_ratio_alone_can_reach_has_no_floor(self) -> None:
+        # 60 is exactly what a perfect text ratio scores with no Jaccard at
+        # all, and a lower threshold is reachable with even less structure.
+        assert similarity.jaccard_floor(60.0) == 0.0
+        assert similarity.jaccard_floor(0.0) == 0.0
+
+    def test_the_default_floor_is_half(self) -> None:
+        # score = 0.4 * jaccard * 100 + 0.6 * ratio, ratio at most 100, so
+        # 80 = 40 * jaccard + 60 at the limit.
+        assert similarity.jaccard_floor(80.0) == pytest.approx(0.5)
+
+    def test_a_perfect_threshold_needs_a_perfect_jaccard(self) -> None:
+        assert similarity.jaccard_floor(100.0) == pytest.approx(1.0)
+
+    def test_the_floor_never_decreases_as_the_threshold_rises(self) -> None:
+        floors = [similarity.jaccard_floor(score) for score in (0, 40, 60, 70, 80, 90, 100)]
+
+        assert floors == sorted(floors)
+
+
+class TestJaccard:
+    def test_an_empty_side_has_no_jaccard(self) -> None:
+        assert similarity.jaccard("", "mov eax, 1") == 0.0
+        assert similarity.jaccard("mov eax, 1", "") == 0.0
+        assert similarity.jaccard("", "") == 0.0
+
+    def test_identical_text_is_one(self) -> None:
+        assert similarity.jaccard("mov eax, 1\nret", "mov eax, 1\nret") == 1.0
+
+    @requires_similarity
+    def test_a_kept_pair_always_clears_the_floor(self) -> None:
+        # The prefilter's whole claim: whatever the blended score, a pair that
+        # reaches the threshold has the Jaccard the floor demands.
+        texts = [
+            "mov eax, 1\nadd eax, ebx\nret",
+            "mov eax, 1\nadd eax, ecx\nret",
+            "push ebp\nmov ebp, esp\npop ebp\nret",
+            "call 0x401000\ntest eax, eax\njz 0x401020",
+        ]
+        for left in texts:
+            for right in texts:
+                score = similarity.similarity(left, right)
+                if score >= 80.0:
+                    assert similarity.jaccard(left, right) >= similarity.jaccard_floor(80.0)
+
+    @requires_similarity
+    def test_it_is_at_most_the_blended_jaccard_term(self) -> None:
+        left, right = "mov eax, 1\nret", "mov eax, 2\nret"
+
+        value = similarity.jaccard(left, right)
+
+        assert 0.0 <= value <= 1.0
+
+
 class TestScoring:
     def test_empty_side_scores_zero(self) -> None:
         assert similarity.similarity("", "mov eax, 1") == 0.0

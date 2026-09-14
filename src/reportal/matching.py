@@ -28,9 +28,15 @@ Scaling: scoring stays pairwise over the candidate corpus, so a run makes
 ``len(functions) * (len(corpus) - 1)`` ratio comparisons and that count grows
 with the square of the corpus size.  :func:`reportal.similarity.similarity`
 prepares each distinct listing once per process, which removes the repeated
-tokenization and MinHash work but not the pairwise term.  Shortlisting
-candidates by LSH banding over the packed fingerprints replaces the quadratic
-sweep when a corpus grows past a few thousand functions.
+tokenization and MinHash work but not the pairwise term.  The default scorer is
+preceded by an exact prefilter: a pair whose MinHash Jaccard is below the floor
+``min_similarity`` implies (see :func:`reportal.similarity.jaccard_floor`)
+cannot reach that threshold, because the text-ratio term is capped, so the full
+score is never computed for it.  That removes most of the pairwise cost without
+changing a single recorded row; the prefilter applies to the default blended
+scorer only, since the floor is derived from its weights.  LSH banding over the
+packed fingerprints is the lever beyond it, for a threshold low enough that the
+Jaccard floor proves nothing.
 """
 
 from __future__ import annotations
@@ -553,6 +559,7 @@ def match_binary(
     :class:`InvalidSettingsError` for a scope id no row carries.
     """
     resolved = settings if settings is not None else MatchSettings()
+    default_scorer = scorer is None
     if scorer is None:
         if not similarity.available():
             raise similarity.SimilarityUnavailable(
@@ -562,6 +569,10 @@ def match_binary(
         scorer = similarity.similarity
     if disassembler is None:
         disassembler = cached_disassembler(conn, engine)
+    # The floor is a proof, not a heuristic, and it holds only for the blended
+    # scorer whose weights it comes from, so a caller's own scorer is scored
+    # without it.
+    floor = similarity.jaccard_floor(resolved.min_similarity) if default_scorer else 0.0
 
     scoped = bool(resolved.binary_ids or resolved.collection_ids)
     allowed = resolve_scope(conn, resolved)
@@ -591,11 +602,16 @@ def match_binary(
         source_text = texts.get(source_id)
         if not source_text:
             continue
-        scored = [
-            (scorer(source_text, candidate_text), candidate_id)
-            for candidate_id in candidate_ids
-            if candidate_id != source_id and (candidate_text := texts.get(candidate_id))
-        ]
+        scored: list[tuple[float, int]] = []
+        for candidate_id in candidate_ids:
+            if candidate_id == source_id:
+                continue
+            candidate_text = texts.get(candidate_id)
+            if not candidate_text:
+                continue
+            if floor > 0.0 and similarity.jaccard(source_text, candidate_text) < floor:
+                continue
+            scored.append((scorer(source_text, candidate_text), candidate_id))
         scored.sort(key=lambda item: item[0], reverse=True)
         kept = [
             (score, candidate_id)

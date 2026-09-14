@@ -7,6 +7,19 @@ view renders it from here.
 
 ## Unreleased
 
+- Function matching rarely computes a full pair score it can prove is wasted.
+  A blended score is 40% MinHash Jaccard and 60% text ratio, and the ratio is
+  capped, so a pair whose Jaccard is below `(min_similarity - 60) / 40` cannot
+  reach the threshold: at the default floor of 80, any pair under 0.5 Jaccard is
+  decided before the expensive text comparison runs.
+  `similarity.jaccard` computes that structural half alone (packed
+  fingerprints, no tokenizer, no ratio) and `similarity.jaccard_floor` is the
+  bound, so `match_binary` skips the scorer for those pairs.  It is exact: the
+  recorded rows are byte-identical to the full sweep, and the prefilter engages
+  only for the default blended scorer, never for a caller's injected one.
+  Measured on a 384-function corpus (147,072 pairs): 8.2 s to 0.6 s, 12.5x,
+  with identical rows.
+
 - The External view reports the analysis's own source status before a pull.
   `GET /api/analyses/<id>/external/<source>/status` says whether a source can
   run for that analysis and whether an answer is stored, and only `reportal
