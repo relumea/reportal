@@ -394,6 +394,10 @@ class TestMatches:
 
 
 class TestDisasmCache:
+    def test_only_nasm_is_the_cacheable_format(self) -> None:
+        # The route, the MCP tool and the CLI read the cache under this one rule.
+        assert store.CACHEABLE_DISASM_FORMAT == "nasm"
+
     def test_round_trip_and_overwrite(self, conn: sqlite3.Connection) -> None:
         function_id = _seed_function(conn)
         assert store.get_disasm(conn, function_id) is None

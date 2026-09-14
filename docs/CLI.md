@@ -341,6 +341,12 @@ reportal references <function-id> [--json]
                                            #   through the engine's describe call
 reportal strings <binary-id> [--sort value|length] [--order asc|desc] [--json]
                                            # list a binary's strings, sorted server-side
+reportal imports <binary-id> [--json]      # list a binary's import table (library,
+                                           #   function, IAT), read from the engine on demand
+reportal disasm <function-id> [--format nasm|hex] [--json]
+                                           # print one function's disassembly through its
+                                           #   binary's rebrew project context; the nasm
+                                           #   listing is cached the way the route caches it
 reportal section-coverage <binary-id> [--json]
                                            # report per-section byte coverage over the stored
                                            #   function table and the stored pe-info sections;

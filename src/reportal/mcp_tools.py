@@ -130,7 +130,7 @@ BUILTIN_ORIGIN = plugins.BUILTIN_ORIGIN
 
 # The only disassembly format `disasm_cache` holds, so only this format is
 # cached; a `hex` request runs the engine and leaves the cache untouched.
-CACHEABLE_DISASM_FORMAT = "nasm"
+CACHEABLE_DISASM_FORMAT = store.CACHEABLE_DISASM_FORMAT
 
 # Functions decompiled by a struct recovery run when the caller names no limit.
 DEFAULT_STRUCT_LIMIT = 50

@@ -1946,6 +1946,12 @@ def clear_matches_for(conn: sqlite3.Connection, function_id: int) -> None:
 
 # ── Disassembly cache ──────────────────────────────────────────────
 
+# The only listing format the cache holds: `disasm_cache` is one text per
+# function, and the hex view is a rendering of the same bytes rather than
+# something worth storing.  The route, the MCP tool and the CLI all read the
+# cache under the same rule, so it lives here rather than once per surface.
+CACHEABLE_DISASM_FORMAT = "nasm"
+
 
 def set_disasm(conn: sqlite3.Connection, function_id: int, text: str) -> None:
     """Store the assembly listing of *function_id*, replacing any earlier one."""

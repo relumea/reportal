@@ -536,6 +536,117 @@ class TestFunctionsCommand:
         assert "invalid va" in json.loads(result.stdout)["error"]
 
 
+class TestDisasmCommand:
+    def _seed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[int, int]:
+        """One binary with a rebrew context and one function; returns their ids."""
+        ids = _seed_portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            store.set_rebrew_context(conn, ids["binary"], "/projects/demo")
+        return ids["binary"], ids["first"]
+
+    def test_prints_the_nasm_listing_and_caches_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        _binary, function_id = self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["disasm", str(function_id), "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["format"] == "nasm"
+        assert payload["cached"] is False
+        assert payload["va"] == 0x1000
+        assert "func_1000:" in payload["disasm"]
+        assert fake_engine.calls == ["disassemble"]
+
+        # The second read answers from the cache the route also reads.
+        again = runner.invoke(cli.app, ["disasm", str(function_id), "--json"])
+        assert json.loads(again.stdout)["cached"] is True
+        assert fake_engine.calls == ["disassemble"]
+
+    def test_the_human_output_is_the_listing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        _binary, function_id = self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["disasm", str(function_id)])
+
+        assert result.exit_code == 0, result.output
+        assert "func_1000:" in result.output
+
+    def test_hex_is_not_cached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        _binary, function_id = self._seed(tmp_path, monkeypatch)
+
+        first = runner.invoke(cli.app, ["disasm", str(function_id), "--format", "hex", "--json"])
+        second = runner.invoke(cli.app, ["disasm", str(function_id), "--format", "hex", "--json"])
+
+        assert json.loads(first.stdout)["cached"] is False
+        assert json.loads(second.stdout)["cached"] is False
+        assert fake_engine.calls == ["disassemble", "disassemble"]
+
+    def test_an_unknown_format_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        _binary, function_id = self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["disasm", str(function_id), "--format", "nope"])
+
+        assert result.exit_code == 1
+        assert "--format must be one of" in result.output
+
+    def test_without_a_project_context_it_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["disasm", str(ids["first"])])
+
+        assert result.exit_code == 1
+        assert "no rebrew project context" in result.output
+
+
+class TestImportsCommand:
+    def test_lists_the_import_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+        # The route reads the stored bytes, so the row's file has to exist.
+        (tmp_path / "demo.exe").write_bytes(b"MZ" + b"\x00" * 30)
+
+        result = runner.invoke(cli.app, ["imports", str(ids["binary"]), "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["count"] == 1
+        assert payload["imports"][0]["name"] == "GetTickCount"
+        assert payload["imports"][0]["dll"] == "KERNEL32.dll"
+        assert fake_engine.calls == ["imports"]
+
+    def test_the_human_table_names_the_library(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+        (tmp_path / "demo.exe").write_bytes(b"MZ" + b"\x00" * 30)
+
+        result = runner.invoke(cli.app, ["imports", str(ids["binary"])])
+
+        assert result.exit_code == 0, result.output
+        assert "KERNEL32.dll" in result.output
+        assert "GetTickCount" in result.output
+
+    def test_an_unknown_binary_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        _seed_portal(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["imports", "4242", "--json"])
+
+        assert result.exit_code == 1
+        assert "no binary with id 4242" in result.stdout
+
+
 class TestBinariesCommand:
     def test_lists_the_register_with_its_counts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -56,6 +56,12 @@ cell that wraps at a narrow width) would drift.  That is why this is a prop per
 table and not the default, and why the tables whose rows carry blocks rather
 than one line of cells stay un-windowed.
 
+The register (`#/binaries`) is the third unbounded list and is deliberately
+left un-windowed: measured at 2,000 binaries it costs 310 ms to the first row,
+46,183 nodes and 16.4 MB of heap, which is not the profile that needed the
+window, and every row carries a scope `select` that windowing would unmount
+while a reader scrolls. If a register grows past that, the same prop is the fix.
+
 Measured in headless Chrome at 1440x900 over a seeded workspace, 20,000
 functions on `#/functions` cost 3,751 ms to the first row, 20,000 DOM rows,
 320,150 nodes and 106.5 MB of JS heap before the window, and 453 ms, 57 rows,

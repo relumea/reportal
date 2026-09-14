@@ -137,7 +137,8 @@ router = APIRouter()
 # The disassembly format `disasm_cache` holds.  The cache key is the function
 # id alone, so only this format is cached; a `hex` request runs the engine and
 # leaves the cache untouched rather than risk serving the wrong listing.
-CACHEABLE_DISASM_FORMAT = "nasm"
+# Only the nasm listing is cached; the rule lives with the cache it names.
+CACHEABLE_DISASM_FORMAT = store.CACHEABLE_DISASM_FORMAT
 
 # Functions decompiled by a struct recovery run when the caller names no limit.
 # `rebrew recover-structs` decompiles each function, so a live request needs a

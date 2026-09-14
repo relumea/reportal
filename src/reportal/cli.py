@@ -102,7 +102,7 @@ import sys
 import tempfile
 import threading
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from functools import partial
 from pathlib import Path
 from typing import Any, NoReturn, cast
@@ -235,6 +235,10 @@ MAX_SNIPPET_CHARS = 200
 # String rows `reportal strings` prints in human mode; the JSON payload carries
 # every row.  A real binary produces tens of thousands.
 _STRING_ROWS_SHOWN = 200
+
+# Import rows `reportal imports` prints in human mode, for the same reason: a
+# statically linked binary imports thousands of symbols.
+_IMPORT_ROWS_SHOWN = 200
 
 # IOC values `reportal threat` prints per category in human mode; the JSON
 # payload carries every finding.
@@ -8242,6 +8246,125 @@ def strings(
         console.print(f"[magenta]{location}[/magenta] {entry['text']}")
     if len(entries) > _STRING_ROWS_SHOWN:
         console.print(f"[dim]... and {len(entries) - _STRING_ROWS_SHOWN} more[/dim]")
+
+
+@app.command("disasm")
+def disasm(
+    function_id: int = typer.Argument(..., help="Function id whose listing to print"),
+    fmt: str = typer.Option(
+        store.CACHEABLE_DISASM_FORMAT,
+        "--format",
+        help=f"One of: {', '.join(engines.DISASM_FORMATS)}",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Print one function's disassembly through its binary's rebrew context.
+
+    The nasm listing is cached the way the route caches it (the hex view is not:
+    it is a rendering of the same bytes), so a repeated read answers without the
+    engine.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if fmt not in engines.DISASM_FORMATS:
+        _fail(f"--format must be one of {', '.join(engines.DISASM_FORMATS)}", json_output)
+    engine = engines.get_engine()
+    if not engine.available():
+        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            _fail(f"no function with id {function_id}", json_output)
+        binary_id = int(function["binary_id"])
+        project_dir = store.get_rebrew_context(conn, binary_id)
+        if project_dir is None:
+            _fail(f"binary {binary_id} has no rebrew project context", json_output)
+        va = int(function["va"])
+        size = int(function["size"])
+        cached = (
+            store.get_disasm(conn, function_id) if fmt == store.CACHEABLE_DISASM_FORMAT else None
+        )
+        if cached is None:
+            try:
+                listing = str(engine.disassemble(project_dir, va, size, fmt))
+            except engines.EngineError as exc:
+                _fail(str(exc), json_output)
+            if fmt == store.CACHEABLE_DISASM_FORMAT:
+                store.set_disasm(conn, function_id, listing)
+        else:
+            listing = cached
+    payload = {
+        "function_id": function_id,
+        "binary_id": binary_id,
+        "va": va,
+        "size": size,
+        "format": fmt,
+        "cached": cached is not None,
+        "disasm": listing,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[dim]{function['name']} @ {hex(va)} ({size} bytes, {fmt})[/dim]")
+    console.print(listing)
+
+
+@app.command()
+def imports(
+    binary_id: int = typer.Argument(..., help="Binary id whose imports to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List a binary's import table, read from the engine on demand."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    engine = engines.get_engine()
+    if not engine.available():
+        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        path = Path(str(binary["path"]))
+        if not path.is_file():
+            _fail(f"binary {binary_id} has no readable file at {path}", json_output)
+        try:
+            payload = engine.imports(path)
+        except engines.EngineError as exc:
+            _fail(str(exc), json_output)
+    raw = payload.get("imports") if isinstance(payload, Mapping) else None
+    rows = raw if isinstance(raw, list) else []
+    stubs = payload.get("stubs") if isinstance(payload, Mapping) else None
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "binary_id": binary_id,
+                    "count": len(rows),
+                    "imports": rows,
+                    "stubs": stubs if isinstance(stubs, list) else [],
+                }
+            )
+        )
+        return
+    if not rows:
+        console.print("[yellow]No imports.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Library", style="cyan")
+    table.add_column("Function")
+    table.add_column("IAT")
+    for entry in rows[:_IMPORT_ROWS_SHOWN]:
+        row = entry if isinstance(entry, Mapping) else {}
+        table.add_row(
+            str(row.get("dll") or "-"),
+            str(row.get("name") or "-"),
+            str(row.get("iat_va") or "-"),
+        )
+    console.print(table)
+    if len(rows) > _IMPORT_ROWS_SHOWN:
+        console.print(f"[dim]... and {len(rows) - _IMPORT_ROWS_SHOWN} more[/dim]")
 
 
 # ── structs ────────────────────────────────────────────────────────

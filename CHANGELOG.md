@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- The command line can print a function's disassembly and a binary's imports.
+  Both reads were reachable from the HTTP API and the MCP server and from no
+  command: `reportal disasm <function-id> [--format nasm|hex]` resolves the
+  binary's rebrew project context and prints the listing (reading the same
+  `disasm_cache` the route fills, with `--json` reporting whether the answer
+  came from it), and `reportal imports <binary-id>` lists the engine's import
+  table as library, function and IAT rows.  The rule that only the nasm listing
+  is cached now lives once, in `store.CACHEABLE_DISASM_FORMAT`, instead of being
+  written in the route and the tool separately.
+
 - The analyses list can be paged.  It always asked the route for exactly
   `store.DEFAULT_ANALYSIS_LIMIT` rows and offered no way to ask for more, so a
   workspace with more than a hundred analyses could see the first hundred and
