@@ -8248,6 +8248,52 @@ def strings(
         console.print(f"[dim]... and {len(entries) - _STRING_ROWS_SHOWN} more[/dim]")
 
 
+@app.command("fingerprint")
+def fingerprint(
+    binary_id: int = typer.Argument(..., help="Binary id to fingerprint"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Print a binary's fingerprint: the stored one, else a live compute.
+
+    A live compute is not stored; `reportal enrich` is the write, and it keeps
+    the bundle so a later read answers without the engine, exactly as the route
+    pair does.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        stored = store.get_fingerprint(conn, binary_id)
+    if stored is None:
+        engine = engines.get_engine()
+        if not engine.available():
+            _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        with contextlib.closing(store.connect(portal_db)) as conn:
+            binary = store.get_binary(conn, binary_id)
+            assert binary is not None, "the row was just read"
+            path = Path(str(binary["path"]))
+            if not path.is_file():
+                _fail(f"binary {binary_id} has no readable file at {path}", json_output)
+            try:
+                computed = engine.fingerprint(path)
+            except engines.EngineError as exc:
+                _fail(str(exc), json_output)
+        payload = {"binary_id": binary_id, "stored": False, **computed}
+    else:
+        payload = {"binary_id": binary_id, "stored": True, **stored}
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[dim]{'stored' if payload['stored'] else 'computed live, not stored'}[/dim]")
+    for key in ("md5", "sha1", "sha256", "sha512", "crc32", "format", "arch", "size", "imphash"):
+        if key in payload:
+            console.print(f"[cyan]{key}[/cyan] {payload[key]}")
+    if not payload["stored"]:
+        console.print("[dim]Run 'reportal enrich <binary-id>' to keep this bundle.[/dim]")
+
+
 @app.command("disasm")
 def disasm(
     function_id: int = typer.Argument(..., help="Function id whose listing to print"),

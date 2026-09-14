@@ -82,6 +82,8 @@ reportal symbols-export <binary-id> [--format c|json] [--output PATH] [--file-id
                                            # render one parse as a C header (through
                                            #   the type model's renderer) or as JSON
 reportal enrich <binary-id>                # compute and store a rebrew fingerprint
+reportal fingerprint <binary-id> [--json]  # print the stored fingerprint, else compute
+                                           #   one live without storing it
 reportal decompile <function-id> [--backend kuna] [--named] [--json]
                                            # decompile through rebrew and store the source
 reportal summary <function-id> [--json]    # summarize the stored decompilation with the

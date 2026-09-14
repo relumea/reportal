@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- `reportal fingerprint <binary-id>` prints a binary's fingerprint: the stored
+  bundle when `reportal enrich` kept one, else a live compute through the engine
+  that is not stored.  The read half of the pair existed in the HTTP route and
+  the MCP tool and had no command, so the terminal could compute the bundle and
+  keep it but not simply look at it.
+
 - The command line can print a function's disassembly and a binary's imports.
   Both reads were reachable from the HTTP API and the MCP server and from no
   command: `reportal disasm <function-id> [--format nasm|hex]` resolves the

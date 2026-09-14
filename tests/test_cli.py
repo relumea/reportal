@@ -536,6 +536,64 @@ class TestFunctionsCommand:
         assert "invalid va" in json.loads(result.stdout)["error"]
 
 
+class TestFingerprintCommand:
+    def _seed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> int:
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        store.init_db(db)
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ" + b"\x00" * 30)
+        with contextlib.closing(store.connect(db)) as conn:
+            return store.add_binary(conn, sha256="ab" * 32, name="demo.exe", path=str(target))
+
+    def test_a_live_compute_is_not_stored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        binary_id = self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["fingerprint", str(binary_id), "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["stored"] is False
+        assert payload["sha256"] == FINGERPRINT["sha256"]
+        assert fake_engine.calls == ["fingerprint"]
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            assert store.get_fingerprint(conn, binary_id) is None
+
+    def test_a_stored_bundle_answers_without_the_engine(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        binary_id = self._seed(tmp_path, monkeypatch)
+        runner.invoke(cli.app, ["enrich", str(binary_id), "--json"])
+        fake_engine.calls.clear()
+
+        result = runner.invoke(cli.app, ["fingerprint", str(binary_id), "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["stored"] is True
+        assert fake_engine.calls == []
+
+    def test_the_human_output_names_the_digests(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        binary_id = self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["fingerprint", str(binary_id)])
+
+        assert result.exit_code == 0, result.output
+        assert FINGERPRINT["md5"] in result.output
+        assert "reportal enrich" in result.output
+
+    def test_an_unknown_binary_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["fingerprint", "4242", "--json"])
+
+        assert result.exit_code == 1
+        assert "no binary with id 4242" in result.stdout
+
+
 class TestDisasmCommand:
     def _seed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[int, int]:
         """One binary with a rebrew context and one function; returns their ids."""
