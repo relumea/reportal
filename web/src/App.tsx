@@ -184,6 +184,11 @@ function AnalysesRoute(): ReactNode {
   return <AnalysesView query={Object.fromEntries(params)} />;
 }
 
+function BinariesRoute(): ReactNode {
+  const [params] = useSearchParams();
+  return <BinariesView query={Object.fromEntries(params)} />;
+}
+
 function CollectionsRoute(): ReactNode {
   const [params] = useSearchParams();
   return <CollectionsView query={Object.fromEntries(params)} />;
@@ -399,7 +404,7 @@ export function App(): ReactNode {
     },
     {
       path: "/binaries",
-      element: <BinariesView />,
+      element: <BinariesRoute />,
       handle: { view: "binaries", title: "Binaries" },
     },
     {

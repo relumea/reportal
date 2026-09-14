@@ -655,15 +655,45 @@ def find_binary_by_sha256(conn: sqlite3.Connection, sha256: str) -> dict[str, An
     return get_binary(conn, binary_id) if binary_id is not None else None
 
 
+# The orders the register listing offers; `id` is the insertion order it always
+# used, so it stays the default.  The names match the analyses list's, where the
+# two controls mean the same thing.
+BINARY_ORDERS: dict[str, str] = {
+    "id": "b.id ASC",
+    "newest": "b.id DESC",
+    "name": "b.name COLLATE NOCASE ASC, b.id ASC",
+    "name-desc": "b.name COLLATE NOCASE DESC, b.id DESC",
+    "size": "b.size ASC, b.id ASC",
+    "size-desc": "b.size DESC, b.id ASC",
+}
+
+DEFAULT_BINARY_ORDER = "id"
+
+
 def list_binaries(
-    conn: sqlite3.Connection, *, visible_to: Mapping[str, Any] | None = None
+    conn: sqlite3.Connection,
+    *,
+    search: str | None = None,
+    tag: str | None = None,
+    fmt: str | None = None,
+    order: str = DEFAULT_BINARY_ORDER,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """All binaries, newest id last, each with its function and comment counts.
+    """The binaries, in *order*, each with its function and comment counts.
+
+    *search* matches the binary's name or its SHA-256 (a prefix is enough, which
+    is what an analyst has for a sample they know by hash); *tag* keeps the
+    binaries carrying that exact tag name; *fmt* keeps one stored format, which
+    is the crawler's own reading rather than a vocabulary written down twice.
+    *order* is one of :data:`BINARY_ORDERS`; an unknown one raises ``ValueError``,
+    which the API, the CLI and the MCP tools map to their own error vocabulary.
 
     *visible_to* is the authenticated caller (None while auth is off); a
     non-admin caller sees only the public binaries and its own teams', which is
     what `auth.visible_clause` expresses.
     """
+    if order not in BINARY_ORDERS:
+        raise ValueError(f"unknown binary order: {order}")
     sql = """
         SELECT b.*, (
             SELECT COUNT(*) FROM functions f
@@ -675,13 +705,42 @@ def list_binaries(
         ) AS comment_count
         FROM binaries b
     """
+    clauses: list[str] = []
     params: list[Any] = []
     scope = auth.visible_clause(conn, visible_to, prefix="b.")
     if scope is not None:
-        sql += f" WHERE {scope[0]}"
+        clauses.append(scope[0])
         params.extend(scope[1])
-    sql += " ORDER BY b.id"
+    if search:
+        pattern = _escape_like(search)
+        clauses.append("(b.name LIKE ? ESCAPE '\\' OR b.sha256 LIKE ? ESCAPE '\\')")
+        params.extend((pattern, pattern))
+    if tag:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM binary_tags bt JOIN tags t ON t.id = bt.tag_id"
+            " WHERE bt.binary_id = b.id AND t.name = ?)"
+        )
+        params.append(tag)
+    if fmt:
+        clauses.append("b.format = ?")
+        params.append(fmt)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += f" ORDER BY {BINARY_ORDERS[order]}"
     return _rows(conn.execute(sql, params))
+
+
+def binary_filter_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """The formats the register actually holds, for the listing's own control.
+
+    A distinct `format` column read the way the analyses facets are, so the
+    control offers only values that can match something.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT format AS value FROM binaries"
+        " WHERE format IS NOT NULL AND format != '' ORDER BY format"
+    )
+    return {"formats": [str(row["value"]) for row in rows]}
 
 
 def get_binary(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:

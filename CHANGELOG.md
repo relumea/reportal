@@ -7,6 +7,17 @@ view renders it from here.
 
 ## Unreleased
 
+- The binary register is filterable and `reportal binaries` exists: `GET
+  /api/binaries` takes `?search=` (the name or the SHA-256, a prefix is enough),
+  `?tag=` (that exact tag name), `?format=` (one stored format) and `?order=`
+  (id, newest, name, name-desc, size, size-desc; an unknown one is 400
+  `invalid order`), echoing every filter it applied beside `count` against the
+  unfiltered `total` and the `formats` the register holds.  The register had no
+  filter at all and the CLI had no command that listed it, although the API
+  route and the `list_binaries` MCP tool both existed; the command and the
+  tool's four arguments close that, and the Binaries view gains the four
+  controls in its route hash.
+
 - An analysis search matches the binary's SHA-256 as well as its name and the
   engine label, so a pasted hash or hash prefix finds the analysis, which is
   what an analyst has for a sample whose name they do not know.  The hosted

@@ -676,6 +676,19 @@ below unpacks an already stored archive into a collection (or one named after
 it) with an optional password and reports each member with the binary it became
 or the reason it was skipped.
 
+The Binaries view's register (`views/BinariesView.tsx`, `#/binaries`) opens with
+the filters the route applies: a Search over the binary's name or SHA-256, a Tag
+select built from `GET /api/tags`, a Format select built from the `formats` the
+payload reports the register holds, and an Order select over
+`store.BINARY_ORDERS`, with a Clear control that resets all four and is disabled
+while none is set.  Every one of them lives in the route hash
+(`#/binaries?search=&tag=&format=&order=`), the convention the Analyses view
+uses, so a filtered register is a link, and the panel's subtitle reads
+`N of M binaries` against the payload's unfiltered `total`.  The register's own
+two pickers (the archive to extract, the family's reference binary) read the
+unfiltered list, so a filter narrows the table without hiding a binary from a
+form that needs one.
+
 The Binaries view (`views/BinariesView.tsx`) carries the scope of each row as a
 select in the table: `public` for the whole workspace, or a team that owns it
 (`PATCH /api/binaries/<id>/scope`).  The options come from `GET /api/teams`, so

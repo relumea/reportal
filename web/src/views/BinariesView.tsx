@@ -16,18 +16,21 @@ import {
   Toolbar,
 } from "../components";
 import {
+  BINARY_ORDERS,
+  DEFAULT_BINARY_ORDER,
   MAX_UPLOAD_FILES,
   UPLOAD_ARCHITECTURES,
   UPLOAD_FORMATS,
 } from "../constants";
 import type {
-  BinaryListRow,
+  BinaryListPayload,
   BulkResult,
   Collection,
   Family,
   FamilyList,
   TeamsPayload,
   ExtractResult,
+  TagRow,
   UploadBatchResult,
   UploadFileOptions,
 } from "../types";
@@ -91,9 +94,51 @@ function TagChips({
   );
 }
 
-export function BinariesView(): ReactNode {
+/** The register's filters, every one optional; `id` is the insertion order. */
+interface BinaryFilters {
+  search: string;
+  tag: string;
+  format: string;
+  order: string;
+}
+
+function filtersFromQuery(query: Record<string, string>): BinaryFilters {
+  const order = query.order ?? "";
+  return {
+    search: query.search ?? "",
+    tag: query.tag ?? "",
+    format: query.format ?? "",
+    order: (BINARY_ORDERS as readonly string[]).includes(order) ? order : DEFAULT_BINARY_ORDER,
+  };
+}
+
+/** The API path one filter set reads. */
+function registerPath(filters: BinaryFilters): string {
+  const params = new URLSearchParams();
+  if (filters.search.trim()) params.set("search", filters.search.trim());
+  if (filters.tag) params.set("tag", filters.tag);
+  if (filters.format) params.set("format", filters.format);
+  params.set("order", filters.order);
+  return `/binaries?${params.toString()}`;
+}
+
+export function BinariesView({
+  query = {},
+}: {
+  /** The route hash, whose keys are the filters this view applies. */
+  query?: Record<string, string>;
+}): ReactNode {
   const navigate = useNavigate();
-  const { data, error, reload } = useAsync(() => api<{ binaries: BinaryListRow[] }>("/binaries"), []);
+  const filters = filtersFromQuery(query);
+  const path = registerPath(filters);
+  const { data, error, reload } = useAsync(
+    () => api<BinaryListPayload>(path),
+    [path],
+  );
+  const tagData = useAsync(() => api<{ tags: TagRow[] }>("/tags"), []);
+  // The extract and family pickers choose from the whole register, so they read
+  // it unfiltered rather than the slice the table is showing.
+  const register = useAsync(() => api<BinaryListPayload>("/binaries"), []);
   const familyData = useAsync(() => api<FamilyList>("/families"), []);
   const collectionData = useAsync(() => api<{ collections: Collection[] }>("/collections"), []);
   const teamData = useAsync(() => api<TeamsPayload>("/teams"), []);
@@ -114,6 +159,7 @@ export function BinariesView(): ReactNode {
   const [familyAlias, setFamilyAlias] = useState("");
   const [familyBinaryId, setFamilyBinaryId] = useState("");
   const [familyError, setFamilyError] = useState<unknown>(null);
+  const [draft, setDraft] = useState(filters.search);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [bulkTag, setBulkTag] = useState("");
   const [bulkMessage, setBulkMessage] = useState("");
@@ -230,6 +276,16 @@ export function BinariesView(): ReactNode {
         })),
       ];
     });
+  };
+
+  const apply = (patch: Partial<BinaryFilters>): void => {
+    const next = { ...filters, ...patch };
+    const params = new URLSearchParams();
+    if (next.search.trim()) params.set("search", next.search.trim());
+    if (next.tag) params.set("tag", next.tag);
+    if (next.format) params.set("format", next.format);
+    if (next.order !== DEFAULT_BINARY_ORDER) params.set("order", next.order);
+    navigate({ pathname: "/binaries", search: params.toString() });
   };
 
   const updateRow = (key: string, patch: Partial<UploadRow>): void => {
@@ -568,7 +624,7 @@ export function BinariesView(): ReactNode {
               onChange={(event) => setExtractTarget(event.target.value)}
             >
               <option value="">Select a stored binary</option>
-              {(binaries ?? []).map((binary) => (
+              {(register.data?.binaries ?? []).map((binary) => (
                 <option key={binary.id} value={binary.id}>
                   {binary.name}
                 </option>
@@ -653,7 +709,7 @@ export function BinariesView(): ReactNode {
               onChange={(event) => setFamilyBinaryId(event.target.value)}
             >
               <option value="">Select a binary</option>
-              {(binaries ?? []).map((binary) => (
+              {(register.data?.binaries ?? []).map((binary) => (
                 <option key={binary.id} value={binary.id}>
                   {binary.name}
                 </option>
@@ -707,7 +763,7 @@ export function BinariesView(): ReactNode {
       </Panel>
       <Panel
         title="Binaries"
-        subtitle={`${binaries?.length ?? 0} binaries`}
+        subtitle={`${data?.count ?? 0} of ${data?.total ?? 0} binaries`}
         actions={
           <>
             <Button tone="ghost" onClick={() => navigate("/analyses")}>
@@ -719,6 +775,67 @@ export function BinariesView(): ReactNode {
           </>
         }
       >
+        <Toolbar>
+          <Field label="Search" hint="name or SHA-256">
+            <input
+              type="search"
+              placeholder="name or hash"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") apply({ search: draft });
+              }}
+            />
+          </Field>
+          <Button onClick={() => apply({ search: draft })}>Search</Button>
+          <Field label="Tag">
+            <select value={filters.tag} onChange={(event) => apply({ tag: event.target.value })}>
+              <option value="">any tag</option>
+              {(tagData.data?.tags ?? []).map((row) => (
+                <option key={row.id} value={row.name}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Format">
+            <select
+              value={filters.format}
+              onChange={(event) => apply({ format: event.target.value })}
+            >
+              <option value="">any format</option>
+              {(data?.formats ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Order">
+            <select value={filters.order} onChange={(event) => apply({ order: event.target.value })}>
+              {BINARY_ORDERS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Button
+            tone="ghost"
+            disabled={
+              filters.search === "" &&
+              filters.tag === "" &&
+              filters.format === "" &&
+              filters.order === DEFAULT_BINARY_ORDER
+            }
+            onClick={() => {
+              setDraft("");
+              navigate({ pathname: "/binaries", search: "" });
+            }}
+          >
+            Clear
+          </Button>
+        </Toolbar>
         {error ? <ErrorNote error={error} onRetry={reload} /> : null}
         {binaries === null ? null : (
           <DataTable

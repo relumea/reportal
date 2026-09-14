@@ -471,6 +471,59 @@ class TestImportRebrew:
         assert "2" in result.output
 
 
+class TestBinariesCommand:
+    def test_lists_the_register_with_its_counts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["binaries", "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["count"] == 1
+        assert payload["total"] == 1
+        assert payload["order"] == "id"
+        assert payload["binaries"][0]["id"] == ids["binary"]
+        assert payload["binaries"][0]["function_count"] == 2
+
+    def test_filters_by_search_tag_and_format(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            store.add_binary(conn, sha256="cd" * 32, name="other.exe", size=99, fmt="ELF")
+            store.add_binary_tag(conn, ids["binary"], store.create_tag(conn, "packed"))
+
+        by_search = runner.invoke(cli.app, ["binaries", "--search", "ab", "--json"])
+        assert [row["name"] for row in json.loads(by_search.stdout)["binaries"]] == ["demo.exe"]
+        by_tag = runner.invoke(cli.app, ["binaries", "--tag", "packed", "--json"])
+        assert [row["name"] for row in json.loads(by_tag.stdout)["binaries"]] == ["demo.exe"]
+        by_format = runner.invoke(cli.app, ["binaries", "--format", "ELF", "--json"])
+        assert [row["name"] for row in json.loads(by_format.stdout)["binaries"]] == ["other.exe"]
+        by_order = runner.invoke(cli.app, ["binaries", "--order", "name-desc", "--json"])
+        assert [row["name"] for row in json.loads(by_order.stdout)["binaries"]] == [
+            "other.exe",
+            "demo.exe",
+        ]
+
+    def test_an_unknown_order_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _seed_portal(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["binaries", "--order", "biggest", "--json"])
+
+        assert result.exit_code == 1
+        assert "unknown binary order" in result.stdout
+
+    def test_without_a_database_it_fails(self, tmp_path: Path, monkeypatch: Any) -> None:
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "missing.db"))
+
+        result = runner.invoke(cli.app, ["binaries", "--json"])
+
+        assert result.exit_code == 1
+        assert "no reportal database" in result.stdout
+
+
 class TestAddBinary:
     def test_registers_and_dedupes_by_sha256(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

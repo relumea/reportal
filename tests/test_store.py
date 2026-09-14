@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -73,6 +74,59 @@ class TestBinaries:
 
     def test_get_missing_returns_none(self, conn: sqlite3.Connection) -> None:
         assert store.get_binary(conn, 999) is None
+
+    def test_the_register_filters_by_search_tag_and_format(self, conn: sqlite3.Connection) -> None:
+        store.add_binary(conn, sha256="aa" * 32, name="beta.exe", size=30, fmt="PE")
+        tagged = store.add_binary(conn, sha256="bb" * 32, name="alpha.exe", size=10, fmt="ELF")
+        store.add_binary(conn, sha256="cc" * 32, name="gamma.exe", size=20, fmt="PE")
+        store.add_binary_tag(conn, tagged, store.create_tag(conn, "packed"))
+
+        def names(**kwargs: Any) -> list[str]:
+            return [row["name"] for row in store.list_binaries(conn, **kwargs)]
+
+        assert names(search="alpha") == ["alpha.exe"]
+        # A hash prefix is what an analyst has for a sample they know by hash.
+        assert names(search="bb") == ["alpha.exe"]
+        assert names(tag="packed") == ["alpha.exe"]
+        assert names(tag="absent") == []
+        assert names(fmt="PE") == ["beta.exe", "gamma.exe"]
+        # The LIKE wildcards stay literal, as every other search's do.
+        assert names(search="%") == []
+
+    def test_the_register_orders_by_id_name_size_and_newest(self, conn: sqlite3.Connection) -> None:
+        first = store.add_binary(conn, sha256="aa" * 32, name="beta.exe", size=30, fmt="PE")
+        second = store.add_binary(conn, sha256="bb" * 32, name="alpha.exe", size=10, fmt="ELF")
+        third = store.add_binary(conn, sha256="cc" * 32, name="gamma.exe", size=20, fmt="PE")
+
+        def names(**kwargs: Any) -> list[str]:
+            return [row["name"] for row in store.list_binaries(conn, **kwargs)]
+
+        assert names(order="id") == ["beta.exe", "alpha.exe", "gamma.exe"]
+        assert names(order="name") == ["alpha.exe", "beta.exe", "gamma.exe"]
+        assert names(order="name-desc") == ["gamma.exe", "beta.exe", "alpha.exe"]
+        assert names(order="size") == ["alpha.exe", "gamma.exe", "beta.exe"]
+        assert names(order="size-desc") == ["beta.exe", "gamma.exe", "alpha.exe"]
+        assert [row["id"] for row in store.list_binaries(conn, order="newest")] == [
+            third,
+            second,
+            first,
+        ]
+
+    def test_an_unknown_register_order_is_a_value_error(self, conn: sqlite3.Connection) -> None:
+        try:
+            store.list_binaries(conn, order="biggest")
+        except ValueError as exc:
+            assert "unknown binary order" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unknown order must be refused")
+
+    def test_the_format_facet_names_what_the_register_holds(self, conn: sqlite3.Connection) -> None:
+        store.add_binary(conn, sha256="aa" * 32, name="a.exe", fmt="PE")
+        store.add_binary(conn, sha256="bb" * 32, name="b.exe", fmt="ELF")
+        store.add_binary(conn, sha256="cc" * 32, name="c.exe", fmt="PE")
+        store.add_binary(conn, sha256="dd" * 32, name="d.exe")
+
+        assert store.binary_filter_values(conn) == {"formats": ["ELF", "PE"]}
 
 
 class TestFingerprints:

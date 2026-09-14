@@ -140,7 +140,56 @@ class TestHealth:
 class TestBinaries:
     def test_list_empty(self, portal_db: Path) -> None:
         _, headers, body = wsgi_request("GET", "/api/binaries")
-        assert json_body(body, headers) == {"binaries": []}
+        payload = json_body(body, headers)
+        assert payload["binaries"] == []
+        assert payload["count"] == 0
+        assert payload["total"] == 0
+        assert payload["order"] == "id"
+        assert payload["formats"] == []
+
+    def test_the_register_filters_orders_and_echoes(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.add_binary(conn, sha256="bb" * 32, name="alpha.exe", size=9, fmt="ELF")
+        store.add_binary(conn, sha256="cc" * 32, name="gamma.exe", size=30, fmt="PE")
+        store.add_binary_tag(conn, ids["binary"], store.create_tag(conn, "packed"))
+
+        status, headers, body = wsgi_request("GET", "/api/binaries?order=name")
+        payload = json_body(body, headers)
+        assert status.startswith("200")
+        assert [row["name"] for row in payload["binaries"]] == [
+            "alpha.exe",
+            "demo.exe",
+            "gamma.exe",
+        ]
+        assert payload["count"] == 3
+        assert payload["total"] == 3
+        assert payload["order"] == "name"
+        assert payload["formats"] == ["ELF", "PE"]
+
+        # Each filter narrows the register and is echoed back.
+        _status, headers, body = wsgi_request("GET", "/api/binaries?search=cc")
+        assert [row["name"] for row in json_body(body, headers)["binaries"]] == ["gamma.exe"]
+        _status, headers, body = wsgi_request("GET", "/api/binaries?search=" + "aa" * 32)
+        assert [row["name"] for row in json_body(body, headers)["binaries"]] == ["demo.exe"]
+        _status, headers, body = wsgi_request("GET", "/api/binaries?tag=packed")
+        payload = json_body(body, headers)
+        assert [row["name"] for row in payload["binaries"]] == ["demo.exe"]
+        assert payload["tag"] == "packed"
+        assert payload["total"] == 3
+        _status, headers, body = wsgi_request("GET", "/api/binaries?format=ELF")
+        assert [row["name"] for row in json_body(body, headers)["binaries"]] == ["alpha.exe"]
+
+        # A filter that matches nothing is distinguishable from an empty register.
+        _status, headers, body = wsgi_request("GET", "/api/binaries?search=absent")
+        payload = json_body(body, headers)
+        assert payload["count"] == 0
+        assert payload["total"] == 3
+
+    def test_an_unknown_register_order_is_400(self, conn: sqlite3.Connection) -> None:
+        status, headers, body = wsgi_request("GET", "/api/binaries?order=biggest")
+
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid order"
 
     def test_list_and_get(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)

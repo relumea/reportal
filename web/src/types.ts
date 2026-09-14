@@ -228,6 +228,19 @@ export interface Tag {
   name: string;
 }
 
+/** `GET /api/binaries`: the register with the filters the route applied. */
+export interface BinaryListPayload {
+  binaries: BinaryListRow[];
+  count: number;
+  total: number;
+  search: string | null;
+  tag: string | null;
+  format: string | null;
+  order: string;
+  /** The formats the register holds, which is what the filter control offers. */
+  formats: string[];
+}
+
 /** One row of `GET /api/tags`: a tag with how many objects carry it. */
 export interface TagRow extends Tag {
   binary_count: number;

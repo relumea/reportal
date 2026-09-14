@@ -535,8 +535,32 @@ def _arg_comment_body(arguments: dict[str, Any]) -> str:
 
 
 def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
+    search = _arg_optional_str(arguments, "search")
+    tag = _arg_optional_str(arguments, "tag")
+    fmt = _arg_optional_str(arguments, "format")
+    order = _arg_optional_str(arguments, "order", store.DEFAULT_BINARY_ORDER)
+    if order not in store.BINARY_ORDERS:
+        raise ToolError(
+            "invalid order",
+            f"unknown binary order: {order};"
+            f" expected one of {', '.join(sorted(store.BINARY_ORDERS))}",
+        )
     with contextlib.closing(_open()) as conn:
-        return {"binaries": store.list_binaries(conn)}
+        rows = store.list_binaries(
+            conn, search=search or None, tag=tag or None, fmt=fmt or None, order=order
+        )
+        total = len(store.list_binaries(conn))
+        formats = store.binary_filter_values(conn)["formats"]
+    return {
+        "binaries": rows,
+        "count": len(rows),
+        "total": total,
+        "search": search or None,
+        "tag": tag or None,
+        "format": fmt or None,
+        "order": order,
+        "formats": formats,
+    }
 
 
 def _tool_get_binary(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5455,8 +5479,20 @@ def builtin_tools() -> tuple[Tool, ...]:
     return (
         Tool(
             "list_binaries",
-            "List every registered binary with its function count.",
-            _object({}),
+            "List the registered binaries with their function and comment counts, optionally"
+            " filtered by name or SHA-256, by tag, or by stored format, and ordered.",
+            _object(
+                {
+                    "search": _str("Match the binary name or its SHA-256 (a prefix works)."),
+                    "tag": _str("Keep the binaries carrying this exact tag name."),
+                    "format": _str("Keep one stored format, e.g. PE or ELF."),
+                    "order": {
+                        "type": "string",
+                        "enum": sorted(store.BINARY_ORDERS),
+                        "description": "id (default), newest, name, name-desc, size or size-desc.",
+                    },
+                }
+            ),
             _READ,
             _tool_list_binaries,
         ),

@@ -4753,6 +4753,72 @@ def composition_command(
     _print_composition(payload)
 
 
+# ── binaries ───────────────────────────────────────────────────────
+
+
+@app.command()
+def binaries(
+    search: str = typer.Option(
+        "", "--search", help="Match the binary name or its SHA-256 (a prefix works)"
+    ),
+    tag: str = typer.Option("", "--tag", help="Keep the binaries carrying this exact tag name"),
+    fmt: str = typer.Option("", "--format", help="Keep one stored format, e.g. PE or ELF"),
+    order: str = typer.Option(
+        store.DEFAULT_BINARY_ORDER,
+        "--order",
+        help=f"Order by one of: {', '.join(store.BINARY_ORDERS)}",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the registered binaries with their function and comment counts."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            rows = store.list_binaries(
+                conn, search=search or None, tag=tag or None, fmt=fmt or None, order=order
+            )
+            total = len(store.list_binaries(conn))
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "binaries": rows,
+                    "count": len(rows),
+                    "total": total,
+                    "search": search or None,
+                    "tag": tag or None,
+                    "format": fmt or None,
+                    "order": order,
+                }
+            )
+        )
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Id", justify="right")
+    table.add_column("Name", style="cyan")
+    table.add_column("Format")
+    table.add_column("Size", justify="right")
+    table.add_column("Functions", justify="right")
+    table.add_column("Comments", justify="right")
+    table.add_column("SHA-256")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            str(row["name"]),
+            f"{row['format'] or 'n/a'} {row['arch'] or ''}".strip(),
+            str(row["size"]),
+            str(row["function_count"]),
+            str(row["comment_count"]),
+            str(row["sha256"])[:16],
+        )
+    console.print(table)
+    console.print(f"[dim]{len(rows)} of {total} binaries[/dim]")
+
+
 # ── add-binary ─────────────────────────────────────────────────────
 
 

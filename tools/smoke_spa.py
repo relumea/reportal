@@ -611,7 +611,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         "binaries list",
         "#/binaries",
         (
-            ("2 binaries",),
+            # The panel states the filtered-of-total count; nothing is filtered
+            # on a fresh smoke workspace, so both numbers are the seeded two.
+            ("2 of 2 binaries",),
             ("notepad.exe",),
             (LINEAGE_OTHER_NAME,),
             (DETECT_FAMILY_NAME,),

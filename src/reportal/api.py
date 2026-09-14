@@ -361,9 +361,46 @@ def _open() -> sqlite3.Connection:
 
 @router.get("/api/binaries")
 def list_binaries(request: Request) -> Response:
-    """Every binary the caller may see; a team-scoped one drops out for a non-member."""
+    """The binaries the caller may see, filtered and ordered.
+
+    A team-scoped binary drops out for a non-member.  ``?search=`` matches the
+    binary's name or its SHA-256 (a prefix is enough), ``?tag=`` keeps the ones
+    carrying that exact tag name, ``?format=`` one stored format and
+    ``?order=`` one of :data:`reportal.store.BINARY_ORDERS`; an unknown order is
+    a 400.  The body echoes the filters it applied, carries ``count`` against
+    ``total`` so a filter that matched nothing is distinguishable from an empty
+    register, and names the ``formats`` the register holds, which is what the
+    SPA's control is built from.
+    """
+    order = _query_text(request, "order") or store.DEFAULT_BINARY_ORDER
+    if order not in store.BINARY_ORDERS:
+        return _invalid_query("order", order, sorted(store.BINARY_ORDERS))
+    search = _query_text(request, "search")
+    tag = _query_text(request, "tag")
+    fmt = _query_text(request, "format")
     with contextlib.closing(_open()) as conn:
-        return json_response({"binaries": store.list_binaries(conn, visible_to=_caller(request))})
+        binaries = store.list_binaries(
+            conn,
+            search=search,
+            tag=tag,
+            fmt=fmt,
+            order=order,
+            visible_to=_caller(request),
+        )
+        total = len(store.list_binaries(conn, visible_to=_caller(request)))
+        formats = store.binary_filter_values(conn)["formats"]
+    return json_response(
+        {
+            "binaries": binaries,
+            "count": len(binaries),
+            "total": total,
+            "search": search,
+            "tag": tag,
+            "format": fmt,
+            "order": order,
+            "formats": formats,
+        }
+    )
 
 
 def _upload_suffix(raw_filename: str) -> str:

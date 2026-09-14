@@ -206,6 +206,14 @@ export const MAX_GRAPH_ROWS_SHOWN = 500;
 // API's lineage.LINEAGE_STATUSES.
 export const LINEAGE_STATUSES = ["unchanged", "changed", "removed", "added"] as const;
 
+// Orders the binary register accepts; the server sorts and echoes the value,
+// and `id` is the insertion order it always used.  The names match the
+// analyses list's, where the two controls mean the same thing.
+export const BINARY_ORDERS = ["id", "newest", "name", "name-desc", "size", "size-desc"] as const;
+export type BinaryOrder = (typeof BINARY_ORDERS)[number];
+// Mirrors store.DEFAULT_BINARY_ORDER.
+export const DEFAULT_BINARY_ORDER: BinaryOrder = "id";
+
 // Orders the collections list accepts; the server sorts and echoes the value,
 // and `id` is the creation order it used before the control existed.  `owner`
 // sorts by the owning team's name, the personal collections first.
