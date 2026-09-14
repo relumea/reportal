@@ -281,8 +281,14 @@ below); strings (loaded on demand,
 a client-side filter with the filtered-of-total count, capped at
 `MAX_STRINGS_SHOWN` with the true total stated, server-side `sort`/`order`
 controls over `value` or `length`, and each row's VA and text linking to the
-Functions view filtered to the functions that reference that address); tags (a table of tags with an add control and a per-row Remove
-behind an inline confirm); comments (`panels/CommentsPanel.tsx` with the binary scope, see below);
+Functions view filtered to the functions that reference that address); tags (a
+table of tags with an add control and a per-row Remove behind an inline
+confirm); collections (the reverse read `GET /api/binaries/<id>/collections`:
+the collections holding this binary, each row naming it, its member count and
+its description with a Remove behind the confirm pattern, and an Add to
+collection select over the collections it is not in yet, posting `POST`/`DELETE
+/api/collections/<id>/binaries` and refreshing both the panel and the pick
+list); comments (`panels/CommentsPanel.tsx` with the binary scope, see below);
 lineage (auto-loads the stored comparisons and never runs an engine on
 render; a compare-with `<select>` over the other binaries and a Run comparison
 control that posts the pair, then the status counts, `matched_percent`, whether the
@@ -580,7 +586,10 @@ every tag), its members are a table whose Remove button posts `DELETE
 /api/collections/<id>/binaries` with that one id, a binary id field adds a
 member through `POST /api/collections/<id>/binaries`, and Delete sits behind an
 inline confirm (`DELETE /api/collections/<id>`).  Every one of those writes is
-one journal action on the server, so the journal view can revert it.
+one journal action on the server, so the journal view can revert it.  The same
+membership is readable and editable from the other side: the binary detail
+carries a Collections panel (below) that reads `GET /api/binaries/<id>/collections`
+and posts the same two routes.
 
 The Users view (`views/UsersView.tsx`, `#/users`, in the System group) renders
 the identity the API reports: `GET /api/iam/me` as a key/value block (the auth

@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- A binary's detail shows and edits which collections hold it.  Membership was
+  reachable only from the collection's side: `GET /api/collections/<id>` lists a
+  collection's members and no read answered "which collections is this binary
+  in", so the binary page could not say where it lived.  `GET
+  /api/binaries/<id>/collections` (binary scope enforced by the route gate, and
+  a collection the caller may not see left out), `reportal collections-of
+  <binary-id>`, the `list_collections` MCP tool's `binary_id` argument and the
+  binary detail's Collections panel all read it, and the panel adds and removes
+  membership through the collection routes that already existed.
+
 - The analyses log drawer lists that analysis's stored scans.  `GET
   /api/analyses/<id>/scans` was reached by the CLI and the MCP tool only, and
   the binary detail's Scans panel reads the *newest* analysis, so an older

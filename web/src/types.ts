@@ -261,6 +261,13 @@ export interface Collection {
   owner_team_name: string | null;
 }
 
+/** `GET /api/binaries/<id>/collections`: the collections holding one binary. */
+export interface BinaryCollections {
+  binary_id: number;
+  collections: Collection[];
+  count: number;
+}
+
 /** One collection's members and tags, the shape `GET /api/collections/<id>` answers. */
 export interface CollectionDetail extends Collection {
   binaries: Array<{ id: number; name: string; sha256: string; size: number }>;

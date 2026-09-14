@@ -425,7 +425,12 @@ action, so it is destructive (`binary not found`, `binary not on disk`,
 `collection not found` and the archive module's own codes answer tool errors).
 `register_binary` registers a local file as a binary by content hash (the CLI's
 `add-binary`), optionally into a team's scope, and is destructive.
-`list_families` reads the
+`list_collections` reads the collection listing (in the named order, optionally
+filtered by scope, or with a `binary_id` the collections that binary is a member
+of) and `get_collection` reads one with its members and tags, so both are
+read-only; `create_collection`, `update_collection`, `delete_collection`,
+`set_collection_members`, `set_collection_tags` and `set_collection_scope` write
+it and are destructive.  `list_families` reads the
 family store and `get_detect_scan` serves a stored detection, so both are
 read-only; `register_family` derives and stores a signature bundle,
 `delete_family` removes a family and `run_detect` matches a binary and stores

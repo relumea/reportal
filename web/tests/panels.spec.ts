@@ -130,3 +130,25 @@ test("each stored remediation artifact links to its raw read", async ({ page }) 
     await expect(remediation.locator(`a[href="${base}/${format}"]`)).toBeVisible();
   }
 });
+
+test("the binary's collections panel reads and changes its membership", async ({ page }) => {
+  const collection = state.collections[0].name;
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  // The title carries the count badge, so the panel is located by its shape.
+  const collections = page
+    .locator(".panel")
+    .filter({ has: page.getByRole("heading", { name: /^Collections \d+$/ }) });
+
+  // The seeder puts the binary in one collection, from the collection's side.
+  await expect(collections.getByRole("cell", { name: collection })).toBeVisible();
+
+  // The same panel removes it, and the confirm control carries the same label.
+  await collections.getByRole("button", { name: "Remove" }).click();
+  await collections.getByRole("button", { name: "Remove" }).click();
+  await expect(collections.getByText("This binary is in no collection.")).toBeVisible();
+
+  // And puts it back, so the workspace is as this spec found it.
+  await collections.getByRole("combobox").selectOption({ label: collection });
+  await collections.getByRole("button", { name: "Add" }).click();
+  await expect(collections.getByRole("cell", { name: collection })).toBeVisible();
+});

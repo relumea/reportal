@@ -3574,6 +3574,42 @@ def collections(
     console.print(table)
 
 
+@app.command("collections-of")
+def collections_of(
+    binary_id: int = typer.Argument(..., help="Binary id whose collections to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List the collections one binary is a member of."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        rows = store.collections_of_binary(conn, binary_id)
+    if json_output:
+        typer.echo(json.dumps({"binary_id": binary_id, "collections": rows, "count": len(rows)}))
+        return
+    if not rows:
+        console.print("[yellow]This binary is in no collection.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Id", justify="right")
+    table.add_column("Name", style="cyan")
+    table.add_column("Owner")
+    table.add_column("Binaries", justify="right")
+    table.add_column("Description")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            str(row["name"]),
+            str(row.get("owner_team_name") or "-"),
+            str(row["binary_count"]),
+            str(row["description"]),
+        )
+    console.print(table)
+
+
 @app.command()
 def collection_show(
     collection_id: int = typer.Argument(..., help="Collection id"),

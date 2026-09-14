@@ -170,6 +170,29 @@ class TestCli:
             names = [tag["name"] for tag in store.collection_tags(conn, ids["collection"])]
         assert names == ["one", "two"]
 
+    def test_collections_of_lists_one_binarys_collections(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        runner.invoke(cli.app, ["collection-new", "later", "--json"])
+        runner.invoke(cli.app, ["collection-add", "2", str(ids["binary"]), "--json"])
+
+        result = runner.invoke(cli.app, ["collections-of", str(ids["binary"]), "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["binary_id"] == ids["binary"]
+        assert payload["count"] == 2
+        assert [row["name"] for row in payload["collections"]] == ["games", "later"]
+
+    def test_collections_of_an_unknown_binary_fails(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["collections-of", "999"])
+
+        assert result.exit_code == 1
+        assert "no binary with id 999" in result.output
+
     def test_an_unknown_collection_fails(self, tmp_path: Path, monkeypatch: Any) -> None:
         _seed(tmp_path, monkeypatch)
 
@@ -205,6 +228,34 @@ class TestMcp:
 
         assert payload["order"] == "name"
         assert [row["name"] for row in payload["collections"]] == ["alpha", "zeta"]
+
+    def test_list_collections_with_a_binary_id_reads_its_memberships(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        collection_id = store.create_collection(conn, name="holder")
+        binary_id = store.add_binary(
+            conn, sha256="b" * 64, name="member.exe", path="/tmp/member.exe", size=8
+        )
+        store.add_collection_binary(conn, collection_id, binary_id)
+        tool = mcp_tools.get_tool("list_collections")
+        assert tool is not None
+
+        payload = tool.handler({"binary_id": binary_id})
+
+        assert payload["binary_id"] == binary_id
+        assert payload["count"] == 1
+        assert [row["name"] for row in payload["collections"]] == ["holder"]
+
+    def test_list_collections_with_an_unknown_binary_is_a_tool_error(self, portal_db: Path) -> None:
+        tool = mcp_tools.get_tool("list_collections")
+        assert tool is not None
+
+        try:
+            tool.handler({"binary_id": 999})
+        except mcp_tools.ToolError as exc:
+            assert exc.error == "binary not found"
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unknown binary must be a tool error")
 
     def test_list_collections_refuses_an_unknown_order(
         self, portal_db: Path, conn: sqlite3.Connection

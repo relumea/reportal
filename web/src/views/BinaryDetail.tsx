@@ -39,6 +39,7 @@ import {
   UnstripPanel,
 } from "../panels/BinaryPanels";
 import { DataTypesPanel } from "../panels/DataTypesPanel";
+import { BinaryCollectionsPanel } from "../panels/CollectionsPanel";
 import { CommentsPanel } from "../panels/CommentsPanel";
 import { ScansPanel } from "../panels/ScansPanel";
 import { MemoryPanel } from "../panels/MemoryPanel";
@@ -77,6 +78,7 @@ export function BinaryDetail({
           <UnpackedFilesPanel binaryId={binary.id} />
           <StringsPanel binaryId={binary.id} />
           <TagsPanel binaryId={binary.id} />
+          <BinaryCollectionsPanel binaryId={binary.id} />
           <CommentsPanel scopeKind="binary" scopeId={binary.id} />
           <LineagePanel binaryId={binary.id} />
           <FirmwarePanel binaryId={binary.id} />

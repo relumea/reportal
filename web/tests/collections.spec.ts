@@ -1,7 +1,8 @@
 // The Collections view's list controls: the scope filter in the hash, the sort
-// that includes the owner, and the owner column.  The seeded workspace has no
-// teams, so every collection it holds is personal and the team scope is the one
-// filter that matches nothing, which is what makes the empty state checkable.
+// that includes the owner, and the owner column.  The seeded workspace holds no
+// team-owned collection, so every collection it has is personal and the team
+// scope is the one filter that matches nothing, which is what makes the empty
+// state checkable.
 
 import { panelByTitle } from "./helpers";
 import { expect, test } from "./fixtures";

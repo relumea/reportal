@@ -2474,6 +2474,36 @@ def list_collections(
     return _rows(conn.execute(sql, params))
 
 
+def collections_of_binary(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    *,
+    visible_to: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """The collections *binary_id* is a member of, each row as the listing's.
+
+    A row carries the collection's own fields, its member count and its owning
+    team's name, the shape :func:`list_collections` returns, and *visible_to*
+    narrows it the same way: a collection the caller may not see is not
+    disclosed by a binary it can.
+    """
+    sql = (
+        "SELECT c.*, (SELECT COUNT(*) FROM collection_binaries cb2"
+        " WHERE cb2.collection_id = c.id) AS binary_count,"
+        " t.name AS owner_team_name FROM collections c"
+        " JOIN collection_binaries cb ON cb.collection_id = c.id"
+        " LEFT JOIN teams t ON t.id = c.owner_team_id"
+        " WHERE cb.binary_id = ?"
+    )
+    params: list[Any] = [binary_id]
+    scope = auth.visible_clause(conn, visible_to, prefix="c.")
+    if scope is not None:
+        sql += " AND " + scope[0]
+        params.extend(scope[1])
+    sql += " ORDER BY c.name, c.id"
+    return _rows(conn.execute(sql, params))
+
+
 # ── Feedback ───────────────────────────────────────────────────────
 
 # A feedback note is free text; this is the bound the hosted form implies and

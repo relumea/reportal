@@ -6905,6 +6905,24 @@ def list_collections(request: Request) -> Response:
         )
 
 
+@router.get("/api/binaries/{binary_id}/collections")
+def list_binary_collections(request: Request, binary_id: int) -> Response:
+    """The collections one binary is a member of, by name; read-only.
+
+    A collection the caller may not see is left out, so a binary it can reach
+    never discloses one it cannot.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        collections = store.collections_of_binary(conn, binary_id, visible_to=_caller(request))
+    return json_response(
+        {"binary_id": binary_id, "collections": collections, "count": len(collections)}
+    )
+
+
 @router.post("/api/collections")
 def create_collection(body: dict[str, Any] = Depends(json_body)) -> Response:
     name = _require_str(body, "name")

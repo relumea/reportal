@@ -198,6 +198,83 @@ class TestMembers:
         assert payload["detail"] == "binary_ids is required"
 
 
+class TestBinaryCollections:
+    """The reverse read: which collections hold one binary."""
+
+    def test_a_binary_reports_its_collections(self, conn: sqlite3.Connection) -> None:
+        first = store.create_collection(conn, name="first", description="one")
+        second = store.create_collection(conn, name="second")
+        binary_id = _binary(conn, "member.exe")
+        store.add_collection_binary(conn, first, binary_id)
+        store.add_collection_binary(conn, second, binary_id)
+
+        status, payload = _request("GET", f"/api/binaries/{binary_id}/collections")
+
+        assert status.startswith("200")
+        assert payload["binary_id"] == binary_id
+        assert payload["count"] == 2
+        assert [row["name"] for row in payload["collections"]] == ["first", "second"]
+        assert payload["collections"][0]["binary_count"] == 1
+        assert payload["collections"][0]["description"] == "one"
+
+    def test_a_binary_in_no_collection_answers_an_empty_list(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = _binary(conn, "lonely.exe")
+
+        status, payload = _request("GET", f"/api/binaries/{binary_id}/collections")
+
+        assert status.startswith("200")
+        assert payload["collections"] == []
+        assert payload["count"] == 0
+
+    def test_an_unknown_binary_is_404(self, conn: sqlite3.Connection) -> None:
+        status, payload = _request("GET", "/api/binaries/9999/collections")
+
+        assert status.startswith("404")
+        assert payload["error"] == "binary not found"
+
+    def test_a_collection_the_caller_cannot_see_is_left_out(
+        self, conn: sqlite3.Connection, monkeypatch: Any
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        team = auth.create_team(conn, name="Blue")
+        team_id = int(team["id"])
+        _, ana = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        _, bob = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        ana_user = auth.find_user(conn, "ana")
+        assert ana_user is not None
+        auth.add_member(conn, team_id, int(ana_user["id"]))
+        binary_id = _binary(conn, "shared.exe")
+        public_id = store.create_collection(conn, name="public")
+        team_collection = store.create_collection(conn, name="team")
+        store.set_collection_scope(
+            conn, team_collection, owner_team_id=team_id, visibility=auth.VISIBILITY_TEAM
+        )
+        store.add_collection_binary(conn, public_id, binary_id)
+        store.add_collection_binary(conn, team_collection, binary_id)
+
+        status, headers, raw = wsgi_request(
+            "GET",
+            f"/api/binaries/{binary_id}/collections",
+            headers={"Authorization": f"Bearer {bob}"},
+        )
+        payload = json_body(raw, headers)
+
+        assert status.startswith("200")
+        assert [row["name"] for row in payload["collections"]] == ["public"]
+        member_status, member_headers, member_raw = wsgi_request(
+            "GET",
+            f"/api/binaries/{binary_id}/collections",
+            headers={"Authorization": f"Bearer {ana}"},
+        )
+        assert member_status.startswith("200")
+        assert [row["name"] for row in json_body(member_raw, member_headers)["collections"]] == [
+            "public",
+            "team",
+        ]
+
+
 class TestCollectionTags:
     def test_replace_creates_removes_and_keeps(self, conn: sqlite3.Connection) -> None:
         collection_id = store.create_collection(conn, name="tagged")

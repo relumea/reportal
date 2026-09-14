@@ -491,6 +491,9 @@ reportal collections [--order ORDER] [--workspace SCOPE] [--json]
                                            #   personal, team or public
 reportal collection-show <collection-id> [--json]
                                            # one collection with its members and tags
+reportal collections-of <binary-id> [--json]
+                                           # the collections one binary is a member of, the
+                                           #   reverse of collection-show's member list
 reportal collection-new <name> [--description TEXT] [--scope TEXT] [--json]
                                            # create a collection
 reportal collection-edit <collection-id> [--name TEXT] [--description TEXT] [--scope TEXT]
