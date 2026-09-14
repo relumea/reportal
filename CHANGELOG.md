@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- The collections list carries the scope it was missing: `GET /api/collections`
+  takes `?workspace=personal|team|public` against the collection's own
+  `visibility`/`owner_team_id` (an unknown value is 400 `invalid workspace`) and
+  answers each row with its `owner_team_name`, `?order=` gained `owner` (sorting
+  by the owning team's name, the personal collections first),
+  `reportal collections` takes `--workspace` and draws an Owner column, the
+  `list_collections` MCP tool takes the same filter, and the Collections view
+  carries a Workspace control and an Owner column, with its sort and scope kept
+  in the route hash so a filtered list is a link.
+
 - Long tables render only what is in view: `DataTable` takes a `windowed` prop,
   set on the Functions and Matches lists, which renders the rows around the
   viewport with a spacer row carrying the height of the rows it left out and

@@ -1,8 +1,14 @@
-// The Collections view: the list, one selected collection's members and tags,
-// and the write controls the collection routes expose (rename, scope,
-// description, member add/remove, tag replace, delete).
+// The Collections view: the list with its order and scope controls, one
+// selected collection's members and tags, and the write controls the
+// collection routes expose (rename, scope, description, member add/remove,
+// tag replace, delete).
+//
+// The list's controls live in the URL hash (`#/collections?order=owner&
+// workspace=team`), the convention the Analyses view uses, so a filtered list
+// is a link and survives a reload.
 
 import { useState } from "react";
+import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
@@ -17,10 +23,12 @@ import {
   Panel,
   Toolbar,
 } from "../components";
-import { COLLECTION_ORDERS } from "../constants";
-import type { CollectionOrder } from "../constants";
+import { COLLECTION_ORDERS, DEFAULT_COLLECTION_ORDER, WORKSPACE_FILTERS } from "../constants";
+import type { CollectionOrder, WorkspaceFilter } from "../constants";
 import type { Collection, CollectionDetail } from "../types";
 import { useAsync } from "../useAsync";
+
+const COLLECTIONS_PATH = "/collections";
 
 function CollectionDetailPanel({
   collectionId,
@@ -188,17 +196,55 @@ function CollectionDetailPanel({
   );
 }
 
-export function CollectionsView(): ReactNode {
-  const [order, setOrder] = useState<CollectionOrder>("id");
+/** The order and the scope filter one collections hash carries. */
+interface CollectionFilters {
+  order: CollectionOrder;
+  workspace: WorkspaceFilter | "";
+}
+
+function filtersFromQuery(query: Record<string, string>): CollectionFilters {
+  const order = query.order ?? "";
+  const workspace = query.workspace ?? "";
+  return {
+    order: (COLLECTION_ORDERS as readonly string[]).includes(order)
+      ? (order as CollectionOrder)
+      : DEFAULT_COLLECTION_ORDER,
+    workspace: (WORKSPACE_FILTERS as readonly string[]).includes(workspace)
+      ? (workspace as WorkspaceFilter)
+      : "",
+  };
+}
+
+export function CollectionsView({
+  query,
+}: {
+  query: Record<string, string>;
+}): ReactNode {
+  const navigate = useNavigate();
+  const filters = filtersFromQuery(query);
+  const params = new URLSearchParams();
+  params.set("order", filters.order);
+  if (filters.workspace) params.set("workspace", filters.workspace);
   const { data, error, reload } = useAsync(
-    () => api<{ collections: Collection[]; order: CollectionOrder }>(`/collections?order=${order}`),
-    [order],
+    () => api<{ collections: Collection[] }>(`/collections?${params.toString()}`),
+    [filters.order, filters.workspace],
   );
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selected, setSelected] = useState<number | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+
+  const apply = (patch: Partial<CollectionFilters>): void => {
+    const next = { ...filters, ...patch };
+    const search = new URLSearchParams();
+    search.set("order", next.order);
+    if (next.workspace) search.set("workspace", next.workspace);
+    navigate({
+      pathname: COLLECTIONS_PATH,
+      search: createSearchParams(Object.fromEntries(search)).toString(),
+    });
+  };
 
   const create = async (): Promise<void> => {
     setActionError(null);
@@ -220,6 +266,7 @@ export function CollectionsView(): ReactNode {
   };
 
   const collections = data?.collections;
+  const filtered = filters.workspace !== "";
 
   return (
     <>
@@ -248,8 +295,24 @@ export function CollectionsView(): ReactNode {
             />
           </Field>
           <Field label="Sort">
-            <select value={order} onChange={(event) => setOrder(event.target.value as CollectionOrder)}>
+            <select
+              value={filters.order}
+              onChange={(event) => apply({ order: event.target.value as CollectionOrder })}
+            >
               {COLLECTION_ORDERS.map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Workspace">
+            <select
+              value={filters.workspace}
+              onChange={(event) => apply({ workspace: event.target.value as WorkspaceFilter | "" })}
+            >
+              <option value="">any scope</option>
+              {WORKSPACE_FILTERS.map((value) => (
                 <option key={value} value={value}>
                   {value}
                 </option>
@@ -259,20 +322,30 @@ export function CollectionsView(): ReactNode {
         </Toolbar>
         {error ? <ErrorNote error={error} onRetry={reload} /> : null}
         {actionError ? <ErrorNote error={actionError} /> : null}
-        {collections === undefined ? null : (
+        {collections === undefined ? (
+          <Loading label="Loading collections" />
+        ) : (
           <DataTable
             columns={[
               { label: "ID", key: "id", numeric: true },
               { label: "Name", key: "name" },
               { label: "Description", key: "description" },
               { label: "Scope", key: "scope" },
+              {
+                label: "Owner",
+                render: (row) => row.owner_team_name ?? "-",
+              },
               { label: "Binaries", key: "binary_count", numeric: true },
             ]}
             rows={collections}
             rowKey={(row) => row.id}
             onRowClick={(row) => setSelected(selected === row.id ? null : row.id)}
             empty={
-              <EmptyState>No collections yet. Name one above to start grouping binaries.</EmptyState>
+              <EmptyState>
+                {filtered
+                  ? "No collections match this filter. Clear it to see them all."
+                  : "No collections yet. Name one above to start grouping binaries."}
+              </EmptyState>
             }
           />
         )}

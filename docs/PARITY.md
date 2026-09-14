@@ -349,13 +349,18 @@ locally with the reason in that section above.
 `update_collection`, `delete_collection`, `collection_binaries`,
 `collection_tags`, `replace_collection_binaries`, `set_collection_tags`), the six
 HTTP routes, the seven CLI commands, the seven MCP tools and the SPA detail
-panel are implemented and tested (57 tests across `tests/test_collections_api.py`
+panel are implemented and tested (68 tests across `tests/test_collections_api.py`
 and `tests/test_collections_cli_mcp.py`), each write journaled and revertible and
 the new `collection_tags` table cascading with its collection.  The SPA lists,
 creates, selects a collection, edits its name/description/scope and tags, adds
 and removes members and deletes it behind an inline confirm, and the list sorts
-by id, name, member count or last change (`collections.updated_at`, touched by
-every write that changed something) through `?order=`.
+by id, name, member count, last change (`collections.updated_at`, touched by
+every write that changed something) or owning team through `?order=`, filters by
+scope (`?workspace=personal|team|public` over the collection's own
+`visibility`/`owner_team_id`, which every row reports beside `owner_team_name`)
+and keeps both in the route hash.  The hosted portal's owner column, its
+Personal/Team/Public filter and its sort by owner are the three pieces of that
+page reportal did not have.
 
 ### F. Users, auth and IAM (hosted 5 operations)
 

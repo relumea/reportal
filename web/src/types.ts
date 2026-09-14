@@ -236,6 +236,10 @@ export interface Collection {
   binary_count: number;
   /** When the collection's fields, members or tags last changed. */
   updated_at: string;
+  /** `public` or `team`, and the team that owns it (null for a personal one). */
+  visibility: string;
+  owner_team_id: number | null;
+  owner_team_name: string | null;
 }
 
 /** One collection's members and tags, the shape `GET /api/collections/<id>` answers. */

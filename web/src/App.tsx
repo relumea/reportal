@@ -181,6 +181,11 @@ function AnalysesRoute(): ReactNode {
   return <AnalysesView query={Object.fromEntries(params)} />;
 }
 
+function CollectionsRoute(): ReactNode {
+  const [params] = useSearchParams();
+  return <CollectionsView query={Object.fromEntries(params)} />;
+}
+
 /** Where the shell remembers whether the sidebar is collapsed. */
 const SIDEBAR_STORAGE_KEY = "reportal.sidebar.collapsed";
 
@@ -442,7 +447,7 @@ export function App(): ReactNode {
     },
     {
       path: "/collections",
-      element: <CollectionsView />,
+      element: <CollectionsRoute />,
       handle: { view: "collections", title: "Collections" },
     },
     {

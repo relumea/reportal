@@ -207,9 +207,13 @@ export const MAX_GRAPH_ROWS_SHOWN = 500;
 export const LINEAGE_STATUSES = ["unchanged", "changed", "removed", "added"] as const;
 
 // Orders the collections list accepts; the server sorts and echoes the value,
-// and `id` is the creation order it used before the control existed.
-export const COLLECTION_ORDERS = ["id", "name", "size", "updated"] as const;
+// and `id` is the creation order it used before the control existed.  `owner`
+// sorts by the owning team's name, the personal collections first.
+export const COLLECTION_ORDERS = ["id", "name", "size", "updated", "owner"] as const;
 export type CollectionOrder = (typeof COLLECTION_ORDERS)[number];
+// Mirrors store.DEFAULT_COLLECTION_ORDER: the control falls back to the order
+// the route uses when none is named.
+export const DEFAULT_COLLECTION_ORDER: CollectionOrder = "id";
 
 // Statuses the Lineage panel groups into tables; unchanged rows are only
 // counted, since a version pair is usually mostly unchanged.
@@ -306,8 +310,10 @@ export const ANALYSIS_ORDER_LABELS: Record<(typeof ANALYSIS_ORDERS)[number], str
   "size-desc": "size (large first)",
 };
 
-/** The workspace filter's labels; mirrors store.WORKSPACE_FILTERS. */
-export const ANALYSIS_WORKSPACES = ["personal", "team", "public"] as const;
+/** The workspace filter's labels; mirrors store.WORKSPACE_FILTERS.  The
+ *  Analyses and Collections lists both filter by it. */
+export const WORKSPACE_FILTERS = ["personal", "team", "public"] as const;
+export type WorkspaceFilter = (typeof WORKSPACE_FILTERS)[number];
 
 // Rows one analyses request asks for; mirrors store.DEFAULT_ANALYSIS_LIMIT.
 export const DEFAULT_ANALYSIS_LIMIT = 100;

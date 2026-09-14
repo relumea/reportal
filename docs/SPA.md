@@ -525,10 +525,15 @@ replace-existing-prefix toggle that posts `POST /api/functions/bulk` for the
 selected rows and reports how many renamed and how many were skipped.
 
 The Collections view (`views/CollectionsView.tsx`, `#/collections`) lists the
-collections with their member and tag counts and creates one from a name and a
-description, with a Sort control offering `id` (the default), `name`, `size` and
-`updated` over `GET /api/collections?order=`, which sorts server-side and echoes
-the order it applied.  Selecting a row opens its detail panel: the collection's name,
+collections with their member and tag counts, their owner and their scope, and
+creates one from a name and a description.  A Sort control offers `id` (the
+default), `name`, `size`, `updated` and `owner` over `GET
+/api/collections?order=`, a Workspace control filters by `personal`, `team` or
+`public` over `?workspace=` against the collection's own scope, and both live in
+the route hash (`#/collections?order=owner&workspace=personal`), so a filtered
+list is a link.  The route sorts server-side and echoes both values it applied;
+a filter that matches nothing says so instead of reading as an empty register.
+Selecting a row opens its detail panel: the collection's name,
 description and scope are editable and saved with `PATCH /api/collections/<id>`,
 its tags are a comma-separated field saved with `PATCH
 /api/collections/<id>/tags` (the set is replaced, so clearing the field removes

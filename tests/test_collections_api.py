@@ -8,7 +8,7 @@ from typing import Any
 
 from conftest import json_body, wsgi_request
 
-from reportal import journal, store
+from reportal import auth, journal, store
 
 CONNECTION: sqlite3.Connection | None = None
 
@@ -409,3 +409,106 @@ class TestOrder:
         row = store.get_collection(conn, collection_id)
         assert row is not None
         assert row["updated_at"] == row["created_at"]
+
+
+class TestScopeFilterAndOwnerOrder:
+    """The list's scope filter and its sort by the owning team's name."""
+
+    def _scoped(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """Three collections: personal, team-owned and team-owned but public."""
+        team = auth.create_team(conn, name="blue")
+        ids = {
+            "personal": store.create_collection(conn, name="personal-set"),
+            "team": store.create_collection(conn, name="team-set"),
+            "shared": store.create_collection(conn, name="shared-set"),
+        }
+        store.set_collection_scope(
+            conn, ids["team"], owner_team_id=int(team["id"]), visibility="team"
+        )
+        store.set_collection_scope(
+            conn, ids["shared"], owner_team_id=int(team["id"]), visibility="public"
+        )
+        return ids
+
+    def _names(self, conn: sqlite3.Connection, workspace: str) -> list[str]:
+        rows = store.list_collections(conn, workspace=workspace)
+        return [row["name"] for row in rows]
+
+    def test_personal_is_every_collection_no_team_owns(self, conn: sqlite3.Connection) -> None:
+        self._scoped(conn)
+
+        assert self._names(conn, "personal") == ["personal-set"]
+
+    def test_team_is_every_collection_a_team_owns(self, conn: sqlite3.Connection) -> None:
+        self._scoped(conn)
+
+        assert sorted(self._names(conn, "team")) == ["shared-set", "team-set"]
+
+    def test_public_is_every_collection_the_workspace_may_see(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        self._scoped(conn)
+
+        assert sorted(self._names(conn, "public")) == ["personal-set", "shared-set"]
+
+    def test_a_row_carries_the_owning_team_and_a_personal_one_carries_none(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = self._scoped(conn)
+
+        rows = {row["id"]: row for row in store.list_collections(conn)}
+
+        assert rows[ids["team"]]["owner_team_name"] == "blue"
+        assert rows[ids["team"]]["visibility"] == "team"
+        assert rows[ids["personal"]]["owner_team_id"] is None
+        assert rows[ids["personal"]]["owner_team_name"] is None
+
+    def test_owner_sorts_by_team_name_with_the_personal_first(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        self._scoped(conn)
+        second = auth.create_team(conn, name="amber")
+        other = store.create_collection(conn, name="other-set")
+        store.set_collection_scope(conn, other, owner_team_id=int(second["id"]), visibility="team")
+
+        ordered = [row["name"] for row in store.list_collections(conn, order="owner")]
+
+        # The personal one first, then the owning teams by name (amber before
+        # blue), and the id breaks the tie inside one team.
+        assert ordered == ["personal-set", "other-set", "team-set", "shared-set"]
+
+    def test_an_unknown_workspace_is_a_value_error(self, conn: sqlite3.Connection) -> None:
+        try:
+            store.list_collections(conn, workspace="everywhere")
+        except ValueError as exc:
+            assert "unknown workspace filter" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unknown workspace filter must be refused")
+
+    def test_the_route_echoes_the_workspace_it_applied(self, conn: sqlite3.Connection) -> None:
+        ids = self._scoped(conn)
+
+        status, payload = _request("GET", "/api/collections?workspace=team")
+
+        assert status.startswith("200")
+        assert payload["workspace"] == "team"
+        assert sorted(row["name"] for row in payload["collections"]) == ["shared-set", "team-set"]
+        assert payload["collections"][0]["id"] in ids.values()
+
+    def test_the_route_without_a_workspace_answers_every_collection(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        self._scoped(conn)
+
+        status, payload = _request("GET", "/api/collections")
+
+        assert status.startswith("200")
+        assert payload["workspace"] is None
+        assert len(payload["collections"]) == 3
+
+    def test_an_unknown_workspace_is_400(self, conn: sqlite3.Connection) -> None:
+        status, payload = _request("GET", "/api/collections?workspace=everywhere")
+
+        assert status.startswith("400")
+        assert payload["error"] == "invalid workspace"
+        assert "everywhere" in payload["detail"]

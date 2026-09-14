@@ -403,21 +403,6 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   and the tag cells are read-only, which is the same information without the
   menu.  Covered by `TestAnalysisFilters`, the CLI's filter cases and the
   Analyses e2e.
-- **Status:** Closed.  `GET /api/analyses` takes `?status=` repeated (any-of),
-  `?platform=` and `?arch=` against the stored binary's own `format`/`arch`, and
-  the six `ANALYSIS_ORDERS` (`newest`, `oldest`, `name`, `name-desc`, `size`,
-  `size-desc`), so the SPA's Order control covers the hosted one; the payload
-  answers the `platforms` and `architectures` the register actually holds, so
-  each filter lists only real choices.  `reportal analyses` takes the same
-  (`--status` repeats, `--platform`, `--arch`, `--order`).  The Analyses view
-  carries a status chip per state (any-of, and the last one off means any), the
-  two selects, a `Clear` control, a per-row `View log` / `Re-analyse` (the
-  cluster D requeue) / `Delete`, and `Copy hashes` in the bulk toolbar beside
-  Add tag, Remove tag and Delete.  Gap: the hosted three-dot menu and the
-  inline tag chips are not built; the actions are buttons in the Actions column
-  and the tag cells are read-only, which is the same information without the
-  menu.  Covered by `TestAnalysisFilters`, the CLI's filter cases and the
-  Analyses e2e.
 
 ### 11. Upload panel: drag and drop, per-entry reporting and extraction in place
 
@@ -639,11 +624,21 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
 - **Status:** Closed.  `collections.updated_at` records the last field,
   membership or tag change (`touch_collection`, backfilled from `created_at`
   for a database that predates the column), `list_collections(order=...)`
-  accepts `id`/`name`/`size`/`updated`, `GET /api/collections?order=` echoes the
-  order it applied and answers 400 `invalid order` for an unknown one,
+  accepts `id`/`name`/`size`/`updated`/`owner`, `GET /api/collections?order=`
+  echoes the order it applied and answers 400 `invalid order` for an unknown one,
   `reportal collections --order` and the `list_collections` MCP tool expose the
-  same, and the Collections view carries the Sort control.  The scope filter
-  stays with cluster F.
+  same, and the Collections view carries the Sort control.  The scope half
+  shipped with cluster F's identity: `list_collections(workspace=...)` reads a
+  collection's own scope (`personal` is one no team owns, `team` one a team does,
+  `public` one the whole workspace may see), each row carries `visibility`,
+  `owner_team_id` and `owner_team_name`, `GET /api/collections?workspace=`
+  answers 400 `invalid workspace` for an unknown value and echoes the filter,
+  `reportal collections --workspace` and the `list_collections` tool take it, and
+  the Collections view carries the Workspace control and an Owner column.  The
+  view's sort and scope live in the route hash (`#/collections?order=&workspace=`),
+  so a filtered list is a link, and the two controls cover the hosted page's
+  Personal/Team/Public filter, its owner column and its sort.  The AI-model link
+  the hosted page dropped has no local equivalent.
 
 ## Open clusters from PARITY.md
 

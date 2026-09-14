@@ -3428,6 +3428,11 @@ def collections(
         "--order",
         help=f"Sort by one of: {', '.join(store.COLLECTION_ORDERS)}",
     ),
+    workspace: str = typer.Option(
+        "",
+        "--workspace",
+        help=f"Filter by scope: {', '.join(store.WORKSPACE_FILTERS)}",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """List collections with their member and tag counts."""
@@ -3436,17 +3441,20 @@ def collections(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
-            rows = store.list_collections(conn, order=order)
+            rows = store.list_collections(conn, order=order, workspace=workspace or None)
         except ValueError as exc:
             _fail(str(exc), json_output)
         for row in rows:
             row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
     if json_output:
-        typer.echo(json.dumps({"collections": rows, "order": order}))
+        typer.echo(
+            json.dumps({"collections": rows, "order": order, "workspace": workspace or None})
+        )
         return
     table = Table(show_header=True, header_style="bold")
     table.add_column("Id", justify="right")
     table.add_column("Name", style="cyan")
+    table.add_column("Owner")
     table.add_column("Binaries", justify="right")
     table.add_column("Tags")
     table.add_column("Description")
@@ -3454,6 +3462,7 @@ def collections(
         table.add_row(
             str(row["id"]),
             str(row["name"]),
+            str(row.get("owner_team_name") or "-"),
             str(row["binary_count"]),
             ", ".join(row["tags"]),
             str(row["description"]),

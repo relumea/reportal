@@ -3926,14 +3926,23 @@ def _tool_get_config(_arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_list_collections(arguments: dict[str, Any]) -> dict[str, Any]:
     order = _arg_optional_str(arguments, "order", store.DEFAULT_COLLECTION_ORDER)
+    workspace = _arg_optional_str(arguments, "workspace", "")
     with contextlib.closing(_open()) as conn:
         try:
-            rows = store.list_collections(conn, order=order)
+            rows = store.list_collections(conn, order=order, workspace=workspace or None)
         except ValueError as exc:
-            raise ToolError("invalid order", str(exc)) from exc
+            # The store names the argument it refused; the tool answers the same
+            # code the route would.
+            code = "invalid workspace" if "workspace" in str(exc) else "invalid order"
+            raise ToolError(code, str(exc)) from exc
         for row in rows:
             row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
-        return {"collections": rows, "count": len(rows), "order": order}
+        return {
+            "collections": rows,
+            "count": len(rows),
+            "order": order,
+            "workspace": workspace or None,
+        }
 
 
 def _tool_get_collection(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -7040,14 +7049,26 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "list_collections",
-            "List collections with their member and tag counts, in the named order.",
+            "List collections with their member and tag counts, in the named order,"
+            " optionally filtered by scope.",
             _object(
                 {
                     "order": {
                         "type": "string",
                         "enum": sorted(store.COLLECTION_ORDERS),
-                        "description": "id (default), name, size by member count, or updated",
-                    }
+                        "description": (
+                            "id (default), name, size by member count, updated by the"
+                            " last change, or owner by the owning team's name"
+                        ),
+                    },
+                    "workspace": {
+                        "type": "string",
+                        "enum": list(store.WORKSPACE_FILTERS),
+                        "description": (
+                            "personal (no owning team), team (owned by a team) or"
+                            " public (the whole workspace may see it)"
+                        ),
+                    },
                 }
             ),
             _READ,

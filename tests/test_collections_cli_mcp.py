@@ -10,7 +10,7 @@ from typing import Any
 
 from typer.testing import CliRunner
 
-from reportal import cli, journal, mcp_tools, store
+from reportal import auth, cli, journal, mcp_tools, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -60,6 +60,34 @@ class TestCli:
 
         assert result.exit_code == 1
         assert "unknown collection order" in result.output
+
+    def test_collections_filters_and_names_the_owner(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            team = auth.create_team(conn, name="blue")
+            team_set = store.create_collection(conn, name="team-set")
+            store.set_collection_scope(
+                conn, team_set, owner_team_id=int(team["id"]), visibility="team"
+            )
+
+        result = runner.invoke(cli.app, ["collections", "--workspace", "team", "--json"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["workspace"] == "team"
+        assert [row["name"] for row in payload["collections"]] == ["team-set"]
+        assert payload["collections"][0]["owner_team_name"] == "blue"
+        assert ids["collection"] not in [row["id"] for row in payload["collections"]]
+
+    def test_an_unknown_workspace_fails(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["collections", "--workspace", "everywhere"])
+
+        assert result.exit_code == 1
+        assert "unknown workspace filter" in result.output
 
     def test_collection_show_reports_the_members(self, tmp_path: Path, monkeypatch: Any) -> None:
         ids = _seed(tmp_path, monkeypatch)
@@ -190,6 +218,36 @@ class TestMcp:
             assert exc.error == "invalid order"
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("an unknown order must be a tool error")
+
+    def test_list_collections_filters_by_the_workspace(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        team = auth.create_team(conn, name="blue")
+        store.create_collection(conn, name="personal-set")
+        team_set = store.create_collection(conn, name="team-set")
+        store.set_collection_scope(conn, team_set, owner_team_id=int(team["id"]), visibility="team")
+        tool = mcp_tools.get_tool("list_collections")
+        assert tool is not None
+
+        payload = tool.handler({"workspace": "team"})
+
+        assert payload["workspace"] == "team"
+        assert [row["name"] for row in payload["collections"]] == ["team-set"]
+        assert payload["collections"][0]["owner_team_name"] == "blue"
+
+    def test_list_collections_refuses_an_unknown_workspace(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        tool = mcp_tools.get_tool("list_collections")
+        assert tool is not None
+
+        try:
+            tool.handler({"workspace": "everywhere"})
+        except mcp_tools.ToolError as exc:
+            assert exc.error == "invalid workspace"
+            assert "unknown workspace filter" in exc.detail
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unknown workspace filter must be a tool error")
 
     def test_get_collection_returns_members(
         self, portal_db: Path, conn: sqlite3.Connection

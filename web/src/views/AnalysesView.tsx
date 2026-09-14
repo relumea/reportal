@@ -32,7 +32,7 @@ import {
   ANALYSIS_ORDER_LABELS,
   ANALYSIS_ORDERS,
   ANALYSIS_STATUSES,
-  ANALYSIS_WORKSPACES,
+  WORKSPACE_FILTERS,
   DEFAULT_ANALYSIS_LIMIT,
   DEFAULT_ANALYSIS_LOG_LIMIT,
 } from "../constants";
@@ -73,7 +73,7 @@ function filtersFromQuery(query: Record<string, string>): AnalysisFilters {
     status: statuses,
     order: (ANALYSIS_ORDERS as readonly string[]).includes(order) ? order : "",
     search: query.search ?? "",
-    workspace: (ANALYSIS_WORKSPACES as readonly string[]).includes(query.workspace ?? "")
+    workspace: (WORKSPACE_FILTERS as readonly string[]).includes(query.workspace ?? "")
       ? (query.workspace ?? "")
       : "",
     platform: query.platform ?? "",
@@ -450,7 +450,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               onChange={(event) => apply({ workspace: event.target.value })}
             >
               <option value="">any scope</option>
-              {ANALYSIS_WORKSPACES.map((value) => (
+              {WORKSPACE_FILTERS.map((value) => (
                 <option key={value} value={value}>
                   {value}
                 </option>

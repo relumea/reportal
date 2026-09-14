@@ -2337,6 +2337,10 @@ COLLECTION_ORDERS: dict[str, str] = {
     "name": "c.name COLLATE NOCASE ASC, c.id ASC",
     "size": "binary_count DESC, c.name COLLATE NOCASE ASC, c.id ASC",
     "updated": "c.updated_at DESC, c.id DESC",
+    # ``owner`` sorts by the owning team's name; a collection no team owns (the
+    # personal ones) has no name to sort by and reads first, which is what
+    # ``t.name IS NOT NULL`` puts there.
+    "owner": "t.name IS NOT NULL, t.name COLLATE NOCASE ASC, c.id ASC",
 }
 
 DEFAULT_COLLECTION_ORDER = "id"
@@ -2346,26 +2350,46 @@ def list_collections(
     conn: sqlite3.Connection,
     *,
     order: str = DEFAULT_COLLECTION_ORDER,
+    workspace: str | None = None,
     visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """All collections with their member-binary count, in *order*.
 
     *order* is one of :data:`COLLECTION_ORDERS`; an unknown one raises
     ``ValueError``, which the API, the CLI and the MCP tools map to their own
-    error vocabulary.  *visible_to* narrows the listing the way
-    :func:`list_binaries` does.
+    error vocabulary.  *workspace* is one of :data:`WORKSPACE_FILTERS` and reads
+    a collection's own scope the way :func:`list_analyses` reads an analysis's:
+    ``personal`` is one no team owns, ``team`` one a team does, and ``public``
+    one the whole workspace may see.  Each row carries that scope
+    (``visibility``, ``owner_team_id``) and the owning team's name as
+    ``owner_team_name``, which is null for a personal collection.  *visible_to*
+    narrows the listing the way :func:`list_binaries` does.
     """
     if order not in COLLECTION_ORDERS:
         raise ValueError(f"unknown collection order: {order}")
+    if workspace is not None and workspace not in WORKSPACE_FILTERS:
+        raise ValueError(f"unknown workspace filter: {workspace}")
     sql = (
         "SELECT c.*, (SELECT COUNT(*) FROM collection_binaries cb"
-        " WHERE cb.collection_id = c.id) AS binary_count FROM collections c"
+        " WHERE cb.collection_id = c.id) AS binary_count,"
+        " t.name AS owner_team_name FROM collections c"
+        " LEFT JOIN teams t ON t.id = c.owner_team_id"
     )
+    clauses: list[str] = []
     params: list[Any] = []
     scope = auth.visible_clause(conn, visible_to, prefix="c.")
     if scope is not None:
-        sql += f" WHERE {scope[0]}"
+        clauses.append(scope[0])
         params.extend(scope[1])
+    if workspace == WORKSPACE_PERSONAL:
+        clauses.append("c.owner_team_id IS NULL")
+    elif workspace == WORKSPACE_TEAM:
+        clauses.append("c.owner_team_id IS NOT NULL")
+    elif workspace == WORKSPACE_PUBLIC:
+        clauses.append("c.visibility = ?")
+        params.append("public")
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += f" ORDER BY {COLLECTION_ORDERS[order]}"
     return _rows(conn.execute(sql, params))
 

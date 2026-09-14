@@ -6747,21 +6747,33 @@ def list_collections(request: Request) -> Response:
     """Collections with their member and tag counts, in ``?order=``.
 
     ``?order=`` is one of :data:`reportal.store.COLLECTION_ORDERS` (``id``, the
-    default, then ``name``, ``size`` by member count and ``updated`` by the last
-    membership, tag or field change); an unknown value is a 400.  The response
-    echoes the order it applied, so a client rendering a sorted table does not
-    have to assume one.
+    default, then ``name``, ``size`` by member count, ``updated`` by the last
+    membership, tag or field change and ``owner`` by the owning team's name); an
+    unknown value is a 400.  ``?workspace=`` is one of
+    :data:`reportal.store.WORKSPACE_FILTERS` and reads a collection's own scope:
+    ``personal`` is one no team owns, ``team`` one a team does and ``public``
+    one the whole workspace may see; an unknown value is a 400.  Every row
+    carries ``visibility``, ``owner_team_id`` and ``owner_team_name``.  The
+    response echoes the order and the workspace filter it applied, so a client
+    rendering a sorted, filtered table does not have to assume either.
     """
     order = _query_text(request, "order") or store.DEFAULT_COLLECTION_ORDER
     if order not in store.COLLECTION_ORDERS:
         return _invalid_query("order", order, sorted(store.COLLECTION_ORDERS))
+    workspace = _query_text(request, "workspace")
+    if workspace is not None and workspace not in store.WORKSPACE_FILTERS:
+        return _invalid_query("workspace", workspace, store.WORKSPACE_FILTERS)
     with contextlib.closing(_open()) as conn:
         return json_response(
             {
                 "collections": store.list_collections(
-                    conn, order=order, visible_to=_caller(request)
+                    conn,
+                    order=order,
+                    workspace=workspace,
+                    visible_to=_caller(request),
                 ),
                 "order": order,
+                "workspace": workspace,
             }
         )
 
