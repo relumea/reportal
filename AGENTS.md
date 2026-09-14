@@ -453,10 +453,11 @@ comment store and is read-only; `add_comment`, `update_comment` and
 (never a digest) and is read-only; `add_user`, `rotate_user_token`,
 `update_user` and `delete_user` write it and are destructive.  `list_teams`
 reads the team store and is read-only; `create_team`, `delete_team`,
-`add_team_member`, `remove_team_member`, `set_binary_scope` and
+`add_team_member`, `remove_team_member`, `set_binary_scope`,
 `set_collection_scope`, `set_team_member_role`, `create_organisation`,
 `delete_organisation` and `set_team_organisation` write it and are destructive;
-`list_organisations` reads the organisation store and is read-only.  `list_journal` reads the
+`list_organisations` reads the organisation store and is read-only, and a
+membership's `owner`/`member` role is what `set_team_member_role` sets.  `list_journal` reads the
 action-journal entries and is read-only; `revert_journal_entry` replays one
 action's or one entry's stored inverses and is destructive.  `get_filetype`
 serves a binary's stored file-type detection and is read-only; `run_filetype`
