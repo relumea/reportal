@@ -184,6 +184,12 @@ full below.
   visible binary.  The comment `author` remains free text kept in the browser
   (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an attribution
   convenience, not a security principal.
+- **A registered binary points at its path.**  `reportal add-binary`, its
+  `register_binary` MCP twin and `import-rebrew` record a file's path rather than
+  copying its bytes, so a binary the operator registered is read from where it
+  lies for every later engine call: a caller who can name a path can make the
+  server read it, which `import_symbols` and the export tools already could.  The
+  upload path is the one that streams the bytes into `binaries/` instead.
 - **The activity feed is derived and unauthenticated in its reads.**  Any
   authenticated caller reads the whole feed, so an analyst sees the other teams'
   action descriptions (a description names ids and paths) even when the object's

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from collections.abc import Iterator
@@ -20,6 +21,7 @@ from typer.testing import CliRunner
 
 from reportal import (
     __version__,
+    auth,
     cli,
     comments,
     components,
@@ -307,6 +309,7 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "ingest_url",
         "delete_document",
         "extract_archive",
+        "register_binary",
         "revert_journal_entry",
     }
 )
@@ -471,9 +474,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 244
+        assert len(names) == 245
         assert len(_READ_ONLY_TOOLS) == 115
-        assert len(_DESTRUCTIVE_TOOLS) == 129
+        assert len(_DESTRUCTIVE_TOOLS) == 130
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
@@ -1008,6 +1011,55 @@ class TestDestructiveTools:
         payload, is_error = _call("extract_archive", {"binary_id": 1234})
         assert is_error is True
         assert payload["error"] == "binary not found"
+
+    def test_register_binary_stores_a_local_file(
+        self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
+        source = tmp_path / "sample.exe"
+        source.write_bytes(b"MZ" + b"\x00" * 30)
+
+        payload, is_error = _call("register_binary", {"path": str(source)})
+
+        assert is_error is False
+        assert payload["duplicate"] is False
+        assert payload["name"] == "sample.exe"
+        assert payload["sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+        assert payload["visibility"] == "public"
+        assert payload["journal_action"]
+
+        again, is_error = _call("register_binary", {"path": str(source), "name": "again"})
+        assert is_error is False
+        assert again["duplicate"] is True
+        assert again["id"] == payload["id"]
+        assert len(store.list_binaries(conn)) == 1
+
+    def test_register_binary_into_a_team_scope(
+        self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
+        team_id = int(auth.create_team(conn, name="Blue")["id"])
+        source = tmp_path / "scoped.exe"
+        source.write_bytes(b"MZ" + b"\x01" * 30)
+
+        payload, is_error = _call("register_binary", {"path": str(source), "team_id": team_id})
+
+        assert is_error is False
+        assert payload["visibility"] == "team"
+        assert int(payload["owner_team_id"]) == team_id
+
+    def test_register_binary_refuses_a_missing_file(
+        self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
+
+        payload, is_error = _call("register_binary", {"path": str(tmp_path / "absent.exe")})
+
+        assert is_error is True
+        assert payload["error"] == "not-a-file"
 
     def test_rename_function_changes_the_store_and_history(self, conn: Any, tmp_path: Path) -> None:
         ids = _seed_binary(conn, tmp_path)

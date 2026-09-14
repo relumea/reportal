@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- An agent can register a binary.  The MCP registry had no tool for the portal's
+  own entry point: `reportal add-binary` registers a local file by content hash
+  and nothing over MCP did, so an agent could only work with binaries somebody
+  else had already registered.  `register_binary` takes the path the server
+  reads, a display name and optionally the team whose scope the binary joins,
+  calls the same store and journal path the command does, and is destructive
+  like every other writer.  That is 245 built-in tools, 115 read-only and 130
+  destructive.
+
 - An upload can register its files into a team's scope.  The batch upload's
   per-file options carried a name, tags, collections and a format/arch hint and
   no scope, so every uploaded binary landed public and ownerless and a team

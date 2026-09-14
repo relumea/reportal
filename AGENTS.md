@@ -423,6 +423,8 @@ its `kind` argument selects the typed query.  `extract_archive` unpacks a
 stored archive and registers its members into one collection as one journaled
 action, so it is destructive (`binary not found`, `binary not on disk`,
 `collection not found` and the archive module's own codes answer tool errors).
+`register_binary` registers a local file as a binary by content hash (the CLI's
+`add-binary`), optionally into a team's scope, and is destructive.
 `list_families` reads the
 family store and `get_detect_scan` serves a stored detection, so both are
 read-only; `register_family` derives and stores a signature bundle,
@@ -549,7 +551,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 244 built-in tools, 115 read-only and 129 destructive.
+declares 245 built-in tools, 115 read-only and 130 destructive.
 
 ## SPA
 
@@ -661,8 +663,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 244 built-in
-tools (115 read-only, 129 destructive).
+and `run_match` expose the same over MCP, and the counts stay 245 built-in
+tools (115 read-only, 130 destructive).
 
 ### Scaling
 

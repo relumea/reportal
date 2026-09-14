@@ -4967,6 +4967,60 @@ def _tool_extract_archive(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError(exc.code, exc.detail) from None
 
 
+def _tool_register_binary(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Register one local file as a binary; the CLI's `add-binary` over MCP.
+
+    The path is the server's to read, as it is for `import_symbols`, and the
+    optional team puts the binary in that team's scope as it registers.
+    """
+    source = Path(_arg_str(arguments, "path")).expanduser().resolve()
+    name = _arg_optional_str(arguments, "name")
+    team = _arg_optional_int(arguments, "team_id", 0) or None
+    if not source.is_file():
+        raise ToolError("not-a-file", f"not a file: {source}")
+    digest = effects.file_digest(source)
+    if digest is None:
+        raise ToolError("unreadable-file", f"cannot read {source}")
+    display = name or source.name
+    with contextlib.closing(_open()) as conn:
+        owner: int | None = None
+        resolved = auth.VISIBILITY_PUBLIC
+        if team is not None:
+            try:
+                owner, resolved = auth.scope_of(conn, team_id=team, visibility=auth.VISIBILITY_TEAM)
+            except auth.AuthError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+        with journal.journaled(conn, journal.new_action()) as log:
+            known = store.find_binary_by_sha256(conn, digest) is not None
+            binary_id = store.add_binary(
+                conn,
+                sha256=digest,
+                name=display,
+                path=str(source),
+                size=source.stat().st_size,
+                fmt=source.suffix.lstrip(".").upper(),
+            )
+            if not known:
+                log.record(
+                    effects.EFFECT_ROW_DELETE,
+                    f"registered binary {binary_id}",
+                    journal.row_delete_descriptor("binaries", binary_id),
+                )
+            if team is not None:
+                if known:
+                    journal.journaled_rows(
+                        conn,
+                        log,
+                        table="binaries",
+                        where="id = ?",
+                        params=(binary_id,),
+                        description=f"scoped binary {binary_id} to {resolved}",
+                    )
+                store.set_binary_scope(conn, binary_id, owner_team_id=owner, visibility=resolved)
+            row = store.get_binary(conn, binary_id) or {}
+            return log.attach({**row, "duplicate": known})
+
+
 # ── Journal tools ──────────────────────────────────────────────────
 
 
@@ -7753,6 +7807,22 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_extract_archive,
+        ),
+        Tool(
+            "register_binary",
+            "Register a local file as a binary by content hash, the CLI's `add-binary`:"
+            " the path the server reads, a display name, and optionally the team whose"
+            " scope the binary joins. Destructive.",
+            _object(
+                {
+                    "path": _str("Path to the file to register, as this host sees it."),
+                    "name": _str("Display name (default: the file's name)."),
+                    "team_id": _int("Team to put the binary in the scope of."),
+                },
+                ("path",),
+            ),
+            _WRITE,
+            _tool_register_binary,
         ),
         Tool(
             "list_notifications",
