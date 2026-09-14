@@ -1191,7 +1191,7 @@ small binary),
 `.../secrets`, `.../protocols`,
 `.../behavior` (all three domains) and `.../behavior/<domain>`,
 `.../hardening` (both domains) and `.../hardening/<domain>`,
-`.../security-scan`, `.../unstrip`, `.../unpack`, `.../benchmark`, `.../threat`, `.../remediation` and
+`.../security-scan`, `.../unstrip`, `.../unpack`, `.../benchmark`, `.../rename-benchmark`, `.../threat`, `.../remediation` and
 `.../remediation/<yara|snort|stix>`,
 `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../data-types`, `.../signatures`,
 `.../comments`, `.../auto`, `.../documents`, `.../knowledge` and `.../graph`;
@@ -1202,7 +1202,7 @@ the graph node route is `GET /api/graph/nodes/<node_id>`, and
 |-------|--------|
 | Health | `GET /api/health` |
 | Jobs | `GET`/`POST /api/jobs`, `GET /api/jobs/<id>`, `POST /api/jobs/<id>/cancel`, `GET /api/jobs/<id>/events` (server-sent events), `POST /api/jobs/run` |
-| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `GET`/`POST /api/binaries/<id>/unpack`, `GET`/`POST /api/binaries/<id>/benchmark`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
+| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `GET`/`POST /api/binaries/<id>/unpack`, `GET`/`POST /api/binaries/<id>/benchmark`, `GET /api/binaries/<id>/rename-benchmark`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
 | Families | `GET`/`POST /api/families`, `GET`/`DELETE /api/families/<id>` |
 | Data types | `GET`/`POST /api/binaries/<id>/data-types[/import\|/export]` (the GET takes `?kind=&namespace=&search=`), `PATCH`/`DELETE /api/data-types/<id>`, `POST`/`DELETE /api/data-types/<id>/members[/<member>]`, `POST /api/data-types/<id>/members/<member>/gap`, `POST /api/data-types/<id>/members/<member>/ungap`, `POST`/`PATCH`/`DELETE /api/data-types/<id>/values[/<value>]`, `GET /api/data-types/<id>/references`, `GET /api/data-types/<id>/history`, `POST /api/data-types/<id>/history/<history_id>/revert` |
 | Signatures | `GET`/`POST /api/binaries/<id>/signatures[/import\|/export]`, `GET`/`PATCH`/`DELETE /api/functions/<id>/signature`, `POST`/`PATCH`/`DELETE /api/functions/<id>/signature/parameters[/<index>]`, `GET /api/functions/<id>/signature/history`, `POST /api/functions/<id>/signature/history/<history_id>/revert` |
@@ -2196,10 +2196,29 @@ Nothing here re-ranks or re-implements the matcher.  The run writes the same
 `matches` rows the match route writes (so a benchmark is reversible as one
 journal action) and its result is stored as the left binary's `benchmark` scan,
 which is what `GET /api/binaries/<id>/benchmark`, `reportal benchmark-info` and
-the Benchmark panel read back.  Rename proposals are deliberately not scored: a
-proposal's correctness needs a labelled name and a proposal source, and
-inventing one from the signature match would measure the label rather than the
-rename.
+the Benchmark panel read back.  ### Benchmarking the rename proposals
+
+`benchmark.rename_report` scores the proposals the workspace already holds
+against the one source of names reportal cannot derive: a debug symbol file.
+Ingesting one renames the functions it covers with the ``symbol`` name source,
+so those names are the ground truth, and the report reads them beside the stored
+library reading (every candidate the engine reported, joined to the function
+table) or the stored unstrip proposals when that is all there is, naming which
+of the two it scored because they are filtered differently.  It is a stored
+read: no engine runs and nothing is written, which is why it has a GET route and
+no journaled action.
+
+A proposal is *correct* when it carries the symbol's name and *close* when it
+matches after casefolding and dropping leading underscores, since the platforms'
+decoration differs between ``_memcpy`` and ``memcpy``; precision is over the
+labelled functions a proposal named and recall over every labelled one, with
+every disagreement and every missed symbol in the payload.  A proposal at an
+address no symbol names is counted as unscored rather than wrong: nothing states
+what that function is really called, and counting a guess as a mistake would
+make the number meaningless.  A binary with either input missing answers
+``stored: false`` with the reason (``no-symbols`` or ``no-proposals``) and the
+command that supplies it, so a panel names what is missing instead of showing a
+report of zeros.
 
 ## Diff view
 

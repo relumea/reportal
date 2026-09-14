@@ -529,8 +529,15 @@ recorded pair count, every label's rank and similarity in a table (a miss is a
 badge, not a blank), and the payload's notes, so a reader can see that the
 labels came from shared names rather than a corpus and why a query missed.  The
 panel runs nothing on render and names the two sources of labels before the
-first run.  `web/tests/benchmark.spec.ts` covers the empty reading, the partner
-select and the disabled-to-enabled run control.
+first run.  The same panel carries the rename half under a `Rename proposals`
+heading: it reads `GET /api/binaries/<id>/rename-benchmark`, which scores the
+stored proposals against the names a debug symbol file supplied, and renders the
+scored/correct/close counts, precision, recall and F1 beside a table of the
+disagreements and the missed symbols.  A binary with either input missing shows
+the reason the read reports (no symbol names, or no stored reading) and the
+command that supplies it, never a table of zeros.  `web/tests/benchmark.spec.ts`
+covers the empty reading, the partner select, the disabled-to-enabled run
+control and the rename half's missing input.
 
 The binary detail's Unpacked files panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/unpack`, which answers the provenance of a binary

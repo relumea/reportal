@@ -19,12 +19,15 @@ matcher the portal actually uses.  The CLI reads a corpus file; the route and
 the MCP tool take the pairs in the request body, so no request names a path.
 The result is stored as the left binary's ``benchmark`` scan.
 
-Rename proposals are not measured here.  A proposal's correctness needs a
-labelled name (not only a labelled address) and a proposal source: the
-deterministic one is the engine's library identification, which is what
-``library.py`` stores.  The labels this module reads carry the counterpart, not
-the name, and inventing a name metric from a signature match would measure the
-label rather than the rename.
+The rename half is :func:`rename_report`, and it is a stored read rather than a
+run.  A proposal's correctness needs a labelled *name*, and the one source of
+names reportal cannot derive is a debug symbol file: ingesting one renames the
+functions it covers with the ``symbol`` name source, which is what the report
+scores the stored proposals against.  It reads the stored ``library`` reading
+(every candidate, joined to the function table) or the stored ``unstrip``
+proposals when that is all there is, and it names which one it scored, because
+the two are filtered differently.  Nothing is written, so the report costs one
+read of two scan rows.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from reportal import engines, function_triage, matching, store
+from reportal import engines, function_triage, library, matching, store, symbols
 
 # The scan kind one benchmark is stored under.
 SCAN_KIND = "benchmark"
@@ -50,6 +53,41 @@ MAX_LABELS = 2000
 ERROR_INVALID_LABELS = "invalid-labels"
 ERROR_NO_LABELS = "no-labels"
 
+# Why a rename report has nothing to score.  These are payload reasons, not
+# error codes: the read answers 200 with `stored: false` and the reason, the way
+# an unscored library or unpack reading does, so a panel can name the missing
+# input instead of showing a failure.
+REASON_NO_SYMBOLS = "no-symbols"
+REASON_NO_PROPOSALS = "no-proposals"
+ERROR_NO_PROPOSALS = "no-proposals"
+
+# Where a stored rename proposal can be read from, best first.  The library
+# reading keeps every candidate the engine reported, while the unstrip one keeps
+# only the candidates it would propose for a function reportal named itself, so
+# the library reading is the one that can score a symbol-named function.
+RENAME_SOURCE_LIBRARY = "library"
+RENAME_SOURCE_UNSTRIP = "unstrip"
+
+# Rows of detail one rename report returns.  A binary with hundreds of symbols
+# would otherwise put every one of them in the payload; the counts above the
+# lists stay exact.
+MAX_RENAME_ROWS = 200
+
+# A name that differs from the symbol only by case or by the platforms' leading
+# underscore is counted as close rather than correct: the signal found the
+# function, the decoration is a naming convention.
+CLOSE_NOTE = (
+    "a proposal that differs from the symbol only by case or by a leading"
+    " underscore is counted as close, not as correct"
+)
+
+NO_SYMBOLS_DETAIL = (
+    "no function of binary {binary_id} was named by a debug symbol file, so no"
+    " proposal has a known answer; run '{command}' first"
+)
+NO_PROPOSALS_DETAIL = (
+    "binary {binary_id} has no stored rename proposals to score; run '{command}' first"
+)
 NO_LABELS_DETAIL = (
     "no labels to score against: name the corresponding virtual addresses in the"
     " request body, or point the CLI at a corpus file, or import two binaries that"
@@ -372,6 +410,236 @@ def run(
         "settings": resolved_settings.payload(),
         "scope_notes": matching.scope_notes(resolved_settings),
         "matching": summary,
+        "metrics": scored,
+        "notes": notes,
+    }
+
+
+def _proposal_va(value: Any) -> int | None:
+    """A proposal's virtual address: the library reading stores it as hex text."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 0)
+        except ValueError:
+            return None
+    return None
+
+
+def _close_name(name: str) -> str:
+    """A name reduced to what two platforms' symbol decoration agrees on."""
+    return name.strip().lstrip("_").casefold()
+
+
+def _stored_proposals(
+    conn: sqlite3.Connection, binary_id: int
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """The stored rename proposals of *binary_id* and where they came from.
+
+    The library reading is preferred: it keeps every candidate the engine
+    reported, so it can score a function a debug symbol named, while the unstrip
+    reading keeps only the candidates it would propose for a function reportal
+    named itself.  Returns None when neither reading is stored.
+    """
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None:
+        return None, ""
+    reading = store.get_scan(conn, analysis_id, library.SCAN_KIND)
+    if isinstance(reading, dict) and isinstance(reading.get("functions"), list):
+        proposals = [
+            {
+                "va": _proposal_va(entry.get("va")),
+                "name": str(entry.get("name") or ""),
+                "module": str(entry.get("module") or ""),
+                "kind": str(entry.get("kind") or ""),
+                "confidence": float(entry.get("confidence") or 0.0),
+            }
+            for entry in reading["functions"]
+            if isinstance(entry, Mapping)
+        ]
+        return proposals, RENAME_SOURCE_LIBRARY
+    stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_UNSTRIP)
+    if isinstance(stored, dict) and isinstance(stored.get("proposals"), list):
+        proposals = [
+            {
+                "va": _proposal_va(entry.get("va")),
+                "name": str(entry.get("proposed_name") or ""),
+                "module": str(entry.get("module") or ""),
+                "kind": str(entry.get("kind") or ""),
+                "confidence": float(entry.get("confidence") or 0.0),
+            }
+            for entry in stored["proposals"]
+            if isinstance(entry, Mapping)
+        ]
+        return proposals, RENAME_SOURCE_UNSTRIP
+    return None, ""
+
+
+def rename_metrics(
+    labelled: Sequence[Mapping[str, Any]], proposals: Sequence[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Precision, recall and F1 of *proposals* against the names *labelled* holds.
+
+    One labelled function is one query: a debug symbol file named it, so the
+    answer is known.  A proposal at that address is *correct* when it carries the
+    same name and *close* when it matches after casefolding and dropping leading
+    underscores.  Precision is over the labelled functions a proposal named,
+    recall over every labelled function, and a proposal whose address no symbol
+    names is counted as unscored rather than wrong: nothing states what that
+    function is really called.  Every disagreement and every labelled function a
+    proposal missed is in the payload, so a miss can be read rather than guessed
+    at.
+    """
+    by_va: dict[int, Mapping[str, Any]] = {}
+    for proposal in proposals:
+        va = _proposal_va(proposal.get("va"))
+        if va is not None and va not in by_va:
+            by_va[va] = proposal
+    wrong: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    correct = 0
+    close = 0
+    proposed = 0
+    for label in labelled:
+        va = int(label["va"])
+        name = str(label["name"])
+        match = by_va.get(va)
+        if match is None:
+            missing.append({"name": name, "va": va})
+            continue
+        proposed += 1
+        found = str(match.get("name") or "")
+        if found == name:
+            correct += 1
+            continue
+        if _close_name(found) == _close_name(name):
+            close += 1
+        wrong.append(
+            {
+                "name": name,
+                "va": va,
+                "proposed": found,
+                "module": str(match.get("module") or ""),
+                "confidence": round(float(match.get("confidence") or 0.0), 2),
+            }
+        )
+    labelled_vas = {int(label["va"]) for label in labelled}
+    unscored = [
+        {
+            "va": va,
+            "name": str(proposal.get("name") or ""),
+            "module": str(proposal.get("module") or ""),
+        }
+        for va, proposal in sorted(by_va.items())
+        if va not in labelled_vas
+    ]
+    queries = len(labelled)
+    precision = correct / proposed if proposed else 0.0
+    recall = correct / queries if queries else 0.0
+    total = precision + recall
+    return {
+        "queries": queries,
+        "proposed": proposed,
+        "correct": correct,
+        "close": close,
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(2 * precision * recall / total, 4) if total else 0.0,
+        "wrong": wrong[:MAX_RENAME_ROWS],
+        "missing": missing[:MAX_RENAME_ROWS],
+        "unscored": unscored[:MAX_RENAME_ROWS],
+        "truncated": max(len(wrong), len(missing), len(unscored)) > MAX_RENAME_ROWS,
+    }
+
+
+def _rename_empty(
+    binary: Mapping[str, Any], binary_id: int, reason: str, detail: str
+) -> dict[str, Any]:
+    """The reading a rename report answers when an input is missing."""
+    return {
+        "binary_id": binary_id,
+        "binary_name": str(binary["name"]),
+        "stored": False,
+        "reason": reason,
+        "proposal_source": "",
+        "labels": {"count": 0, "source": symbols.SYMBOL_NAME_SOURCE},
+        "proposals": {"count": 0, "scored": 0, "unscored": 0},
+        "metrics": None,
+        "notes": [detail],
+    }
+
+
+def rename_report(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """Score the stored rename proposals against the names symbols supplied.
+
+    A stored read: no engine runs, nothing is written.  The ground truth is the
+    functions an ingested debug symbol file named (the ``symbol`` name source),
+    and the proposals are the stored library reading, or the stored unstrip
+    proposals when that is all the workspace has.  A binary with either input
+    missing answers ``stored: false`` with the reason (``no-symbols`` or
+    ``no-proposals``) rather than a report of zeros, and only an unknown binary
+    raises :class:`BenchmarkError`.
+    """
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise BenchmarkError(f"no binary with id {binary_id}", code="binary not found")
+    functions = store.list_functions(conn, binary_id=binary_id)
+    labelled = [
+        {"va": int(function["va"]), "name": str(function["name"] or "")}
+        for function in functions
+        if str(function.get("name_source") or "") == symbols.SYMBOL_NAME_SOURCE
+    ]
+    if not labelled:
+        return _rename_empty(
+            binary,
+            binary_id,
+            REASON_NO_SYMBOLS,
+            NO_SYMBOLS_DETAIL.format(
+                binary_id=binary_id, command=f"reportal symbols {binary_id} <file>"
+            ),
+        )
+    proposals, source = _stored_proposals(conn, binary_id)
+    if proposals is None:
+        return _rename_empty(
+            binary,
+            binary_id,
+            REASON_NO_PROPOSALS,
+            NO_PROPOSALS_DETAIL.format(
+                binary_id=binary_id, command=f"reportal library {binary_id}"
+            ),
+        )
+    scored = rename_metrics(labelled, proposals)
+    notes = [
+        (
+            "the ground truth is the function names an ingested debug symbol file applied"
+            " (the 'symbol' name source)"
+        ),
+        (
+            f"the proposals are the stored {source} reading; the library reading keeps"
+            " every candidate the engine reported, the unstrip reading only the ones it"
+            " would propose for a function reportal named itself"
+        ),
+        CLOSE_NOTE,
+        "a proposal at an address no symbol names is counted as unscored, not as wrong",
+    ]
+    if not proposals:
+        notes.append(f"the stored {source} reading holds no candidate, so nothing was scored")
+    if scored["truncated"]:
+        notes.append(f"the detail lists carry the first {MAX_RENAME_ROWS} rows each")
+    return {
+        "binary_id": binary_id,
+        "binary_name": str(binary["name"]),
+        "stored": True,
+        "proposal_source": source,
+        "labels": {"count": len(labelled), "source": symbols.SYMBOL_NAME_SOURCE},
+        "proposals": {
+            "count": len(proposals),
+            "scored": scored["proposed"],
+            "unscored": len(scored["unscored"]),
+        },
         "metrics": scored,
         "notes": notes,
     }

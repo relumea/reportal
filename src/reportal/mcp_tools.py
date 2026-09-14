@@ -2496,6 +2496,16 @@ def _tool_run_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
         return _journaled_scan_store(conn, binary_id, store.SCAN_KIND_BENCHMARK, result)
 
 
+def _tool_get_rename_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        try:
+            return benchmark.rename_report(conn, binary_id)
+        except benchmark.BenchmarkError as exc:
+            raise ToolError(exc.code, exc.detail) from None
+
+
 def _tool_run_unstrip(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     min_confidence = _arg_optional_number(
@@ -6556,6 +6566,16 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_run_benchmark,
+        ),
+        Tool(
+            "get_rename_benchmark",
+            "Score a binary's stored rename proposals against the names an ingested debug symbol"
+            " file supplied: precision, recall, F1, every disagreement and every symbol the"
+            " proposals missed (a difference of case or a leading underscore is reported as"
+            " close).  Stored-only; it runs no engine and writes nothing.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_rename_benchmark,
         ),
         Tool(
             "run_unstrip",

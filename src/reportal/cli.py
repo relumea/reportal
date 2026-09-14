@@ -5226,6 +5226,77 @@ def _print_benchmark(payload: dict[str, Any]) -> None:
     console.print(missed)
 
 
+@app.command("rename-benchmark")
+def rename_benchmark_command(
+    binary_id: int = typer.Argument(..., help="Binary whose proposals to score"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Score the stored rename proposals against the names symbols supplied.
+
+    A stored read: the ground truth is what an ingested debug symbol file named
+    (``reportal symbols <binary-id> <file>``) and the proposals are the stored
+    library reading, or the stored unstrip proposals when that is all there is.
+    Nothing runs and nothing is written, so this measures the reading the
+    workspace already holds.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = benchmark.rename_report(conn, binary_id)
+        except benchmark.BenchmarkError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    _print_rename_benchmark(payload)
+
+
+def _print_rename_benchmark(payload: dict[str, Any]) -> None:
+    """Print one rename report: the metrics, the disagreements and the misses."""
+    scored = payload.get("metrics") or {}
+    console.print(
+        f"\n[bold cyan]binary {payload['binary_id']}[/bold cyan]"
+        f" proposals from the {payload.get('proposal_source')} reading against"
+        f" {payload['labels']['count']} symbol name(s)"
+    )
+    for note in payload.get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+    table = Table(show_header=False)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", justify="right")
+    table.add_row("proposals", str(payload.get("proposals", {}).get("count", 0)))
+    table.add_row("scored", str(scored.get("proposed", 0)))
+    table.add_row("correct", str(scored.get("correct", 0)))
+    table.add_row("close", str(scored.get("close", 0)))
+    table.add_row("precision", f"{float(scored.get('precision') or 0):.4f}")
+    table.add_row("recall", f"{float(scored.get('recall') or 0):.4f}")
+    table.add_row("f1", f"{float(scored.get('f1') or 0):.4f}")
+    table.add_row("unscored", str(payload.get("proposals", {}).get("unscored", 0)))
+    console.print(table)
+    for title, rows in (
+        ("disagreements", scored.get("wrong") or []),
+        ("missed", scored.get("missing") or []),
+    ):
+        if not rows:
+            continue
+        console.print(f"\n[bold]{len(rows)} {title}[/bold]")
+        detail = Table(show_header=True, header_style="bold")
+        detail.add_column("Symbol", style="cyan")
+        detail.add_column("VA", justify="right")
+        detail.add_column("Proposed")
+        detail.add_column("Module")
+        for row in rows[:MAX_REPORT_ROWS]:
+            detail.add_row(
+                str(row["name"]),
+                f"0x{int(row['va']):x}",
+                str(row.get("proposed") or "nothing"),
+                str(row.get("module") or ""),
+            )
+        console.print(detail)
+
+
 @app.command("benchmark-info")
 def benchmark_info_command(
     binary_id: int = typer.Argument(..., help="Binary whose stored benchmark to read"),

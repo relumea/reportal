@@ -83,7 +83,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 230 source files` is the finish line.
+`Success: no issues found in 231 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -97,7 +97,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.07%, 31362 statements with 2486 missed. `[tool.coverage.report] fail_under`
+92.08%, 31510 statements with 2495 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -501,7 +501,12 @@ cannot rebuild).  `get_benchmark` reads a binary's stored benchmark (the labels,
 the metrics and every query's rank) and `run_benchmark` matches the binary
 against a named partner and scores the run against label pairs it was given or
 derived from the two binaries' shared real names (replacing the binary's
-recorded matches), so the read is read-only and the run is destructive.  `get_symbols` reads a binary's ingested debug symbol
+recorded matches), so the read is read-only and the run is destructive.
+`get_rename_benchmark` scores a binary's stored rename proposals against the
+names an ingested debug symbol file supplied (precision, recall, F1, every
+disagreement and every missed symbol) and is a stored read, so it is read-only
+and never answers a tool error for an input that is merely missing: it returns
+``stored: false`` with the reason.  `get_symbols` reads a binary's ingested debug symbol
 files (kind, counts, notes and the parse) and is read-only; `import_symbols`
 parses a PDB or an ELF/DWARF file, renames the functions whose VA matches a
 symbol and adds the aggregate types it declares as one journaled action, and
@@ -539,7 +544,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 240 built-in tools, 113 read-only and 127 destructive.
+declares 241 built-in tools, 114 read-only and 127 destructive.
 
 ## SPA
 
@@ -651,8 +656,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 240 built-in
-tools (113 read-only, 127 destructive).
+and `run_match` expose the same over MCP, and the counts stay 241 built-in
+tools (114 read-only, 127 destructive).
 
 ### Scaling
 

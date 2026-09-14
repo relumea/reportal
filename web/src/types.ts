@@ -2955,6 +2955,40 @@ export interface BenchmarkMiss {
   candidates: number;
 }
 
+/** One proposal that disagrees with the symbol name, or a symbol it missed. */
+export interface RenameDisagreement {
+  name: string;
+  va: number;
+  proposed?: string;
+  module?: string;
+  confidence?: number;
+}
+
+/** `GET /api/binaries/<id>/rename-benchmark`: proposals scored against symbols. */
+export interface RenameBenchmarkResult {
+  binary_id: number;
+  binary_name: string;
+  stored: boolean;
+  reason?: string;
+  proposal_source: string;
+  labels: { count: number; source: string };
+  proposals: { count: number; scored: number; unscored: number };
+  metrics: {
+    queries: number;
+    proposed: number;
+    correct: number;
+    close: number;
+    precision: number;
+    recall: number;
+    f1: number;
+    wrong: RenameDisagreement[];
+    missing: RenameDisagreement[];
+    unscored: Array<{ va: number; name: string; module: string }>;
+    truncated: boolean;
+  } | null;
+  notes: string[];
+}
+
 /** `POST`/`GET /api/binaries/<id>/benchmark`: a scored match run. */
 export interface BenchmarkResult {
   binary_id?: number;

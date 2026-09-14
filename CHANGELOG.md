@@ -7,6 +7,17 @@ view renders it from here.
 
 ## Unreleased
 
+- Scoring the rename proposals: `reportal rename-benchmark <binary-id>` and
+  `GET /api/binaries/<id>/rename-benchmark` score the proposals the workspace
+  already holds against the one source of names reportal cannot derive, a debug
+  symbol file (which renames the functions it covers with the `symbol` name
+  source).  It reports precision, recall, F1, every disagreement and every
+  missed symbol, counts a difference of case or a leading underscore as `close`
+  rather than `correct`, and counts a proposal at an address no symbol names as
+  unscored rather than wrong.  A stored read: no engine runs and nothing is
+  written, which is also what the Benchmark panel's new Rename proposals
+  section renders.
+
 - Deployment readiness and a service unit: `reportal doctor [--port N]
   [--json]` checks that this install can serve before anything starts (the
   workspace, the database and its schema, the auth posture, the engine, the SPA

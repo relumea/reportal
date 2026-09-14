@@ -117,6 +117,7 @@ import type {
   ThreatScore,
   TriageDossier,
   BenchmarkResult,
+  RenameBenchmarkResult,
   UnpackProvenance,
   UnpackResult,
   UnstripProposal,
@@ -923,6 +924,10 @@ export function BenchmarkPanel({ binaryId }: { binaryId: number }): ReactNode {
   const candidatesEntry = usePanel(panelKey("binary", binaryId, "benchmark-candidates"), () =>
     api<{ binaries: Binary[] }>("/binaries"),
   );
+  const renameKey = panelKey("binary", binaryId, "rename-benchmark");
+  const renameEntry = usePanel(renameKey, () =>
+    api<RenameBenchmarkResult>(`/binaries/${binaryId}/rename-benchmark`),
+  );
   const [partnerId, setPartnerId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -1002,7 +1007,66 @@ export function BenchmarkPanel({ binaryId }: { binaryId: number }): ReactNode {
           )
         }
       </PanelBody>
+      <h3>Rename proposals</h3>
+      {renameEntry === undefined ? (
+        <Loading label="Loading the rename proposals" rows={2} />
+      ) : renameEntry.state === "error" ? (
+        <ErrorNote
+          error={renameEntry.error}
+          onRetry={() =>
+            refreshPanel(renameKey, () =>
+              api<RenameBenchmarkResult>(`/binaries/${binaryId}/rename-benchmark`),
+            )
+          }
+        />
+      ) : renameEntry.state !== "ready" ? null : renameEntry.data.stored === false ||
+        renameEntry.data.metrics === null ? (
+        <Muted>{renameEntry.data.notes[0] ?? "Nothing to score yet."}</Muted>
+      ) : (
+        <RenameBenchmarkBody result={renameEntry.data} />
+      )}
     </Panel>
+  );
+}
+
+function RenameBenchmarkBody({ result }: { result: RenameBenchmarkResult }): ReactNode {
+  const scored = result.metrics;
+  if (scored === null) return null;
+  return (
+    <>
+      <Muted>
+        {result.labels.count} symbol name(s) against {result.proposals.count} stored proposal(s)
+        from the {result.proposal_source} reading
+      </Muted>
+      <KeyValue
+        rows={[
+          ["scored", String(scored.proposed)],
+          ["correct", String(scored.correct)],
+          ["close", String(scored.close)],
+          ["precision", scored.precision.toFixed(4)],
+          ["recall", scored.recall.toFixed(4)],
+          ["f1", scored.f1.toFixed(4)],
+          ["unscored", String(result.proposals.unscored)],
+        ]}
+      />
+      {(result.notes ?? []).map((note) => (
+        <Muted key={note}>{note}</Muted>
+      ))}
+      <DataTable
+        columns={[
+          { label: "Symbol", key: "name", mono: true },
+          { label: "VA", mono: true, render: (row) => hex(row.va) },
+          {
+            label: "Proposed",
+            render: (row) => (row.proposed ? row.proposed : <Muted>nothing</Muted>),
+          },
+          { label: "Module", render: (row) => row.module ?? NA },
+        ]}
+        rows={[...scored.wrong, ...scored.missing]}
+        rowKey={(row) => `${row.va}-${row.name}`}
+        empty={<Muted>Every symbol name was proposed exactly.</Muted>}
+      />
+    </>
   );
 }
 

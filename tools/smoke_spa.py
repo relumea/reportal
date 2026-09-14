@@ -722,6 +722,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Benchmark",),
             ("Run benchmark",),
             ("Partner",),
+            # The rename half of the same panel: the seeded binary has no
+            # symbol-named function, so it names the command that supplies one.
+            ("Rename proposals",),
+            ("reportal symbols",),
             # Analyst feedback on the stored agent artifacts.
             ("Agent feedback",),
             ("Function triage",),

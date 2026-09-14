@@ -4054,6 +4054,27 @@ def get_binary_benchmark(binary_id: int) -> Response:
     return json_response(payload)
 
 
+@router.get("/api/binaries/{binary_id}/rename-benchmark")
+def get_binary_rename_benchmark(binary_id: int) -> Response:
+    """Score the stored rename proposals against the names symbols supplied.
+
+    A stored read: no engine runs and nothing is written.  The ground truth is
+    the functions an ingested debug symbol file named, the proposals are the
+    stored library reading (else the stored unstrip proposals), and the answer
+    is precision, recall, F1 and every disagreement.  A binary with either input
+    missing answers 200 with ``stored: false`` and the reason (``no-symbols`` or
+    ``no-proposals``) rather than an error, so a panel names the missing input;
+    only an unknown id is 404 `binary not found`.
+    """
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = benchmark.rename_report(conn, binary_id)
+        except benchmark.BenchmarkError as exc:
+            status = 404 if exc.code == "binary not found" else 400
+            return json_error(status, error=exc.code, detail=exc.detail)
+    return json_response(payload)
+
+
 @router.post("/api/binaries/{binary_id}/lineage")
 def store_binary_lineage(
     binary_id: int, body: dict[str, Any] = Depends(optional_json_body)

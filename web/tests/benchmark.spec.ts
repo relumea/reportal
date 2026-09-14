@@ -25,3 +25,13 @@ test("the benchmark panel reads empty and offers a partner", async ({ page }) =>
   await expect(partner).not.toHaveValue("");
   await expect(panel.getByRole("button", { name: "Run benchmark" })).toBeEnabled();
 });
+
+test("the rename half names the input it is missing", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const panel = panelByTitle(page, "Benchmark");
+  await expect(panel.getByRole("heading", { name: "Rename proposals" })).toBeVisible();
+
+  // No debug symbol file named a function of the seeded binary, so the read
+  // answers 200 with the reason and the command that supplies the ground truth.
+  await expect(panel.getByText(/reportal symbols/)).toBeVisible();
+});

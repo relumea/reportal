@@ -420,6 +420,11 @@ reportal benchmark <left-id> <right-id> [--labels FILE] [--top N]
                                            # without --labels the ground
                                            # truth is the two binaries'
                                            # shared real function names
+reportal rename-benchmark <binary-id> [--json]
+                                           # score the stored rename
+                                           # proposals against the names an
+                                           # ingested debug symbol file
+                                           # supplied; stored-only
 reportal benchmark-info <binary-id> [--json]
                                            # show the stored benchmark:
                                            # precision, recall, F1, MRR
