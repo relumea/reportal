@@ -8,7 +8,7 @@ the authority when the two disagree; README.md carries worked examples.
 reportal init [--dir PATH]                 # write reportal.toml + reportal.db
 reportal import-rebrew <project-dir>       # ingest a rebrew workspace (idempotent; stores its context)
                                            #   plus the target binary's import stubs as THUNK rows
-reportal add-binary <path> [--name TEXT]   # register a binary by sha256 (dedupe)
+reportal add-binary <path> [--name TEXT] [--team ID]   # register a binary by sha256 (dedupe)
 reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--password TEXT] [--json]
                                            # write the stored binary's bytes to a path (default:
                                            #   the stored name in the current directory), copying

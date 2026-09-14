@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SeedCollection, SeedIds, StaleRun } from "./seed";
+import type { SeedCollection, SeedIds, SeedTeam, StaleRun } from "./seed";
 import { workspacePath } from "./workspace";
 
 export interface E2eState {
@@ -23,6 +23,8 @@ export interface E2eState {
   large_function_count: number;
   /** The run the seeder left `running`, for the Auto view's recovery control. */
   stale_run: StaleRun;
+  /** The team the seeder created, for the upload scope control. */
+  team: SeedTeam;
 }
 
 const STATE_FILE = "state.json";

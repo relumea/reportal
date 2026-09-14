@@ -1302,6 +1302,9 @@ export interface UploadFileOptions {
   /** Explicit architecture, else the suffix-derived value. */
   arch?: string;
   collection_ids?: number[];
+  /** The scope the registered binary should carry; absent leaves it public. */
+  visibility?: "public" | "team";
+  team_id?: number;
 }
 
 /** One uploaded part's outcome, as the batch response reports it. */
@@ -1311,6 +1314,9 @@ export interface UploadFileEntry {
   duplicate: boolean;
   tags: string[];
   collections: number[];
+  /** The scope the binary carries after the entry was applied. */
+  visibility: string;
+  owner_team_id: number | null;
   error: { error: string; detail: string; status?: number } | null;
 }
 
@@ -2322,6 +2328,8 @@ export interface UserRow {
   created_at: string;
   disabled: boolean;
   has_token: boolean;
+  /** The team this caller has selected as its working scope, or null. */
+  active_team_id: number | null;
 }
 
 /** `GET /api/users`: every user and the count. */

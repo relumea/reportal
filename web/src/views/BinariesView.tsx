@@ -28,6 +28,7 @@ import type {
   Collection,
   Family,
   FamilyList,
+  Me,
   TeamsPayload,
   ExtractResult,
   TagRow,
@@ -44,6 +45,8 @@ interface UploadRow {
   tags: string[];
   format: string;
   arch: string;
+  /** The team to register the binary into; "" leaves it public and ownerless. */
+  scope: string;
 }
 
 /** The comma-or-Enter chip control one upload row applies its tags with. */
@@ -142,10 +145,17 @@ export function BinariesView({
   const familyData = useAsync(() => api<FamilyList>("/families"), []);
   const collectionData = useAsync(() => api<{ collections: Collection[] }>("/collections"), []);
   const teamData = useAsync(() => api<TeamsPayload>("/teams"), []);
+  const me = useAsync(() => api<Me>("/iam/me"), []);
+  // The team the caller has selected, when the install has auth on: new rows
+  // start there rather than in the whole workspace.
+  const activeTeam =
+    me.data?.user?.active_team_id === undefined || me.data?.user === null
+      ? ""
+      : String(me.data.user.active_team_id);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [configure, setConfigure] = useState({ format: "", arch: "" });
+  const [configure, setConfigure] = useState({ format: "", arch: "", scope: "" });
   // The stored archives this session uploaded, so the batch can be unpacked in
   // place rather than by copying a hash into another view.
   const [extractTarget, setExtractTarget] = useState("");
@@ -273,6 +283,7 @@ export function BinariesView({
           tags: [],
           format: "",
           arch: "",
+          scope: activeTeam,
         })),
       ];
     });
@@ -310,6 +321,9 @@ export function BinariesView({
       format: row.format || undefined,
       arch: row.arch || undefined,
       collection_ids: collectionIds,
+      ...(row.scope === ""
+        ? {}
+        : { visibility: "team" as const, team_id: Number(row.scope) }),
     }));
     body.append("files", JSON.stringify(options));
     setBusy("upload");
@@ -327,6 +341,7 @@ export function BinariesView({
   };
 
   const binaries = data?.binaries ?? null;
+  const teams = teamData.data?.teams ?? [];
   const families = familyData.data?.families ?? null;
   const collections = collectionData.data?.collections ?? [];
 
@@ -469,6 +484,20 @@ export function BinariesView({
                   ))}
                 </select>
               </Field>
+              <Field label="Scope for every file">
+                <select
+                  aria-label="Scope for every file"
+                  value={configure.scope}
+                  onChange={(event) => configureAll({ scope: event.target.value })}
+                >
+                  <option value="">Workspace</option>
+                  {teams.map((team) => (
+                    <option key={team.id} value={team.id}>
+                      team {team.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </Toolbar>
             <DataTable
               columns={[
@@ -551,6 +580,24 @@ export function BinariesView({
                   ),
                 },
                 {
+                  label: "Scope",
+                  render: (row) => (
+                    <select
+                      aria-label={`scope for ${row.file.name}`}
+                      value={row.scope}
+                      onChange={(event) => updateRow(row.key, { scope: event.target.value })}
+                    >
+                      <option value="">Workspace</option>
+                      {teams.map((team) => (
+                        <option key={team.id} value={team.id}>
+                          team {team.name}
+                          {String(team.id) === activeTeam ? " (active)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  ),
+                },
+                {
                   label: "",
                   render: (row) => (
                     <Button
@@ -595,6 +642,11 @@ export function BinariesView({
                     : entry.duplicate
                       ? `Already stored ${entry.file} as binary #${entry.binary_id}.`
                       : `Uploaded ${entry.file} as binary #${entry.binary_id}.`}
+                  {entry.error
+                    ? ""
+                    : entry.owner_team_id === null
+                      ? " Workspace scope."
+                      : ` Team #${entry.owner_team_id} scope.`}
                   {entry.tags.length ? ` Tags: ${entry.tags.join(", ")}.` : ""}
                 </li>
               ))}

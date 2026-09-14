@@ -37,6 +37,14 @@ export interface SeedResult {
   large_function_count: number;
   /** A run on that binary a dead process left `running`, for the recovery control. */
   stale_run: StaleRun;
+  /** The team an upload can be registered into. */
+  team: SeedTeam;
+}
+
+/** A team the seeder created, so a scope control has a real choice. */
+export interface SeedTeam {
+  id: number;
+  name: string;
 }
 
 /** The run the seeder leaves `running` so the Auto view's recovery is reachable. */

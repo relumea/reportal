@@ -7,6 +7,25 @@ view renders it from here.
 
 ## Unreleased
 
+- An upload can register its files into a team's scope.  The batch upload's
+  per-file options carried a name, tags, collections and a format/arch hint and
+  no scope, so every uploaded binary landed public and ownerless and a team
+  workflow had to re-scope each one afterwards through `PATCH
+  /api/binaries/<id>/scope`.  An entry may now name `visibility`/`team_id` (a
+  `team_id` alone means team visibility; naming a team the caller is not in is
+  403 `not-a-team-member`, and re-scoping a duplicate is the scope route's own
+  refusal on that entry), the whole batch stays one journal action with each
+  re-scope journaled, and every entry reports the scope the binary carries.
+  `reportal add-binary` takes the same choice as `--team`.  In the SPA the
+  upload rows carry a scope select, `Configure all` reaches it, and a new row
+  starts on the caller's active team.
+
+- The Users view can switch the caller's active team.  `PUT
+  /api/iam/active-team` stored the preference and the SPA neither showed nor set
+  it, so `active_team_id` decided nothing a user could reach.  The identity
+  panel now carries an `Active team` select over the caller's teams (with an
+  empty option that clears it), and the upload panel's scope select starts there.
+
 - Each stored remediation artifact can be downloaded.  `GET
   /api/binaries/<id>/remediation/<yara|snort|stix>` served one artifact as the
   raw text or JSON the store holds, and the panel that renders all three

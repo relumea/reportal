@@ -584,7 +584,10 @@ one journal action on the server, so the journal view can revert it.
 The Users view (`views/UsersView.tsx`, `#/users`, in the System group) renders
 the identity the API reports: `GET /api/iam/me` as a key/value block (the auth
 mode, who this browser is, the role and its permission badges) beside a bearer
-token field that saves or clears what this browser sends, and `GET /api/users`
+token field that saves or clears what this browser sends, an `Active team`
+select that PUTs `/api/iam/active-team` (non-membership is the server's refusal,
+and clearing it is the empty option) rendering only when the install has auth on,
+and `GET /api/users`
 as the user table.  Creating a user takes a name and a role select and shows the
 returned token once in a `CodeBlock`, because that is the only time the server
 has it; each row's role select saves a `PATCH`, Disable/Enable flips the
@@ -694,9 +697,13 @@ membership is managed in the browser the same way the CLI manages it.
 
 The Binaries view's upload panel (`views/BinariesView.tsx`) takes a batch one
 file at a time: a `Files` control and a dashed drop zone both queue files, each
-queued row carries its own name, tags, format and ISA, a `Configure all` pair
-applies a format and an ISA to every row at once, and a row nobody configured
-keeps the `auto` plan badge.  The batch posts as one multipart request with one
+queued row carries its own name, tags, format, ISA and scope, a `Configure all`
+row applies a format, an ISA and a scope to every row at once, and a row nobody
+configured keeps the `auto` plan badge.  A row's scope is the team the binary
+registers into (`Workspace` leaves it public and ownerless), sent as the entry's
+`visibility`/`team_id`, and the scope select starts on the caller's active team
+(`GET /api/iam/me`), so a caller who has picked one registers there without
+touching the control; each result line says which scope the binary landed in.  The batch posts as one multipart request with one
 options entry per part, so the whole request is one journal action; the result
 list opens with a duplicate banner and an error banner above the per-entry rows,
 each of which names what happened to that file.  The `Extract an archive` panel

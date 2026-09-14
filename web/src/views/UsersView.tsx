@@ -670,6 +670,15 @@ export function UsersView(): ReactNode {
   const authRequired = me.data?.auth === "required";
   const rows = users.data?.users ?? [];
 
+  const setActiveTeam = (value: string): void => {
+    act("active-team", () =>
+      api("/iam/active-team", {
+        method: "PUT",
+        json: { team_id: value === "" ? null : Number(value) },
+      }),
+    );
+  };
+
   return (
     <>
       <Panel
@@ -701,6 +710,32 @@ export function UsersView(): ReactNode {
             ]}
           />
         )}
+        {authRequired && me.data?.user ? (
+          <Toolbar>
+            <Field
+              label="Active team"
+              hint="The team this caller works in; the binaries view starts new uploads in its scope."
+            >
+              <select
+                aria-label="Active team"
+                value={
+                  me.data.user.active_team_id === null
+                    ? ""
+                    : String(me.data.user.active_team_id)
+                }
+                disabled={busy === "active-team"}
+                onChange={(event) => setActiveTeam(event.target.value)}
+              >
+                <option value="">No active team</option>
+                {me.data.teams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    team {team.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </Toolbar>
+        ) : null}
         <Muted>
           A loopback install needs no token and every request carries all three permissions. A bind
           another machine can reach refuses to start without auth: set <code>REPORTAL_AUTH</code> or{" "}

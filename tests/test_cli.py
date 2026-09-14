@@ -23,7 +23,7 @@ from conftest import (
 )
 from typer.testing import CliRunner
 
-from reportal import __version__, cli, engines, jobs, llm, similarity, store
+from reportal import __version__, auth, cli, engines, jobs, llm, similarity, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -783,6 +783,39 @@ class TestAddBinary:
         result = runner.invoke(cli.app, ["add-binary", str(tmp_path / "absent.exe")])
         assert result.exit_code == 1
         assert "not a file" in result.output
+
+    def test_team_registers_into_that_scope(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "portal.db"))
+        store.init_db(tmp_path / "portal.db")
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            team_id = int(auth.create_team(conn, name="Blue")["id"])
+        target = tmp_path / "scoped.exe"
+        target.write_bytes(b"MZ" + b"\x00" * 30)
+
+        result = runner.invoke(
+            cli.app, ["add-binary", str(target), "--team", str(team_id), "--json"]
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["visibility"] == "team"
+        assert payload["owner_team_id"] == team_id
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            stored = store.get_binary(conn, int(payload["binary_id"]))
+        assert stored is not None
+        assert int(stored["owner_team_id"]) == team_id
+
+    def test_an_unknown_team_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "portal.db"))
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ" + b"\x00" * 30)
+
+        result = runner.invoke(cli.app, ["add-binary", str(target), "--team", "99"])
+
+        assert result.exit_code == 1
+        assert "team-not-found" in result.output
 
 
 class TestExtract:

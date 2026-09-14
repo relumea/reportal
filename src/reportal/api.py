@@ -595,17 +595,50 @@ def _apply_upload_collections(
     return applied
 
 
+def _upload_scope(
+    request: Request, conn: sqlite3.Connection, entry: Mapping[str, Any]
+) -> tuple[int | None, str] | None:
+    """The scope one batch entry asks for, or None when it asks for nothing.
+
+    Absent options keep the register's default (public, no owning team), so a
+    client that names no scope behaves exactly as before.  A ``team_id`` without
+    a ``visibility`` means team visibility, which is the shape the upload panel
+    sends.  Naming a team the caller is not in is refused: the scope decides who
+    may read and write the binary, and while auth is off there is no caller to
+    hold to anything.
+    """
+    visibility = _file_option_str(entry, "visibility")
+    raw_team = entry.get("team_id")
+    if not visibility and raw_team is None:
+        return None
+    if raw_team is not None and (isinstance(raw_team, bool) or not isinstance(raw_team, int)):
+        raise json_error(400, error="invalid-body", detail="file option team_id must be an integer")
+    if not visibility:
+        visibility = auth.VISIBILITY_TEAM
+    owner, resolved = auth.scope_of(conn, team_id=raw_team, visibility=visibility)
+    caller = _caller(request)
+    member = owner is None or caller is None or str(caller.get("role")) == auth.ROLE_ADMIN
+    if not member and owner not in set(_caller_team_ids(conn, request)):
+        raise auth.NotAMemberError(auth.ERROR_NOT_A_MEMBER, f"you are not a member of team {owner}")
+    return owner, resolved
+
+
 def _upload_entry(
     conn: sqlite3.Connection,
     log: journal.Journal,
+    request: Request,
     upload: Any,
     entry: Mapping[str, Any],
     directory: Path,
+    scope: tuple[int | None, str] | None,
 ) -> dict[str, Any]:
     """Register one part of a batch upload and report its outcome.
 
     A refusal is reported in the entry instead of failing the request, so the
-    files that succeeded stay registered.
+    files that succeeded stay registered.  *scope* is the resolved scope the
+    entry asked for, or None to leave the binary where it was: a fresh binary
+    carries it from the start, and a duplicate is re-scoped the way the scope
+    route does it, journaled and refused when the caller may not write it.
     """
     raw_name = str(upload.filename or "")
     display = _file_option_str(entry, "name") or _client_name(raw_name) or raw_name
@@ -623,6 +656,25 @@ def _upload_entry(
         temp.unlink(missing_ok=True)
         binary_id = int(existing["id"])
         duplicate = True
+        if scope is not None:
+            if not auth.may_write(
+                _caller(request), existing, team_ids=_caller_team_ids(conn, request)
+            ):
+                return _upload_error_entry(
+                    display,
+                    auth.ERROR_SCOPE_FORBIDDEN,
+                    f"binary {binary_id} belongs to a team you are not a member of",
+                    403,
+                )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="binaries",
+                where="id = ?",
+                params=(binary_id,),
+                description=f"scoped binary {binary_id} to {scope[1]}",
+            )
+            store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
     else:
         suffix = _upload_suffix(raw_name)
         target = directory / f"{sha256}{suffix}"
@@ -637,6 +689,8 @@ def _upload_entry(
             arch=_file_option_str(entry, "arch"),
         )
         duplicate = False
+        if scope is not None:
+            store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
         log.record(
             effects.EFFECT_FILE_DELETE,
             f"stored uploaded file {target}",
@@ -649,12 +703,15 @@ def _upload_entry(
         )
     applied_tags = _apply_upload_tags(conn, log, binary_id, tags)
     applied_collections = _apply_upload_collections(conn, log, binary_id, collection_ids)
+    row = store.get_binary(conn, binary_id) or {}
     return {
         "file": display or sha256,
         "binary_id": binary_id,
         "duplicate": duplicate,
         "tags": applied_tags,
         "collections": applied_collections,
+        "visibility": str(row.get("visibility") or auth.VISIBILITY_PUBLIC),
+        "owner_team_id": row.get("owner_team_id"),
         "error": None,
     }
 
@@ -8217,7 +8274,9 @@ def _form_text(value: object) -> str:
 # ``request.stream()`` reader instead of ``UploadFile``.
 
 
-def _upload_batch(files: Sequence[UploadFile], raw_options: Any, name: str) -> Response:
+def _upload_batch(
+    request: Request, files: Sequence[UploadFile], raw_options: Any, name: str
+) -> Response:
     """Upload many files in one journaled action, reporting each one.
 
     A refusal or a duplicate is an entry on the result rather than a failed
@@ -8264,11 +8323,16 @@ def _upload_batch(files: Sequence[UploadFile], raw_options: Any, name: str) -> R
                 return json_error(
                     404, error="collection not found", detail=f"no collection with id {unknown[0]}"
                 )
+        scopes: list[tuple[int | None, str] | None] = []
+        try:
+            scopes = [_upload_scope(request, conn, entry) for entry in options]
+        except auth.AuthError as exc:
+            return _team_failure(exc)
         results: list[dict[str, Any]] = []
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            for upload, entry in zip(files, options, strict=True):
-                results.append(_upload_entry(conn, log, upload, entry, directory))
+            for upload, entry, scope in zip(files, options, scopes, strict=True):
+                results.append(_upload_entry(conn, log, request, upload, entry, directory, scope))
         payload = log.attach(
             {
                 "files": results,
@@ -8287,13 +8351,15 @@ async def upload_binary(request: Request) -> Response:
     One ``file`` part is the single-file upload and answers that binary's row
     with a ``duplicate`` flag, unchanged.  Repeated ``file`` parts (optionally
     described by a JSON ``files`` field, entry *i* per part, carrying a ``name``,
-    ``tags``, ``collection_ids`` and an explicit ``format``/``arch`` hint) are a
-    batch: every created binary, applied tag and collection link is recorded in
-    **one** journal action, so reverting its ``journal_action`` takes the whole
-    request back.  Each entry answers the same refusal vocabulary as the
+    ``tags``, ``collection_ids``, an explicit ``format``/``arch`` hint and the
+    ``visibility``/``team_id`` scope the binary should carry) are a
+    batch: every created binary, applied tag, collection link and scope change is
+    recorded in **one** journal action, so reverting its ``journal_action`` takes
+    the whole request back.  Each entry answers the same refusal vocabulary as the
     single-file path.  A compiler hint has no column in reportal's binary model
-    (the hosted portal's Platform and Visibility have no local meaning either),
-    so it is not stored.
+    (the hosted portal's Platform hint has no local meaning), so it is not stored;
+    the scope does have one, and an entry that names none leaves the binary public
+    and ownerless as before.
 
     The form is read here rather than declared as ``File``/``Form`` parameters
     so that a part which is not a file is a missing file (400 ``no-file``), as
@@ -8312,15 +8378,17 @@ async def upload_binary(request: Request) -> Response:
     files = [part for part in form.getlist("file") if isinstance(part, UploadFile)]
     name = _form_text(form.get("name"))
     options = _form_text(form.get("files")) or None
-    return await run_in_threadpool(_register_uploads, files, name, options)
+    return await run_in_threadpool(_register_uploads, request, files, name, options)
 
 
-def _register_uploads(files: list[UploadFile], name: str, options: str | None) -> Response:
+def _register_uploads(
+    request: Request, files: list[UploadFile], name: str, options: str | None
+) -> Response:
     """Store the parts of one upload request (the blocking half of the route)."""
     if not files:
         return json_error(400, error="no-file", detail="multipart body needs a 'file' part")
     if len(files) > 1 or (options is not None and options.strip()):
-        return _upload_batch(files, options, name)
+        return _upload_batch(request, files, options, name)
 
     upload = files[0]
     raw_name = str(upload.filename or "")

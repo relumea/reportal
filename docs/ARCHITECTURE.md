@@ -2390,8 +2390,9 @@ where a reader will look rather than left to be discovered.  Deleting an
 organisation leaves its teams in place.
 
 A user's `active_team_id` is a view preference, not a permission: every listing
-still shows everything the caller may see, and the switch exists so the SPA and
-the CLI can filter their team lists to one team.  Membership is required to
+still shows everything the caller may see, and the switch exists so the SPA can
+start a new upload in that team's scope and mark it in the team controls; the
+Users view's `Active team` select is where it is set.  Membership is required to
 select a team, so the setting cannot point at a team the caller is not in.  None
 of these columns existed when identity first shipped, so all three are in
 `store._ADDED_COLUMNS`: a membership that predates the role column is `member`

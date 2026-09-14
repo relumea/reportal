@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import api, store
+from reportal import api, auth, store
 
 # Boundary used by the request builder; kept fixed so a failure is readable.
 BOUNDARY = "----reportal-batch-test"
@@ -57,9 +57,11 @@ def _multipart(
 
 
 def _upload_batch(
-    files: list[tuple[str, bytes]], *, files_json: str | None = None
+    files: list[tuple[str, bytes]], *, files_json: str | None = None, token: str = ""
 ) -> tuple[str, dict[str, str], bytes]:
     body, headers = _multipart(files, files_json=files_json)
+    if token:
+        headers = {**headers, "Authorization": f"Bearer {token}"}
     return wsgi_request("POST", "/api/binaries", body=body, headers=headers)
 
 
@@ -225,6 +227,183 @@ class TestBatchTagsAndCollections:
         status, headers, raw = _upload_batch([("one.exe", b"one")], files_json=options)
         assert status.startswith("404")
         assert json_body(raw, headers)["error"] == "collection not found"
+
+
+class TestBatchScope:
+    """The scope a batch entry can register its binary into."""
+
+    def test_an_entry_can_register_into_a_team_scope(
+        self, portal_db: Path, workspace: Path, conn: sqlite3.Connection
+    ) -> None:
+        team_id = int(auth.create_team(conn, name="Blue")["id"])
+        options = json.dumps([{"visibility": "team", "team_id": team_id}])
+
+        status, headers, raw = _upload_batch([("scoped.exe", b"scoped")], files_json=options)
+
+        assert status.startswith("200")
+        entry = json_body(raw, headers)["files"][0]
+        assert entry["visibility"] == "team"
+        assert entry["owner_team_id"] == team_id
+        stored = store.get_binary(conn, entry["binary_id"])
+        assert stored is not None
+        assert stored["visibility"] == "team"
+        assert int(stored["owner_team_id"]) == team_id
+
+    def test_a_team_id_alone_means_team_visibility(
+        self, portal_db: Path, workspace: Path, conn: sqlite3.Connection
+    ) -> None:
+        team_id = int(auth.create_team(conn, name="Green")["id"])
+        options = json.dumps([{"team_id": team_id}])
+
+        _, headers, raw = _upload_batch([("green.exe", b"green")], files_json=options)
+
+        entry = json_body(raw, headers)["files"][0]
+        assert entry["visibility"] == "team"
+        assert entry["owner_team_id"] == team_id
+
+    def test_an_entry_that_names_no_scope_stays_public(
+        self, portal_db: Path, workspace: Path, conn: sqlite3.Connection
+    ) -> None:
+        _, headers, raw = _upload_batch([("plain.exe", b"plain")], files_json=json.dumps([{}]))
+
+        entry = json_body(raw, headers)["files"][0]
+        assert entry["visibility"] == "public"
+        assert entry["owner_team_id"] is None
+
+    def test_an_explicit_public_scope_ignores_a_team_id(
+        self, portal_db: Path, workspace: Path, conn: sqlite3.Connection
+    ) -> None:
+        team_id = int(auth.create_team(conn, name="Amber")["id"])
+        options = json.dumps(
+            [
+                {"visibility": "team", "team_id": team_id},
+                {"visibility": "public", "team_id": team_id},
+            ]
+        )
+
+        status, headers, raw = _upload_batch(
+            [("first.exe", b"first"), ("second.exe", b"second")], files_json=options
+        )
+
+        assert status.startswith("200")
+        first, second = json_body(raw, headers)["files"]
+        assert second["visibility"] == "public"
+        assert second["owner_team_id"] is None
+
+    def test_an_unknown_team_is_404(self, portal_db: Path, workspace: Path) -> None:
+        options = json.dumps([{"visibility": "team", "team_id": 99}])
+
+        status, headers, raw = _upload_batch([("nope.exe", b"nope")], files_json=options)
+
+        assert status.startswith("404")
+        assert json_body(raw, headers)["error"] == auth.ERROR_TEAM_NOT_FOUND
+
+    def test_a_team_visibility_without_a_team_is_400(
+        self, portal_db: Path, workspace: Path
+    ) -> None:
+        options = json.dumps([{"visibility": "team"}])
+
+        status, headers, raw = _upload_batch([("nope.exe", b"nope")], files_json=options)
+
+        assert status.startswith("400")
+        assert json_body(raw, headers)["error"] == auth.ERROR_INVALID_TEAM
+
+    def test_an_unknown_visibility_is_400(self, portal_db: Path, workspace: Path) -> None:
+        options = json.dumps([{"visibility": "secret"}])
+
+        status, headers, raw = _upload_batch([("nope.exe", b"nope")], files_json=options)
+
+        assert status.startswith("400")
+        assert json_body(raw, headers)["error"] == auth.ERROR_INVALID_TEAM
+
+    def test_a_non_integer_team_id_is_400(self, portal_db: Path, workspace: Path) -> None:
+        options = json.dumps([{"team_id": "5"}])
+
+        status, headers, raw = _upload_batch([("nope.exe", b"nope")], files_json=options)
+
+        assert status.startswith("400")
+        assert json_body(raw, headers)["error"] == "invalid-body"
+
+    def test_a_non_member_cannot_scope_into_a_team(
+        self,
+        portal_db: Path,
+        workspace: Path,
+        conn: sqlite3.Connection,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        team_id = int(auth.create_team(conn, name="Blue")["id"])
+        _, ana = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        _, bob = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        ana_user = auth.find_user(conn, "ana")
+        assert ana_user is not None
+        auth.add_member(conn, team_id, int(ana_user["id"]))
+        options = json.dumps([{"visibility": "team", "team_id": team_id}])
+
+        refused = _upload_batch([("bob.exe", b"bob")], files_json=options, token=bob)
+        allowed = _upload_batch([("ana.exe", b"ana")], files_json=options, token=ana)
+
+        assert refused[0].startswith("403")
+        assert json_body(refused[2], refused[1])["error"] == auth.ERROR_NOT_A_MEMBER
+        assert allowed[0].startswith("200")
+        assert json_body(allowed[2], allowed[1])["files"][0]["owner_team_id"] == team_id
+
+    def test_a_duplicate_is_rescoped_and_the_revert_puts_it_back(
+        self, portal_db: Path, workspace: Path, conn: sqlite3.Connection
+    ) -> None:
+        team_id = int(auth.create_team(conn, name="Blue")["id"])
+        _, headers, raw = _upload_batch([("known.exe", b"known bytes")], files_json="[{}]")
+        first = json_body(raw, headers)["files"][0]
+        assert first["visibility"] == "public"
+
+        options = json.dumps([{"visibility": "team", "team_id": team_id}])
+        _, headers, raw = _upload_batch([("known.exe", b"known bytes")], files_json=options)
+        payload = json_body(raw, headers)
+        entry = payload["files"][0]
+        assert entry["duplicate"] is True
+        assert entry["binary_id"] == first["binary_id"]
+        assert entry["owner_team_id"] == team_id
+        stored = store.get_binary(conn, first["binary_id"])
+        assert stored is not None and stored["visibility"] == "team"
+
+        wsgi_request(
+            "POST",
+            "/api/journal/revert",
+            body=json.dumps({"action": payload["journal_action"]}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        restored = store.get_binary(conn, first["binary_id"])
+        assert restored is not None
+        assert restored["visibility"] == "public"
+        assert restored["owner_team_id"] is None
+
+    def test_a_duplicate_in_a_foreign_team_is_reported_per_entry(
+        self,
+        portal_db: Path,
+        workspace: Path,
+        conn: sqlite3.Connection,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _, ana = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        _, bob = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        team_id = int(auth.create_team(conn, name="Blue")["id"])
+        ana_user = auth.find_user(conn, "ana")
+        assert ana_user is not None
+        auth.add_member(conn, team_id, int(ana_user["id"]))
+        _, headers, raw = _upload_batch([("ana.exe", b"ana bytes")], files_json="[{}]", token=ana)
+        binary_id = json_body(raw, headers)["files"][0]["binary_id"]
+        store.set_binary_scope(conn, binary_id, owner_team_id=team_id, visibility="team")
+
+        options = json.dumps([{"visibility": "public"}])
+        status, headers, raw = _upload_batch(
+            [("ana.exe", b"ana bytes")], files_json=options, token=bob
+        )
+
+        assert status.startswith("200"), "the batch reports the refusal per entry"
+        entry = json_body(raw, headers)["files"][0]
+        assert entry["error"]["error"] == auth.ERROR_SCOPE_FORBIDDEN
+        assert entry["binary_id"] is None
 
 
 class TestBatchRefusals:

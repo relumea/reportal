@@ -38,7 +38,7 @@ _REPO_ROOT = next(
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from reportal import data_types, store  # noqa: E402
+from reportal import auth, data_types, store  # noqa: E402
 from tools import smoke_spa  # noqa: E402
 
 WORKSPACE_RELATIVE = Path(".scratch") / "e2e-web"
@@ -49,6 +49,11 @@ WORKSPACE_RELATIVE = Path(".scratch") / "e2e-web"
 # the DOM and take seconds.
 LARGE_BINARY_NAME = "wide.exe"
 LARGE_FUNCTIONS = 5000
+
+# The team the seeded binaries can be scoped to.  It gives the upload panel's
+# scope select a real choice and the scope route something to set, so the suite
+# covers registering a file into a team rather than only into the workspace.
+TEAM_NAME = "e2e scope team"
 
 # Collections seeded so the Collections view and the Search view's collection
 # table list rows.  The first carries the seeded binary, the second stays empty
@@ -170,6 +175,7 @@ def seed(workspace: Path) -> dict[str, object]:
         stored_types = [row["name"] for row in store.list_data_types(conn, int(ids["binary_id"]))]
         large_binary_id = _seed_large_binary(conn)
         stale_run = _seed_stale_run(conn, large_binary_id)
+        team = auth.create_team(conn, name=TEAM_NAME)
     return {
         "workspace": str(workspace),
         "ids": ids,
@@ -180,6 +186,7 @@ def seed(workspace: Path) -> dict[str, object]:
         "large_binary_id": large_binary_id,
         "large_function_count": LARGE_FUNCTIONS,
         "stale_run": stale_run,
+        "team": {"id": int(team["id"]), "name": str(team["name"])},
     }
 
 

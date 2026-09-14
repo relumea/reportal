@@ -4929,9 +4929,15 @@ def functions(
 def add_binary(
     path: Path = typer.Argument(..., help="Path to the binary to register"),
     name: str | None = typer.Option(None, "--name", help="Display name (default: file name)"),
+    team: int | None = typer.Option(None, "--team", help="Team id to register the binary into"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Register a binary by content hash (reportal's equivalent of an upload)."""
+    """Register a binary by content hash (reportal's equivalent of an upload).
+
+    ``--team`` puts it in that team's scope as it registers, the way the
+    upload panel's scope control does; without one it is public and ownerless,
+    and ``reportal binary-scope`` changes it afterwards.
+    """
     binary = path.expanduser().resolve()
     if not binary.is_file():
         _fail(f"not a file: {path}", json_output)
@@ -4940,6 +4946,13 @@ def add_binary(
     portal_db = _db_path(json_output)
     store.init_db(portal_db)
     with contextlib.closing(store.connect(portal_db)) as conn:
+        owner: int | None = None
+        resolved = auth.VISIBILITY_PUBLIC
+        if team is not None:
+            try:
+                owner, resolved = auth.scope_of(conn, team_id=team, visibility=auth.VISIBILITY_TEAM)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             known = store.find_binary_by_sha256(conn, sha256) is not None
@@ -4957,12 +4970,25 @@ def add_binary(
                     f"registered binary {binary_id}",
                     journal.row_delete_descriptor("binaries", binary_id),
                 )
+            if team is not None:
+                if known:
+                    journal.journaled_rows(
+                        conn,
+                        log,
+                        table="binaries",
+                        where="id = ?",
+                        params=(binary_id,),
+                        description=f"scoped binary {binary_id} to {resolved}",
+                    )
+                store.set_binary_scope(conn, binary_id, owner_team_id=owner, visibility=resolved)
         payload = log.attach(
             {
                 "binary_id": binary_id,
                 "name": display_name,
                 "sha256": sha256,
                 "path": str(binary),
+                "visibility": resolved,
+                "owner_team_id": owner,
             }
         )
     if json_output:
@@ -4971,6 +4997,8 @@ def add_binary(
         console.print(f"[green]Registered[/green] binary {binary_id}: {display_name}")
         console.print(f"  path:   {binary}")
         console.print(f"  sha256: {sha256}")
+        if owner is not None:
+            console.print(f"  scope:  team {owner}")
     _print_journal_action(log, json_output)
 
 
