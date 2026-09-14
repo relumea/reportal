@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- Benchmarking a match run: `reportal benchmark <left-id> <right-id>` and
+  `POST /api/binaries/<id>/benchmark` run the ordinary match with the partner
+  binary as the candidate scope and score the rows it recorded against labelled
+  counterpart addresses, reporting precision, recall, F1 and mean reciprocal
+  rank with every query's rank and every miss.  The labels are a corpus file
+  (the route and the MCP tool take the pairs in the body, so no request names a
+  path) or, without one, the two binaries' shared real function names, which the
+  payload states as the weaker source.  The result is stored as the binary's
+  `benchmark` scan.  Rename proposals are deliberately not scored.
+
 - Unpacking a packed executable: `reportal unpack <binary-id>` and
   `POST /api/binaries/<id>/unpack` identify the packer from the file's own stub
   (the LZEXE stub at the entry point, the UPX marker), rebuild the image the

@@ -88,6 +88,8 @@ reportal/
 │   │                         #   (CycloneDX, SPDX, CSV) it feeds
 │   ├── unpack.py             # packer detection and the rebuild: LZEXE in process
 │   │                         #   through the engine, UPX through the external tool
+│   ├── benchmark.py          # precision and recall of a match run against labelled
+│   │                         #   counterpart addresses
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
 │   │                         #   derived callees, analyst-declared edges, canonical names
 │   ├── user_strings.py       # analyst strings at function or analysis scope, plus
@@ -1182,7 +1184,7 @@ small binary),
 `.../secrets`, `.../protocols`,
 `.../behavior` (all three domains) and `.../behavior/<domain>`,
 `.../hardening` (both domains) and `.../hardening/<domain>`,
-`.../security-scan`, `.../unstrip`, `.../unpack`, `.../threat`, `.../remediation` and
+`.../security-scan`, `.../unstrip`, `.../unpack`, `.../benchmark`, `.../threat`, `.../remediation` and
 `.../remediation/<yara|snort|stix>`,
 `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../data-types`, `.../signatures`,
 `.../comments`, `.../auto`, `.../documents`, `.../knowledge` and `.../graph`;
@@ -1193,13 +1195,13 @@ the graph node route is `GET /api/graph/nodes/<node_id>`, and
 |-------|--------|
 | Health | `GET /api/health` |
 | Jobs | `GET`/`POST /api/jobs`, `GET /api/jobs/<id>`, `POST /api/jobs/<id>/cancel`, `GET /api/jobs/<id>/events` (server-sent events), `POST /api/jobs/run` |
-| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `GET`/`POST /api/binaries/<id>/unpack`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
+| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `GET`/`POST /api/binaries/<id>/unpack`, `GET`/`POST /api/binaries/<id>/benchmark`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
 | Families | `GET`/`POST /api/families`, `GET`/`DELETE /api/families/<id>` |
 | Data types | `GET`/`POST /api/binaries/<id>/data-types[/import\|/export]` (the GET takes `?kind=&namespace=&search=`), `PATCH`/`DELETE /api/data-types/<id>`, `POST`/`DELETE /api/data-types/<id>/members[/<member>]`, `POST /api/data-types/<id>/members/<member>/gap`, `POST /api/data-types/<id>/members/<member>/ungap`, `POST`/`PATCH`/`DELETE /api/data-types/<id>/values[/<value>]`, `GET /api/data-types/<id>/references`, `GET /api/data-types/<id>/history`, `POST /api/data-types/<id>/history/<history_id>/revert` |
 | Signatures | `GET`/`POST /api/binaries/<id>/signatures[/import\|/export]`, `GET`/`PATCH`/`DELETE /api/functions/<id>/signature`, `POST`/`PATCH`/`DELETE /api/functions/<id>/signature/parameters[/<index>]`, `GET /api/functions/<id>/signature/history`, `POST /api/functions/<id>/signature/history/<history_id>/revert` |
 | Functions | `GET /api/functions/<id>`, `.../disasm`, `.../cfg`, `.../decompilation`, `.../xrefs`, `.../references`, `.../history`, `.../matches`, `.../diff`, `.../diff/<candidate_id>`, `.../summary`, `.../comments`, `.../type-suggestions`, `.../renames`, `.../ai-comments`, `POST /api/functions/bulk` |
 | Comments | `GET`/`POST /api/binaries/<id>/comments`, `GET`/`POST /api/functions/<id>/comments`, `PATCH`/`DELETE /api/comments/<id>` |
-| Mutations | `POST .../rename`, `.../apply-match`, `.../history/<hid>/revert`, `.../fingerprint`, `.../match`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../triage`, `.../function-triage`, `.../report`, `.../report/pdf`, `.../structs`, `.../crypto-scan`, `.../pe-info`, `.../filetype`, `.../capabilities`, `.../secrets`, `.../protocols`, `.../behavior/<domain>`, `.../hardening/<domain>`, `.../security-scan`, `.../threat`, `.../remediation`, `.../unstrip`, `.../unstrip/apply`, `.../unpack`, `.../decompilation`, `.../summary`, `.../ai-comments`, `.../type-suggestions`, `.../renames`, `.../renames/apply`, `.../renames/revert`, `POST /api/binaries/<id>/matches/transfer` (bulk symbol transfer; its binary is the one the listed functions must belong to) |
+| Mutations | `POST .../rename`, `.../apply-match`, `.../history/<hid>/revert`, `.../fingerprint`, `.../match`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../triage`, `.../function-triage`, `.../report`, `.../report/pdf`, `.../structs`, `.../crypto-scan`, `.../pe-info`, `.../filetype`, `.../capabilities`, `.../secrets`, `.../protocols`, `.../behavior/<domain>`, `.../hardening/<domain>`, `.../security-scan`, `.../threat`, `.../remediation`, `.../unstrip`, `.../unstrip/apply`, `.../unpack`, `.../benchmark`, `.../decompilation`, `.../summary`, `.../ai-comments`, `.../type-suggestions`, `.../renames`, `.../renames/apply`, `.../renames/revert`, `POST /api/binaries/<id>/matches/transfer` (bulk symbol transfer; its binary is the one the listed functions must belong to) |
 | Analyses | `GET`/`POST /api/analyses`, `GET /api/analyses/<id>/scans`, `GET /api/analyses/<id>/logs`, `DELETE /api/analyses/<id>` |
 | Collections | `GET`/`POST /api/collections`, `POST /api/collections/<id>/binaries` |
 | Tags | `GET`/`POST /api/tags`, `GET`/`POST /api/binaries/<id>/tags`, `DELETE .../tags/<tag_id>` |
@@ -2004,7 +2006,9 @@ rendering the packer verdict, a peak-section-entropy meter with the packed range
 marked, the section count, the toolchain compiler string and the match table
 with each match's category, name, confidence and signal list), and the Unpacked
 files panel, which reads the binary's stored unpack provenance and posts a
-rebuild from its packer select (see "Unpacking a packed executable"). The binary and function detail views carry
+rebuild from its packer select (see "Unpacking a packed executable"), and the
+Benchmark panel, which picks a partner binary and posts a scored run (see
+"Benchmarking a run"). The binary and function detail views carry
 the shared Comments panel (`panels/CommentsPanel.tsx`): it auto-loads the
 scope's comments, adds one with the browser's remembered author, and shows Edit
 and Delete only on a comment that author wrote. The binary detail view carries the
@@ -2160,6 +2164,35 @@ injected (default: cache-backed engine adapter) and the scorer is injected
 Scaling: scoring stays pairwise, so comparisons grow with the square of the
 corpus; the per-listing cache removes repeated preprocessing. LSH candidate
 shortlisting is the next lever if corpora grow past a few thousand functions.
+
+### Benchmarking a run
+
+`benchmark.py` answers the question matching leaves open: how often the run is
+right.  It runs the ordinary `match_binary` over one pair of binaries with the
+partner binary as the whole scope, then scores the rows that run recorded
+against labelled counterpart addresses: precision over the retrieved rows (how
+many proposals were right), recall over the queries (how many known pairs were
+found), F1 and mean reciprocal rank, with each query's rank and each miss in the
+payload, so a low number can be read rather than guessed at.
+
+The labels are the analyst's.  A corpus is a JSON file the CLI reads
+(`{"pairs": [{"left_va", "right_va"}, ...]}`, addresses as integers or `0x`
+strings); the route and the MCP tool take the same pairs in the request body, so
+no request names a path.  Without a corpus the labels are derived from the two
+binaries' own real function names, which the payload states as the weaker
+source: a name the two share is exactly the case a name transfer gets right for
+free.  A placeholder name, a name one binary carries twice, and a label whose
+address is not a stored function are all reported rather than silently dropped,
+and a label set that resolves to nothing is refused instead of scored.
+
+Nothing here re-ranks or re-implements the matcher.  The run writes the same
+`matches` rows the match route writes (so a benchmark is reversible as one
+journal action) and its result is stored as the left binary's `benchmark` scan,
+which is what `GET /api/binaries/<id>/benchmark`, `reportal benchmark-info` and
+the Benchmark panel read back.  Rename proposals are deliberately not scored: a
+proposal's correctness needs a labelled name and a proposal source, and
+inventing one from the signature match would measure the label rather than the
+rename.
 
 ## Diff view
 

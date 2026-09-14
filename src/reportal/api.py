@@ -14,6 +14,7 @@ to the ``_query_*`` helpers, which read through ``request.query_params``.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import json
 import os
@@ -49,6 +50,7 @@ from reportal import (
     auto_store,
     auto_workers,
     behavior,
+    benchmark,
     bulk_actions,
     capabilities,
     comments,
@@ -3967,6 +3969,89 @@ def _lineage_other_id(body: dict[str, Any]) -> int:
             detail="other_binary_id must be an integer",
         )
     return value
+
+
+@router.post("/api/binaries/{binary_id}/benchmark")
+def store_binary_benchmark(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Score a match run against known counterpart addresses.
+
+    The body names the partner binary with ``right_binary_id`` and the ground
+    truth with an optional ``labels`` list of ``{"left_va", "right_va"}``
+    objects; without one the labels are the two binaries' shared real function
+    names, which the payload states because a shared name is the case a name
+    transfer gets right for free.  ``min_similarity``, ``min_confidence`` and
+    ``top`` come from the body as they do on the match route, while the
+    candidate scope is always the partner binary: a benchmark is about one pair.
+    404 `binary not found` for either id, 400 `invalid-labels` for the same
+    binary twice or a malformed pair, 400 `no-labels` when nothing resolves to a
+    stored function, 503 `similarity-unavailable` without the extra; the run is
+    an ordinary match, so it replaces the left binary's recorded matches and is
+    journaled as one action.
+    """
+    right_binary_id = _optional_int(body, "right_binary_id", 0)
+    if right_binary_id <= 0:
+        return json_error(
+            400, error="invalid right_binary_id", detail="right_binary_id is required"
+        )
+    raw_labels = body.get("labels")
+    if raw_labels is not None and not isinstance(raw_labels, list):
+        return json_error(
+            400,
+            error="invalid labels",
+            detail="labels must be a list of {left_va, right_va} objects",
+        )
+    try:
+        settings = dataclasses.replace(
+            matching.MatchSettings.from_request(body),
+            binary_ids=(right_binary_id,),
+            include_self=False,
+        )
+    except matching.InvalidSettingsError as exc:
+        return json_error(400, error=exc.error, detail=exc.detail)
+    with contextlib.closing(_open()) as conn:
+        try:
+            result = benchmark.run(
+                conn,
+                left_binary_id=binary_id,
+                right_binary_id=right_binary_id,
+                engine=_engine(),
+                labels=raw_labels,
+                settings=settings,
+            )
+        except benchmark.BenchmarkError as exc:
+            status = 404 if exc.code == "binary not found" else 400
+            return json_error(status, error=exc.code, detail=exc.detail)
+        except matching.InvalidSettingsError as exc:
+            return json_error(400, error=exc.error, detail=exc.detail)
+        except similarity.SimilarityUnavailable:
+            return json_error(
+                503,
+                error="similarity-unavailable",
+                detail="install the optional extra: uv sync --extra similarity",
+            )
+        except engines.EngineUnavailable:
+            return json_error(
+                503, error="engine-unavailable", detail=engines.ENGINE_UNAVAILABLE_HINT
+            )
+        except engines.EngineError as exc:
+            return json_error(500, error="engine-error", detail=str(exc))
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_BENCHMARK, result)
+    return json_response(log.attach(result))
+
+
+@router.get("/api/binaries/{binary_id}/benchmark")
+def get_binary_benchmark(binary_id: int) -> Response:
+    """The stored benchmark of a binary, empty rather than 404 before the first run."""
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = benchmark.describe(conn, binary_id)
+        except benchmark.BenchmarkError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+    return json_response(payload)
 
 
 @router.post("/api/binaries/{binary_id}/lineage")

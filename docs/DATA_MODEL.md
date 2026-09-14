@@ -207,7 +207,7 @@ or chunk count, and the `truncated` flag on the binary node).
 `SCAN_KIND_ANTI_ANALYSIS`, `SCAN_KIND_OBFUSCATION`, `SCAN_KIND_LINEAGE`,
 `SCAN_KIND_DETECT`, `SCAN_KIND_FUNCTION_TRIAGE`, `SCAN_KIND_RELATED`,
 `SCAN_KIND_PE_INFO`, `SCAN_KIND_FILETYPE`, `SCAN_KIND_COMPOSITION`,
-`SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`); the unique index
+`SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`, `SCAN_KIND_BENCHMARK`); the unique index
 makes `set_scan` an upsert, so a re-run refreshes the stored dossier, report or
 struct recovery instead of adding a row.  A scan hangs off an analysis, so
 `ensure_analysis_for_binary` reuses the binary's newest analysis and creates one

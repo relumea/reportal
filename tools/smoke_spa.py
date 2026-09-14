@@ -716,6 +716,12 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Unpacked files",),
             ("Run unpack",),
             ("Auto",),
+            # The benchmark panel: its partner select and run control.  The
+            # seeded binary has no stored benchmark, so the body is the empty
+            # state rather than a metrics table.
+            ("Benchmark",),
+            ("Run benchmark",),
+            ("Partner",),
             # Analyst feedback on the stored agent artifacts.
             ("Agent feedback",),
             ("Function triage",),

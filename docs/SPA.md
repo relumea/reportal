@@ -520,6 +520,18 @@ shape chosen in the select (CycloneDX, SPDX or CSV), and shows the document in a
 code block.  Before the first run the panel names the command that fills it
 rather than showing an empty table.
 
+The binary detail's Benchmark panel (`panels/BinaryPanels.tsx`) reads
+`GET /api/binaries/<id>/benchmark` and posts from its `Run benchmark` control
+with a partner binary chosen in the panel's select (the workspace's other
+binaries, so the run has a corpus).  A stored run renders the queries, retrieved
+rows, hits, precision, recall, F1, mean reciprocal rank and mean rank beside the
+recorded pair count, every label's rank and similarity in a table (a miss is a
+badge, not a blank), and the payload's notes, so a reader can see that the
+labels came from shared names rather than a corpus and why a query missed.  The
+panel runs nothing on render and names the two sources of labels before the
+first run.  `web/tests/benchmark.spec.ts` covers the empty reading, the partner
+select and the disabled-to-enabled run control.
+
 The binary detail's Unpacked files panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/unpack`, which answers the provenance of a binary
 reportal unpacked and `stored: false` for one it did not, and posts from its

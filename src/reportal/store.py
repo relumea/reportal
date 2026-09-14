@@ -88,6 +88,7 @@ SCAN_KIND_FILETYPE = "filetype"
 SCAN_KIND_COMPOSITION = "composition"
 SCAN_KIND_LIBRARY = "library"
 SCAN_KIND_UNPACK = "unpack"
+SCAN_KIND_BENCHMARK = "benchmark"
 
 # Per-section byte coverage is reportal's own metric over the stored function
 # table and the stored `pe-info` section table.  The hosted portal publishes no

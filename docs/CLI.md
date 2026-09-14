@@ -409,6 +409,17 @@ reportal sbom <binary-id> [--format cyclonedx|spdx|csv] [--output PATH] [--json]
                                            # export the stored library reading
                                            #   as a bill of materials; stored-only,
                                            #   it never re-runs the engine
+reportal benchmark <left-id> <right-id> [--labels FILE] [--top N]
+                   [--min-similarity F] [--min-confidence F] [--json]
+                                           # score a match run against
+                                           # known counterpart addresses;
+                                           # without --labels the ground
+                                           # truth is the two binaries'
+                                           # shared real function names
+reportal benchmark-info <binary-id> [--json]
+                                           # show the stored benchmark:
+                                           # precision, recall, F1, MRR
+                                           # and the missed labels
 reportal unpack <binary-id> [--packer lzexe|upx] [--name TEXT] [--json]
                                            # rebuild a packed executable's
                                            # image and register it as a binary

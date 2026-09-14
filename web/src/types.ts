@@ -2937,6 +2937,57 @@ export interface LibraryResult {
   notes: string[];
 }
 
+/** One query's rank in a benchmark run, or null when the counterpart was missed. */
+export interface BenchmarkRank {
+  name: string;
+  left_va: number;
+  right_va: number;
+  rank: number | null;
+  similarity: number | null;
+  candidates: number;
+}
+
+/** A labelled pair the run did not find. */
+export interface BenchmarkMiss {
+  name: string;
+  left_va: number;
+  right_va: number;
+  candidates: number;
+}
+
+/** `POST`/`GET /api/binaries/<id>/benchmark`: a scored match run. */
+export interface BenchmarkResult {
+  binary_id?: number;
+  binary_name?: string;
+  stored: boolean;
+  left?: { binary_id: number; name: string };
+  right?: { binary_id: number; name: string };
+  label_source?: string;
+  labels?: {
+    count: number;
+    truncated: boolean;
+    unmatched: Array<{ left_va: number; right_va: number; reason: string }>;
+  };
+  settings?: Record<string, unknown>;
+  scope_notes?: string[];
+  matching?: { functions: number; matched: number; pairs: number };
+  metrics: {
+    queries: number;
+    retrieved: number;
+    hits: number;
+    top: number;
+    precision: number;
+    recall: number;
+    f1: number;
+    mrr: number;
+    mean_rank: number | null;
+    misses: BenchmarkMiss[];
+    detail: BenchmarkRank[];
+  } | null;
+  notes: string[];
+  journal_action?: string;
+}
+
 /** The packed source a binary was unpacked from. */
 export interface UnpackSource {
   binary_id: number;

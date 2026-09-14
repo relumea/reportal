@@ -116,6 +116,7 @@ import type {
   ThreatReport,
   ThreatScore,
   TriageDossier,
+  BenchmarkResult,
   UnpackProvenance,
   UnpackResult,
   UnstripProposal,
@@ -912,6 +913,151 @@ export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNo
         )}
       </PanelBody>
     </Panel>
+  );
+}
+
+export function BenchmarkPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "benchmark");
+  const path = `/binaries/${binaryId}/benchmark`;
+  const entry = usePanel(key, () => api<BenchmarkResult>(path));
+  const candidatesEntry = usePanel(panelKey("binary", binaryId, "benchmark-candidates"), () =>
+    api<{ binaries: Binary[] }>("/binaries"),
+  );
+  const [partnerId, setPartnerId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<unknown>(null);
+
+  const candidates = (
+    candidatesEntry?.state === "ready" ? candidatesEntry.data.binaries : []
+  ).filter((binary) => binary.id !== binaryId);
+  const stored = entry?.state === "ready" ? entry.data : null;
+  const partner = partnerId ?? stored?.right?.binary_id ?? null;
+
+  const run = (): void => {
+    if (partner === null) return;
+    setActionError(null);
+    setBusy(true);
+    refreshPanel(key, async () => {
+      try {
+        await api<BenchmarkResult>(path, {
+          method: "POST",
+          json: { right_binary_id: partner },
+        });
+        return await api<BenchmarkResult>(path);
+      } catch (failure) {
+        setActionError(failure);
+        throw failure;
+      } finally {
+        setBusy(false);
+      }
+    });
+  };
+
+  return (
+    <Panel
+      title="Benchmark"
+      subtitle="Precision and recall of a match run against counterpart addresses an analyst knows."
+      actions={
+        <Toolbar>
+          <Field
+            label="Partner"
+            hint="Candidates come from this binary; labels come from the two binaries' shared real names."
+          >
+            <select
+              value={partner ?? ""}
+              onChange={(event) => {
+                const value = event.target.value;
+                setPartnerId(value === "" ? null : Number(value));
+              }}
+            >
+              <option value="">Select a binary</option>
+              {candidates.map((binary) => (
+                <option key={binary.id} value={binary.id}>
+                  {binary.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Button tone="primary" pending={busy} onClick={run} disabled={partner === null}>
+            Run benchmark
+          </Button>
+        </Toolbar>
+      }
+    >
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      <PanelBody
+        entry={entry}
+        hint="Loading the stored benchmark"
+        onRetry={() => refreshPanel(key, () => api<BenchmarkResult>(path))}
+      >
+        {(data) =>
+          !data.stored || data.metrics === null ? (
+            <EmptyState>
+              Nothing measured yet. Pick a partner binary and run the benchmark: the labels are
+              the two binaries&apos; shared real function names unless a corpus supplies them, and
+              an unidentified binary still scores zero rather than guessing.
+            </EmptyState>
+          ) : (
+            <BenchmarkBody result={data} />
+          )
+        }
+      </PanelBody>
+    </Panel>
+  );
+}
+
+function BenchmarkBody({ result }: { result: BenchmarkResult }): ReactNode {
+  const scored = result.metrics;
+  if (scored === null) return null;
+  return (
+    <>
+      <Muted>
+        {result.left?.name} against {result.right?.name}, {result.label_source} labels (
+        {result.labels?.count ?? scored.queries} scored
+        {result.labels?.unmatched.length
+          ? `, ${result.labels.unmatched.length} unresolved`
+          : ""}
+        )
+      </Muted>
+      <KeyValue
+        rows={[
+          ["queries", String(scored.queries)],
+          ["retrieved", String(scored.retrieved)],
+          ["hits", String(scored.hits)],
+          ["precision", scored.precision.toFixed(4)],
+          ["recall", scored.recall.toFixed(4)],
+          ["f1", scored.f1.toFixed(4)],
+          ["mrr", scored.mrr.toFixed(4)],
+          ["mean rank", scored.mean_rank === null ? "n/a" : String(scored.mean_rank)],
+          ["top", String(scored.top)],
+          ["recorded pairs", result.matching ? String(result.matching.pairs) : "n/a"],
+        ]}
+      />
+      {(result.notes ?? []).map((note) => (
+        <Muted key={note}>{note}</Muted>
+      ))}
+      <DataTable
+        columns={[
+          { label: "Label", key: "name", mono: true },
+          { label: "Left VA", mono: true, render: (row) => hex(row.left_va) },
+          { label: "Right VA", mono: true, render: (row) => hex(row.right_va) },
+          {
+            label: "Rank",
+            numeric: true,
+            render: (row) => (row.rank === null ? <Badge tone="warn">miss</Badge> : String(row.rank)),
+          },
+          {
+            label: "Similarity",
+            numeric: true,
+            render: (row) => (row.similarity === null ? NA : row.similarity.toFixed(1)),
+          },
+          { label: "Candidates", numeric: true, render: (row) => row.candidates },
+        ]}
+        rows={scored.detail}
+        rowKey={(row) => `${row.left_va}-${row.right_va}`}
+        empty={<Muted>No label was scored.</Muted>}
+      />
+    </>
   );
 }
 

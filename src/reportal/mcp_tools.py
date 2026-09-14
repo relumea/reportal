@@ -37,6 +37,7 @@ from reportal import (
     auto_store,
     auto_workers,
     behavior,
+    benchmark,
     bulk_actions,
     capabilities,
     comments,
@@ -2438,6 +2439,61 @@ def _tool_run_unpack(arguments: dict[str, Any]) -> dict[str, Any]:
             return unpack_binary(conn, binary_id, packer=packer, name=name)
         except ExtractError as exc:
             raise ToolError(exc.code, exc.detail) from None
+
+
+def _tool_get_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        try:
+            return benchmark.describe(conn, binary_id)
+        except benchmark.BenchmarkError as exc:
+            raise ToolError(exc.code, exc.detail) from None
+
+
+def _tool_run_benchmark(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    right_binary_id = _arg_int(arguments, "right_binary_id")
+    raw_labels = arguments.get("labels")
+    if raw_labels is not None and not isinstance(raw_labels, list):
+        raise ToolError("invalid params", "labels must be a list of {left_va, right_va} objects")
+    try:
+        settings = matching.MatchSettings.from_request(
+            {
+                "min_similarity": _arg_optional_number(
+                    arguments, "min_similarity", matching.DEFAULT_MIN_SIMILARITY
+                ),
+                "min_confidence": _arg_optional_number(
+                    arguments, "min_confidence", matching.DEFAULT_MIN_CONFIDENCE
+                ),
+                "top": _arg_optional_int(arguments, "top", matching.DEFAULT_TOP),
+                "include_self": False,
+                "binary_ids": [right_binary_id],
+            }
+        )
+    except matching.InvalidSettingsError as exc:
+        raise ToolError(exc.error, exc.detail) from exc
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        _require_binary(conn, right_binary_id)
+        try:
+            result = benchmark.run(
+                conn,
+                left_binary_id=binary_id,
+                right_binary_id=right_binary_id,
+                engine=_engine(),
+                labels=raw_labels,
+                settings=settings,
+            )
+        except benchmark.BenchmarkError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        except matching.InvalidSettingsError as exc:
+            raise ToolError(exc.error, exc.detail) from exc
+        except similarity.SimilarityUnavailable as exc:
+            raise ToolError("similarity-unavailable", str(exc)) from exc
+        except engines.EngineError as exc:
+            raise ToolError("engine-error", str(exc)) from exc
+        return _journaled_scan_store(conn, binary_id, store.SCAN_KIND_BENCHMARK, result)
 
 
 def _tool_run_unstrip(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6456,6 +6512,50 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_run_unpack,
+        ),
+        Tool(
+            "get_benchmark",
+            "The stored benchmark of a binary: the labels it scored, the metrics (precision,"
+            " recall, F1, mean reciprocal rank) and the per-query ranks.  stored=false when no"
+            " run scored it.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_benchmark,
+        ),
+        Tool(
+            "run_benchmark",
+            "Match a binary against a partner and score the run against known counterpart"
+            " addresses: label pairs are supplied or derived from the two binaries' shared real"
+            " function names, and the run replaces the left binary's recorded matches.  The"
+            " candidates are always the partner binary.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "right_binary_id": {"type": "integer", "description": "Partner binary."},
+                    "labels": _array(
+                        "Ground-truth pairs; each names a virtual address in both binaries.",
+                        _object(
+                            {
+                                "left_va": {
+                                    "type": ["integer", "string"],
+                                    "description": "Address in the left binary.",
+                                },
+                                "right_va": {
+                                    "type": ["integer", "string"],
+                                    "description": "Address in the partner binary.",
+                                },
+                            },
+                            ("left_va", "right_va"),
+                        ),
+                    ),
+                    "top": _number("Candidates a query may retrieve."),
+                    "min_similarity": _number("Similarity floor."),
+                    "min_confidence": _number("Confidence floor."),
+                },
+                ("binary_id", "right_binary_id"),
+            ),
+            _WRITE,
+            _tool_run_benchmark,
         ),
         Tool(
             "run_unstrip",

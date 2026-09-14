@@ -34,6 +34,7 @@ import {
   TagsPanel,
   ThreatPanel,
   TriagePanel,
+  BenchmarkPanel,
   UnpackedFilesPanel,
   UnstripPanel,
 } from "../panels/BinaryPanels";
@@ -80,6 +81,7 @@ export function BinaryDetail({
           <SandboxPanel binaryId={binary.id} />
           <RelatedPanel binaryId={binary.id} />
           <LibraryPanel binaryId={binary.id} />
+          <BenchmarkPanel binaryId={binary.id} />
           <CompositionPanel binaryId={binary.id} />
           <TriagePanel binaryId={binary.id} />
           <FunctionTriagePanel binaryId={binary.id} />

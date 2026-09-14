@@ -93,6 +93,7 @@ they can be piped.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import hashlib
 import json
 import os
@@ -125,6 +126,7 @@ from reportal import (
     auto_workers,
     backup,
     behavior,
+    benchmark,
     bulk_actions,
     capabilities,
     comments,
@@ -5041,6 +5043,152 @@ def match(
             f"{row['confidence']:.2f}",
         )
     console.print(table)
+
+
+# ── benchmark ──────────────────────────────────────────────────────
+
+
+@app.command("benchmark")
+def benchmark_command(
+    left_binary_id: int = typer.Argument(..., help="Binary whose match run is scored"),
+    right_binary_id: int = typer.Argument(..., help="Partner binary the candidates come from"),
+    labels: str = typer.Option(
+        "", "--labels", help="Corpus JSON with a 'pairs' list of {left_va, right_va}"
+    ),
+    top: int = typer.Option(matching.DEFAULT_TOP, "--top", help="Candidates a query may retrieve"),
+    min_similarity: float = typer.Option(
+        matching.DEFAULT_MIN_SIMILARITY, "--min-similarity", help="Similarity floor"
+    ),
+    min_confidence: float = typer.Option(
+        matching.DEFAULT_MIN_CONFIDENCE, "--min-confidence", help="Confidence floor"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Score a match run against the counterpart addresses an analyst knows.
+
+    Without ``--labels`` the ground truth is the two binaries' shared real
+    function names, which the output states because a shared name is the case a
+    name transfer gets right for free.  The run is an ordinary match scoped to
+    the partner binary, so it replaces the left binary's recorded matches and
+    is reversible with the printed journal action.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    try:
+        raw_labels = benchmark.load_labels(labels) if labels.strip() else None
+    except benchmark.BenchmarkError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    try:
+        settings = dataclasses.replace(
+            matching.MatchSettings(
+                min_similarity=min_similarity, min_confidence=min_confidence, top=top
+            ),
+            binary_ids=(right_binary_id,),
+            include_self=False,
+        )
+    except matching.InvalidSettingsError as exc:
+        _fail(exc.detail, json_output)
+    engine = engines.get_engine()
+    if not engine.available():
+        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            result = benchmark.run(
+                conn,
+                left_binary_id=left_binary_id,
+                right_binary_id=right_binary_id,
+                engine=engine,
+                labels=raw_labels,
+                settings=settings,
+            )
+        except benchmark.BenchmarkError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+        except matching.InvalidSettingsError as exc:
+            _fail(exc.detail, json_output)
+        except similarity.SimilarityUnavailable:
+            _fail(
+                "function matching requires the optional 'similarity' extra"
+                " (uv sync --extra similarity)",
+                json_output,
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_scan_result(
+                conn, log, left_binary_id, store.SCAN_KIND_BENCHMARK, result
+            )
+
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    _print_benchmark(result)
+
+
+def _print_benchmark(payload: dict[str, Any]) -> None:
+    """Print one benchmark: the labels it scored, the metrics and the misses."""
+    scored = payload.get("metrics") or {}
+    console.print(
+        f"\n[bold cyan]binary {payload['left']['binary_id']}[/bold cyan]"
+        f" against {payload['right']['binary_id']}"
+        f" ({payload['label_source']} labels, {payload['labels']['count']})"
+    )
+    for note in payload.get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+    table = Table(show_header=False)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", justify="right")
+    table.add_row("queries", str(scored.get("queries", 0)))
+    table.add_row("retrieved", str(scored.get("retrieved", 0)))
+    table.add_row("hits", str(scored.get("hits", 0)))
+    table.add_row("precision", f"{float(scored.get('precision') or 0):.4f}")
+    table.add_row("recall", f"{float(scored.get('recall') or 0):.4f}")
+    table.add_row("f1", f"{float(scored.get('f1') or 0):.4f}")
+    table.add_row("mrr", f"{float(scored.get('mrr') or 0):.4f}")
+    mean_rank = scored.get("mean_rank")
+    table.add_row("mean rank", "n/a" if mean_rank is None else str(mean_rank))
+    table.add_row("top", str(scored.get("top", 0)))
+    console.print(table)
+    misses = scored.get("misses") or []
+    if not misses:
+        return
+    console.print(f"\n[bold]{len(misses)} miss(es)[/bold]")
+    missed = Table(show_header=True, header_style="bold")
+    missed.add_column("Label", style="cyan")
+    missed.add_column("Left VA", justify="right")
+    missed.add_column("Right VA", justify="right")
+    missed.add_column("Candidates", justify="right")
+    for row in misses[:MAX_REPORT_ROWS]:
+        missed.add_row(
+            str(row["name"]),
+            f"0x{int(row['left_va']):x}",
+            f"0x{int(row['right_va']):x}",
+            str(row["candidates"]),
+        )
+    console.print(missed)
+
+
+@app.command("benchmark-info")
+def benchmark_info_command(
+    binary_id: int = typer.Argument(..., help="Binary whose stored benchmark to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Show the last stored benchmark of a binary."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = benchmark.describe(conn, binary_id)
+        except benchmark.BenchmarkError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if not payload.get("stored"):
+        console.print(f"[yellow]{' '.join(payload.get('notes') or [])}[/yellow]")
+        return
+    _print_benchmark(payload)
 
 
 # ── decompile ──────────────────────────────────────────────────────

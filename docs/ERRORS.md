@@ -798,6 +798,21 @@ the stored pass reports.
 
 `404`. No region carries that index in the binary's stored firmware scan.
 
+### invalid-labels
+
+`400`. A benchmark's labels are malformed: a pair is not an object, an address
+is neither an integer nor a decimal or `0x` string, a pair is missing `left_va`
+or `right_va`, or the same binary was named on both sides. A benchmark compares
+two different binaries, so send `right_binary_id` and one `{left_va, right_va}`
+object per labelled pair.
+
+### no-labels
+
+`400`. A benchmark resolved no label to a stored function in both binaries, so
+there is nothing to score. Name addresses the two binaries actually carry (the
+run reports each label it could not resolve), or drop `labels` and let the two
+binaries' shared real function names label the run.
+
 ### scope-forbidden
 
 `403`. The object belongs to a team the caller is not a member of, so the write
