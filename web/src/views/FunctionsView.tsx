@@ -35,6 +35,10 @@ interface FunctionFilters {
   match: string;
   minSize: string;
   maxSize: string;
+  /** A substring of the function's name; empty means no filter. */
+  name: string;
+  /** One exact address, decimal or 0x hex; empty means no filter. */
+  va: string;
   /** The decompilation needles, combined as any-of; empty means no filter. */
   strings: string[];
   /** Whether every needle is a regular expression. */
@@ -51,6 +55,8 @@ const DEFAULT_FILTERS: FunctionFilters = {
   match: "",
   minSize: "",
   maxSize: "",
+  name: "",
+  va: "",
   strings: [],
   regex: false,
   refersTo: "",
@@ -70,6 +76,8 @@ function filtersFromQuery(query: Record<string, string>): FunctionFilters {
     match: oneOf(query.match, FUNCTION_MATCH_VALUES, ""),
     minSize: query.min_size ?? "",
     maxSize: query.max_size ?? "",
+    name: query.name ?? "",
+    va: query.va ?? "",
     // Several needles travel in one hash value, one per line, so a needle may
     // carry anything a pattern needs (including a comma or a pipe).
     strings:
@@ -91,6 +99,8 @@ function filterQuery(filters: FunctionFilters): Record<string, string> {
     match: filters.match,
     min_size: filters.minSize,
     max_size: filters.maxSize,
+    name: filters.name,
+    va: filters.va,
     string: filters.strings.join("\n"),
     regex: filters.regex ? "1" : "",
     refers_to: filters.refersTo,
@@ -164,6 +174,8 @@ export function FunctionsView({
   const [drafts, setDrafts] = useState({
     minSize: filters.minSize,
     maxSize: filters.maxSize,
+    name: filters.name,
+    va: filters.va,
     string: "",
   });
 
@@ -171,9 +183,21 @@ export function FunctionsView({
     if (binaryId !== null) setSelected(binaryId);
   }, [binaryId]);
 
-  const draftKey = `${filters.minSize}\u0000${filters.maxSize}\u0000${filters.strings.join("\u0000")}`;
+  const draftKey = [
+    filters.minSize,
+    filters.maxSize,
+    filters.name,
+    filters.va,
+    filters.strings.join("\u0000"),
+  ].join("\u0000");
   useEffect(() => {
-    setDrafts({ minSize: filters.minSize, maxSize: filters.maxSize, string: "" });
+    setDrafts({
+      minSize: filters.minSize,
+      maxSize: filters.maxSize,
+      name: filters.name,
+      va: filters.va,
+      string: "",
+    });
     // The drafts follow the hash; a change here means the URL moved under us.
     // The key is a string because `filters` is rebuilt on every render, so the
     // array identity would fire this effect on every one of them.
@@ -197,6 +221,8 @@ export function FunctionsView({
     filters.match !== "" ||
     filters.minSize !== "" ||
     filters.maxSize !== "" ||
+    filters.name !== "" ||
+    filters.va !== "" ||
     filters.strings.length > 0 ||
     filters.refersTo !== "";
 
@@ -214,6 +240,8 @@ export function FunctionsView({
     apply({
       minSize: drafts.minSize.trim(),
       maxSize: drafts.maxSize.trim(),
+      name: drafts.name.trim(),
+      va: drafts.va.trim(),
       strings: needle === "" ? filters.strings : [...filters.strings, needle],
     });
     setDrafts({ ...drafts, string: "" });
@@ -230,7 +258,7 @@ export function FunctionsView({
   };
 
   const clearFilters = (): void => {
-    setDrafts({ minSize: "", maxSize: "", string: "" });
+    setDrafts({ minSize: "", maxSize: "", name: "", va: "", string: "" });
     navigate({
       pathname: path,
       search: createSearchParams(
@@ -394,6 +422,28 @@ export function FunctionsView({
                 </option>
               ))}
             </select>
+          </Field>
+          <Field label="Name" hint="a substring; Enter applies">
+            <input
+              type="search"
+              placeholder="sub_1000"
+              value={drafts.name}
+              onChange={(event) => setDrafts({ ...drafts, name: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") applyDrafts();
+              }}
+            />
+          </Field>
+          <Field label="Address" hint="hex or decimal">
+            <input
+              type="text"
+              placeholder="0x401000"
+              value={drafts.va}
+              onChange={(event) => setDrafts({ ...drafts, va: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") applyDrafts();
+              }}
+            />
           </Field>
           <Field label="Min size">
             <input

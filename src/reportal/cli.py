@@ -4819,6 +4819,89 @@ def binaries(
     console.print(f"[dim]{len(rows)} of {total} binaries[/dim]")
 
 
+# ── functions ──────────────────────────────────────────────────────
+
+
+@app.command()
+def functions(
+    binary_id: int = typer.Argument(..., help="Binary id whose functions to list"),
+    name: str = typer.Option("", "--name", help="Keep functions whose name contains this text"),
+    va: str = typer.Option("", "--va", help="Keep the function at this address (hex or decimal)"),
+    sort: str = typer.Option(
+        store.DEFAULT_FUNCTION_SORT,
+        "--sort",
+        help=f"Sort by one of: {', '.join(store.FUNCTION_SORT_COLUMNS)}",
+    ),
+    order: str = typer.Option(
+        store.DEFAULT_FUNCTION_ORDER,
+        "--order",
+        help=f"One of: {', '.join(store.FUNCTION_ORDERS)}",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List one binary's stored functions, filtered and sorted."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    address = 0
+    if va:
+        try:
+            address = int(va, 0)
+        except ValueError:
+            _fail("invalid va: va must be an integer or 0x-prefixed hex", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        try:
+            rows = store.list_functions(
+                conn,
+                binary_id=binary_id,
+                name=name or None,
+                va=address if va else None,
+                sort=sort,
+                order=order,
+            )
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+        total = store.count_functions(conn, binary_id=binary_id)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "binary_id": binary_id,
+                    "functions": rows,
+                    "count": len(rows),
+                    "total": total,
+                    "name": name or None,
+                    "va": address if va else None,
+                    "sort": sort,
+                    "order": order,
+                }
+            )
+        )
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Id", justify="right")
+    table.add_column("VA", style="cyan")
+    table.add_column("Name")
+    table.add_column("Size", justify="right")
+    table.add_column("Status")
+    table.add_column("Source")
+    table.add_column("Confidence", justify="right")
+    for row in rows:
+        table.add_row(
+            str(row["id"]),
+            hex(int(row["va"])),
+            str(row["name"]),
+            str(row["size"]),
+            str(row["status"]),
+            str(row["name_source"]),
+            f"{float(row['confidence']):.2f}",
+        )
+    console.print(table)
+    console.print(f"[dim]{len(rows)} of {total} functions[/dim]")
+
+
 # ── add-binary ─────────────────────────────────────────────────────
 
 

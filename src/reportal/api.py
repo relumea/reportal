@@ -1270,9 +1270,13 @@ def _function_capabilities(function: dict[str, Any]) -> frozenset[str]:
     return frozenset(str(entry["name"]) for entry in found)
 
 
-def _query_referrer_address(request: Request) -> int | None:
-    """Return the `refers_to` query parameter as an address, or None when absent."""
-    raw = _query_text(request, "refers_to")
+def _query_optional_address(request: Request, key: str) -> int | None:
+    """Return one address query parameter, or None when it is absent.
+
+    Decimal and `0x`-prefixed hex both read, which is how an analyst writes an
+    address; anything else is a 400 naming the parameter.
+    """
+    raw = _query_text(request, key)
     if raw is None:
         return None
     try:
@@ -1280,9 +1284,14 @@ def _query_referrer_address(request: Request) -> int | None:
     except ValueError:
         raise json_error(
             400,
-            error="invalid refers_to",
-            detail="refers_to must be an integer or 0x-prefixed hex",
+            error=f"invalid {key}",
+            detail=f"{key} must be an integer or 0x-prefixed hex",
         ) from None
+
+
+def _query_referrer_address(request: Request) -> int | None:
+    """Return the `refers_to` query parameter as an address, or None when absent."""
+    return _query_optional_address(request, "refers_to")
 
 
 def _containing_function_ids(
@@ -1312,9 +1321,11 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     ``capability`` (one of :data:`FUNCTION_CAPABILITIES`), ``min_size`` and
     ``max_size`` (inclusive byte bounds, at most :data:`MAX_FUNCTION_SIZE`),
     ``string`` (a literal the stored decompilation carries), ``match`` (one of
-    :data:`reportal.store.FUNCTION_MATCH_VALUES`), ``refers_to`` (an address
-    whose referrers the list keeps; the one engine-backed filter, resolved
-    through the same ``rebrew xrefs`` call the xrefs route makes), ``sort``
+    :data:`reportal.store.FUNCTION_MATCH_VALUES`), ``name`` (a substring of the
+    function's name), ``va`` (one exact address, decimal or ``0x`` hex) and
+    ``refers_to`` (an address whose referrers the list keeps; the one
+    engine-backed filter, resolved through the same ``rebrew xrefs`` call the
+    xrefs route makes), ``sort``
     (one of :data:`reportal.store.FUNCTION_SORT_COLUMNS`) and ``order`` (one
     of :data:`reportal.store.FUNCTION_ORDERS`).  An unknown value is a 400.
     ``total`` counts the binary's functions before filtering, so a reader can
@@ -1322,12 +1333,12 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     """
     min_size = _query_int(request, "min_size")
     max_size = _query_int(request, "max_size")
-    for name, bound in (("min_size", min_size), ("max_size", max_size)):
+    for bound_name, bound in (("min_size", min_size), ("max_size", max_size)):
         if bound is not None and not 0 <= bound <= MAX_FUNCTION_SIZE:
             return json_error(
                 400,
-                error=f"invalid {name}",
-                detail=f"{name} must be between 0 and {MAX_FUNCTION_SIZE}",
+                error=f"invalid {bound_name}",
+                detail=f"{bound_name} must be between 0 and {MAX_FUNCTION_SIZE}",
             )
     if min_size is not None and max_size is not None and min_size > max_size:
         return json_error(400, error="invalid size range", detail="min_size is above max_size")
@@ -1341,6 +1352,8 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     if match is not None and match not in store.FUNCTION_MATCH_VALUES:
         return _invalid_query("match", match, store.FUNCTION_MATCH_VALUES)
     refers_to = _query_referrer_address(request)
+    name = _query_text(request, "name")
+    va = _query_optional_address(request, "va")
     sort = _query_text(request, "sort") or store.DEFAULT_FUNCTION_SORT
     if sort not in store.FUNCTION_SORT_COLUMNS:
         return _invalid_query("sort", sort, tuple(store.FUNCTION_SORT_COLUMNS))
@@ -1365,6 +1378,8 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
                 strings=strings,
                 regex=regex,
                 match=match,
+                name=name,
+                va=va,
                 sort=sort,
                 order=order,
             )

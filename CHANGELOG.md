@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- A function list is filterable by name and address, and `reportal functions`
+  exists: `GET /api/binaries/<id>/functions` takes `?name=` (a case-insensitive
+  substring, with the LIKE wildcards escaped) and `?va=` (one exact address,
+  decimal or `0x` hex; 400 `invalid va` otherwise), the CLI gains the command
+  that listed the binary's functions (it had none, although the route and the
+  `list_functions` tool both existed), the `list_functions` tool takes the same
+  two arguments, and the Functions view carries a Name and an Address control
+  in its route hash.  The `refers_to` filter now shares one address parser with
+  `va`, so both read the same way and refuse the same way.
+
 - The binary register is filterable and `reportal binaries` exists: `GET
   /api/binaries` takes `?search=` (the name or the SHA-256, a prefix is enough),
   `?tag=` (that exact tag name), `?format=` (one stored format) and `?order=`

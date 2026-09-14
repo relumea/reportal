@@ -1732,6 +1732,8 @@ def list_functions(
     strings: Sequence[str] = (),
     regex: bool = False,
     match: str | None = None,
+    name: str | None = None,
+    va: int | None = None,
     sort: str = DEFAULT_FUNCTION_SORT,
     order: str = DEFAULT_FUNCTION_ORDER,
 ) -> list[dict[str, Any]]:
@@ -1740,9 +1742,11 @@ def list_functions(
     ``sort`` names one of :data:`FUNCTION_SORT_COLUMNS` and ``order`` one of
     :data:`FUNCTION_ORDERS`; either being unknown raises :class:`ValueError`.
     Ties break on ``f.id``, so a listing is deterministic.  ``min_size`` and
-    ``max_size`` are inclusive byte bounds, ``string`` and ``strings`` match the
-    function's stored decompilation text (a literal the reversed source carries;
-    a function with none never matches) and ``match`` is one of
+    ``max_size`` are inclusive byte bounds, ``name`` is a case-insensitive
+    substring of the function's name (an escaped ``LIKE``, so a wildcard in the
+    needle stays literal), ``va`` is one exact address and ``string``/``strings``
+    match the function's stored decompilation text (a literal the reversed source
+    carries; a function with none never matches) and ``match`` is one of
     :data:`FUNCTION_MATCH_VALUES`.
 
     Several needles are combined as any-of, so a filter listing three strings
@@ -1793,6 +1797,12 @@ def list_functions(
     if match is not None:
         exists = "EXISTS (SELECT 1 FROM matches m WHERE m.function_id = f.id)"
         clauses.append(exists if match == FUNCTION_MATCH_MATCHED else f"NOT {exists}")
+    if name:
+        clauses.append("f.name LIKE ? ESCAPE '\\'")
+        params.append(_escape_like(name))
+    if va is not None:
+        clauses.append("f.va = ?")
+        params.append(va)
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     direction = "ASC" if order == DEFAULT_FUNCTION_ORDER else "DESC"

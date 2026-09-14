@@ -511,7 +511,9 @@ and the toolbar carries Run pipeline/Re-run and Revert run (which posts the
 revert route and refreshes the history panel).  The Functions view
 (`views/FunctionsView.tsx`, `#/functions` and `#/binaries/<id>/functions`)
 picks a binary, lists its functions with per-row Matches, History and Rename
-actions, and carries a filter panel plus sortable headers: name source,
+actions, and carries a filter panel plus sortable headers: a name search (a
+substring of the function's name), one address (decimal or `0x` hex, which is
+how an analyst has a function they have no name for), the name source,
 capability, match state, a size range and a string reference are sent to the
 server as query parameters (`GET /api/binaries/<id>/functions`), the table
 reports the filtered-of-total counts and the empty state names the filter, and

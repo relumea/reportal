@@ -713,6 +713,25 @@ class TestReadTools:
         assert is_error is True
         assert payload["error"] == "invalid order"
 
+    def test_list_functions_filters_by_name_and_address(self, conn: Any, tmp_path: Path) -> None:
+        ids = _seed_binary(conn, tmp_path)
+
+        payload, is_error = _call("list_functions", {"binary_id": ids["binary"], "name": "2000"})
+        assert is_error is False
+        assert [row["name"] for row in payload["functions"]] == ["sub_2000"]
+
+        # Both a number and the text an analyst writes address one function.
+        payload, is_error = _call("list_functions", {"binary_id": ids["binary"], "va": "0x1000"})
+        assert is_error is False
+        assert [row["name"] for row in payload["functions"]] == ["sub_1000"]
+        payload, is_error = _call("list_functions", {"binary_id": ids["binary"], "va": 0x2000})
+        assert is_error is False
+        assert [row["name"] for row in payload["functions"]] == ["sub_2000"]
+
+        payload, is_error = _call("list_functions", {"binary_id": ids["binary"], "va": "somewhere"})
+        assert is_error is True
+        assert payload["error"] == "invalid va"
+
     def test_get_binary_missing_is_a_structured_error(self, conn: Any) -> None:
         payload, is_error = _call("get_binary", {"binary_id": 999})
         assert is_error is True

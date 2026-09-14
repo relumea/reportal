@@ -387,6 +387,35 @@ class TestFunctionListing:
         assert self._rows(conn, 1, match="matched") == [source]
         assert self._rows(conn, 1, match="unmatched") == [candidate]
 
+    def test_name_filter_is_a_case_insensitive_substring(self, conn: sqlite3.Connection) -> None:
+        analysis_id = _analysis(conn, _binary(conn))
+        header = _function(conn, analysis_id, va=0x1000, name="NP_HEADER")
+        entry = _function(conn, analysis_id, va=0x2000, name="NP_ENTRY")
+        other = _function(conn, analysis_id, va=0x3000, name="WIN_MAIN")
+
+        assert self._rows(conn, 1, name="NP_") == [header, entry]
+        assert self._rows(conn, 1, name="np_entry") == [entry]
+        assert self._rows(conn, 1, name="absent") == []
+        assert other not in self._rows(conn, 1, name="NP_")
+        # The LIKE wildcards stay literal, as every other search's do.
+        assert self._rows(conn, 1, name="%") == []
+
+    def test_va_filter_keeps_one_exact_address(self, conn: sqlite3.Connection) -> None:
+        analysis_id = _analysis(conn, _binary(conn))
+        first = _function(conn, analysis_id, va=0x1000)
+        _function(conn, analysis_id, va=0x2000)
+
+        assert self._rows(conn, 1, va=0x1000) == [first]
+        assert self._rows(conn, 1, va=0x1001) == []
+
+    def test_name_and_va_compose_with_each_other(self, conn: sqlite3.Connection) -> None:
+        analysis_id = _analysis(conn, _binary(conn))
+        first = _function(conn, analysis_id, va=0x1000, name="NP_HEADER")
+        _function(conn, analysis_id, va=0x2000, name="NP_ENTRY")
+
+        assert self._rows(conn, 1, name="NP_", va=0x1000) == [first]
+        assert self._rows(conn, 1, name="NP_", va=0x9999) == []
+
     def test_unknown_sort_order_and_match_rejected(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(ValueError):
             store.list_functions(conn, sort="similarity")

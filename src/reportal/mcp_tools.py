@@ -483,6 +483,27 @@ def _arg_optional_str(arguments: dict[str, Any], key: str, default: str = "") ->
     return value
 
 
+def _arg_optional_address(arguments: dict[str, Any], key: str) -> int | None:
+    """One address argument (decimal or 0x-prefixed hex), or None when absent.
+
+    A caller may send the address as a number or as the text an analyst writes,
+    so both read and anything else is a tool error naming the argument.
+    """
+    value = arguments.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ToolError(f"invalid {key}", f"{key} must be an integer or 0x-prefixed hex")
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return int(value.strip(), 0)
+    except ValueError:
+        raise ToolError(f"invalid {key}", f"{key} must be an integer or 0x-prefixed hex") from None
+
+
 def _arg_optional_number(arguments: dict[str, Any], key: str, default: float) -> float:
     if key not in arguments or arguments[key] is None:
         return default
@@ -574,6 +595,8 @@ def _tool_list_functions(arguments: dict[str, Any]) -> dict[str, Any]:
     analysis_id = _arg_optional_int(arguments, "analysis_id", 0)
     strings = _arg_str_list(arguments, "strings")
     regex = _arg_optional_bool(arguments, "regex", False)
+    name = _arg_optional_str(arguments, "name")
+    va = _arg_optional_address(arguments, "va")
     with contextlib.closing(_open()) as conn:
         if binary_id:
             _require_binary(conn, binary_id)
@@ -584,6 +607,8 @@ def _tool_list_functions(arguments: dict[str, Any]) -> dict[str, Any]:
                 analysis_id=analysis_id or None,
                 strings=strings,
                 regex=regex,
+                name=name or None,
+                va=va,
             )
         except store.SearchError as exc:
             raise ToolError(exc.code, exc.detail) from None
@@ -5506,11 +5531,14 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "list_functions",
             "List function rows, optionally scoped to a binary or an analysis and filtered by"
-            " what their stored decompilation contains; several strings are combined as any-of.",
+            " name, address, or what their stored decompilation contains; several strings are"
+            " combined as any-of.",
             _object(
                 {
                     "binary_id": _int("Limit to one binary's functions."),
                     "analysis_id": _int("Limit to one analysis's functions."),
+                    "name": _str("Keep functions whose name contains this text."),
+                    "va": _str("Keep the function at this address (decimal or 0x hex)."),
                     "strings": _array(
                         "Needles the decompilation must contain (any one of them).",
                         _str("A literal, or a pattern with regex."),

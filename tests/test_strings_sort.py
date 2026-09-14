@@ -167,6 +167,51 @@ class TestStringsSort:
         assert json_body(body, headers)["error"] == "invalid order"
 
 
+class TestNameAndAddressFilters:
+    def test_name_matches_a_substring_and_va_one_address(
+        self, conn: sqlite3.Connection, fake_engine: FakeEngine
+    ) -> None:
+        ids = _seed(conn)
+        store.add_function(
+            conn,
+            analysis_id=ids["analysis"],
+            va=0x2000,
+            name="NP_ENTRY",
+            size=16,
+            status="STUB",
+        )
+
+        status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{ids['binary']}/functions?name=np_"
+        )
+        payload = json_body(body, headers)
+        assert status.startswith("200")
+        assert [row["name"] for row in payload["functions"]] == ["NP_ENTRY"]
+        assert payload["count"] == 1
+        assert payload["total"] == 2
+
+        _status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{ids['binary']}/functions?va=0x1000"
+        )
+        payload = json_body(body, headers)
+        assert [row["id"] for row in payload["functions"]] == [ids["function"]]
+
+        # Decimal reads too, and both filters compose.
+        _status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{ids['binary']}/functions?va={0x2000}&name=NP"
+        )
+        payload = json_body(body, headers)
+        assert [row["name"] for row in payload["functions"]] == ["NP_ENTRY"]
+
+    def test_a_bad_address_is_400(self, conn: sqlite3.Connection, fake_engine: FakeEngine) -> None:
+        ids = _seed(conn)
+        status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{ids['binary']}/functions?va=somewhere"
+        )
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid va"
+
+
 class TestReferrerFilter:
     def test_keeps_the_containing_function(
         self, conn: sqlite3.Connection, fake_engine: FakeEngine

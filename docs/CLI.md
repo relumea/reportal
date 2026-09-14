@@ -8,11 +8,6 @@ the authority when the two disagree; README.md carries worked examples.
 reportal init [--dir PATH]                 # write reportal.toml + reportal.db
 reportal import-rebrew <project-dir>       # ingest a rebrew workspace (idempotent; stores its context)
                                            #   plus the target binary's import stubs as THUNK rows
-reportal binaries [--search TEXT] [--tag NAME] [--format FMT] [--order ORDER] [--json]
-                                           # list the register with function and comment
-                                           #   counts; --search matches the name or the
-                                           #   SHA-256, --order is id (default), newest,
-                                           #   name, name-desc, size or size-desc
 reportal add-binary <path> [--name TEXT]   # register a binary by sha256 (dedupe)
 reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--password TEXT] [--json]
                                            # write the stored binary's bytes to a path (default:
@@ -22,6 +17,16 @@ reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--
                                            #   'infected', a shared convention, not a secret);
                                            #   --analysis reads the id as an analysis id and
                                            #   writes that analysis's binary
+reportal binaries [--search TEXT] [--tag NAME] [--format FMT] [--order ORDER] [--json]
+                                           # list the register with function and comment
+                                           #   counts; --search matches the name or the
+                                           #   SHA-256, --order is id (default), newest,
+                                           #   name, name-desc, size or size-desc
+reportal functions <binary-id> [--name TEXT] [--va ADDRESS] [--sort SORT] [--order ORDER] [--json]
+                                           # list one binary's stored functions, filtered
+                                           #   by a name substring or one exact address
+                                           #   (decimal or 0x hex), sorted by va, size,
+                                           #   name or status ascending or descending
 reportal sandbox <binary-id> [--timeout N] [--memory-mb N] [--report|--status] [--json]
                                            # detonate a stored sample under the sandbox
                                            #   runner (off by default: the workspace opts in

@@ -471,6 +471,49 @@ class TestImportRebrew:
         assert "2" in result.output
 
 
+class TestFunctionsCommand:
+    def test_lists_the_binary_functions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["functions", str(ids["binary"]), "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["count"] == 2
+        assert payload["total"] == 2
+        assert payload["sort"] == "va"
+        assert [row["name"] for row in payload["functions"]] == ["sub_1000", "sub_2000"]
+
+    def test_filters_by_name_and_address(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+
+        by_name = runner.invoke(
+            cli.app, ["functions", str(ids["binary"]), "--name", "2000", "--json"]
+        )
+        assert [row["name"] for row in json.loads(by_name.stdout)["functions"]] == ["sub_2000"]
+
+        by_address = runner.invoke(
+            cli.app, ["functions", str(ids["binary"]), "--va", "0x2000", "--json"]
+        )
+        payload = json.loads(by_address.stdout)
+        assert [row["name"] for row in payload["functions"]] == ["sub_2000"]
+        assert payload["va"] == 0x2000
+
+    def test_a_bad_address_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+
+        result = runner.invoke(
+            cli.app, ["functions", str(ids["binary"]), "--va", "somewhere", "--json"]
+        )
+
+        assert result.exit_code == 1
+        assert "invalid va" in json.loads(result.stdout)["error"]
+
+
 class TestBinariesCommand:
     def test_lists_the_register_with_its_counts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
