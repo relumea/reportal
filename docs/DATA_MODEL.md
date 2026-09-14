@@ -353,7 +353,10 @@ Path resolution lives in `_paths.py`: `project_root()` walks up for a
 when there is none, so a command run outside a workspace fails loud instead of
 writing a stray `reportal.db`; `reportal init` writes its target marker and
 database directly.  `reports_dir(binary_id)` resolves `<workspace>/reports/<binary_id>`
-for generated engine reports.  `REPORTAL_DB` overrides the database path outright.  The
+for generated engine reports.  `REPORTAL_DB` overrides the database path outright; without it the marker's
+`[portal] db` names the database (a relative name from the workspace root, an
+absolute one as written), and `reportal.db` beside the marker is the default.
+`reportal config` reports the path in force and where it came from.  The
 server creates the schema on first database access, so a missing `reportal.db`
 is not a startup failure; a request that escapes `WorkspaceNotFound` answers a
 JSON 500 `{"error": "no-workspace", ...}`.

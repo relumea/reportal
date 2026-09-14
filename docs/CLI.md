@@ -36,6 +36,11 @@ reportal extract <binary-id> [--password TEXT] [--collection ID] [--json]
                                            #   register each member by content hash into one
                                            #   collection and report each member and refusal;
                                            #   one journal action, reverted with the printed id
+reportal config [--json]                  # what this install can do, and every
+                                           #   setting reportal reads with the
+                                           #   origin that answered; names the keys
+                                           #   and values reportal does not read and
+                                           #   exits 1 on a file it cannot parse
 reportal doctor [--port N] [--json]        # readiness before a start: workspace,
                                            #   database, schema, auth, engine, SPA
                                            #   build, optional paths, free port; exits

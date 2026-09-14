@@ -5,7 +5,8 @@ __pycache__/
 *.egg-info/
 
 # Workspace runtime state: the portal database and its SQLite sidecars (the DB
-# name follows `[portal] db`), the content-addressed uploaded binaries and the
+# is `[portal] db` in the marker, `reportal.db` by default), the content-addressed
+# uploaded binaries and the
 # generated report sites.  Local state, never source.
 *.db
 *.db-journal

@@ -168,6 +168,7 @@ from reportal import (
     renames,
     secret_store,
     secrets,
+    settings,
     signatures,
     similarity,
     store,
@@ -182,9 +183,9 @@ from reportal import (
     docs as docs_mod,
 )
 from reportal._paths import (
-    DB_NAME,
     MARKER,
     WorkspaceNotFound,
+    database_path,
     db_path,
     project_root,
     reports_dir,
@@ -277,8 +278,11 @@ _AI_KIND_LABELS: dict[str, str] = {
 }
 
 _MARKER_TEMPLATE = """\
-# reportal workspace marker.  The directory containing this file is the
-# portal root; reportal.db beside it holds all portal state.
+# reportal workspace marker.  The directory containing this file is the portal
+# root, and the database named here holds all portal state: a relative name is
+# taken from this directory, an absolute one as written.  REPORTAL_DB overrides
+# it, which is what tests and multi-workspace setups use.  Every other setting
+# reportal reads is listed by `reportal config`.
 [portal]
 db = "reportal.db"
 """
@@ -387,10 +391,11 @@ def init(
     else:
         marker.write_text(_MARKER_TEMPLATE, encoding="utf-8")
         console.print(f"[green]Wrote[/green] {marker}")
-    created = not (target / DB_NAME).exists()
-    store.init_db(target / DB_NAME)
+    database = database_path(target)
+    created = not database.exists()
+    store.init_db(database)
     verb = "Created" if created else "Reused"
-    console.print(f"[green]{verb}[/green] {target / DB_NAME}")
+    console.print(f"[green]{verb}[/green] {database}")
     console.print("\nNext steps:")
     console.print(f"  cd {target}")
     console.print("  reportal import-rebrew <rebrew-project-dir>")
@@ -3284,25 +3289,74 @@ def tag(
 def config(
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Report what this instance can do: versions, features, limits and counts."""
+    """Report what this instance can do, and every setting that decided it.
+
+    Two halves of one question.  The first is the instance description: the
+    version, the engine, the counts, every feature and every cap in force.  The
+    second is the configuration behind it: each setting reportal reads, the
+    value in force, whether the environment, the workspace ``reportal.toml``,
+    the secret store or a default answered, and every key or value in that file
+    reportal does not read (both are ignored silently by the modules that read
+    it).  A file reportal cannot parse exits 1, because every setting behind it
+    has fallen back to its default.
+    """
     payload = instance.describe()
+    configuration = settings.report()
     if json_output:
-        typer.echo(json.dumps(payload))
-        return
+        typer.echo(json.dumps({**payload, **configuration}))
+    else:
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Setting", style="cyan")
+        table.add_column("Value")
+        table.add_row("reportal", str(payload["version"]))
+        table.add_row("engine", "available" if payload["engine"]["available"] else "unavailable")
+        table.add_row("database", f"{payload['database']['tables']} tables")
+        table.add_row("MCP tools", str(payload["mcp"]["total"]))
+        for name, value in sorted(payload["features"].items()):
+            table.add_row(
+                f"feature: {name}", ", ".join(value) if isinstance(value, list) else str(value)
+            )
+        for name, value in sorted(payload["limits"].items()):
+            table.add_row(f"limit: {name}", str(value))
+        console.print(table)
+        _print_settings(configuration)
+    if settings.failing():
+        raise typer.Exit(code=EXIT_DECLINED)
+
+
+def _print_settings(payload: dict[str, Any]) -> None:
+    """Print every setting with its value and origin, then what is ignored."""
+    workspace = payload.get("workspace") or "no workspace"
+    # The workspace keys carry square brackets, which rich would read as markup.
+    console.print(f"\n[bold cyan]configuration[/bold cyan] {escape(workspace)}")
     table = Table(show_header=True, header_style="bold")
     table.add_column("Setting", style="cyan")
     table.add_column("Value")
-    table.add_row("reportal", str(payload["version"]))
-    table.add_row("engine", "available" if payload["engine"]["available"] else "unavailable")
-    table.add_row("database", f"{payload['database']['tables']} tables")
-    table.add_row("MCP tools", str(payload["mcp"]["total"]))
-    for name, value in sorted(payload["features"].items()):
-        table.add_row(
-            f"feature: {name}", ", ".join(value) if isinstance(value, list) else str(value)
+    table.add_column("Origin")
+    table.add_column("From")
+    for row in payload.get("settings", []):
+        source = (
+            f"{row['env']} / {row['table_key']}"
+            if row["env"] and row["table_key"]
+            else row["env"] or row["table_key"] or "default only"
         )
-    for name, value in sorted(payload["limits"].items()):
-        table.add_row(f"limit: {name}", str(value))
+        table.add_row(
+            str(row["name"]), escape(str(row["display"])), str(row["origin"]), escape(source)
+        )
     console.print(table)
+    problems = payload.get("problems") or []
+    if not problems:
+        console.print("[green]every key and value is one reportal reads[/green]")
+        return
+    for problem in problems:
+        level = "fail" if problem["level"] == "fail" else "ignored"
+        colour = "red" if problem["level"] == "fail" else "yellow"
+        console.print(
+            f"  [{colour}]{level}[/{colour}] {escape(problem['where'])}:"
+            f" {escape(problem['problem'])}"
+        )
+        if problem.get("hint"):
+            console.print(f"    {escape(problem['hint'])}")
 
 
 # ── collections ────────────────────────────────────────────────────

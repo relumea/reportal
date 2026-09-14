@@ -41,6 +41,7 @@ from reportal import (
     llm,
     remote_ingest,
     sandbox,
+    settings,
     similarity,
     store,
     ui,
@@ -174,6 +175,32 @@ def _optional_check() -> dict[str, str]:
     return _check("optional", STATUS_OK, detail)
 
 
+def _config_check() -> dict[str, str]:
+    """Whether the workspace file is one reportal reads.
+
+    A file reportal cannot parse is a failure: every reader catches the parse
+    error and falls back to its default, so the install serves on defaults while
+    the operator believes their settings are in force.  A key or value reportal
+    does not read is a warning naming it, because it costs exactly the setting it
+    was meant to make.
+    """
+    problems = settings.problems()
+    if not problems:
+        return _check("config", STATUS_OK, f"{len(settings.SETTINGS)} settings, every key read")
+    failing = [problem for problem in problems if problem["level"] == STATUS_FAIL]
+    if failing:
+        problem = failing[0]
+        return _check("config", STATUS_FAIL, problem["problem"], problem["hint"])
+    ignored = ", ".join(problem["where"] for problem in problems[:3])
+    more = "" if len(problems) <= 3 else f" and {len(problems) - 3} more"
+    return _check(
+        "config",
+        STATUS_WARN,
+        f"{len(problems)} setting(s) ignored: {ignored}{more}",
+        "run 'reportal config' to see what each one costs",
+    )
+
+
 def _auth_check(conn: sqlite3.Connection | None) -> dict[str, str]:
     """The auth posture, and the enabled users a non-loopback bind needs."""
     if not auth.required():
@@ -239,6 +266,7 @@ def report(*, port: int = DEFAULT_PORT) -> dict[str, Any]:
         schema, conn = _schema_check(path)
 
     checks.append(schema)
+    checks.append(_config_check())
     checks.append(_auth_check(conn))
     if conn is not None:
         with contextlib.closing(conn):

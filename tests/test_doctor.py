@@ -248,6 +248,7 @@ class TestCli:
             "workspace",
             "database",
             "schema",
+            "config",
             "auth",
             "engine",
             "spa",

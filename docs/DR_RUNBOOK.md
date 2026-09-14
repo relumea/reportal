@@ -12,7 +12,7 @@ source of the claim.
 
 | State | Location | Written by | Rebuildable |
 |-------|----------|-----------|-------------|
-| Portal database | `<workspace>/reportal.db`, override `REPORTAL_DB` (`_paths.db_path`) | `reportal init` -> `store.init_db` | No: the rows are the work |
+| Portal database | the marker's `[portal] db` name, `reportal.db` by default, override `REPORTAL_DB` (`_paths.db_path`); `reportal config` prints the path in force | `reportal init` -> `store.init_db` | No: the rows are the work |
 | Action journal (revert record) | `journal_entries` table, same database | `journal.ensure_schema`, `journal.Journal.flush` | Partially: it is what makes another write revertible |
 | Auto runs and attempts | `auto_runs`, `auto_tasks`, `auto_attempts` tables | `auto_store`; undo plan in `auto_runs.effects_json` | The undo plan is the recoverable part |
 | Uploaded binaries | `<workspace>/binaries/<sha256><suffix>` (`_paths.binaries_dir`) | `api.upload_binary` | Yes, re-upload the same file (content-addressed) |

@@ -91,7 +91,9 @@ sudo -u reportal .venv/bin/reportal doctor                            # auth now
 ```
 
 then either edit the unit's `--host` or keep the unit on loopback and put a
-reverse proxy in front.  The proxy owns TLS, its own authentication, and any
+reverse proxy in front.  After editing `reportal.toml`, `reportal config` says
+whether the line took: it prints each setting with the value in force and the
+origin that answered, and names every key or value reportal does not read.  The proxy owns TLS, its own authentication, and any
 rate limits; reportal's token gate is the only authentication it implements
 (`docs/THREAT_MODEL.md` states the boundary).  A wider bind without auth fails
 at startup rather than serving.

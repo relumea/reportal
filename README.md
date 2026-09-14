@@ -87,6 +87,16 @@ before running it.
 
 ## Configuration
 
+`reportal config` is the one read of what this install is configured to do: the
+version, engine, counts, features and caps, then every setting reportal reads
+with the value in force and whether the environment, the workspace
+`reportal.toml`, the secret store or a default answered. It also names every key
+and value in `reportal.toml` that reportal does not read, which is the one
+configuration mistake that is otherwise silent: an unknown key is ignored, and so
+is a value of the wrong type (`required = "true"` is off, not on). A file
+reportal cannot parse exits 1, because every setting has fallen back to its
+default by then, and `reportal doctor` carries the same check.
+
 The AI extras (a function summary, inline comments, type suggestions,
 per-function triage and
 identifier renames) need

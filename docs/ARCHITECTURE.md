@@ -92,6 +92,8 @@ reportal/
 │   │                         #   counterpart addresses
 │   ├── doctor.py             # pre-flight readiness: workspace, database, schema,
 │   │                         #   engine, SPA build, optional paths and the port
+│   ├── settings.py           # every setting reportal reads: its env var, workspace
+│   │                         #   key, default, origin and the keys it ignores
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
 │   │                         #   derived callees, analyst-declared edges, canonical names
 │   ├── user_strings.py       # analyst strings at function or analysis scope, plus
@@ -2421,6 +2423,36 @@ half-restored workspace never looks complete.  A path that lived outside the
 archived workspace is left where it points and reported: that is the user's own
 rebrew project, which reportal never owned.  An existing database is refused
 unless the caller asks to overwrite, which the CLI confirms.
+
+## Configuration
+
+Every setting reportal reads comes from one of four places: an environment
+variable, the workspace ``reportal.toml``, the workspace secret store (a
+credential only), or a default.  The modules that read them each own their keys
+and their ordering, and ``settings.py`` is the one place that knows the whole
+surface: each :class:`Setting` names the environment variable, the table and key,
+the default and the module accessor that resolves it, so the report cannot drift
+from the code that reads it (``tests/test_settings.py`` pins the agreement
+against each module's own predicate, and against every ``REPORTAL_*`` name the
+package carries).
+
+``reportal config`` prints the instance description and then that report: each
+setting, the value in force, and whether the environment, the file, the store or
+a default answered.  Its second half is the one that pays for itself: the
+settings module reads the workspace file as data and reports every table, key and
+value reportal does not read.  An unknown key is silently ignored by the module
+that would have read it, and so is a value of the wrong type (the flags test for
+a boolean, so ``required = "true"`` is off), which is a configuration mistake an
+operator cannot otherwise see.  A file reportal cannot parse is a failure rather
+than a warning: every reader catches the parse error and falls back to its
+default, so the install serves unconfigured while the file looks authoritative.
+``reportal doctor`` carries the same check as its ``config`` row.
+
+The database is the one setting the file has always carried: the marker
+``reportal init`` writes names it under ``[portal] db``, and ``db_path``
+resolves that name against the workspace root (an absolute name as written)
+before falling back to ``reportal.db``.  ``REPORTAL_DB`` still overrides the path
+outright, which is what tests and multi-workspace setups use.
 
 ## Readiness
 

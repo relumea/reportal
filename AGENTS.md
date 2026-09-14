@@ -83,7 +83,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 231 source files` is the finish line.
+`Success: no issues found in 233 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -97,7 +97,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.08%, 31510 statements with 2495 missed. `[tool.coverage.report] fail_under`
+92.17%, 31741 statements with 2486 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -135,6 +135,7 @@ cd web && bun run test:ui   # Playwright over a seeded workspace (see tests/)
 # `make serve` serves the current build without rebuilding.
 make run            # build src/reportal/assets/dist, then serve (PORT=8002)
 make serve          # serve the current build
+reportal config     # what this install can do, and every setting that decided it
 reportal doctor     # readiness before a start: exits 1 on a failure (docs/DEPLOY.md)
 
 # Gate (see "Gate"): lint + types + tests under the coverage floor + SPA + wheel

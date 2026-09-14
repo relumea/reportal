@@ -7,6 +7,17 @@ view renders it from here.
 
 ## Unreleased
 
+- One read of every setting: `reportal config` now prints the instance
+  description and then each setting reportal reads with the value in force and
+  whether the environment, the workspace `reportal.toml`, the secret store or a
+  default answered, plus every key and value in that file reportal does not read
+  (an unknown key and a value of the wrong type are both ignored silently today,
+  and a file reportal cannot parse switches the whole install to defaults, so it
+  exits 1).  `reportal doctor` carries the same check as its `config` row.  The
+  marker's `[portal] db` name is now what it says it is: `db_path` resolves it
+  against the workspace root, `reportal init` writes the database it names, and
+  `REPORTAL_DB` still overrides the path outright.
+
 - Scoring the rename proposals: `reportal rename-benchmark <binary-id>` and
   `GET /api/binaries/<id>/rename-benchmark` score the proposals the workspace
   already holds against the one source of names reportal cannot derive, a debug
