@@ -54,7 +54,8 @@ view renders it from here.
   rule is the paper's coeffect precondition (one writer per key is exactly what
   its independence condition needs), and `docs/COMPONENTS.md` now maps the
   paper's mechanisms it does not implement (fibers, coeffect isolation and
-  interception, derived realization, inertia) and the two deliberate deviations
+  interception, derived realization, inertia, and the effect iterator as a
+  reified value) and the two deliberate deviations
   it keeps (an overwritten context name, and a revert that is idempotent rather
   than invertible off the paths whose revert writes rows).
 
