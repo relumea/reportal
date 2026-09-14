@@ -2693,16 +2693,52 @@ def create_tag(conn: sqlite3.Connection, name: str) -> int:
 
 
 def list_tags(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """All tags with their tagged-binary count."""
+    """All tags with their tagged-binary and tagged-collection counts."""
     cur = conn.execute(
         """
         SELECT t.*, (
             SELECT COUNT(*) FROM binary_tags bt WHERE bt.tag_id = t.id
-        ) AS binary_count
+        ) AS binary_count, (
+            SELECT COUNT(*) FROM collection_tags ct WHERE ct.tag_id = t.id
+        ) AS collection_count
         FROM tags t ORDER BY t.name
         """
     )
     return _rows(cur)
+
+
+def rename_tag(conn: sqlite3.Connection, tag_id: int, name: str) -> dict[str, Any] | None:
+    """Rename one tag; None for an unknown id.
+
+    A blank name or one another tag already holds raises ``ValueError``, which
+    the API, the CLI and the MCP tools map to their own error vocabulary.  The
+    name is matched exactly, the rule the ``tags.name`` unique index and
+    :func:`create_tag` already use, so a case variant stays a tag of its own.
+    """
+    if get_tag(conn, tag_id) is None:
+        return None
+    cleaned = name.strip()
+    if not cleaned:
+        raise ValueError("tag name must not be empty")
+    existing = find_tag(conn, cleaned)
+    if existing is not None and int(existing["id"]) != tag_id:
+        raise ValueError(f"a tag named {cleaned!r} already exists")
+    conn.execute("UPDATE tags SET name = ? WHERE id = ?", (cleaned, tag_id))
+    conn.commit()
+    return get_tag(conn, tag_id)
+
+
+def delete_tag(conn: sqlite3.Connection, tag_id: int) -> bool:
+    """Delete one tag and every link to it; False for an unknown id.
+
+    The links go with the row through the schema's ``ON DELETE CASCADE``, so a
+    caller that journals them can put both back.
+    """
+    if get_tag(conn, tag_id) is None:
+        return False
+    conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
+    conn.commit()
+    return True
 
 
 def get_tag(conn: sqlite3.Connection, tag_id: int) -> dict[str, Any] | None:

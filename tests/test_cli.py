@@ -1045,6 +1045,51 @@ class TestTagsCommand:
         assert result.exit_code == 1
         assert "no binary with id 4242" in result.stdout
 
+    def test_tag_rename_keeps_the_links_then_tag_rm_prunes_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+        runner.invoke(cli.app, ["tag", str(ids["binary"]), "relase", "--json"])
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            tag_id = int(store.find_tag(conn, "relase")["id"])  # type: ignore[index]
+
+        renamed = runner.invoke(cli.app, ["tag-rename", str(tag_id), "release", "--json"])
+        assert renamed.exit_code == 0, renamed.output
+        assert json.loads(renamed.stdout)["name"] == "release"
+
+        listed = runner.invoke(cli.app, ["tags", "--json"])
+        tags = json.loads(listed.stdout)["tags"]
+        assert [(tag["name"], tag["binary_count"]) for tag in tags] == [("release", 1)]
+
+        removed = runner.invoke(cli.app, ["tag-rm", str(tag_id), "--json"])
+        assert removed.exit_code == 0, removed.output
+        assert json.loads(removed.stdout)["deleted"] is True
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            assert store.get_tag(conn, tag_id) is None
+            assert store.get_binary_tags(conn, ids["binary"]) == []
+
+    def test_tag_rename_to_a_taken_name_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _seed_portal(tmp_path, monkeypatch)
+        runner.invoke(cli.app, ["tag", "1", "release", "--json"])
+        runner.invoke(cli.app, ["tag", "1", "triage", "--json"])
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            other = int(store.find_tag(conn, "triage")["id"])  # type: ignore[index]
+
+        result = runner.invoke(cli.app, ["tag-rename", str(other), "release", "--json"])
+
+        assert result.exit_code == 1
+        assert "already exists" in result.stdout
+
+    def test_tag_rm_unknown_tag_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _seed_portal(tmp_path, monkeypatch)
+        result = runner.invoke(cli.app, ["tag-rm", "4242", "--json"])
+        assert result.exit_code == 1
+        assert "no tag with id 4242" in result.stdout
+
 
 class TestApplyMatchCommand:
     def test_apply_match_renames(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

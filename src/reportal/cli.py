@@ -3251,10 +3251,14 @@ def tags(
         typer.echo(json.dumps({"tags": rows}))
         return
     table = Table(show_header=True, header_style="bold")
+    table.add_column("Id", justify="right")
     table.add_column("Tag", style="cyan")
     table.add_column("Binaries", justify="right")
+    table.add_column("Collections", justify="right")
     for row in rows:
-        table.add_row(str(row["name"]), str(row["binary_count"]))
+        table.add_row(
+            str(row["id"]), str(row["name"]), str(row["binary_count"]), str(row["collection_count"])
+        )
     console.print(table)
 
 
@@ -3331,6 +3335,86 @@ def tag(
     else:
         verb = "Tagged" if payload["added"] else "Already tagged"
         console.print(f"[green]{verb}[/green] binary {binary_id} with {name!r}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("tag-rename")
+def tag_rename(
+    tag_id: int = typer.Argument(..., help="Tag id to rename"),
+    name: str = typer.Argument(..., help="New tag name"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rename one tag by id, keeping every link to it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_tag(conn, tag_id) is None:
+            _fail(f"no tag with id {tag_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="tags",
+                where="id = ?",
+                params=(tag_id,),
+                description=f"renamed tag {tag_id}",
+            )
+            try:
+                renamed = store.rename_tag(conn, tag_id, name)
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+        payload = log.attach(renamed or {"id": tag_id, "name": name})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(f"[green]Renamed[/green] tag {tag_id} to {payload['name']!r}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("tag-rm")
+def tag_rm(
+    tag_id: int = typer.Argument(..., help="Tag id to delete"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete one tag and every binary and collection link to it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_tag(conn, tag_id) is None:
+            _fail(f"no tag with id {tag_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # The links are journaled before the tag row: a revert replays
+            # newest-first, and a link restored before its tag exists trips the
+            # foreign key.
+            for table, where in (
+                ("binary_tags", "tag_id = ?"),
+                ("collection_tags", "tag_id = ?"),
+            ):
+                links = journal.snapshot_rows(conn, table=table, where=where, params=(tag_id,))
+                if links:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"links of tag {tag_id} in {table}",
+                        journal.row_restore_descriptor(table, links),
+                    )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="tags",
+                where="id = ?",
+                params=(tag_id,),
+                description=f"deleted tag {tag_id}",
+            )
+            store.delete_tag(conn, tag_id)
+        payload = log.attach({"tag_id": tag_id, "deleted": True})
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(f"[green]Deleted[/green] tag {tag_id}")
     _print_journal_action(log, json_output)
 
 

@@ -36,7 +36,7 @@ no request for them at all.  A file without a hash (the favicon) is answered
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-77 kB (22 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with 24 view
+77 kB (22 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with 25 view
 chunks behind them.  `tools/smoke_spa.py` asserts the split rather than trusting
 it: the entry chunk must not carry a marker only the binary detail view renders,
 and some other chunk must, so a view import that goes back to being static
@@ -523,6 +523,16 @@ shareable and survives a reload; the router parses a hash's `?query` into
 a prefix input with a
 replace-existing-prefix toggle that posts `POST /api/functions/bulk` for the
 selected rows and reports how many renamed and how many were skipped.
+
+The Tags view (`views/TagsView.tsx`, `#/tags`, in the Targets group) is the
+register's tag vocabulary: every tag with how many binaries and how many
+collections carry it, from `GET /api/tags`.  A tag is created where it is
+applied (the binary detail's Tags panel and a collection's tag field), so this
+view maintains rather than creates: selecting a row opens its panel, where the
+name saves through `PATCH /api/tags/<id>` (every link follows, and the write is
+journaled so a revert restores the old name) and Delete sits behind an inline
+confirm over `DELETE /api/tags/<id>`, which takes the tag off every binary and
+collection.  Before it a misspelled tag could never be renamed or pruned.
 
 The Collections view (`views/CollectionsView.tsx`, `#/collections`) lists the
 collections with their member and tag counts, their owner and their scope, and

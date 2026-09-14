@@ -459,7 +459,10 @@ reportal unstrip-apply <function-id> [--name TEXT] [--json]
                                            # the rename with source unstrip
 reportal revert <function-id> <history-id> [--json]
                                            # restore the name a history row replaced
-reportal tags [--json]                     # list tags with tagged-binary counts
+reportal tags [--json]                     # list tags with tagged-binary and collection counts
+reportal tag-rename <tag-id> <name> [--json]
+                                           # rename one tag, keeping every link to it
+reportal tag-rm <tag-id> [--json]          # delete one tag and every link to it
 reportal tag <binary-id> <name> [--remove] [--json]
 reportal collections [--order ORDER] [--workspace SCOPE] [--json]
                                            # list collections with member and tag counts and

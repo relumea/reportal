@@ -180,6 +180,8 @@ _READ_ONLY_TOOLS = frozenset(
 _DESTRUCTIVE_TOOLS = frozenset(
     {
         "rate_artifact",
+        "rename_tag",
+        "delete_tag",
         "import_symbols",
         "export_symbols",
         "run_conversation_agent",
@@ -469,9 +471,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 242
+        assert len(names) == 244
         assert len(_READ_ONLY_TOOLS) == 115
-        assert len(_DESTRUCTIVE_TOOLS) == 127
+        assert len(_DESTRUCTIVE_TOOLS) == 129
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
@@ -1005,6 +1007,35 @@ class TestDestructiveTools:
         payload, is_error = _call("untag_binary", {"binary_id": ids["binary"], "tag_id": tag_id})
         assert is_error is False
         assert store.get_binary_tags(conn, ids["binary"]) == []
+
+    def test_rename_tag_and_delete_tag_change_the_store(self, conn: Any, tmp_path: Path) -> None:
+        ids = _seed_binary(conn, tmp_path)
+        created, _ = _call("create_tag", {"name": "relase"})
+        tag_id = created["tag_id"]
+        _call("tag_binary", {"binary_id": ids["binary"], "tag_id": tag_id})
+
+        renamed, is_error = _call("rename_tag", {"tag_id": tag_id, "name": "release"})
+        assert is_error is False
+        assert renamed["name"] == "release"
+        assert [tag["name"] for tag in store.get_binary_tags(conn, ids["binary"])] == ["release"]
+
+        taken, is_error = _call("create_tag", {"name": "triage"})
+        assert is_error is False
+        refused, is_error = _call("rename_tag", {"tag_id": taken["tag_id"], "name": "release"})
+        assert is_error is True
+        assert refused["error"] == "invalid tag"
+
+        deleted, is_error = _call("delete_tag", {"tag_id": tag_id})
+        assert is_error is False
+        assert deleted["deleted"] is True
+        assert store.get_tag(conn, tag_id) is None
+        assert store.get_binary_tags(conn, ids["binary"]) == []
+
+    def test_delete_tag_unknown_is_a_tool_error(self, conn: Any, tmp_path: Path) -> None:
+        _seed_binary(conn, tmp_path)
+        payload, is_error = _call("delete_tag", {"tag_id": 4242})
+        assert is_error is True
+        assert payload["error"] == "tag not found"
 
     def test_delete_conversation_removes_it(self, conn: Any, tmp_path: Path) -> None:
         ids = _seed_binary(conn, tmp_path)

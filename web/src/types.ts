@@ -228,6 +228,12 @@ export interface Tag {
   name: string;
 }
 
+/** One row of `GET /api/tags`: a tag with how many objects carry it. */
+export interface TagRow extends Tag {
+  binary_count: number;
+  collection_count: number;
+}
+
 export interface Collection {
   id: number;
   name: string;

@@ -549,7 +549,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 242 built-in tools, 115 read-only and 127 destructive.
+declares 244 built-in tools, 115 read-only and 129 destructive.
 
 ## SPA
 
@@ -661,8 +661,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 242 built-in
-tools (115 read-only, 127 destructive).
+and `run_match` expose the same over MCP, and the counts stay 244 built-in
+tools (115 read-only, 129 destructive).
 
 ### Scaling
 

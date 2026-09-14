@@ -7047,6 +7047,67 @@ def create_tag(body: dict[str, Any] = Depends(json_body)) -> Response:
     return json_response(log.attach({"tag_id": tag_id, "name": name}), status=201)
 
 
+@router.patch("/api/tags/{tag_id}")
+def rename_tag(tag_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Rename one tag by id; 404 when unknown, 400 for a blank or taken name."""
+    name = _require_str(body, "name")
+    with contextlib.closing(_open()) as conn:
+        before = store.get_tag(conn, tag_id)
+        if before is None:
+            return json_error(404, error="tag not found", detail=f"no tag with id {tag_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # The snapshot is taken before the write: a revert restores the row
+            # as it was, so the old name has to be read first.
+            journal.journaled_rows(
+                conn,
+                log,
+                table="tags",
+                where="id = ?",
+                params=(tag_id,),
+                description=f"renamed tag {tag_id}",
+            )
+            try:
+                renamed = store.rename_tag(conn, tag_id, name)
+            except ValueError as exc:
+                return json_error(400, error="invalid tag", detail=str(exc))
+    return json_response(log.attach(renamed or before))
+
+
+@router.delete("/api/tags/{tag_id}")
+def delete_tag(tag_id: int) -> Response:
+    """Delete one tag with every link to it; 404 when unknown."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_tag(conn, tag_id) is None:
+            return json_error(404, error="tag not found", detail=f"no tag with id {tag_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # The links are recorded before the tag row on purpose: a revert
+            # replays newest-first, and a link restored before the tag it points
+            # at exists trips the foreign key.
+            for table, where in (
+                ("binary_tags", "tag_id = ?"),
+                ("collection_tags", "tag_id = ?"),
+            ):
+                links = journal.snapshot_rows(conn, table=table, where=where, params=(tag_id,))
+                if links:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"links of tag {tag_id} in {table}",
+                        journal.row_restore_descriptor(table, links),
+                    )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="tags",
+                where="id = ?",
+                params=(tag_id,),
+                description=f"deleted tag {tag_id}",
+            )
+            store.delete_tag(conn, tag_id)
+    return json_response(log.attach({"tag_id": tag_id, "deleted": True}))
+
+
 @router.get("/api/binaries/{binary_id}/tags")
 def list_binary_tags(binary_id: int) -> Response:
     with contextlib.closing(_open()) as conn:

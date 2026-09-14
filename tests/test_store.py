@@ -494,13 +494,60 @@ class TestTags:
         assert store.remove_binary_tag(conn, binary_id, tag_id) is False
         assert store.get_binary_tags(conn, binary_id) == []
 
+    def test_rename_tag_keeps_the_links_and_refuses_a_taken_name(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = store.add_binary(conn, sha256="8d" * 32, name="demo")
+        tag_id = store.create_tag(conn, "relase")
+        store.add_binary_tag(conn, binary_id, tag_id)
+        store.create_tag(conn, "triage")
+
+        renamed = store.rename_tag(conn, tag_id, "release")
+
+        assert renamed == {"id": tag_id, "name": "release"}
+        assert [tag["name"] for tag in store.get_binary_tags(conn, binary_id)] == ["release"]
+        try:
+            store.rename_tag(conn, tag_id, "triage")
+        except ValueError as exc:
+            assert "already exists" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("a taken name must be refused")
+        try:
+            store.rename_tag(conn, tag_id, "  ")
+        except ValueError as exc:
+            assert "must not be empty" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("a blank name must be refused")
+        assert store.rename_tag(conn, 4242, "release") is None
+
+    def test_rename_tag_to_its_own_name_is_allowed(self, conn: sqlite3.Connection) -> None:
+        tag_id = store.create_tag(conn, "release")
+
+        assert store.rename_tag(conn, tag_id, "release") == {"id": tag_id, "name": "release"}
+
+    def test_delete_tag_takes_the_links_with_it(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="8e" * 32, name="demo")
+        collection_id = store.create_collection(conn, name="triage-set")
+        tag_id = store.create_tag(conn, "release")
+        store.add_binary_tag(conn, binary_id, tag_id)
+        store.set_collection_tags(conn, collection_id, ["release"])
+
+        assert store.delete_tag(conn, tag_id) is True
+
+        assert store.get_tag(conn, tag_id) is None
+        assert store.get_binary_tags(conn, binary_id) == []
+        assert store.collection_tags(conn, collection_id) == []
+        assert store.delete_tag(conn, tag_id) is False
+
     def test_find_tag_does_not_create(self, conn: sqlite3.Connection) -> None:
         assert store.find_tag(conn, "absent") is None
         tag_id = store.create_tag(conn, "release")
         found = store.find_tag(conn, "release")
         assert found is not None
         assert found["id"] == tag_id
-        assert store.list_tags(conn) == [{"id": tag_id, "name": "release", "binary_count": 0}]
+        assert store.list_tags(conn) == [
+            {"id": tag_id, "name": "release", "binary_count": 0, "collection_count": 0}
+        ]
 
     def test_get_tag(self, conn: sqlite3.Connection) -> None:
         tag_id = store.create_tag(conn, "release")

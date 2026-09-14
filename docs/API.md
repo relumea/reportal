@@ -317,8 +317,10 @@ their pages by the same rule.
 | `/api/collections/<id>/binaries` | PATCH | make `{"binary_ids": [...]}` the exact member list; 404 `binary not found` naming the first unknown id, and nothing is written; journaled |
 | `/api/collections/<id>/binaries` | DELETE | remove `{"binary_ids": [...]}`, keeping the other members; 400 when the key is absent; journaled |
 | `/api/collections/<id>/tags` | PATCH | replace the tags with `{"tags": [...]}`, creating the new names (`[]` clears them); 400 when the key is absent; journaled |
-| `/api/tags` | GET | all tags with their tagged-binary count |
+| `/api/tags` | GET | all tags with their tagged-binary and tagged-collection counts |
 | `/api/tags` | POST | create a tag by name; body `{"name": ...}`; idempotent |
+| `/api/tags/<id>` | PATCH | rename one tag; body `{"name": ...}`; every link keeps pointing at it, the write is journaled so a revert restores the old name, 404 `tag not found` for an unknown id and 400 for a blank name or one another tag already holds |
+| `/api/tags/<id>` | DELETE | delete one tag and every binary and collection link to it; journaled, the links restored before the tag row, so a revert puts both back; 404 `tag not found` |
 | `/api/binaries/<id>/documents` | POST | ingest a document file into the binary's knowledge scope; `multipart/form-data` with a `file` part and an optional `title` field; 201 on create, 200 with `duplicate: true` on a repeat |
 | `/api/binaries/<id>/documents` | GET | the knowledge documents of one binary, newest last, without their text |
 | `/api/documents` | GET | documents, optionally filtered by `?scope_kind=` and `?scope_id=` |

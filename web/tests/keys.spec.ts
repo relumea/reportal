@@ -28,7 +28,7 @@ function dialog(page: import("@playwright/test").Page) {
 const SHELL_BINDINGS = 11;
 
 // One `g` jump per sidebar view plus the shell bindings above.
-const DECLARED_SHORTCUTS = 19 + SHELL_BINDINGS;
+const DECLARED_SHORTCUTS = 20 + SHELL_BINDINGS;
 
 test("a conflicting binding is refused at registration", () => {
   const probe = (): void => {};
@@ -105,7 +105,7 @@ test("the cheatsheet lists the registered set", async ({ page }) => {
 
   const declared = Number(await sheet.getAttribute("data-shortcut-count"));
   expect(declared).toBe(descriptions.length);
-  expect(views).toHaveLength(19);
+  expect(views).toHaveLength(20);
   expect(declared).toBe(DECLARED_SHORTCUTS);
 
   // The visible keys are the combos, not the registry's spelling of them.

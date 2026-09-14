@@ -866,6 +866,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         ),
     ),
     ("collections", "#/collections", (("No collections yet.",),)),
+    ("tags", "#/tags", (("Tags",), ("Binaries",), ("Collections",))),
     (
         "knowledge",
         "#/knowledge",

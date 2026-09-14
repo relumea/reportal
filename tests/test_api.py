@@ -1486,7 +1486,14 @@ class TestTags:
 
         _, headers, body = wsgi_request("GET", "/api/tags")
         tags = json_body(body, headers)["tags"]
-        assert tags == [{"id": created["tag_id"], "name": "release", "binary_count": 1}]
+        assert tags == [
+            {
+                "id": created["tag_id"],
+                "name": "release",
+                "binary_count": 1,
+                "collection_count": 0,
+            }
+        ]
 
         _, headers, body = wsgi_request("GET", f"/api/binaries/{ids['binary']}/tags")
         assert json_body(body, headers)["tags"] == [{"id": created["tag_id"], "name": "release"}]
@@ -1516,6 +1523,109 @@ class TestTags:
         status, headers, body = wsgi_request("POST", "/api/tags", body=json.dumps({"name": "  "}))
         assert status.startswith("400")
         assert "name" in json_body(body, headers)["error"]
+
+    def test_rename_keeps_every_link_and_reverts_to_the_old_name(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = _seed(conn)
+        tag_id = store.create_tag(conn, "relase")
+        store.add_binary_tag(conn, ids["binary"], tag_id)
+        collection_id = store.create_collection(conn, name="triage-set")
+        store.set_collection_tags(conn, collection_id, ["relase"])
+
+        status, headers, body = wsgi_request(
+            "PATCH", f"/api/tags/{tag_id}", body=json.dumps({"name": "release"})
+        )
+        assert status.startswith("200")
+        renamed = json_body(body, headers)
+        action = renamed.pop("journal_action")
+        assert renamed == {"id": tag_id, "name": "release"}
+
+        _, headers, body = wsgi_request("GET", "/api/tags")
+        assert json_body(body, headers)["tags"] == [
+            {
+                "id": tag_id,
+                "name": "release",
+                "binary_count": 1,
+                "collection_count": 1,
+            }
+        ]
+
+        status, headers, body = wsgi_request(
+            "POST", "/api/journal/revert", body=json.dumps({"action": action})
+        )
+        assert status.startswith("200")
+        assert json_body(body, headers)["failed"] == 0
+        restored = store.get_tag(conn, tag_id)
+        assert restored is not None
+        assert restored["name"] == "relase"
+
+    def test_rename_to_a_taken_name_400(self, conn: sqlite3.Connection) -> None:
+        store.create_tag(conn, "release")
+        other = store.create_tag(conn, "triage")
+
+        status, headers, body = wsgi_request(
+            "PATCH", f"/api/tags/{other}", body=json.dumps({"name": "release"})
+        )
+
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid tag"
+        kept = store.get_tag(conn, other)
+        assert kept is not None
+        assert kept["name"] == "triage"
+
+    def test_rename_blank_name_400(self, conn: sqlite3.Connection) -> None:
+        tag_id = store.create_tag(conn, "release")
+
+        status, headers, body = wsgi_request(
+            "PATCH", f"/api/tags/{tag_id}", body=json.dumps({"name": "  "})
+        )
+
+        assert status.startswith("400")
+        assert "name" in json_body(body, headers)["error"]
+
+    def test_rename_unknown_tag_404(self, conn: sqlite3.Connection) -> None:
+        status, headers, body = wsgi_request(
+            "PATCH", "/api/tags/4242", body=json.dumps({"name": "release"})
+        )
+
+        assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "tag not found"
+
+    def test_delete_removes_the_tag_and_its_links_and_reverts(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = _seed(conn)
+        tag_id = store.create_tag(conn, "release")
+        store.add_binary_tag(conn, ids["binary"], tag_id)
+        collection_id = store.create_collection(conn, name="triage-set")
+        store.set_collection_tags(conn, collection_id, ["release"])
+
+        status, headers, body = wsgi_request("DELETE", f"/api/tags/{tag_id}")
+        assert status.startswith("200")
+        deleted = json_body(body, headers)
+        action = deleted.pop("journal_action")
+        assert deleted == {"tag_id": tag_id, "deleted": True}
+        assert store.get_tag(conn, tag_id) is None
+        assert store.get_binary_tags(conn, ids["binary"]) == []
+        assert store.collection_tags(conn, collection_id) == []
+
+        status, headers, body = wsgi_request(
+            "POST", "/api/journal/revert", body=json.dumps({"action": action})
+        )
+        assert status.startswith("200")
+        assert json_body(body, headers)["failed"] == 0
+        restored = store.get_tag(conn, tag_id)
+        assert restored is not None
+        assert restored["name"] == "release"
+        assert [tag["name"] for tag in store.get_binary_tags(conn, ids["binary"])] == ["release"]
+        assert [tag["name"] for tag in store.collection_tags(conn, collection_id)] == ["release"]
+
+    def test_delete_unknown_tag_404(self, conn: sqlite3.Connection) -> None:
+        status, headers, body = wsgi_request("DELETE", "/api/tags/4242")
+
+        assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "tag not found"
 
     def test_link_by_tag_id(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)

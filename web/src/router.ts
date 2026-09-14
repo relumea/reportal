@@ -10,6 +10,7 @@ export type NavView =
   | "analyses"
   | "functions"
   | "collections"
+  | "tags"
   | "matches"
   | "graph"
   | "auto"
@@ -33,7 +34,7 @@ export interface NavGroup {
 // it, so a view cannot exist without a group.
 export const NAV_GROUPS = [
   { label: "Overview", views: ["dashboard", "search"] },
-  { label: "Targets", views: ["binaries", "analyses", "functions", "collections"] },
+  { label: "Targets", views: ["binaries", "analyses", "functions", "collections", "tags"] },
   { label: "Analysis", views: ["matches", "graph", "knowledge", "external"] },
   { label: "Agent", views: ["auto", "conversations"] },
   {
@@ -52,6 +53,7 @@ export const NAV_LABELS: Record<NavView, string> = {
   matches: "Matches",
   auto: "Auto-mode",
   collections: "Collections",
+  tags: "Tags",
   conversations: "Conversations",
   knowledge: "Knowledge",
   graph: "Graph",

@@ -47,6 +47,8 @@ const BinaryDetail = lazy(() =>
 const BinariesView = lazy(() =>
   import("./views/BinariesView").then((m) => ({ default: m.BinariesView })),
 );
+const TagsView = lazy(() => import("./views/TagsView").then((m) => ({ default: m.TagsView })));
+
 const CollectionsView = lazy(() =>
   import("./views/CollectionsView").then((m) => ({ default: m.CollectionsView })),
 );
@@ -106,6 +108,7 @@ const NAV_JUMPS: ReadonlyArray<readonly [string, NavView]> = [
   ["a", "analyses"],
   ["f", "functions"],
   ["c", "collections"],
+  ["t", "tags"],
   ["m", "matches"],
   ["g", "graph"],
   ["k", "knowledge"],
@@ -449,6 +452,11 @@ export function App(): ReactNode {
       path: "/collections",
       element: <CollectionsRoute />,
       handle: { view: "collections", title: "Collections" },
+    },
+    {
+      path: "/tags",
+      element: <TagsView />,
+      handle: { view: "tags", title: "Tags" },
     },
     {
       path: "/conversations",

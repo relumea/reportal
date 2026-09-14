@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- Tags can be maintained: `PATCH /api/tags/<id>` renames one and
+  `DELETE /api/tags/<id>` removes one with every binary and collection link to
+  it, both journaled (a revert restores the old name, or the tag and its links
+  parent-last), with `reportal tag-rename` and `reportal tag-rm`, the
+  destructive `rename_tag` and `delete_tag` MCP tools, and a Tags view
+  (`#/tags`) listing the vocabulary with what carries each tag.  Until now a
+  tag could be created where it was applied but never renamed or pruned, so a
+  misspelling was permanent, and `GET /api/tags` now reports how many
+  collections carry a tag beside how many binaries do.
+
 - A revert no longer deletes a file another writer replaced.  A `file-write` (an
   auto run's candidate source) and a `file-delete` (the action journal's stored
   upload or export) descriptor now carries the SHA-256 of the bytes the writer
@@ -53,7 +63,7 @@ view renders it from here.
   e2e spec waits for its table instead of counting it while the view loads.
   `GET /` is answered `no-cache` and the hashed bundles under
   `/static/assets/` `immutable`, so a repeat load serves them from the browser
-  cache instead of revalidating 27 files.
+  cache instead of revalidating 28 files.
 
 - Recorded scan inputs: a stored scan now carries the inputs the caller named
   beside its result (`scans.params_json`), so a reading can be run again the same

@@ -3848,6 +3848,62 @@ def _tool_untag_binary(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach({"binary_id": binary_id, "tag_id": tag_id, "removed": True})
 
 
+def _tool_rename_tag(arguments: dict[str, Any]) -> dict[str, Any]:
+    tag_id = _arg_int(arguments, "tag_id")
+    name = _arg_str(arguments, "name")
+    with contextlib.closing(_open()) as conn:
+        if store.get_tag(conn, tag_id) is None:
+            raise ToolError("tag not found", f"no tag with id {tag_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="tags",
+                where="id = ?",
+                params=(tag_id,),
+                description=f"renamed tag {tag_id}",
+            )
+            try:
+                renamed = store.rename_tag(conn, tag_id, name)
+            except ValueError as exc:
+                raise ToolError("invalid tag", str(exc)) from exc
+            return log.attach(renamed or {"id": tag_id, "name": name})
+
+
+def _tool_delete_tag(arguments: dict[str, Any]) -> dict[str, Any]:
+    tag_id = _arg_int(arguments, "tag_id")
+    with contextlib.closing(_open()) as conn:
+        if store.get_tag(conn, tag_id) is None:
+            raise ToolError("tag not found", f"no tag with id {tag_id}")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            # The links are journaled before the tag row: a revert replays
+            # newest-first, and a link restored before its tag exists trips the
+            # foreign key.
+            for table, where in (
+                ("binary_tags", "tag_id = ?"),
+                ("collection_tags", "tag_id = ?"),
+            ):
+                links = journal.snapshot_rows(conn, table=table, where=where, params=(tag_id,))
+                if links:
+                    log.record(
+                        effects.EFFECT_ROW_RESTORE,
+                        f"links of tag {tag_id} in {table}",
+                        journal.row_restore_descriptor(table, links),
+                    )
+            journal.journaled_rows(
+                conn,
+                log,
+                table="tags",
+                where="id = ?",
+                params=(tag_id,),
+                description=f"deleted tag {tag_id}",
+            )
+            store.delete_tag(conn, tag_id)
+            return log.attach({"tag_id": tag_id, "deleted": True})
+
+
 def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
     """Write a stored binary as a password-protected zip at the caller's path."""
     from reportal import api  # the filename sanitizer the routes use
@@ -5471,7 +5527,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_tags",
-            "List all tags with their binary counts; with binary_id, only that binary's tags.",
+            "List all tags with their binary and collection counts; with binary_id, only that"
+            " binary's tags.",
             _object({"binary_id": _int("Limit to one binary's tags.")}),
             _READ,
             _tool_get_tags,
@@ -7004,6 +7061,23 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_untag_binary,
+        ),
+        Tool(
+            "rename_tag",
+            "Rename one tag by id, keeping every binary and collection link to it.",
+            _object(
+                {"tag_id": _int("Tag id to rename."), "name": _str("New tag name.")},
+                ("tag_id", "name"),
+            ),
+            _WRITE,
+            _tool_rename_tag,
+        ),
+        Tool(
+            "delete_tag",
+            "Delete one tag and every link to it, binary and collection alike.",
+            _object({"tag_id": _int("Tag id to delete.")}, ("tag_id",)),
+            _WRITE,
+            _tool_delete_tag,
         ),
         Tool(
             "export_zipped_binary",
