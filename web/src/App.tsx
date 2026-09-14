@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import {
@@ -14,6 +14,7 @@ import {
 import type { Params, RouteObject } from "react-router";
 
 import { api } from "./api";
+import { Loading } from "./components";
 import {
   cycleViewSection,
   focusViewFilter,
@@ -25,31 +26,74 @@ import { toggleFunctionCodeView } from "./panels/FunctionPanels";
 import { NAV_GROUPS, NAV_LABELS, navPath } from "./router";
 import type { NavView } from "./router";
 import type { Health } from "./types";
-import { AutoView } from "./views/AutoView";
-import { AnalysesView } from "./views/AnalysesView";
-import { BinaryDetail } from "./views/BinaryDetail";
-import { BinariesView } from "./views/BinariesView";
-import { CollectionsView } from "./views/CollectionsView";
-import { ComponentsView } from "./views/ComponentsView";
-import { IntegrationsView } from "./views/IntegrationsView";
-import { ConversationDetail, ConversationsView } from "./views/ConversationsView";
-import { DashboardView } from "./views/DashboardView";
-import { ChangelogView, DocumentationView } from "./views/DocumentationView";
-import { DiffView } from "./views/DiffView";
-import { FunctionDetail } from "./views/FunctionDetail";
-import { FunctionsView } from "./views/FunctionsView";
-import { GraphView } from "./views/GraphView";
-import { JobsView } from "./views/JobsView";
-import { ExternalView } from "./views/ExternalView";
-import { ModelsView } from "./views/ModelsView";
-import { JournalView } from "./views/JournalView";
-import { KnowledgeView } from "./views/KnowledgeView";
-import { MatchesView } from "./views/MatchesView";
 import { CheatsheetDialog } from "./views/CheatsheetDialog";
+import { DashboardView } from "./views/DashboardView";
 import { NotificationsBell } from "./views/NotificationsDialog";
 import { SearchModal } from "./views/SearchModal";
-import { SearchView } from "./views/SearchView";
-import { UsersView } from "./views/UsersView";
+
+// Every view but the dashboard is loaded when its route is first opened, so
+// the initial bundle carries the shell, the dashboard and the shortcut layer
+// rather than the whole workbench: the binary detail view alone (its panels,
+// the memory dump and the data type editor) is a third of the source.  The
+// dashboard stays eager because it is the landing route, and FunctionPanels
+// stays eager because the shell's `Space` binding is its module state.
+const AutoView = lazy(() => import("./views/AutoView").then((m) => ({ default: m.AutoView })));
+const AnalysesView = lazy(() =>
+  import("./views/AnalysesView").then((m) => ({ default: m.AnalysesView })),
+);
+const BinaryDetail = lazy(() =>
+  import("./views/BinaryDetail").then((m) => ({ default: m.BinaryDetail })),
+);
+const BinariesView = lazy(() =>
+  import("./views/BinariesView").then((m) => ({ default: m.BinariesView })),
+);
+const CollectionsView = lazy(() =>
+  import("./views/CollectionsView").then((m) => ({ default: m.CollectionsView })),
+);
+const ComponentsView = lazy(() =>
+  import("./views/ComponentsView").then((m) => ({ default: m.ComponentsView })),
+);
+const ExternalView = lazy(() =>
+  import("./views/ExternalView").then((m) => ({ default: m.ExternalView })),
+);
+const ConversationsView = lazy(() =>
+  import("./views/ConversationsView").then((m) => ({ default: m.ConversationsView })),
+);
+const ConversationDetail = lazy(() =>
+  import("./views/ConversationsView").then((m) => ({ default: m.ConversationDetail })),
+);
+const DocumentationView = lazy(() =>
+  import("./views/DocumentationView").then((m) => ({ default: m.DocumentationView })),
+);
+const ChangelogView = lazy(() =>
+  import("./views/DocumentationView").then((m) => ({ default: m.ChangelogView })),
+);
+const DiffView = lazy(() => import("./views/DiffView").then((m) => ({ default: m.DiffView })));
+const FunctionDetail = lazy(() =>
+  import("./views/FunctionDetail").then((m) => ({ default: m.FunctionDetail })),
+);
+const FunctionsView = lazy(() =>
+  import("./views/FunctionsView").then((m) => ({ default: m.FunctionsView })),
+);
+const GraphView = lazy(() => import("./views/GraphView").then((m) => ({ default: m.GraphView })));
+const IntegrationsView = lazy(() =>
+  import("./views/IntegrationsView").then((m) => ({ default: m.IntegrationsView })),
+);
+const JobsView = lazy(() => import("./views/JobsView").then((m) => ({ default: m.JobsView })));
+const JournalView = lazy(() =>
+  import("./views/JournalView").then((m) => ({ default: m.JournalView })),
+);
+const KnowledgeView = lazy(() =>
+  import("./views/KnowledgeView").then((m) => ({ default: m.KnowledgeView })),
+);
+const MatchesView = lazy(() =>
+  import("./views/MatchesView").then((m) => ({ default: m.MatchesView })),
+);
+const ModelsView = lazy(() => import("./views/ModelsView").then((m) => ({ default: m.ModelsView })));
+const SearchView = lazy(() =>
+  import("./views/SearchView").then((m) => ({ default: m.SearchView })),
+);
+const UsersView = lazy(() => import("./views/UsersView").then((m) => ({ default: m.UsersView })));
 
 // The `g` prefix jumps to a sidebar view: its initial where that is unique,
 // otherwise a letter from the word (`g o` for Auto-mode, `g n` for
@@ -525,7 +569,7 @@ export function App(): ReactNode {
           </span>
         </header>
         <div className="content" id="content">
-          {content}
+          <Suspense fallback={<Loading label="Loading the view" />}>{content}</Suspense>
         </div>
       </main>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />

@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- A faster first paint in the SPA: every view but the dashboard is now a lazy
+  route (`React.lazy` plus a `Suspense` boundary), React and the router are one
+  cached `vendor` chunk, and the initial payload drops from one 617 kB bundle
+  (172 kB gzip) to a 76 kB entry (22 kB gzip) plus a 289 kB vendor chunk (91 kB
+  gzip).  The binary detail view, which is a third of the source, is now 113 kB
+  that only that route fetches.  `tools/smoke_spa.py` asserts the split, so a
+  view import that goes back to being static fails the gate, and the analyses
+  e2e spec waits for its table instead of counting it while the view loads.
+
 - Recorded scan inputs: a stored scan now carries the inputs the caller named
   beside its result (`scans.params_json`), so a reading can be run again the same
   way instead of guessed at: the decompiler and limit of a struct recovery, the

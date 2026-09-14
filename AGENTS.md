@@ -60,7 +60,8 @@ reportal/
 shellcheck over `scripts/`, W3C VNU over `web/index.html` and
 `web/src/styles.css`, mypy, `tsc --noEmit`, pytest under the coverage floor,
 the built SPA smoke (which fails a route that logs a page error, a console
-error or a dropped request) and audit in headless Chrome, and the wheel
+error or a dropped request, and a bundle that carries a view it should load on
+demand) and audit in headless Chrome, and the wheel
 packaging check. Run it before calling anything done. CI runs
 `make lint typecheck test package-check`: the two browser targets are the one
 part of the gate a runner cannot do, because their smoke and audit seed a
@@ -714,7 +715,11 @@ thousand functions.
   share, so a new route is scoped by construction too.
 - SPA is Vite + React + TypeScript in `web/`, built with bun into
   `src/reportal/assets/dist/` (generated, gitignored).  Routing is
-  react-router and every fetch is `@tanstack/react-query`; no CDN.
+  react-router and every fetch is `@tanstack/react-query`; no CDN.  Every view
+  but the dashboard is a `React.lazy` import (the dashboard is the landing
+  route and `FunctionPanels` stays eager because the shell's `Space` binding is
+  its module state), React and the router are one `vendor` chunk, and the smoke
+  fails when a view's marker ends up in the entry bundle.
 - Components: the AI decompilation pipeline is a composition of components
   (`src/reportal/components.py`).  A component declares `requires`/`provides`
   plus an `effect`.  `Context` carries the values and the reversible journal:

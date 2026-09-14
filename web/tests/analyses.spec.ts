@@ -66,6 +66,9 @@ test("the status chips, platform filter, order and re-analyse drive the list", a
   await page.goto("/#/analyses");
   const panel = panelByTitle(page, "Analyses");
   const rows = panel.locator("tbody tr");
+  // The view is loaded on demand and its rows arrive with the query, so the
+  // table is waited for rather than counted while it is still empty.
+  await expect(rows.first()).toBeVisible();
   const total = await rows.count();
   expect(total).toBeGreaterThan(1);
 
@@ -73,6 +76,7 @@ test("the status chips, platform filter, order and re-analyse drive the list", a
   // puts the any-of set in the hash.
   await panel.getByRole("button", { name: "done", exact: true }).click();
   await expect(page).toHaveURL(/status=done/);
+  await expect(rows.first()).toBeVisible();
   const done = await rows.count();
   expect(done).toBeGreaterThan(0);
   expect(done).toBeLessThanOrEqual(total);

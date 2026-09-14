@@ -16,5 +16,13 @@ export default defineConfig({
   build: {
     outDir: "../src/reportal/assets/dist",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // React and the router change when the SPA's dependencies change, and
+        // the views change on every commit: one vendor chunk keeps a browser's
+        // cached copy of the framework across a deploy.
+        manualChunks: (id) => (id.includes("node_modules") ? "vendor" : undefined),
+      },
+    },
   },
 });

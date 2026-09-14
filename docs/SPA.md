@@ -12,6 +12,30 @@ instead of a broken page.  The build step is the accepted tradeoff for a
 UI-heavy portal; package-data still ships only `assets/*`, so packaging the
 built UI is a follow-up.
 
+### What loads when
+
+Every view but the dashboard is a `React.lazy` import in `App.tsx`, so the
+browser parses the shell, the dashboard and the shortcut layer on the first
+paint and fetches a view's code when its route is opened.  The binary detail is
+the reason this matters: its panels, the memory dump and the data type editor
+are a third of the SPA's source, and they are one chunk (113 kB) that no other
+route pays for.  React and the router are one `vendor` chunk
+(`vite.config.ts`, `build.rollupOptions.output.manualChunks`), which a browser
+keeps across a deploy while the per-view chunks change.  Two imports stay
+static on purpose: the dashboard, because it is the landing route, and
+`FunctionPanels`, because the shell's `Space` binding is its module state (a
+lazy import there would move the binding out of the registry the cheatsheet
+reads).  A `<Suspense>` boundary around the route content shows the shell's
+`Loading` line while a view's chunk arrives.
+
+The measurement that matters is the initial payload: before the split the SPA
+was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
+76 kB (22 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with 24 view
+chunks behind them.  `tools/smoke_spa.py` asserts the split rather than trusting
+it: the entry chunk must not carry a marker only the binary detail view renders,
+and some other chunk must, so a view import that goes back to being static
+fails the gate.
+
 `src/main.tsx` mounts `QueryClientProvider` and `HashRouter` around
 `src/App.tsx`, the shell: a grouped sidebar (`NAV_GROUPS` in `src/router.ts`:
 Overview, Targets, Analysis, Agent, System; the System group ends with Jobs,

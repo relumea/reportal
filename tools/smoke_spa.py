@@ -1521,6 +1521,45 @@ def ensure_frontend_built() -> int:
     return 0
 
 
+# Text only the binary detail view renders.  The view is loaded when its route
+# is opened, so these live in their own chunk; the check below fails when one of
+# them ends up in the entry bundle, which is what happens if a view import goes
+# back to being static.
+VIEW_MARKERS: tuple[str, ...] = (
+    "Library identification",
+    "Unpacked files",
+    "Rename proposals",
+)
+
+
+def check_code_split() -> bool:
+    """The initial bundle carries the shell, and each view is its own chunk.
+
+    A reader's first paint should not parse the whole workbench.  This reads the
+    built assets rather than a browser: the entry chunk must not carry a marker
+    only the binary detail view renders, and some other chunk must.
+    """
+    assets = (repo_root() / DIST_INDEX_RELATIVE).parent / "assets"
+    entry = sorted(assets.glob("index-*.js"))
+    chunks = sorted(assets.glob("*.js"))
+    if not entry or len(chunks) < 2:
+        emit(f"[FAIL] the SPA is one bundle ({len(chunks)} chunk(s)); no view is loaded on demand")
+        return False
+    entry_text = "".join(path.read_text(encoding="utf-8", errors="replace") for path in entry)
+    carried = [marker for marker in VIEW_MARKERS if marker in entry_text]
+    if carried:
+        emit(f"[FAIL] the initial bundle carries {carried[0]!r}, a view it should load on demand")
+        return False
+    eager_text = "".join(
+        path.read_text(encoding="utf-8", errors="replace") for path in chunks if path not in entry
+    )
+    if not any(marker in eager_text for marker in VIEW_MARKERS):
+        emit("[FAIL] no chunk carries the binary detail view; the markers moved")
+        return False
+    emit(f"code split: {len(chunks)} chunks, entry {entry[0].name}")
+    return True
+
+
 def markers_missing(dom: str, groups: tuple[tuple[str, ...], ...]) -> list[tuple[str, ...]]:
     """The marker groups *dom* carries no member of."""
     return [group for group in groups if not any(marker in dom for marker in group)]
@@ -1888,7 +1927,8 @@ def main() -> int:
         "REPORTAL_DOCS": str(repo_root() / "docs"),
     }
     emit(f"browser: {browser}")
-    failures = run_smoke(workspace, env, browser, ids)
+    failures = 0 if check_code_split() else 1
+    failures += run_smoke(workspace, env, browser, ids)
     if failures:
         emit(f"{failures} route(s) failed; workspace kept at {workspace}")
         return 1
