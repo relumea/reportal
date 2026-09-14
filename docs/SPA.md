@@ -28,6 +28,12 @@ lazy import there would move the binding out of the registry the cheatsheet
 reads).  A `<Suspense>` boundary around the route content shows the shell's
 `Loading` line while a view's chunk arrives.
 
+`GET /` answers the entry page `no-cache` (so a deploy is picked up on the
+next load) and the hashed bundles under `/static/assets/` `immutable` with a
+one-year `max-age`: their names carry their content hash, so a repeat load makes
+no request for them at all.  A file without a hash (the favicon) is answered
+`no-cache` like the shell.
+
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
 76 kB (22 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with 24 view

@@ -1659,6 +1659,10 @@ class TestUi:
         assert "text/html" in headers["Content-Type"]
         assert b"reportal" in body
         assert b"/static/assets/index-abc.js" in body
+        # The entry page names the deploy's asset hashes, so it is revalidated
+        # on every load: a new build is picked up instead of a stale shell
+        # pointing at bundles the server no longer has.
+        assert headers["Cache-Control"] == ui.SHELL_CACHE_CONTROL
 
     def test_static_asset_served_from_dist(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1671,6 +1675,9 @@ class TestUi:
         status, headers, body = wsgi_request("GET", "/static/assets/index-abc.js")
         assert status.startswith("200")
         assert b"console.log" in body
+        # The bundle's name carries its content hash, so it is immutable: a
+        # repeat load is served from the browser's cache with no request.
+        assert headers["Cache-Control"] == ui.ASSET_CACHE_CONTROL
 
     def test_static_favicon_served_from_public(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1680,9 +1687,12 @@ class TestUi:
             monkeypatch,
             {"index.html": "reportal", "favicon.svg": "<svg xmlns='x'/>"},
         )
-        status, _, body = wsgi_request("GET", "/static/favicon.svg")
+        status, headers, body = wsgi_request("GET", "/static/favicon.svg")
         assert status.startswith("200")
         assert b"<svg" in body
+        # A file whose name carries no hash can change under it, so it is
+        # revalidated rather than pinned for a year.
+        assert headers["Cache-Control"] == ui.SHELL_CACHE_CONTROL
 
     def test_static_traversal_blocked(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

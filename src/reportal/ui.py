@@ -30,6 +30,17 @@ REPORT_INDEX = "index.html"
 APP_INDEX = "index.html"
 UI_NOT_BUILT_DETAIL = "run 'bun install && bun run build' in web/"
 
+# Where Vite writes the hashed bundles, relative to the dist directory.  A file
+# under it carries its content hash in its name, so a browser may keep it
+# forever: a deploy writes a new name rather than new bytes behind the old one.
+ASSET_DIRECTORY = "assets"
+ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
+
+# Everything else the SPA serves (the entry page and the favicon) can change
+# under its own name, so a browser revalidates it and a deploy is picked up on
+# the next load rather than a year later.
+SHELL_CACHE_CONTROL = "no-cache"
+
 
 def dist_dir() -> Path:
     """Directory holding the built SPA (Vite output, generated and gitignored)."""
@@ -69,17 +80,30 @@ def _file_under(root: Path, relative: str) -> Response:
 
 @router.get("/")
 def index() -> Response:
-    """Serve the built SPA shell, or a 503 when the frontend was never built."""
+    """Serve the built SPA shell, or a 503 when the frontend was never built.
+
+    The entry page names the deploy's own asset hashes, so it is answered
+    `no-cache`: a browser revalidates it (a 304 while the build is unchanged)
+    and picks up a new build on the next load.
+    """
     root = dist_dir()
     if not (root / APP_INDEX).is_file():
         raise json_error(503, error="ui-not-built", detail=UI_NOT_BUILT_DETAIL)
-    return FileResponse(root / APP_INDEX)
+    return FileResponse(root / APP_INDEX, headers={"Cache-Control": SHELL_CACHE_CONTROL})
 
 
 @router.get("/static/{path:path}")
 def asset(path: str) -> Response:
-    """Serve one built SPA asset."""
-    return _file_under(dist_dir(), path)
+    """Serve one built SPA asset, cached by content address when it has one.
+
+    Vite writes each bundle under a name carrying its content hash, so the
+    bundles are answered `immutable` and a repeat load makes no request for
+    them; a file without a hash (the favicon) is answered `no-cache` instead.
+    """
+    response = _file_under(dist_dir(), path)
+    hashed = Path(path).parent.as_posix() == ASSET_DIRECTORY
+    response.headers["Cache-Control"] = ASSET_CACHE_CONTROL if hashed else SHELL_CACHE_CONTROL
+    return response
 
 
 @router.get("/reports/{binary_id}/")

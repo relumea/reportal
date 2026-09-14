@@ -15,6 +15,9 @@ view renders it from here.
   that only that route fetches.  `tools/smoke_spa.py` asserts the split, so a
   view import that goes back to being static fails the gate, and the analyses
   e2e spec waits for its table instead of counting it while the view loads.
+  `GET /` is answered `no-cache` and the hashed bundles under
+  `/static/assets/` `immutable`, so a repeat load serves them from the browser
+  cache instead of revalidating 26 files.
 
 - Recorded scan inputs: a stored scan now carries the inputs the caller named
   beside its result (`scans.params_json`), so a reading can be run again the same
