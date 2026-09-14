@@ -743,8 +743,8 @@ match green, `failed` the fail red, `processing` the live hue) and the owning
 binary's tags as an editor: each tag is a chip with its own remove control and
 the cell carries an add field, both of which post the whole set through
 `PATCH /api/analyses/<id>/tags` (the binary's tags are what reportal tags, so a
-change here and a change in the binary's Tags panel are one write).  A status select, an order select and a search box write the
-hash query (`#/analyses?status=failed&search=notepad`), the table states
+change here and a change in the binary's Tags panel are one write).  A status select, an order select and a search box (the binary's name, its
+SHA-256 or the engine label) write the hash query (`#/analyses?status=failed&search=notepad`), the table states
 `N of M analyses` so a filter is distinguishable from a small project, and a
 filter that matched nothing says so instead of rendering an empty table.  Each
 row has a View log control that opens an on-demand drawer over

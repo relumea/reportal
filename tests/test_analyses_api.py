@@ -567,3 +567,30 @@ class TestAnalysisFilters:
         status, headers, body = wsgi_request("GET", "/api/analyses?order=sideways")
         assert status.startswith("400"), body
         assert json_body(body, headers)["error"] == "invalid order"
+
+    def test_search_matches_the_name_the_engine_and_the_hash(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        self._analyse(conn, index=1)
+        self._analyse(conn, index=2)
+
+        # The name and the engine label, as they always were.
+        _status, headers, body = wsgi_request("GET", "/api/analyses?search=demo1")
+        assert [row["binary_name"] for row in json_body(body, headers)["analyses"]] == ["demo1.exe"]
+        _status, headers, body = wsgi_request("GET", "/api/analyses?search=manual")
+        assert json_body(body, headers)["count"] == 2
+
+        # And the hash: a prefix is what an analyst has for a sample whose name
+        # they do not know.
+        _status, headers, body = wsgi_request("GET", "/api/analyses?search=0202")
+        payload = json_body(body, headers)
+        assert payload["count"] == 1
+        assert payload["analyses"][0]["binary_name"] == "demo2.exe"
+
+    def test_search_escapes_like_wildcards(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, index=1)
+
+        status, headers, body = wsgi_request("GET", "/api/analyses?search=%25")
+
+        assert status.startswith("200")
+        assert json_body(body, headers)["count"] == 0

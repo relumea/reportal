@@ -1235,7 +1235,9 @@ def list_analyses(
     ``status`` is one of :data:`ANALYSIS_STATUSES`, ``workspace`` one of
     :data:`WORKSPACE_FILTERS` and ``order`` one of :data:`ANALYSIS_ORDERS`;
     either being unknown raises :class:`ValueError`.  ``search`` matches the
-    binary name or the engine label, case-insensitively.  ``limit`` is bounded by
+    binary name, the binary's SHA-256 (a prefix is enough, which is what an
+    analyst has when they know the sample rather than its name) or the engine
+    label, case-insensitively.  ``limit`` is bounded by
     :data:`MAX_ANALYSIS_LIMIT` and defaults to :data:`DEFAULT_ANALYSIS_LIMIT`.
     Tag names are the owning binary's, ordered by name.
 
@@ -1281,8 +1283,11 @@ def list_analyses(
         params.append(arch)
     if search:
         pattern = _escape_like(search)
-        clauses.append("(b.name LIKE ? ESCAPE '\\' OR a.engine LIKE ? ESCAPE '\\')")
-        params.extend((pattern, pattern))
+        clauses.append(
+            "(b.name LIKE ? ESCAPE '\\' OR a.engine LIKE ? ESCAPE '\\'"
+            " OR b.sha256 LIKE ? ESCAPE '\\')"
+        )
+        params.extend((pattern, pattern, pattern))
     if workspace == WORKSPACE_PERSONAL:
         clauses.append("b.owner_team_id IS NULL")
     elif workspace == WORKSPACE_TEAM:

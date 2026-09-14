@@ -7690,7 +7690,9 @@ def builtin_tools() -> tuple[Tool, ...]:
                 {
                     "status": _enum("Keep only this status.", store.ANALYSIS_STATUSES),
                     "workspace": _enum("Keep only this scope.", store.WORKSPACE_FILTERS),
-                    "search": _str("Match the binary name or the engine label."),
+                    "search": _str(
+                        "Match the binary name, its SHA-256 (a prefix works) or the engine label."
+                    ),
                     "limit": _int(f"Most rows to return (default {store.DEFAULT_ANALYSIS_LIMIT})."),
                 }
             ),

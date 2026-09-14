@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- An analysis search matches the binary's SHA-256 as well as its name and the
+  engine label, so a pasted hash or hash prefix finds the analysis, which is
+  what an analyst has for a sample whose name they do not know.  The hosted
+  analyses list searches the same three fields, and the search box's placeholder
+  now says so.
+
 - The data types list sorts: `GET /api/binaries/<id>/data-types` takes
   `?sort=name|size` (400 `invalid sort`) and `?direction=asc|desc` (400
   `invalid direction`), a type whose size the model states as zero (an unknown

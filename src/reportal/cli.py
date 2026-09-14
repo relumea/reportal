@@ -2755,7 +2755,7 @@ def analyses(
     platform: str | None = typer.Option(None, "--platform", help="Only this binary format"),
     arch: str | None = typer.Option(None, "--arch", help="Only this architecture"),
     search: str | None = typer.Option(
-        None, "--search", help="Match the binary name or the engine label"
+        None, "--search", help="Match the binary name, its SHA-256 or the engine label"
     ),
     order: str = typer.Option(
         store.DEFAULT_ANALYSIS_ORDER, "--order", help="Newest, oldest, name or size, with -desc"
