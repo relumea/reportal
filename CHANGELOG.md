@@ -7,6 +7,14 @@ view renders it from here.
 
 ## Unreleased
 
+- The External view reports the analysis's own source status before a pull.
+  `GET /api/analyses/<id>/external/<source>/status` says whether a source can
+  run for that analysis and whether an answer is stored, and only `reportal
+  external-status` and the `get_external_status` tool read it: the view showed
+  the workspace-level registry and nothing about the analysis in front of the
+  analyst until a pull had already happened.  The pull form now renders that
+  line, and a pull refreshes it.
+
 - A binary's detail shows and edits which collections hold it.  Membership was
   reachable only from the collection's side: `GET /api/collections/<id>` lists a
   collection's members and no read answered "which collections is this binary

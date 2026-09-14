@@ -1086,6 +1086,19 @@ export interface ExternalSourcesPayload {
   note: string;
 }
 
+/** `GET /api/analyses/<id>/external/<source>/status`. */
+export interface ExternalStatus {
+  analysis_id: number;
+  binary_id: number;
+  source: string;
+  kind: string;
+  available: boolean;
+  unavailable_reason: string;
+  stored: boolean;
+  fetched_at: string | null;
+  remote_enabled: boolean;
+}
+
 /** One stored external report, as its route serves it. */
 export interface ExternalReport {
   analysis_id: number;

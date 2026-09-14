@@ -152,3 +152,19 @@ test("the binary's collections panel reads and changes its membership", async ({
   await collections.getByRole("button", { name: "Add" }).click();
   await expect(collections.getByRole("cell", { name: collection })).toBeVisible();
 });
+
+test("the external view names the analysis's own status before a pull", async ({ page }) => {
+  await page.goto("/#/external");
+  const pull = panelByTitle(page, "Pull a report");
+
+  // The status read needs an analysis, so it says so until one is named.
+  await expect(pull.getByText(/Name an analysis to see whether/)).toBeVisible();
+
+  await pull.getByLabel("Analysis", { exact: true }).fill(String(state.ids.analysis_id));
+  // The offline source never leaves the machine and answers from stored rows,
+  // and the seed stores no external answer, so the first status says so.
+  await expect(pull.getByText(/available, nothing stored for this source yet/)).toBeVisible();
+
+  await pull.getByRole("button", { name: "Pull", exact: true }).click();
+  await expect(pull.getByText(/stored, fetched/)).toBeVisible();
+});

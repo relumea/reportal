@@ -530,7 +530,12 @@ availability and the two switches behind a remote one, and carries a pull form
 (analysis id and source, with Pull posting to `POST
 /api/analyses/<id>/external/<source>` and Read stored loading the `GET` on the
 same path) that renders whatever the source returned under a note naming it, its
-kind and the fetch time.  The
+kind and the fetch time.  Naming an analysis also reads `GET
+/api/analyses/<id>/external/<source>/status` and renders its answer above the
+result: whether that source can run for that analysis (with the reason when it
+cannot) and whether an answer is stored for it, naming the fetch time when one
+is.  A pull refreshes that line, so the state a pull left behind is the state
+the view reports.  The
 Renames panel lists each stored suggestion with a checkbox, its reason and
 confidence, an Apply selected / Apply all pair (with a rename-function toggle
 for a function-kind suggestion) and a Revert; an apply or a revert refreshes the

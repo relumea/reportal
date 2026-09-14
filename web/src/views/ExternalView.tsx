@@ -24,7 +24,12 @@ import {
   Panel,
   Toolbar,
 } from "../components";
-import type { ExternalReport, ExternalSource, ExternalSourcesPayload } from "../types";
+import type {
+  ExternalReport,
+  ExternalSource,
+  ExternalSourcesPayload,
+  ExternalStatus,
+} from "../types";
 import { useAsync } from "../useAsync";
 
 function availability(row: ExternalSource): ReactNode {
@@ -45,6 +50,16 @@ export function ExternalView(): ReactNode {
   const [report, setReport] = useState<ExternalReport | null>(null);
 
   const sources = registry.data?.sources ?? [];
+  // The named analysis's own status for the chosen source: whether a pull can
+  // run there and when the stored answer was fetched.
+  const status = useAsync(
+    () =>
+      api<ExternalStatus>(
+        `/analyses/${Number(analysisId)}/external/${encodeURIComponent(source)}/status`,
+      ),
+    [analysisId, source],
+    Number(analysisId) > 0,
+  );
 
   const pull = (): void => {
     const id = Number(analysisId);
@@ -55,7 +70,10 @@ export function ExternalView(): ReactNode {
     api<ExternalReport>(`/analyses/${id}/external/${encodeURIComponent(source)}`, {
       method: "POST",
     })
-      .then(setReport)
+      .then((result) => {
+        setReport(result);
+        status.reload();
+      })
       .catch((failure: unknown) => setError(failure))
       .finally(() => setBusy(false));
   };
@@ -127,6 +145,21 @@ export function ExternalView(): ReactNode {
             Read stored
           </Button>
         </Toolbar>
+        {status.error ? (
+          <ErrorNote error={status.error} onRetry={status.reload} />
+        ) : status.data === undefined ? (
+          <Muted>Name an analysis to see whether {source} can run for it.</Muted>
+        ) : (
+          <Muted>
+            analysis #{status.data.analysis_id} (binary #{status.data.binary_id}):{" "}
+            {status.data.available ? "available" : `unavailable (${status.data.unavailable_reason})`}
+            ,{" "}
+            {status.data.stored
+              ? `stored, fetched ${status.data.fetched_at}`
+              : "nothing stored for this source yet"}
+            .
+          </Muted>
+        )}
         {error ? <ErrorNote error={error} onRetry={pull} /> : null}
         {report ? (
           <>
