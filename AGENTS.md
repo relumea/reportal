@@ -40,8 +40,9 @@ reportal/
 ├── .github/workflows/check.yml  # CI: every gate target but the two browser ones
 ├── README.md               # user-facing docs
 ├── LICENSE                 # MIT
+├── deploy/reportal.service # the systemd unit a host copies and edits (docs/DEPLOY.md)
 ├── docs/                   # README (index), PARITY, ARCHITECTURE, COMPONENTS, ERRORS,
-│                           #   API, CLI, SPA, DATA_MODEL, THREAT_MODEL, DR_RUNBOOK
+│                           #   API, CLI, SPA, DATA_MODEL, DEPLOY, THREAT_MODEL, DR_RUNBOOK
 ├── tests/                  # pytest suite (self-contained, tmp_path based)
 ├── tools/                  # cdp.py (DevTools client), smoke_spa.py, audit_ui.py, seed_e2e.py
 ├── web/                    # Vite + React + TypeScript SPA (bun); src/views and src/panels
@@ -82,7 +83,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 228 source files` is the finish line.
+`Success: no issues found in 230 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +97,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.03%, 31218 statements with 2487 missed. `[tool.coverage.report] fail_under`
+92.07%, 31362 statements with 2486 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -134,6 +135,7 @@ cd web && bun run test:ui   # Playwright over a seeded workspace (see tests/)
 # `make serve` serves the current build without rebuilding.
 make run            # build src/reportal/assets/dist, then serve (PORT=8002)
 make serve          # serve the current build
+reportal doctor     # readiness before a start: exits 1 on a failure (docs/DEPLOY.md)
 
 # Gate (see "Gate"): lint + types + tests under the coverage floor + SPA + wheel
 make check          # the whole gate, in order

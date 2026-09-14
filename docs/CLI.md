@@ -36,6 +36,10 @@ reportal extract <binary-id> [--password TEXT] [--collection ID] [--json]
                                            #   register each member by content hash into one
                                            #   collection and report each member and refusal;
                                            #   one journal action, reverted with the printed id
+reportal doctor [--port N] [--json]        # readiness before a start: workspace,
+                                           #   database, schema, auth, engine, SPA
+                                           #   build, optional paths, free port; exits
+                                           #   1 on a failure, 0 on a warning
 reportal backup [--output PATH] [--json]    # write the whole workspace (database,
                                            #   binaries, reports) as one gzipped
                                            #   tar; the database is copied through

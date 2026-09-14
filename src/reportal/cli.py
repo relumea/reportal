@@ -136,6 +136,7 @@ from reportal import (
     data_types,
     details,
     diffview,
+    doctor,
     effects,
     engines,
     external,
@@ -545,9 +546,66 @@ def _require_lan_auth(portal_db: Path) -> None:
         _fail(f"refusing to bind beyond loopback: {auth.NO_USER_DETAIL}", False)
 
 
+@app.command("doctor")
+def doctor_command(
+    port: int = typer.Option(
+        doctor.DEFAULT_PORT, "--port", help="Port 'reportal serve' would bind"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Check that this install can serve, before anything is started.
+
+    The workspace, the database and its schema, the auth posture, the engine,
+    the SPA build, every optional path and whether the port is bindable.  Every
+    check is a read: nothing is written, no database is created and the port
+    probe is closed again.  A failing check exits 1, so a unit file can gate its
+    own start on this command; a warning is reported without changing the exit
+    code.
+    """
+    payload = doctor.report(port=port)
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        _print_doctor(payload)
+    if payload["failures"]:
+        raise typer.Exit(code=EXIT_DECLINED)
+
+
+def _print_doctor(payload: dict[str, Any]) -> None:
+    """Print one readiness report: every check, its status and the fix."""
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Check", style="cyan")
+    table.add_column("Status")
+    table.add_column("Detail")
+    for check in payload.get("checks", []):
+        status = check["status"]
+        painted = (
+            f"[green]{status}[/green]"
+            if status == "ok"
+            else f"[yellow]{status}[/yellow]"
+            if status == "warn"
+            else f"[red]{status}[/red]"
+        )
+        table.add_row(str(check["name"]), painted, str(check["detail"]))
+    console.print(table)
+    for check in payload.get("checks", []):
+        if check.get("hint"):
+            console.print(f"  [yellow]{check['name']}[/yellow]: {check['hint']}")
+    failures = payload.get("failures") or []
+    if failures:
+        console.print(f"[red]not ready[/red]: {', '.join(str(name) for name in failures)}")
+        return
+    console.print(
+        f"[green]ready[/green]: reportal {payload.get('version')} on"
+        f" {payload.get('workspace') or 'no workspace'}"
+    )
+
+
 @app.command()
 def serve(
-    port: int = typer.Option(8002, "--port", "-p", min=0, max=65535, help="Port to serve on"),
+    port: int = typer.Option(
+        doctor.DEFAULT_PORT, "--port", "-p", min=0, max=65535, help="Port to serve on"
+    ),
     host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind to"),
     no_open: bool = typer.Option(False, "--no-open", help="Don't open browser automatically"),
 ) -> None:

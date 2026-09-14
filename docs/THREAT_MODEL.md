@@ -160,6 +160,7 @@ full below.
 | MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
 | Workspace `reportal.toml` and database files | Local filesystem | `_paths`, `store`, `journal` |
+| Readiness check (`reportal doctor`) | Local operator; the workspace, the port and the optional paths | `doctor.report`, `_port_check`, `_schema_check` |
 
 ## What is out of scope
 

@@ -24,11 +24,13 @@ from reportal import (
     bulk_actions,
     comments,
     conversations,
+    external,
     graph,
     journal,
     knowledge,
     llm,
     remote_ingest,
+    sandbox,
     similarity,
 )
 from reportal._paths import db_path
@@ -123,8 +125,12 @@ def features() -> dict[str, Any]:
     """Which optional paths are on, and what turns each one on.
 
     Nothing here reaches the network: a feature reports configured state, and
-    the two guarded paths (the AI bridge and URL ingestion) stay off until the
-    workspace opts in.
+    every guarded path (the AI bridge, URL ingestion, detonation and the remote
+    sources) stays off until the workspace opts in.  Each flag is the opt-in
+    itself, not the install behind it: ``similarity`` reports the package,
+    ``sandbox`` and ``external_sources`` report whether the workspace allowed
+    the path, and whether the tool or key it also needs is present is what
+    ``reportal doctor`` and ``GET /api/health`` answer.
     """
     from reportal import graph_backends
 
@@ -135,8 +141,8 @@ def features() -> dict[str, Any]:
         "graph_backend": graph_backends.configured_backend_name(),
         "graph_backends": [backend.name for backend in graph_backends.graph_backends()],
         "auth": "token" if auth.required() else "single-user",
-        "sandbox": False,
-        "external_sources": False,
+        "sandbox": sandbox.enabled(),
+        "external_sources": external.remote_enabled(),
     }
 
 

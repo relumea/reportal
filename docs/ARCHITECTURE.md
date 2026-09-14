@@ -90,6 +90,8 @@ reportal/
 │   │                         #   through the engine, UPX through the external tool
 │   ├── benchmark.py          # precision and recall of a match run against labelled
 │   │                         #   counterpart addresses
+│   ├── doctor.py             # pre-flight readiness: workspace, database, schema,
+│   │                         #   engine, SPA build, optional paths and the port
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
 │   │                         #   derived callees, analyst-declared edges, canonical names
 │   ├── user_strings.py       # analyst strings at function or analysis scope, plus
@@ -147,6 +149,11 @@ The request path is `server.py` (shared app plus helpers) composed by
 `webapp.py`, with routes in `api.py` and `ui.py`. Engine work is confined to
 `engines.py`; tests inject a fake engine through `engines.set_engine()` rather
 than running the engine.
+
+The tree also carries `deploy/reportal.service`, the systemd unit a host
+copies and edits (`docs/DEPLOY.md` is the sequence around it), and every gate
+target keeps working without it: the unit is data a test verifies with
+`systemd-analyze verify` on a copy whose paths point into a temporary directory.
 
 ## Library choices
 
@@ -2395,6 +2402,33 @@ half-restored workspace never looks complete.  A path that lived outside the
 archived workspace is left where it points and reported: that is the user's own
 rebrew project, which reportal never owned.  An existing database is refused
 unless the caller asks to overwrite, which the CLI confirms.
+
+## Readiness
+
+`doctor.py` answers "can this install serve" without starting one.
+`GET /api/health` answers the same question from inside a running server; it
+cannot check the two things a start depends on first (whether the SPA has a
+build, which the server answers 503 at `/` without, and whether the port is
+free), so `reportal doctor` is the pre-flight half and a unit's `ExecStartPre`
+gates its own start on it.
+
+Every check is a read: the workspace walk-up, the database file and its write
+permission, the schema (the four tables the reads need, then `store.counts`), the
+auth posture and the enabled users a non-loopback bind needs, the engine's
+availability and origin, the SPA build, every optional path as one row, and a
+port probe that binds loopback with `SO_REUSEADDR` and closes again (uvicorn
+binds that way, so a socket in `TIME_WAIT` is not reported as a conflict).  A
+missing workspace is a reported failure, never a directory reportal creates.
+
+A check is `ok` (the path works), `warn` (it works, with a caveat) or `fail`
+(the portal cannot serve correctly).  A warning never changes the exit code, a
+failure always does, which is what makes the command usable both as an
+operator's read and as a supervisor's gate.  The optional paths are one check
+rather than several: it warns only when a path is asked for and unusable
+(detonation opted in with no runner, remote sources opted in with no key, a
+configured graph backend whose package is missing) and lists every path's state
+either way, so an install that chose not to install the similarity extra reads
+as `similarity=off` rather than as a defect.
 
 ## Library identification and the bill of materials
 

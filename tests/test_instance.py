@@ -17,11 +17,13 @@ from reportal import (
     bulk_actions,
     cli,
     comments,
+    external,
     instance,
     integrations,
     journal,
     knowledge,
     mcp_tools,
+    sandbox,
     store,
 )
 from reportal._paths import DB_ENV
@@ -79,6 +81,27 @@ class TestPayload:
         monkeypatch.setenv("REPORTAL_ALLOW_REMOTE_INGEST", "1")
 
         assert instance.features()["remote_ingest"] is True
+
+    def test_an_enabled_detonation_is_reported_as_on(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("REPORTAL_SANDBOX", "enabled")
+
+        assert instance.features()["sandbox"] is True
+
+    def test_enabled_remote_sources_are_reported_as_on(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("REPORTAL_ALLOW_EXTERNAL", "1")
+
+        assert instance.features()["external_sources"] is True
+
+    def test_the_features_are_the_opt_ins_the_paths_read(self, monkeypatch: Any) -> None:
+        # Each flag is the gate the path itself checks, so the config read and
+        # the route that refuses cannot disagree.
+        monkeypatch.setenv("REPORTAL_SANDBOX", "1")
+        monkeypatch.setenv("REPORTAL_ALLOW_EXTERNAL", "yes")
+
+        features = instance.features()
+
+        assert features["sandbox"] is sandbox.enabled()
+        assert features["external_sources"] is external.remote_enabled()
 
     def test_it_reports_the_engine_and_its_backends(self, fake_engine: Any) -> None:
         engine = instance.describe()["engine"]

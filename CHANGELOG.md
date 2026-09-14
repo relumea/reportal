@@ -7,6 +7,17 @@ view renders it from here.
 
 ## Unreleased
 
+- Deployment readiness and a service unit: `reportal doctor [--port N]
+  [--json]` checks that this install can serve before anything starts (the
+  workspace, the database and its schema, the auth posture, the engine, the SPA
+  build, every optional path and whether the port is bindable), exits 1 on a
+  failure and 0 on a warning, and is what `deploy/reportal.service` runs as its
+  `ExecStartPre`.  `docs/DEPLOY.md` is the sequence around it: the host
+  requirements, the unit's directives and their deliberate omissions, remote
+  access with token auth, the backup timer and the upgrade steps.  `GET
+  /api/config`'s `features` now reports the detonation and remote-source opt-ins
+  from the gates those paths read, instead of two hardcoded falses.
+
 - Benchmarking a match run: `reportal benchmark <left-id> <right-id>` and
   `POST /api/binaries/<id>/benchmark` run the ordinary match with the partner
   binary as the candidate scope and score the rows it recorded against labelled

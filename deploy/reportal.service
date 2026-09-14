@@ -1,0 +1,51 @@
+# reportal as a systemd service.
+#
+# This file is a template, not an installed unit: copy it to
+# /etc/systemd/system/reportal.service, replace /srv/reportal with the workspace
+# root, replace the reportal account with the one that owns that directory, then
+# `systemctl daemon-reload && systemctl enable --now reportal`.  docs/DEPLOY.md
+# has the whole sequence, including the backup it should run against.
+#
+# The hardening below assumes the workspace directory is the service's whole
+# state.  Egress is deliberately not restricted: the AI bridge, the external
+# sources and guarded URL ingestion call an endpoint the operator configures,
+# so an install that uses none of them can add `IPAddressDeny=any` with an
+# `IPAddressAllow=` for whatever else it needs.
+
+[Unit]
+Description=reportal reverse-engineering portal
+Documentation=https://github.com/relumea/reportal/blob/main/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reportal
+Group=reportal
+WorkingDirectory=/srv/reportal
+# Readiness before serving: a missing workspace, an unwritable database, a
+# broken schema or a taken port stops the start instead of serving failures.
+ExecStartPre=/srv/reportal/.venv/bin/reportal doctor
+ExecStart=/srv/reportal/.venv/bin/reportal serve --host 127.0.0.1 --port 8002 --no-open
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+# The workspace is read-write; the rest of the host is read-only or hidden.  No
+# MemoryDenyWriteExecute: the engine's decompiler backends may need an
+# executable mapping.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/srv/reportal
+
+[Install]
+WantedBy=multi-user.target
