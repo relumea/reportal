@@ -35,6 +35,7 @@ import {
   WORKSPACE_FILTERS,
   DEFAULT_ANALYSIS_LIMIT,
   DEFAULT_ANALYSIS_LOG_LIMIT,
+  MAX_ANALYSIS_LIMIT,
 } from "../constants";
 import { logSeverityLevel } from "../design";
 import type {
@@ -61,6 +62,15 @@ interface AnalysisFilters {
   /** The stored binary format, and its architecture beside it. */
   platform: string;
   arch: string;
+  /** Rows to ask for, as text; a value the route refuses never reaches it. */
+  limit: string;
+}
+
+/** The page bound a hash carries: a number the route accepts, else the default. */
+function limitFromQuery(raw: string | undefined): string {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (Number.isNaN(parsed)) return String(DEFAULT_ANALYSIS_LIMIT);
+  return String(Math.min(Math.max(parsed, 1), MAX_ANALYSIS_LIMIT));
 }
 
 function filtersFromQuery(query: Record<string, string>): AnalysisFilters {
@@ -78,6 +88,7 @@ function filtersFromQuery(query: Record<string, string>): AnalysisFilters {
       : "",
     platform: query.platform ?? "",
     arch: query.arch ?? "",
+    limit: limitFromQuery(query.limit),
   };
 }
 
@@ -91,7 +102,7 @@ function listPath(filters: AnalysisFilters): string {
   if (filters.workspace) params.set("workspace", filters.workspace);
   if (filters.platform) params.set("platform", filters.platform);
   if (filters.arch) params.set("arch", filters.arch);
-  params.set("limit", String(DEFAULT_ANALYSIS_LIMIT));
+  params.set("limit", filters.limit);
   return `/analyses?${params.toString()}`;
 }
 
@@ -104,6 +115,7 @@ function filterSearch(filters: AnalysisFilters): string {
   if (filters.workspace) params.set("workspace", filters.workspace);
   if (filters.platform) params.set("platform", filters.platform);
   if (filters.arch) params.set("arch", filters.arch);
+  if (filters.limit !== String(DEFAULT_ANALYSIS_LIMIT)) params.set("limit", filters.limit);
   return params.toString();
 }
 
@@ -566,6 +578,15 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               ))}
             </select>
           </Field>
+          <Field label="Show" hint={`up to ${MAX_ANALYSIS_LIMIT}`}>
+            <input
+              type="number"
+              min={1}
+              max={MAX_ANALYSIS_LIMIT}
+              value={filters.limit}
+              onChange={(event) => apply({ limit: limitFromQuery(event.target.value) })}
+            />
+          </Field>
           <Field label="Search">
             <input
               placeholder="binary, engine or hash"
@@ -608,6 +629,9 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
             <div className="row-between">
               <span className="muted">
                 {analyses.length} of {result.data?.total ?? analyses.length} analyses
+                {analyses.length < (result.data?.total ?? 0)
+                  ? `; raise Show (up to ${MAX_ANALYSIS_LIMIT}) to list the rest`
+                  : ""}
               </span>
             </div>
             <DataTable

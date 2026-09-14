@@ -732,9 +732,12 @@ rather than an empty page.
 The Analyses view (`views/AnalysesView.tsx`) carries the entry 10 filters: a
 chip per status (the set is any-of, the last one off means any status), a
 platform and an architecture select built from the values the payload reports
-the register actually holds, an Order select over `store.ANALYSIS_ORDERS` and a
-Clear control; every one of them is in the route hash, so a filtered list is
-shareable.  Each row's Actions cell carries View log, Re-analyse (the cluster D
+the register actually holds, an Order select over `store.ANALYSIS_ORDERS`, a
+Show field for the page size (bounded by `store.MAX_ANALYSIS_LIMIT`, and left
+out of the hash while it is the default) and a Clear control; every one of them
+is in the route hash, so a filtered list is shareable.  The count line reads
+`N of M analyses` and, while the bound is hiding rows, says so and names the
+Show control that lists the rest.  Each row's Actions cell carries View log, Re-analyse (the cluster D
 requeue, which puts the analysis back to pending and clears its finish time) and
 Delete, and the bulk toolbar adds Copy hashes beside Add tag, Remove tag and
 Delete.

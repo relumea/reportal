@@ -120,3 +120,30 @@ test("the status chips, platform filter, order and re-analyse drive the list", a
   await button.click();
   await expect(panel.locator("tbody tr").first()).toBeVisible();
 });
+
+test("the page size bounds the list and says what it is hiding", async ({ page }) => {
+  await page.goto("/#/analyses");
+  const panel = panelByTitle(page, "Analyses");
+  const rows = panel.locator("tbody tr");
+  await expect(rows.first()).toBeVisible();
+  const counted = await panel.getByText(/^\d+ of \d+ analyses/).innerText();
+  const total = Number(/of (\d+)/.exec(counted)?.[1] ?? 0);
+  expect(total).toBeGreaterThan(1);
+
+  // The control asks the route for that many rows, and the URL carries it.
+  const asked = page.waitForRequest(
+    (request) => request.url().includes("/api/analyses?") && request.url().includes("limit=2"),
+  );
+  await panel.getByRole("spinbutton", { name: /^Show/ }).fill("2");
+  await asked;
+  await expect(page).toHaveURL(/limit=2/);
+  await expect(rows).toHaveCount(2);
+  // With rows left over, the line says so rather than reading as the whole set.
+  await expect(panel.getByText(/raise Show \(up to 1000\) to list the rest/)).toBeVisible();
+
+  // The default bound is the one the hash leaves out, so the URL stays clean.
+  await panel.getByRole("spinbutton", { name: /^Show/ }).fill("100");
+  await expect(page).toHaveURL(/#\/analyses$/);
+  await expect(rows).toHaveCount(total);
+  await expect(panel.getByText(/raise Show/)).toHaveCount(0);
+});

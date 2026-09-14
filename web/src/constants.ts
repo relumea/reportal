@@ -323,8 +323,10 @@ export const ANALYSIS_ORDER_LABELS: Record<(typeof ANALYSIS_ORDERS)[number], str
 export const WORKSPACE_FILTERS = ["personal", "team", "public"] as const;
 export type WorkspaceFilter = (typeof WORKSPACE_FILTERS)[number];
 
-// Rows one analyses request asks for; mirrors store.DEFAULT_ANALYSIS_LIMIT.
+// Rows one analyses request asks for, and the most the route accepts; both
+// mirror store.DEFAULT_ANALYSIS_LIMIT and store.MAX_ANALYSIS_LIMIT.
 export const DEFAULT_ANALYSIS_LIMIT = 100;
+export const MAX_ANALYSIS_LIMIT = 1000;
 
 // A log page's size when the drawer opens and when "Load more" is pressed;
 // mirrors analysis_log.DEFAULT_LOG_LIMIT.

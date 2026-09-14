@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- The analyses list can be paged.  It always asked the route for exactly
+  `store.DEFAULT_ANALYSIS_LIMIT` rows and offered no way to ask for more, so a
+  workspace with more than a hundred analyses could see the first hundred and
+  nothing else even though the payload reported the true total and the route
+  accepts up to `store.MAX_ANALYSIS_LIMIT`.  A Show field now sets the bound in
+  the route hash (left out while it is the default, and clamped to the range the
+  route accepts so a hand-edited URL cannot ask for a 400), and the count line
+  says when rows are hidden and which control lists the rest.
+
 - The journal filters by the actor it recorded.  `GET /api/journal` takes
   `?actor=` beside its existing `?action=` and `?limit=`, echoes what it applied
   and names the `actors` the journal holds (the same facet idea as the job
