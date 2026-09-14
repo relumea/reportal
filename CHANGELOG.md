@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- Each stored remediation artifact can be downloaded.  `GET
+  /api/binaries/<id>/remediation/<yara|snort|stix>` served one artifact as the
+  raw text or JSON the store holds, and the panel that renders all three
+  offered only a copy: each artifact's section now links to the read that
+  serves that one format.
+
 - The function detail can search its binary's stored documents.
   `GET /api/functions/<id>/knowledge` ranks the binary's knowledge scope
   against a query and resolves a blank one to the function's own name, and

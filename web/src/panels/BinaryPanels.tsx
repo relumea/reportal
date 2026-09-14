@@ -2814,13 +2814,24 @@ export function RemediationPanel({ binaryId }: { binaryId: number }): ReactNode 
         hint="Loading the remediation artifacts"
         noScanHint={NO_SCAN_MESSAGES.remediation}
       >
-        {(data) => <RemediationBody result={data} />}
+        {(data) => <RemediationBody binaryId={binaryId} result={data} />}
       </PanelBody>
     </Panel>
   );
 }
 
-function RemediationBody({ result }: { result: RemediationResult }): ReactNode {
+/** The stored artifact of one remediation format, as the raw read serves it. */
+function remediationArtifact(binaryId: number, format: string): string {
+  return `/api/binaries/${binaryId}/remediation/${format}`;
+}
+
+function RemediationBody({
+  binaryId,
+  result,
+}: {
+  binaryId: number;
+  result: RemediationResult;
+}): ReactNode {
   const validation = result.validated
     ? `validated by ${result.validator ?? "yarac"}`
     : result.validator
@@ -2837,7 +2848,14 @@ function RemediationBody({ result }: { result: RemediationResult }): ReactNode {
         specificity {result.specificity} · {validation}
       </Muted>
       <details open>
-        <summary>YARA</summary>
+        <summary>
+          YARA{" "}
+          {result.rule ? (
+            <a className="btn btn-ghost btn-sm" href={remediationArtifact(binaryId, "yara")}>
+              Download
+            </a>
+          ) : null}
+        </summary>
         {result.rule ? (
           <CodeBlock text={result.rule} title="yara" />
         ) : (
@@ -2845,7 +2863,14 @@ function RemediationBody({ result }: { result: RemediationResult }): ReactNode {
         )}
       </details>
       <details open>
-        <summary>Snort</summary>
+        <summary>
+          Snort{" "}
+          {snortText ? (
+            <a className="btn btn-ghost btn-sm" href={remediationArtifact(binaryId, "snort")}>
+              Download
+            </a>
+          ) : null}
+        </summary>
         {snortText ? (
           <CodeBlock text={snortText} title="snort" />
         ) : (
@@ -2853,7 +2878,14 @@ function RemediationBody({ result }: { result: RemediationResult }): ReactNode {
         )}
       </details>
       <details>
-        <summary>STIX</summary>
+        <summary>
+          STIX{" "}
+          {stixText ? (
+            <a className="btn btn-ghost btn-sm" href={remediationArtifact(binaryId, "stix")}>
+              Download
+            </a>
+          ) : null}
+        </summary>
         {stixText ? (
           <CodeBlock text={stixText} title="stix" />
         ) : (

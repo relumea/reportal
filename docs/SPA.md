@@ -376,8 +376,10 @@ expandable evidence, and the report's notes); remediation (auto-loads the stored
 the engine on render; a `no-scan` response shows the nothing-stored message with
 a Generate control, rendering the rule name, string count and validation status
 plus a collapsible section per artifact, YARA, Snort and STIX, each with its
-text in a `<pre class="code">` and a copy control or an artifact-specific empty
-state, then the Snort and YARA notes); and a link to the binary's functions.
+text in a `<pre class="code">`, a copy control and, when the artifact is
+present, a Download link to the raw read that serves that one format
+(`GET /api/binaries/<id>/remediation/<yara|snort|stix>`), or an
+artifact-specific empty state, then the Snort and YARA notes); and a link to the binary's functions.
 
 Function detail (`#/functions/<id>`) panels: header (id, VA, name, size,
 status, name_source); signature (auto-loads the stored signature through its

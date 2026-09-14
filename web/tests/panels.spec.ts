@@ -118,3 +118,15 @@ test("the function knowledge panel retrieves the binary's documents", async ({ p
   await expect(knowledge.getByText(KNOWLEDGE_DOCUMENT_TITLE)).toBeVisible();
   await expect(knowledge.getByText(/1 chunk\(s\) for "toolbar"/)).toBeVisible();
 });
+
+test("each stored remediation artifact links to its raw read", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const remediation = panelByTitle(page, "Remediation");
+  const base = `/api/binaries/${state.ids.binary_id}/remediation`;
+
+  // The seeded scan carries all three artifacts, so each summary links to the
+  // format route that serves that one.
+  for (const format of ["yara", "snort", "stix"]) {
+    await expect(remediation.locator(`a[href="${base}/${format}"]`)).toBeVisible();
+  }
+});
