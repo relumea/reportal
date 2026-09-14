@@ -116,6 +116,8 @@ import type {
   ThreatReport,
   ThreatScore,
   TriageDossier,
+  UnpackProvenance,
+  UnpackResult,
   UnstripProposal,
   UnstripResult,
 } from "../types";
@@ -913,15 +915,128 @@ export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNo
   );
 }
 
-export function UnpackedFilesPanel(): ReactNode {
+export function UnpackedFilesPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "unpack");
+  const path = `/binaries/${binaryId}/unpack`;
+  const entry = usePanel(key, () => api<UnpackProvenance>(path));
+  const [packer, setPacker] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<UnpackResult | null>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
+
+  const run = async (): Promise<void> => {
+    setBusy(true);
+    setActionError(null);
+    setResult(null);
+    try {
+      const payload = await api<UnpackResult>(path, {
+        method: "POST",
+        json: packer ? { packer } : {},
+      });
+      setResult(payload);
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <Panel title="Unpacked files" subtitle="What this portal can and cannot unpack.">
-      <Note tone="info">
-        reportal never unpacks a sample: unpacking a packed executable needs a sandbox to run it in,
-        and the portal runs no sample. The engine&apos;s only unpack path is{" "}
-        <code>rebrew unpack-lzexe</code>, which covers DOS LZEXE 0.90/0.91 executables.
-      </Note>
+    <Panel
+      title="Unpacked files"
+      subtitle="Rebuild the image a packer replaced and register it as a binary of its own. Nothing is executed."
+      actions={
+        <Button tone="primary" pending={busy} onClick={() => void run()}>
+          Run unpack
+        </Button>
+      }
+    >
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      <Toolbar>
+        <Field
+          label="Packer"
+          hint="Detected from the file's own stub when left on Auto. UPX needs the upx tool installed."
+        >
+          <select value={packer} onChange={(event) => setPacker(event.target.value)}>
+            <option value="">Auto</option>
+            <option value="lzexe">LZEXE (in process)</option>
+            <option value="upx">UPX (external upx)</option>
+          </select>
+        </Field>
+      </Toolbar>
+      {entry === undefined ? (
+        <Loading label="Loading the unpack provenance" rows={2} />
+      ) : entry.state === "error" ? (
+        <ErrorNote
+          error={entry.error}
+          onRetry={() => refreshPanel(key, () => api<UnpackProvenance>(path))}
+        />
+      ) : entry.state !== "ready" ? null : entry.data.stored ? (
+        <UnpackProvenanceRows provenance={entry.data} title="This binary was unpacked from" />
+      ) : (
+        <Note tone="info">
+          {entry.data.notes[0] ?? "This binary did not come from an unpack."} A packed file's own
+          bytes name the packer: the LZEXE stub at the entry point, or the UPX marker.
+        </Note>
+      )}
+      {result ? (
+        <>
+          <Note tone="info">
+            Unpacked with {result.packer} ({result.method}).
+          </Note>
+          <UnpackProvenanceRows provenance={result.provenance} title="Rebuilt from" />
+          <KeyValue
+            rows={[
+              [
+                "New binary",
+                result.unpacked.binary_id === null ? (
+                  <Muted>none</Muted>
+                ) : (
+                  <a href={`#/binaries/${result.unpacked.binary_id}`}>
+                    #{result.unpacked.binary_id} {result.unpacked.name}
+                  </a>
+                ),
+              ],
+              ["sha256", <span className="mono">{result.unpacked.sha256}</span>],
+              ["Already stored", result.unpacked.duplicate ? "yes" : "no"],
+              ["Identified by", result.detected.map((found) => found.detail).join(", ")],
+            ]}
+          />
+          {result.notes.map((note) => (
+            <Muted key={note}>{note}</Muted>
+          ))}
+        </>
+      ) : null}
     </Panel>
+  );
+}
+
+/** The provenance of an unpacked binary, read from its `unpack` scan. */
+function UnpackProvenanceRows({
+  provenance,
+  title,
+}: {
+  provenance: UnpackProvenance;
+  title: string;
+}): ReactNode {
+  const source = provenance.source;
+  return (
+    <KeyValue
+      rows={[
+        [title, source ? `${source.name} (#${source.binary_id})` : <Muted>unknown</Muted>],
+        ["Source sha256", <span className="mono">{source?.sha256 ?? "not recorded"}</span>],
+        ["Packer", `${provenance.packer} (${provenance.detected ?? provenance.method ?? ""})`],
+        [
+          "Sizes",
+          provenance.image_size != null
+            ? `${provenance.image_size.toLocaleString()} image bytes, ${(
+                provenance.file_size ?? 0
+              ).toLocaleString()} file bytes`
+            : `${(provenance.file_size ?? 0).toLocaleString()} file bytes`,
+        ],
+        ["Unpacked at", provenance.unpacked_at ?? "unknown"],
+      ]}
+    />
   );
 }
 

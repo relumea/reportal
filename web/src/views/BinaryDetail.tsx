@@ -71,7 +71,7 @@ export function BinaryDetail({
           <CodeSignaturePanel binaryId={binary.id} />
           <DetailCoveragePanel binaryId={binary.id} />
           <PackerPanel binaryId={binary.id} />
-          <UnpackedFilesPanel />
+          <UnpackedFilesPanel binaryId={binary.id} />
           <StringsPanel binaryId={binary.id} />
           <TagsPanel binaryId={binary.id} />
           <CommentsPanel scopeKind="binary" scopeId={binary.id} />

@@ -170,6 +170,7 @@ from reportal import (
     store,
     symbols,
     threat,
+    unpack,
     unstrip,
     user_strings,
     zipcrypto,
@@ -10435,6 +10436,103 @@ def sbom_command(
         console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
         return
     typer.echo(text, nl=False)
+
+
+# ── unpacking a packed executable ──────────────────────────────────
+
+
+@app.command("unpack")
+def unpack_command(
+    binary_id: int = typer.Argument(..., help="Binary id of the packed executable"),
+    packer: str = typer.Option("", "--packer", help="lzexe or upx; detected when left out"),
+    name: str = typer.Option("", "--name", help="Display name for the unpacked binary"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rebuild a packed binary's image and register it as a binary of its own.
+
+    The packer is detected from the source file's own stub unless ``--packer``
+    names one.  LZEXE is rebuilt in process by the engine; UPX needs the
+    external ``upx`` tool, which reportal does not ship.  Nothing is executed
+    and the packed source is left as it was.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    from reportal import api
+
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = api.unpack_binary(conn, binary_id, packer=packer, name=name)
+        except api.ExtractError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    _print_unpack(payload)
+
+
+def _print_unpack(payload: dict[str, Any]) -> None:
+    """Print one unpack: what identified the packer and the binary it produced."""
+    unpacked = payload.get("unpacked") or {}
+    console.print(
+        f"\n[bold cyan]binary {payload.get('binary_id')}[/bold cyan]"
+        f" unpacked with [bold]{payload.get('packer')}[/bold]"
+        f" via {payload.get('method')}"
+    )
+    for note in payload.get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+    if unpacked.get("binary_id") is None:
+        console.print("[yellow]No binary was registered.[/yellow]")
+        return
+    table = Table(show_header=False)
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("binary id", str(unpacked["binary_id"]))
+    table.add_row("name", str(unpacked["name"]))
+    table.add_row("sha256", str(unpacked["sha256"]))
+    table.add_row("path", str(unpacked["path"]))
+    table.add_row("duplicate", "yes" if unpacked.get("duplicate") else "no")
+    console.print(table)
+
+
+@app.command("unpack-info")
+def unpack_info_command(
+    binary_id: int = typer.Argument(..., help="Binary id to read the unpack provenance of"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Show where an unpacked binary came from and which packer produced it."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = unpack.describe(conn, binary_id)
+        except unpack.UnpackError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if not payload.get("stored"):
+        console.print(f"[yellow]{' '.join(payload.get('notes') or [])}[/yellow]")
+        return
+    source = payload.get("source") or {}
+    table = Table(show_header=False)
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("binary id", str(payload.get("binary_id")))
+    table.add_row("source binary", f"{source.get('binary_id')} ({source.get('name')})")
+    table.add_row("source sha256", str(source.get("sha256")))
+    table.add_row("packer", str(payload.get("packer")))
+    table.add_row("detected", str(payload.get("detected")))
+    table.add_row("method", str(payload.get("method")))
+    if payload.get("version") is not None:
+        table.add_row("packer version", str(payload.get("version")))
+    table.add_row("image bytes", str(payload.get("image_size")))
+    table.add_row("file bytes", str(payload.get("file_size")))
+    table.add_row("unpacked at", str(payload.get("unpacked_at")))
+    console.print(table)
+    for note in payload.get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
 
 
 # ── unstrip ────────────────────────────────────────────────────────

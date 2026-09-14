@@ -938,6 +938,46 @@ class RebrewEngine:
             lambda: run_test(cfg, source, no_promote=True, json_output=True),
         )
 
+    @_maps_missing_engine
+    def lzexe_version(self, binary: str | Path) -> int | None:
+        """The LZEXE version *binary* was packed with (90 or 91), or None.
+
+        Detection reads the MZ header and the decompressor stub at the entry
+        point, so "not packed" is an answer rather than a failure: a plain MZ,
+        another packer and a non-MZ file all come back None.
+        """
+        path = _require_file(binary)
+        self._require_available()
+        from rebrew.lzexe import lzexe_version
+
+        return _call("lzexe", lambda: lzexe_version(path))
+
+    @_maps_missing_engine
+    def unpack_lzexe(self, binary: str | Path, output: str | Path) -> dict[str, Any]:
+        """Rebuild the image of an LZEXE-packed *binary* into *output*.
+
+        Output is ``{"version", "image_size", "file_size"}``: the version the
+        stub reports and the byte counts of the decompressed image and of the
+        MZ file written.  A binary that is not LZEXE-packed raises
+        :class:`EngineError`.
+        """
+        path = _require_file(binary)
+        self._require_available()
+        target = Path(output)
+        from rebrew.lzexe import unpack_lzexe
+
+        def rebuild() -> dict[str, Any]:
+            result = unpack_lzexe(path)
+            data = result.to_bytes()
+            target.write_bytes(data)
+            return {
+                "version": result.version,
+                "image_size": len(result.image),
+                "file_size": len(data),
+            }
+
+        return _call("lzexe", rebuild)
+
     def _require_available(self) -> None:
         """Raise :class:`EngineUnavailable` when the engine is not importable."""
         if not self.available():

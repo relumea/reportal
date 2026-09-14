@@ -2937,6 +2937,57 @@ export interface LibraryResult {
   notes: string[];
 }
 
+/** The packed source a binary was unpacked from. */
+export interface UnpackSource {
+  binary_id: number;
+  name: string;
+  sha256: string | null;
+  size: number;
+}
+
+/** One packer the file's own bytes identified. */
+export interface UnpackPacker {
+  packer: string;
+  detail: string;
+  method: string;
+}
+
+/** `GET /api/binaries/<id>/unpack`: where an unpacked binary came from. */
+export interface UnpackProvenance {
+  binary_id: number;
+  binary_name?: string;
+  stored: boolean;
+  source: UnpackSource | null;
+  packer: string;
+  detected?: string;
+  method?: string;
+  tool?: string;
+  version?: number | null;
+  image_size?: number | null;
+  file_size?: number | null;
+  unpacked_at?: string;
+  notes: string[];
+}
+
+/** `POST /api/binaries/<id>/unpack`: the rebuild and the binary it produced. */
+export interface UnpackResult {
+  binary_id: number;
+  source: UnpackSource;
+  packer: string;
+  method: string;
+  detected: UnpackPacker[];
+  unpacked: {
+    binary_id: number | null;
+    name: string;
+    sha256: string;
+    path: string;
+    duplicate: boolean;
+  };
+  provenance: UnpackProvenance;
+  notes: string[];
+  journal_action?: string;
+}
+
 /** One entry of the documentation index (`GET /api/docs`). */
 export interface DocPage {
   slug: string;

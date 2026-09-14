@@ -82,7 +82,7 @@ level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 222 source files` is the finish line.
+`Success: no issues found in 226 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
 `.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
@@ -96,7 +96,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.09%, 30391 statements with 2403 missed. `[tool.coverage.report] fail_under`
+92.05%, 30906 statements with 2458 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -489,7 +489,13 @@ updates an analysis's types from C declarations, so both are destructive.
 rollup and the per-candidate list) and `export_sbom` renders it as CycloneDX,
 SPDX or CSV, so both are read-only; `run_library` runs the engine's signature
 match over the binary's rebrew project and stores the reading, and is
-destructive.  `get_symbols` reads a binary's ingested debug symbol
+destructive.  `get_unpack` reads a binary's stored unpack provenance (the packed
+source and its hash, the packer and what identified it, the method and the
+sizes), and `run_unpack` rebuilds a packed binary's image, registers it as a
+binary of its own and stores that provenance on the new binary, so the read is
+read-only and the run is destructive (it answers a `no-packer`,
+`unknown-packer`, `no-unpacker` or `unpack-failed` tool error for a file it
+cannot rebuild).  `get_symbols` reads a binary's ingested debug symbol
 files (kind, counts, notes and the parse) and is read-only; `import_symbols`
 parses a PDB or an ELF/DWARF file, renames the functions whose VA matches a
 symbol and adds the aggregate types it declares as one journaled action, and
@@ -527,7 +533,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 236 built-in tools, 111 read-only and 125 destructive.
+declares 238 built-in tools, 112 read-only and 126 destructive.
 
 ## SPA
 
@@ -567,6 +573,8 @@ error rather than a traceback.  Callers go through `get_engine()` /
 | `structs` | `rebrew.struct_recover.recover_project_structs` | project |
 | `security_scan` | `rebrew.security_scan.security_scan` | project |
 | `identify_library` | `rebrew.identify_library.collect_candidates` | project |
+| `lzexe_version` | `rebrew.lzexe.lzexe_version` | standalone |
+| `unpack_lzexe` | `rebrew.lzexe.unpack_lzexe`, written into the caller's path | standalone |
 | `report` | `rebrew.report.generate_report` | project |
 
 A project method loads its config with `rebrew.config.load_config(root)` from
@@ -596,6 +604,11 @@ resolved config:
 - `test_source` returns `rebrew.test.run_test(cfg, source, no_promote=True)`.
   A mismatch is a result, not a failure: the object is returned for a match and
   a mismatch alike, and only a tooling failure raises.
+- `unpack_lzexe` writes `rebrew.lzexe.unpack_lzexe(path).to_bytes()` to the
+  caller's path, so the LZEXE case of `reportal unpack` is the engine's own
+  unpacker in process and reportal reimplements no decompressor; its detection
+  half, `lzexe_version`, answers None for a binary that is not LZEXE-packed
+  rather than raising.
 
 `read_memory` and
 `read_memory_page` take their section map from the engine's own `pe_info` and
@@ -632,8 +645,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 236 built-in
-tools (111 read-only, 125 destructive).
+and `run_match` expose the same over MCP, and the counts stay 238 built-in
+tools (112 read-only, 126 destructive).
 
 ### Scaling
 

@@ -97,6 +97,7 @@ from reportal import (
     surface,
     symbols,
     threat,
+    unpack,
     unstrip,
     user_strings,
     zipcrypto,
@@ -987,6 +988,136 @@ def _link_member(
             {"collection_id": collection_id, "binary_id": int(binary_id)},
         ),
     )
+
+
+def _unpacked_name(binary_name: str) -> str:
+    """The default display name of an unpacked image: source stem, ``unpacked``, suffix."""
+    candidate = Path(binary_name).name
+    return f"{Path(candidate).stem or 'binary'}.unpacked{Path(candidate).suffix}"
+
+
+def unpack_binary(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    *,
+    packer: str = "",
+    name: str = "",
+) -> dict[str, Any]:
+    """Rebuild a packed binary's image and register it as a new binary.
+
+    The packer is the caller's when *packer* names one, else the one the source
+    file's own stub identifies.  The rebuilt image is written into the workspace
+    `binaries/` directory and registered by content hash exactly like an upload,
+    so unpacking the same sample twice resolves to the binary already stored
+    instead of a second copy.  The new binary carries the provenance as its
+    ``unpack`` scan: the source binary and its hash, the packer, the method and
+    the sizes, journaled with the row, so one revert removes the scan, the row
+    and the file together.  The packed source is never touched.
+
+    Raises :class:`ExtractError` for an unknown binary, a row without a file, an
+    unknown or absent packer, and an engine that is not installed.
+    """
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise ExtractError(404, "binary not found", f"no binary with id {binary_id}")
+    source = Path(str(binary["path"]))
+    if not source.is_file():
+        raise ExtractError(
+            400, "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+        )
+    chosen = packer.strip().lower()
+    if chosen and chosen not in unpack.PACKERS:
+        raise ExtractError(
+            400,
+            unpack.ERROR_UNKNOWN_PACKER,
+            f"packer must be one of {', '.join(unpack.PACKERS)}",
+        )
+    engine = engines.get_engine()
+    detected = unpack.detect(source, engine=engine)
+    matched = [entry for entry in detected if not chosen or entry["packer"] == chosen]
+    if not matched:
+        detail = unpack.NO_PACKER_DETAIL.format(binary_id=binary_id, name=str(binary["name"]))
+        if chosen:
+            detail = f"{detail} that is {chosen}-packed"
+        raise ExtractError(400, unpack.ERROR_NO_PACKER, detail)
+    entry = matched[0]
+    display = _client_name(name) or _unpacked_name(str(binary["name"]))
+    directory = binaries_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    temp_root = Path(tempfile.mkdtemp(dir=directory, prefix=".unpack-"))
+    try:
+        target = temp_root / display
+        try:
+            method = unpack.unpack_to(source, target, packer=entry["packer"], engine=engine)
+        except unpack.UnpackError as exc:
+            raise ExtractError(400, exc.code, exc.detail) from None
+        except engines.EngineUnavailable as exc:
+            raise ExtractError(503, "engine-unavailable", str(exc)) from None
+        except engines.EngineError as exc:
+            raise ExtractError(400, unpack.ERROR_UNPACK_FAILED, str(exc)) from None
+        sha256 = _sha256_file(target)
+        notes = [
+            unpack.METHOD_NOTES[entry["packer"]].format(tool=unpack.UPX_TOOL),
+            unpack.CEILING_NOTE,
+            "the rebuilt image is a binary of its own; the packed source is left as it was",
+        ]
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            registered = _register_member(
+                conn,
+                log,
+                archive.MemberOutcome(name=display, size=target.stat().st_size, path=target),
+                directory,
+            )
+            new_id = registered["binary_id"]
+            stored = new_id is not None and not registered["duplicate"]
+            provenance = {
+                "binary_id": new_id,
+                "stored": stored,
+                "source": {
+                    "binary_id": binary_id,
+                    "name": str(binary["name"]),
+                    "sha256": binary["sha256"],
+                    "size": int(binary["size"]),
+                },
+                "packer": entry["packer"],
+                "detected": entry["detail"],
+                "method": method["method"],
+                "tool": method.get("tool", ""),
+                "version": method.get("version"),
+                "image_size": method.get("image_size"),
+                "file_size": method.get("file_size"),
+                "unpacked_at": store.now(),
+                "notes": list(notes),
+            }
+            if stored:
+                journal.journaled_scan_result(conn, log, int(new_id), unpack.SCAN_KIND, provenance)
+            else:
+                notes.append(
+                    "the rebuilt image matches a binary already stored; its row and its"
+                    " provenance were left alone"
+                )
+        row = None if new_id is None else store.get_binary(conn, int(new_id))
+        return log.attach(
+            {
+                "binary_id": binary_id,
+                "source": provenance["source"],
+                "packer": entry["packer"],
+                "method": method["method"],
+                "detected": detected,
+                "unpacked": {
+                    "binary_id": new_id,
+                    "name": display,
+                    "sha256": sha256,
+                    "path": "" if row is None else str(row["path"]),
+                    "duplicate": bool(registered["duplicate"]),
+                },
+                "provenance": provenance,
+                "notes": notes,
+            }
+        )
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
 
 
 @router.post("/api/binaries/{binary_id}/firmware")
@@ -3696,6 +3827,47 @@ def get_binary_sbom(request: Request, binary_id: int) -> Response:
             media_type="text/csv",
             headers={"Content-Disposition": 'inline; filename="sbom.csv"'},
         )
+    return json_response(payload)
+
+
+@router.post("/api/binaries/{binary_id}/unpack")
+def unpack_binary_route(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Rebuild a packed binary's image and register it as a new binary.
+
+    The packer is the body's optional ``packer`` when it names one, else the one
+    the source file's own stub identifies; the body's optional ``name`` is the
+    new binary's display name.  The packed source is left untouched and the new
+    binary carries the provenance as its ``unpack`` scan.  404 `binary not
+    found`, 400 `binary not on disk`, 400 `no-packer` when nothing is packed,
+    400 `unknown-packer` for a name that is not a known packer, 400
+    `no-unpacker` for UPX without the external tool, and 503
+    `engine-unavailable` for an LZEXE image without the engine.
+    """
+    packer = _optional_str(body, "packer").strip().lower()
+    name = _optional_str(body, "name")
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = unpack_binary(conn, binary_id, packer=packer, name=name)
+        except ExtractError as exc:
+            return json_error(exc.status, error=exc.code, detail=exc.detail)
+    return json_response(payload)
+
+
+@router.get("/api/binaries/{binary_id}/unpack")
+def get_binary_unpack(binary_id: int) -> Response:
+    """The stored provenance of an unpacked binary, empty rather than 404.
+
+    A binary reportal did not unpack answers ``stored: false`` and names the
+    command that produces one, so a caller can tell "not unpacked" from "no such
+    binary".
+    """
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = unpack.describe(conn, binary_id)
+        except unpack.UnpackError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
     return json_response(payload)
 
 

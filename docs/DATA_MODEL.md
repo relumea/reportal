@@ -199,14 +199,15 @@ and `delete_graph` are the CRUD the graph module and the routes use, and each
 row's parsed `meta` is the JSON object its builder wrote (a node's VA, status
 or chunk count, and the `truncated` flag on the binary node).
 
-`scans` stores one engine result per `(analysis_id, kind)` pair(`SCAN_KIND_TRIAGE`, `SCAN_KIND_REPORT`, `SCAN_KIND_STRUCTS`, `SCAN_KIND_CRYPTO`,
+`scans` stores one result per `(analysis_id, kind)` pair(`SCAN_KIND_TRIAGE`, `SCAN_KIND_REPORT`, `SCAN_KIND_STRUCTS`, `SCAN_KIND_CRYPTO`,
 `SCAN_KIND_SECURITY`, `SCAN_KIND_UNSTRIP`, `SCAN_KIND_CAPABILITIES`,
 `SCAN_KIND_THREAT`, `SCAN_KIND_REMEDIATION`, `SCAN_KIND_EXECUTION`,
 `SCAN_KIND_NETWORKING`, `SCAN_KIND_FILESYSTEM`, `SCAN_KIND_SECRETS`,
 `SCAN_KIND_PROTOCOLS`,
 `SCAN_KIND_ANTI_ANALYSIS`, `SCAN_KIND_OBFUSCATION`, `SCAN_KIND_LINEAGE`,
 `SCAN_KIND_DETECT`, `SCAN_KIND_FUNCTION_TRIAGE`, `SCAN_KIND_RELATED`,
-`SCAN_KIND_PE_INFO`, `SCAN_KIND_FILETYPE`, `SCAN_KIND_COMPOSITION`); the unique index
+`SCAN_KIND_PE_INFO`, `SCAN_KIND_FILETYPE`, `SCAN_KIND_COMPOSITION`,
+`SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`); the unique index
 makes `set_scan` an upsert, so a re-run refreshes the stored dossier, report or
 struct recovery instead of adding a row.  A scan hangs off an analysis, so
 `ensure_analysis_for_binary` reuses the binary's newest analysis and creates one

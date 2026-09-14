@@ -86,6 +86,8 @@ reportal/
 │   │                         #   snapshot, manifest-checked restore, path rewrite
 │   ├── library.py            # library identification and the bill of materials
 │   │                         #   (CycloneDX, SPDX, CSV) it feeds
+│   ├── unpack.py             # packer detection and the rebuild: LZEXE in process
+│   │                         #   through the engine, UPX through the external tool
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
 │   │                         #   derived callees, analyst-declared edges, canonical names
 │   ├── user_strings.py       # analyst strings at function or analysis scope, plus
@@ -1180,7 +1182,7 @@ small binary),
 `.../secrets`, `.../protocols`,
 `.../behavior` (all three domains) and `.../behavior/<domain>`,
 `.../hardening` (both domains) and `.../hardening/<domain>`,
-`.../security-scan`, `.../unstrip`, `.../threat`, `.../remediation` and
+`.../security-scan`, `.../unstrip`, `.../unpack`, `.../threat`, `.../remediation` and
 `.../remediation/<yara|snort|stix>`,
 `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../data-types`, `.../signatures`,
 `.../comments`, `.../auto`, `.../documents`, `.../knowledge` and `.../graph`;
@@ -1191,13 +1193,13 @@ the graph node route is `GET /api/graph/nodes/<node_id>`, and
 |-------|--------|
 | Health | `GET /api/health` |
 | Jobs | `GET`/`POST /api/jobs`, `GET /api/jobs/<id>`, `POST /api/jobs/<id>/cancel`, `GET /api/jobs/<id>/events` (server-sent events), `POST /api/jobs/run` |
-| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
+| Binaries | `GET /api/binaries`, `GET /api/binaries/<id>`, `.../download`, `.../download-zipped`, `.../die-info`, `.../additional-details`, `.../additional-details/status`, `.../functions`, `.../matches`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../comments`, `.../memory`, `.../memory/page`, `.../section-coverage`, `GET`/`POST /api/binaries/<id>/unpack`, `POST /api/binaries`, `POST /api/binaries/<id>/extract`, `POST /api/binaries/bulk` |
 | Families | `GET`/`POST /api/families`, `GET`/`DELETE /api/families/<id>` |
 | Data types | `GET`/`POST /api/binaries/<id>/data-types[/import\|/export]` (the GET takes `?kind=&namespace=&search=`), `PATCH`/`DELETE /api/data-types/<id>`, `POST`/`DELETE /api/data-types/<id>/members[/<member>]`, `POST /api/data-types/<id>/members/<member>/gap`, `POST /api/data-types/<id>/members/<member>/ungap`, `POST`/`PATCH`/`DELETE /api/data-types/<id>/values[/<value>]`, `GET /api/data-types/<id>/references`, `GET /api/data-types/<id>/history`, `POST /api/data-types/<id>/history/<history_id>/revert` |
 | Signatures | `GET`/`POST /api/binaries/<id>/signatures[/import\|/export]`, `GET`/`PATCH`/`DELETE /api/functions/<id>/signature`, `POST`/`PATCH`/`DELETE /api/functions/<id>/signature/parameters[/<index>]`, `GET /api/functions/<id>/signature/history`, `POST /api/functions/<id>/signature/history/<history_id>/revert` |
 | Functions | `GET /api/functions/<id>`, `.../disasm`, `.../cfg`, `.../decompilation`, `.../xrefs`, `.../references`, `.../history`, `.../matches`, `.../diff`, `.../diff/<candidate_id>`, `.../summary`, `.../comments`, `.../type-suggestions`, `.../renames`, `.../ai-comments`, `POST /api/functions/bulk` |
 | Comments | `GET`/`POST /api/binaries/<id>/comments`, `GET`/`POST /api/functions/<id>/comments`, `PATCH`/`DELETE /api/comments/<id>` |
-| Mutations | `POST .../rename`, `.../apply-match`, `.../history/<hid>/revert`, `.../fingerprint`, `.../match`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../triage`, `.../function-triage`, `.../report`, `.../report/pdf`, `.../structs`, `.../crypto-scan`, `.../pe-info`, `.../filetype`, `.../capabilities`, `.../secrets`, `.../protocols`, `.../behavior/<domain>`, `.../hardening/<domain>`, `.../security-scan`, `.../threat`, `.../remediation`, `.../unstrip`, `.../unstrip/apply`, `.../decompilation`, `.../summary`, `.../ai-comments`, `.../type-suggestions`, `.../renames`, `.../renames/apply`, `.../renames/revert`, `POST /api/binaries/<id>/matches/transfer` (bulk symbol transfer; its binary is the one the listed functions must belong to) |
+| Mutations | `POST .../rename`, `.../apply-match`, `.../history/<hid>/revert`, `.../fingerprint`, `.../match`, `.../lineage`, `.../related`, `.../composition`, `.../detect`, `.../triage`, `.../function-triage`, `.../report`, `.../report/pdf`, `.../structs`, `.../crypto-scan`, `.../pe-info`, `.../filetype`, `.../capabilities`, `.../secrets`, `.../protocols`, `.../behavior/<domain>`, `.../hardening/<domain>`, `.../security-scan`, `.../threat`, `.../remediation`, `.../unstrip`, `.../unstrip/apply`, `.../unpack`, `.../decompilation`, `.../summary`, `.../ai-comments`, `.../type-suggestions`, `.../renames`, `.../renames/apply`, `.../renames/revert`, `POST /api/binaries/<id>/matches/transfer` (bulk symbol transfer; its binary is the one the listed functions must belong to) |
 | Analyses | `GET`/`POST /api/analyses`, `GET /api/analyses/<id>/scans`, `GET /api/analyses/<id>/logs`, `DELETE /api/analyses/<id>` |
 | Collections | `GET`/`POST /api/collections`, `POST /api/collections/<id>/binaries` |
 | Tags | `GET`/`POST /api/tags`, `GET`/`POST /api/binaries/<id>/tags`, `DELETE .../tags/<tag_id>` |
@@ -2001,8 +2003,8 @@ filtered-of-total count; the Sections card carries an entropy meter and the full
 rendering the packer verdict, a peak-section-entropy meter with the packed range
 marked, the section count, the toolchain compiler string and the match table
 with each match's category, name, confidence and signal list), and the Unpacked
-files card stating that reportal never unpacks and the engine's only unpack path
-is `rebrew unpack-lzexe`. The binary and function detail views carry
+files panel, which reads the binary's stored unpack provenance and posts a
+rebuild from its packer select (see "Unpacking a packed executable"). The binary and function detail views carry
 the shared Comments panel (`panels/CommentsPanel.tsx`): it auto-loads the
 scope's comments, adds one with the browser's remembered author, and shows Edit
 and Delete only on a comment that author wrote. The binary detail view carries the
@@ -2386,6 +2388,40 @@ the reportal-specific facts (function count, byte total, confidence, linkage and
 kinds) as CycloneDX properties or as CSV columns.  The engine reports a module
 name and not a version, so no version is invented and the package URL carries
 none.
+
+## Unpacking a packed executable
+
+`unpack.py` answers the one question a packer poses: which bytes did the program
+carry before it was compressed.  A packer replaces the code with a decompressor
+stub and an encoded image, so the file on disk is not the program the analyst
+wants to read, and every downstream scan reads the stub instead.  `detect`
+probes the file's own bytes: the LZEXE version through the engine's
+`lzexe_version` (the stub at the entry point is the real test, not the string in
+the header) and the UPX marker in the first or last page.  Detection is a
+signature read, so a packer that rewrites its own stub is not identified, the
+same ceiling `filetypes.py` states for its signature table.
+
+The rebuild is one call per packer.  LZEXE goes through the engine in process
+(`RebrewEngine.unpack_lzexe`, the sibling's own unpacker, which writes the
+rebuilt MZ file), and UPX goes through the external `upx` tool as a bounded
+subprocess that is looked up on `PATH`.  reportal ships no packer, so a UPX
+sample on a machine without the tool is `no-unpacker` carrying the install hint
+rather than a silent failure, and UPX's own exit code and last output line are
+what `unpack-failed` reports.  Nothing executes the sample: `upx -d` decodes a
+file, and the LZEXE case is arithmetic over the bytes.
+
+`api.unpack_binary` is the one write path (the route, the CLI and the MCP tool
+share it).  The rebuilt image is written into a temporary directory under the
+workspace's `binaries/` and registered by content hash exactly like an upload,
+so unpacking the same sample twice resolves to the binary already stored rather
+than a second copy; it is the binary's own bytes that are stored, and the packed
+source is never touched.  The new binary carries the provenance as its `unpack`
+scan: the packed source and its hash, the packer and what identified it, the
+method, the sizes and the moment.  The whole action is journaled with the file
+and the row, so one revert removes the scan, the row and the file together.
+`unpack.describe` reads that scan back, and `GET
+/api/binaries/<id>/unpack` answers `stored: false` for a binary reportal did not
+unpack so a caller can tell that apart from an unknown id.
 
 ## Detect
 

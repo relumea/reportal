@@ -281,6 +281,32 @@ resource, not for a parse. Re-upload the binary or fix the path.
 `400`. The scope already holds `knowledge.MAX_DOCUMENTS_PER_SCOPE` documents.
 Delete one before ingesting another.
 
+### no-packer
+
+`400`. The binary's own bytes carry no packer signature reportal knows, so there
+is nothing to rebuild. Detection reads the LZEXE stub at the entry point and the
+UPX marker, so a packer that rewrites its own stub is not identified; the stored
+file-type scan names the wider signature set.
+
+### unknown-packer
+
+`400`. The `packer` name is outside `unpack.PACKERS` (`lzexe`, `upx`). Send one
+of those, or leave it out and let the file's own stub decide.
+
+### no-unpacker
+
+`400`. The binary is UPX-packed and the external `upx` tool is not installed.
+reportal ships no packer, so no rebuild can run: install UPX on `PATH` and run
+the unpack again. The detection and the stored file-type scan still name the
+packer, so the sample is identified even when it cannot be opened.
+
+### unpack-failed
+
+`400`. The packer was identified and the rebuild itself failed: the engine
+refused the file's header geometry, or the external tool exited non-zero (its
+last output line is the detail). The packed source is never modified, so there
+is nothing to undo.
+
 ## Not found
 
 ### binary-not-found

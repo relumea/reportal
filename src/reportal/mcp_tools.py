@@ -86,6 +86,7 @@ from reportal import (
     surface,
     symbols,
     threat,
+    unpack,
     unstrip,
     user_strings,
     zipcrypto,
@@ -2411,6 +2412,32 @@ def _tool_export_sbom(arguments: dict[str, Any]) -> dict[str, Any]:
     if fmt == library.FORMAT_CSV:
         return {"format": fmt, "csv": library.render_csv(payload)}
     return {"format": fmt, "document": payload["document"]}
+
+
+def _tool_get_unpack(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        try:
+            return unpack.describe(conn, binary_id)
+        except unpack.UnpackError as exc:
+            raise ToolError(exc.code, exc.detail) from None
+
+
+def _tool_run_unpack(arguments: dict[str, Any]) -> dict[str, Any]:
+    # Imported lazily: `reportal.api` imports `reportal.integrations`, which
+    # imports this module, so a top-level import would be circular.
+    from reportal.api import ExtractError, unpack_binary
+
+    binary_id = _arg_int(arguments, "binary_id")
+    packer = _arg_optional_str(arguments, "packer").strip().lower()
+    name = _arg_optional_str(arguments, "name")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        try:
+            return unpack_binary(conn, binary_id, packer=packer, name=name)
+        except ExtractError as exc:
+            raise ToolError(exc.code, exc.detail) from None
 
 
 def _tool_run_unstrip(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6403,6 +6430,32 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _READ,
             _tool_export_sbom,
+        ),
+        Tool(
+            "get_unpack",
+            "The stored provenance of a binary reportal unpacked: the packed source and its"
+            " hash, the packer, the method and the sizes.  stored=false when the binary did not"
+            " come from an unpack.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_unpack,
+        ),
+        Tool(
+            "run_unpack",
+            "Rebuild a packed binary's image and register it as a new binary, detected from the"
+            " file's own stub unless packer names one.  LZEXE is rebuilt in process by the"
+            " engine; UPX needs the external 'upx' tool, which reportal does not ship.  Nothing"
+            " is executed and the packed source is left as it was.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "packer": _enum("Packer to use; detected when left out.", unpack.PACKERS),
+                    "name": _str("Display name for the unpacked binary."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_run_unpack,
         ),
         Tool(
             "run_unstrip",

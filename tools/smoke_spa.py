@@ -687,9 +687,6 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             (PACKER_VERDICT,),
             ("Peak section entropy",),
             (FILETYPE_SIGNAL,),
-            # Unpacked files card.
-            ("Unpacked files",),
-            ("rebrew unpack-lzexe",),
             ("Data types",),
             (SMOKE_TYPE_NAME,),
             # The editable type's bitfield member, its explicit gap member and
@@ -714,6 +711,11 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # The library identification panel (entry 15's SBOM half).
             ("Library identification",),
             ("Identify libraries",),
+            # Unpacked files panel: its rebuild control and the packer select
+            # that leaves the packer to the file's own stub.
+            ("Unpacked files",),
+            ("Run unpack",),
+            ("Auto",),
             # Analyst feedback on the stored agent artifacts.
             ("Agent feedback",),
             ("Function triage",),

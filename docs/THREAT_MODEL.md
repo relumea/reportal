@@ -153,6 +153,7 @@ full below.
 | External-source plugin | Third-party package on the host | `external.refresh_sources`, `reportal.external_sources` |
 | Secret read and write | Network client; a credential name, scope and value | `api.py` secret routes, `secret_store.normalize_*`, `secret_store.journaled_set` / `journaled_delete` |
 | Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `api.sandbox_detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
+| Packer rebuild (`upx -d`) | Stored binary bytes, plus the external `upx` tool on `PATH` | `unpack.unpack_to`, `unpack._run_upx`, `api.unpack_binary` |
 | Registered sandbox runner | Third-party package on the host | `sandbox.refresh_runners`, `reportal.sandbox_runners` |
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm.LlmClient.chat`, `llm._parse_json` |
 | Agent tool calls | LLM endpoint response, gated by an analyst's confirmation | `agent._drive`, `agent.confirm`, `mcp_server.call_tool` |
@@ -200,7 +201,12 @@ full below.
   authentication it implements; an operator who fronts it with a proxy owns
   that layer's configuration (TLS, client certificates, rate limits).
 - **Engine and toolchain isolation.**  The rebrew CLI and its docker images run
-  with the operator's privileges; reportal does not sandbox them.
+  with the operator's privileges; reportal does not sandbox them.  The same holds
+  for the external unpacker: `reportal unpack` runs `upx -d` on a stored sample
+  when that tool is installed, as a list-argv subprocess with no shell, a
+  captured output and a bounded timeout, and it decodes a file rather than
+  running it, but a bug in UPX itself is UPX's problem.  The engine's own LZEXE
+  case is arithmetic over the bytes in this process and shells out to nothing.
 
 ## Secrets
 
@@ -237,6 +243,17 @@ full below.
   database carries no usable credential and a stolen database copy cannot
   authenticate.  The token is never logged: `server.require_auth` reports a fixed
   detail that does not echo the header value.
+- **A backup carries every secret the workspace holds, plus the stored binary
+  bytes.**  `reportal backup` writes one archive of the database, the stored
+  binaries and the generated reports, and the database is where the secret store
+  keeps its plaintext values.  The archive is therefore exactly as sensitive as
+  the workspace directory itself and must be stored with the same care; it is
+  not encrypted, and reportal ships no passphrase for it.  `reportal restore`
+  refuses an archive whose members do not match its own manifest and refuses a
+  member whose path leaves the archive root, so a crafted archive cannot write
+  outside the workspace, but nothing there authenticates *who* made an archive:
+  a restore trusts the archive the operator named, which is the same trust the
+  operator already extends to the filesystem.
 - No secret is passed through argv.
 
 ## Residual risks

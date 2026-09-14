@@ -409,6 +409,19 @@ reportal sbom <binary-id> [--format cyclonedx|spdx|csv] [--output PATH] [--json]
                                            # export the stored library reading
                                            #   as a bill of materials; stored-only,
                                            #   it never re-runs the engine
+reportal unpack <binary-id> [--packer lzexe|upx] [--name TEXT] [--json]
+                                           # rebuild a packed executable's
+                                           # image and register it as a binary
+                                           # of its own; the packer is detected
+                                           # from the file's own stub unless
+                                           # named; LZEXE runs in process
+                                           # through the engine, UPX needs the
+                                           # external upx tool, and nothing is
+                                           # executed
+reportal unpack-info <binary-id> [--json]
+                                           # show where an unpacked binary came
+                                           # from: the packed source, the
+                                           # packer, the method and the sizes
 reportal unstrip <binary-id> [--min-confidence F] [--json]
                                            # store rename proposals for library-identified
                                            # functions (rebrew identify-library --dry-run)

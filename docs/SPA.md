@@ -211,9 +211,8 @@ reports what is missing rather than an empty panel; the overlay size and
 offset, the Rich header's entry count and build ids, the debug entry count and
 the section-table packer hint from `/binaries/<id>/additional-details`; and the
 Detect-It-Easy identity with the by-category match counts and the packed
-verdict from `/binaries/<id>/die-info`); unpacked files (the honest
-local statement that reportal never unpacks a sample and the engine's only
-unpack path is `rebrew unpack-lzexe` for DOS LZEXE); strings (loaded on demand,
+verdict from `/binaries/<id>/die-info`); unpacked files (the unpack panel, see
+below); strings (loaded on demand,
 a client-side filter with the filtered-of-total count, capped at
 `MAX_STRINGS_SHOWN` with the true total stated, server-side `sort`/`order`
 controls over `value` or `length`, and each row's VA and text linking to the
@@ -520,6 +519,17 @@ it is one.  The `Export` control fetches `/api/binaries/<id>/sbom?format=`, the
 shape chosen in the select (CycloneDX, SPDX or CSV), and shows the document in a
 code block.  Before the first run the panel names the command that fills it
 rather than showing an empty table.
+
+The binary detail's Unpacked files panel (`panels/BinaryPanels.tsx`) reads
+`GET /api/binaries/<id>/unpack`, which answers the provenance of a binary
+reportal unpacked and `stored: false` for one it did not, and posts from its
+`Run unpack` control with a packer select (Auto, LZEXE, UPX; Auto is the
+file's own stub).  A run renders the method, the rebuilt binary with a link to
+its detail view, its sha256, whether it matched a binary already stored, and
+what identified the packer, and a failure (nothing packed, UPX without the
+`upx` tool, an LZEXE image without the engine) is the route's own error code in
+the panel.  The panel runs nothing on render: the reconstruct itself is the
+server's, and no sample is executed.
 
 The binary detail's Composition panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/composition` and runs it over `POST`, whose body is the

@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- Unpacking a packed executable: `reportal unpack <binary-id>` and
+  `POST /api/binaries/<id>/unpack` identify the packer from the file's own stub
+  (the LZEXE stub at the entry point, the UPX marker), rebuild the image the
+  packer replaced and register it as a binary of its own, with the packed
+  source, the packer and the method kept as the new binary's `unpack` scan.
+  LZEXE runs in process through the engine; UPX runs the external `upx` tool,
+  which reportal does not ship, so a machine without it answers `no-unpacker`
+  with the install hint.  Nothing executes the sample, the packed source is
+  never modified, and one journal revert removes the new scan, row and file.
+
 - Workspace backup and restore: `reportal backup` writes the whole workspace
   (database, stored binaries, reports) as one gzipped tar with a manifest, and
   `reportal restore` reads it back.  The database is copied through SQLite's own

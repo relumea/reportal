@@ -320,6 +320,10 @@ class FakeEngine(engines.RebrewEngine):
         self.structs_args: tuple[str, str, int] = ("", "", 0)
         self.security_scan_args: tuple[str, str] = ("", "")
         self.identify_arg = ""
+        # The paths the stub reports as LZEXE-packed, and the bytes its rebuild
+        # writes, so an unpack test drives both packers without a tool.
+        self.lzexe_versions: dict[str, int] = {}
+        self.unpack_bytes = b"MZ" + b"\x00" * 62
 
     def available(self) -> bool:
         return True
@@ -409,6 +413,20 @@ class FakeEngine(engines.RebrewEngine):
         self.calls.append("identify_library")
         self.identify_arg = str(project_dir)
         return {**IDENTIFY, "candidates": [dict(candidate) for candidate in IDENTIFY["candidates"]]}
+
+    def lzexe_version(self, binary: str | Path) -> int | None:
+        self.calls.append("lzexe_version")
+        return self.lzexe_versions.get(str(binary))
+
+    def unpack_lzexe(self, binary: str | Path, output: str | Path) -> dict[str, Any]:
+        self.calls.append("unpack_lzexe")
+        target = Path(output)
+        target.write_bytes(self.unpack_bytes)
+        return {
+            "version": self.lzexe_versions.get(str(binary), 91),
+            "image_size": len(self.unpack_bytes),
+            "file_size": len(self.unpack_bytes),
+        }
 
 
 @pytest.fixture(autouse=True)
