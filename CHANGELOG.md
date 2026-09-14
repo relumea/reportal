@@ -117,7 +117,7 @@ entry.
   order, gaps stated rather than zero-filled, a click-through from a section's
   address, and `G`/`Tab` for the address box and the offset column.
 - The Integrations view's MCP onboarding card, which prints the one-liner and
-  the client config for the 228 built-in tools.
+  the client config for the built-in tools.
 - Regular-expression and multi-value search, per-type provenance in the
   data-type model, and the in-app documentation browser over `docs/*.md` and
   this file.

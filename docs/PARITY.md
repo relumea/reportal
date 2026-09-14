@@ -782,24 +782,36 @@ screen is the overlay, the Rich header's shape and the coverage report.
 ### Beyond parity
 
 Capabilities RevEng.AI advertises but has not shipped, or has no public
-implementation of, each with the evidence.  Two of them are already done here,
-which is the point of the list: a local portal can ship what a hosted one has
-only announced.
+implementation of, each with the evidence.  Several are already done here, which
+is the point of the list: a local portal can ship what a hosted one has only
+announced.
 
-| # | Capability | Evidence that it is not shipped | Local plan |
+| # | Capability | Evidence that it is not shipped | Status and the local shape |
 |---|------------|--------------------------------|-----------|
 | 1 | **Malware unpacking** (their "Unpack" agent: "unpack encrypted malware") | a "Coming Soon" card with a disabled Generate button in the portal's upcoming-agents list, and no run, status or result endpoint in either spec (`portal.reveng.ai/_next/static/chunks/1hp6wi67r3bhm.js`; changelog PRO-3218) | a local unpack path: packer identification from the stored file-type scan, then UPX and the engine's own `lzexe` case, writing the unpacked image as a new binary with its provenance recorded |
 | 2 | **Cross-architecture symbol matching** | "We will be releasing a cross-architecture model to match symbols between architectures in Q3 2026" (`reveng.ai`) | match across architectures locally by scoring the stored listings instead of a shared model, with the ISA pair recorded on every row |
 | 3 | **Ventris architecture and language coverage** | "we are also planning to release a version of Ventris in the coming months that provides wider architecture support"; "expanding language coverage to Rust and Go, and supporting additional architectures such as MIPS, PowerPC, and RISC-V" (`reveng.ai/blog/introducing-wilbert-and-ventris`) | reportal already reads whatever the engine can decompile; the addition is recording the language and ISA per artifact so a coverage gap is visible instead of silent |
-| 4 | **MCP destructive annotations on every writer** | 27 of the hosted server's 36 tools mutate state but only 9 carry a destructive marker (`docs.reveng.ai/mcp`) | done: all 188 local tools carry `readOnlyHint` or `destructiveHint`, and a test pins the split |
-| 5 | **Lineage, Obfuscation, Anti-Analysis and Detect agents** | all four are "Coming Soon" cards with no endpoint (`portal.reveng.ai/_next/static/chunks/1hp6wi67r3bhm.js`) | done locally already: `lineage.py`, `hardening.py` (anti-analysis and obfuscation domains), `families.py` (detect).  The addition is naming them as one agent surface with a run record, which cluster A's job queue provides |
-| 6 | **A public changelog for the API** | every error resolution points at `docs.reveng.ai/changelog`, which 404s, and `NOT_IMPLEMENTED` (501) tells the caller to check a page that does not exist (`docs.reveng.ai/errors`) | `docs/ERRORS.md` plus the release notes are the local equivalent, and a test asserts every code the API can answer has a documented section |
-| 7 | **A capability manifest generated from the code, with a drift check** | their plugins carry `.revengai/features.json` and a features-drift workflow; the portal publishes nothing equivalent | `GET /api/config` (cluster I) plus a gate step that regenerates the manifest and fails on drift |
-| 8 | **HTTP message-signature auth in the SDKs** | `export type HttpSignatureConfiguration = unknown; // TODO: Implement` (`sdk-typescript/auth/auth.ts`) | local token auth (cluster F) signs the request body with the workspace key, so a request cannot be replayed |
-| 9 | **The documented-but-missing client flags** | `reait`'s README documents `-n` (ANN search), `--symbol`, `--start-vaddr`, `--image-base`, `-C` (open-source component identification) and "YARA++" signatures; none exist in its argparse parser, and `api.py` never calls its ANN or SBOM functions (`github.com/RevEngAI/reait`) | reportal already answers the equivalents over its typed search, the families store and its remediation rules; the addition is an SBOM view over the stored composition and library identification |
-| 10 | **Public limits** | no pricing, tier or rate-limit page exists (`reveng.ai/pricing` 404s; only `TOO_MANY_REQUESTS` with `Retry-After`) | `GET /api/config` publishes every cap in force (cluster I) |
-| 11 | **VeriDecomp as a product surface** | "we are developing an internal benchmark called VeriDecomp" (`reveng.ai/blog/introducing-wilbert-and-ventris`) | a local benchmark harness: build a labelled corpus, run matching and rename proposals over it, report precision and recall |
-| 12 | **WilBERT, Ventris and "Mega Bite" as usable models** | the names appear in their blog and FAQ but **not** in either API spec; the model enum carries only `binnet-0.7` variants | the model registry (cluster G) records any model an artifact was produced with, including a local one, so a reportal install can point at what it has |
+| 4 | **MCP destructive annotations on every writer** | 27 of the hosted server's 36 tools mutate state but only 9 carry a destructive marker (`docs.reveng.ai/mcp`) | Done: all 233 local tools carry `readOnlyHint` or `destructiveHint`, and a test pins the split |
+| 5 | **Lineage, Obfuscation, Anti-Analysis and Detect agents** | all four are "Coming Soon" cards with no endpoint (`portal.reveng.ai/_next/static/chunks/1hp6wi67r3bhm.js`) | Done: `lineage.py`, `hardening.py` (anti-analysis and obfuscation domains), `families.py` (detect) and the job queue that records each run |
+| 6 | **A public changelog for the API** | every error resolution points at `docs.reveng.ai/changelog`, which 404s, and `NOT_IMPLEMENTED` (501) tells the caller to check a page that does not exist (`docs.reveng.ai/errors`) | Done: `CHANGELOG.md` is served by the in-app documentation view and `GET /api/docs`, `docs/ERRORS.md` documents every code, and a test asserts it |
+| 7 | **A capability manifest generated from the code, with a drift check** | their plugins carry `.revengai/features.json` and a features-drift workflow; the portal publishes nothing equivalent | Done: `GET /api/config` publishes the features, limits and every plugin seam with its parts, and a test pins the numbers against the registries |
+| 8 | **HTTP message-signature auth in the SDKs** | `export type HttpSignatureConfiguration = unknown; // TODO: Implement` (`sdk-typescript/auth/auth.ts`) | Open: local token auth carries a bearer token over TLS-less loopback, so body signing buys nothing an attacker on the loopback already has.  Recorded rather than built. |
+| 9 | **The documented-but-missing client flags** | `reait`'s README documents `-n` (ANN search), `--symbol`, `--start-vaddr`, `--image-base`, `-C` (open-source component identification) and "YARA++" signatures; none exist in its argparse parser, and `api.py` never calls its ANN or SBOM functions (`github.com/RevEngAI/reait`) | Partly done: the equivalents are answered by the typed search, the families store, the data-type model and the remediation rules.  Open: an SBOM view over the stored composition. |
+| 10 | **Public limits** | no pricing, tier or rate-limit page exists (`reveng.ai/pricing` 404s; only `TOO_MANY_REQUESTS` with `Retry-After`) | Done: `GET /api/config` publishes every cap in force, and `docs/API.md` names each one |
+| 11 | **VeriDecomp as a product surface** | "we are developing an internal benchmark called VeriDecomp" (`reveng.ai/blog/introducing-wilbert-and-ventris`) | Open: a local benchmark harness over a labelled corpus would report precision and recall for matching and rename proposals.  Recorded rather than built. |
+| 12 | **WilBERT, Ventris and "Mega Bite" as usable models** | the names appear in their blog and FAQ but **not** in either API spec; the model enum carries only `binnet-0.7` variants | Done: the model registry records any model an artifact was produced with, including a local one, so a reportal install can point at what it has |
 
 Effort is S (hours), M (a day or two), L (a week or more) for a vertical slice
-with tests.
+with tests.  Rows 2 and 3 are shipped: 2 is the match settings' platform and
+architecture scope (`MatchSettings.platforms`/`architectures` and the coarse
+best-effort comparison `scope_notes` states), and 3 is the per-artifact model
+and name-source provenance records (the model registry, the data-type source
+labels and the symbols reader's `symbol` source).
+
+Rows 1, 8, 9 and 11 stay open on purpose, each with the reason stated in its
+row, and none of them is a capability the hosted portal ships, so none is a
+parity gap and none is tracked in `docs/TODO.md` (no crawl entry asked for
+one).  Row 1 is the standing one: reportal's `reportal extract` and the upload
+panel's Extract an archive panel unpack a stored archive, but unpacking a
+*packed* executable (a UPX-compressed PE, an LZEXE image) is not built; only
+`rebrew unpack-lzexe` reaches one case, through the engine.
