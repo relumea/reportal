@@ -183,6 +183,27 @@ While it is disabled the command exits 1 and `POST /api/knowledge/fetch` answers
 
 The same surface is `GET /api/knowledge/config` and `POST /api/knowledge/fetch` (body `{"scope_kind", "scope_id", "url", "title"}`) on the HTTP API and the destructive `ingest_url` MCP tool. `src/reportal/remote_ingest.py` holds the guards and the test-only `allow_loopback` seam documented in `docs/ARCHITECTURE.md`.
 
+## Backup and restore
+
+`reportal backup` writes the workspace's whole state as one gzipped tar: the
+SQLite database (copied through SQLite's backup API after a WAL checkpoint, so
+the snapshot is consistent), the stored binaries, the generated reports and
+`reportal.toml`, with a manifest naming the format, the version, the time and
+every member. `reportal backup-info <archive>` prints that manifest without
+touching anything, and `reportal restore <archive>` reads it back.
+
+A restore stages the archive in a temporary directory and checks it against its
+own manifest before it moves anything, so an unreadable, truncated or crafted
+archive leaves the workspace exactly as it was. A member whose path leaves the
+archive root is refused by name. A workspace that already holds a database needs
+`--overwrite` and, without `--yes`, a confirmation.
+
+The manifest records the absolute workspace root the archive was made in, so
+restoring into a different directory rewrites the stored binary paths to the new
+root. A stored path outside that root (an imported binary that lives in your own
+rebrew project) is left where it points and reported, because reportal never
+owned it.
+
 ## Retrieval
 
 `reportal context <function-id>` and `GET /api/functions/<id>/knowledge?q=` retrieve the documents most relevant to a function from its binary's scope, and `GET /api/binaries/<id>/knowledge?q=` does the same for a whole binary; the query defaults to the function name and the result list is capped at `knowledge.RETRIEVAL_LIMIT`. Retrieval also feeds the AI features. A conversation appends a bounded `Relevant documents` section (its own binary's documents) to its prompt and returns the hits as `sources`, which the SPA renders as a `Sources` disclosure under the assistant reply; the AI decompilation pipeline's `retrieve-knowledge` stage adds the same context to the summary and type-suggestion prompts, and the read-only `retrieve_knowledge` MCP tool exposes it to clients. Retrieved text is untrusted input: it is quoted as data to reason about, never executed and never treated as an instruction, and the conversation system prompt says so.

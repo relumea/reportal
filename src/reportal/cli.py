@@ -123,6 +123,7 @@ from reportal import (
     auto_mode,
     auto_store,
     auto_workers,
+    backup,
     behavior,
     bulk_actions,
     capabilities,
@@ -187,6 +188,10 @@ from reportal._paths import (
 from reportal.surface import bulk_data_type_definitions as _bulk_data_types
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
 from reportal.surface import journaled_signature_write as _journal_signature_write
+
+# Exit status a declined confirmation reports, separate from the generic
+# failure `_fail` raises so a caller can tell "no" from "it did not work".
+EXIT_DECLINED = 1
 
 console = Console(stderr=True)
 
@@ -386,6 +391,131 @@ def init(
     console.print(f"  cd {target}")
     console.print("  reportal import-rebrew <rebrew-project-dir>")
     console.print("  reportal serve")
+
+
+# ── backup and restore ─────────────────────────────────────────────
+
+
+@app.command("backup")
+def backup_command(
+    output: Path = typer.Option(
+        Path(""),
+        "--output",
+        "-o",
+        help="Where to write the archive; a name in the workspace by default",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Write the whole workspace (database, binaries, reports) as one archive.
+
+    The database is copied through SQLite's own backup API after its WAL is
+    checkpointed, so the archive holds one consistent snapshot; the manifest
+    records the absolute workspace root the archive was made in, which is what
+    lets a restore into a different directory rewrite the stored binary paths.
+    """
+    try:
+        result = backup.create(output=Path(output).expanduser() if str(output) else None)
+    except backup.BackupError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    manifest = result["manifest"]
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    console.print(f"[green]Wrote[/green] {result['path']} ({result['bytes']:,} bytes)")
+    console.print(
+        f"  {manifest['counts']['binaries']} stored binary file(s),"
+        f" {manifest['counts']['reports']} report file(s),"
+        f" root {manifest['root']}"
+    )
+    console.print(
+        "  Restore it with [bold]reportal restore <archive>[/bold]"
+        " (add --overwrite to replace this workspace's state)."
+    )
+
+
+@app.command("restore")
+def restore_command(
+    archive: Path = typer.Argument(..., help="The archive to read back"),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Replace an existing workspace's state"
+    ),
+    force: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Read an archive back into the current workspace.
+
+    The archive is staged in a temporary directory and checked against its own
+    manifest before anything moves, so a refused archive leaves the workspace
+    untouched.  A workspace that already holds a database needs --overwrite, and
+    without --yes it asks first.  A stored binary whose file lived outside the
+    archived workspace is left where it points and reported: reportal never
+    owned it.
+    """
+    path = Path(archive).expanduser()
+    try:
+        manifest = backup.describe(path)
+    except backup.BackupError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    db = _db_path(json_output) if not json_output else _db_path(True)
+    if db.exists() and not overwrite:
+        _fail(
+            f"{db} already exists; pass --overwrite to replace the workspace's state",
+            json_output,
+        )
+    if not json_output:
+        console.print(
+            f"Restoring {path}\n"
+            f"  made by reportal {manifest.get('version') or 'unknown'}"
+            f" at {manifest.get('created_at') or 'an unknown time'}"
+            f" from {manifest.get('root')}\n"
+            f"  {len(manifest.get('members') or [])} file(s),"
+            f" {db} will be replaced"
+        )
+        if not force and not typer.confirm("Continue?", default=False):
+            raise typer.Exit(code=EXIT_DECLINED)
+    try:
+        result = backup.restore(path, overwrite=overwrite)
+    except backup.BackupError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    console.print(
+        f"[green]Restored[/green] {result['path']} into {result['workspace']}"
+        f" ({result['members']} file(s))"
+    )
+    if result["rewritten"]:
+        console.print(f"  rewrote {result['rewritten']} stored binary path(s) to the new root")
+    if result["external"]:
+        console.print(
+            f"  [yellow]{result['external']} stored binary path(s) live outside the archived"
+            " workspace and were left where they point[/yellow]"
+        )
+
+
+@app.command("backup-info")
+def backup_info_command(
+    archive: Path = typer.Argument(..., help="The archive to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Print one archive's manifest without restoring it."""
+    try:
+        manifest = backup.describe(archive)
+    except backup.BackupError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(manifest))
+        return
+    console.print(f"[bold cyan]{manifest['path']}[/bold cyan]")
+    console.print(f"  format {manifest['format']} v{manifest['format_version']}")
+    console.print(f"  reportal {manifest.get('version') or 'unknown'}")
+    console.print(f"  created {manifest.get('created_at') or 'unknown'}")
+    console.print(f"  root {manifest.get('root')}")
+    counts = manifest.get("counts") or {}
+    console.print(
+        f"  {len(manifest.get('members') or [])} file(s):"
+        f" {counts.get('binaries', 0)} binaries, {counts.get('reports', 0)} reports"
+    )
 
 
 # ── serve ──────────────────────────────────────────────────────────

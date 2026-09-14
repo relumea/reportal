@@ -82,6 +82,8 @@ reportal/
 │   │                         #   content-addressed store, the import and the export
 │   ├── pdb.py                # the PDB 7.0 reader: MSF container, DBI section map and
 │   │                         #   symbol record stream
+│   ├── backup.py             # workspace backup and restore: one consistent
+│   │                         #   snapshot, manifest-checked restore, path rewrite
 │   ├── library.py            # library identification and the bill of materials
 │   │                         #   (CycloneDX, SPDX, CSV) it feeds
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
@@ -2333,6 +2335,31 @@ of these columns existed when identity first shipped, so all three are in
 (the only role such an install had), a team that predates the hierarchy belongs
 to no organisation, and a user that predates the switch has no active team,
 which reads as "see every team".
+
+## Backup and restore
+
+`backup.py` is the one module that reads or writes a whole workspace.  `create`
+copies the database through SQLite's own backup API after a
+`wal_checkpoint(TRUNCATE)`, then adds the marker, the stored binaries and the
+generated reports to a gzip-compressed tar with a manifest.  The checkpoint is
+what makes the archive one consistent snapshot: a plain file copy would ship the
+database without its `-wal` sidecar, silently dropping the writes that had not
+been folded in yet.
+
+The manifest records the format and version, the reportal version, the time, the
+absolute workspace root and every member name.  `read_manifest` is the gate a
+restore runs before it touches anything: an unreadable archive, a missing
+manifest, an unknown format version, a member the manifest does not name and a
+member whose path leaves the archive root are each refused with a named code.
+The `..` check runs over the archive's own name list, so a crafted archive
+cannot write outside the workspace even if a tar implementation would follow it.
+
+A restore stages the archive in a temporary directory, rewrites the stored
+binary paths, moves the directories in, and moves the database last, so a
+half-restored workspace never looks complete.  A path that lived outside the
+archived workspace is left where it points and reported: that is the user's own
+rebrew project, which reportal never owned.  An existing database is refused
+unless the caller asks to overwrite, which the CLI confirms.
 
 ## Library identification and the bill of materials
 

@@ -36,6 +36,17 @@ reportal extract <binary-id> [--password TEXT] [--collection ID] [--json]
                                            #   register each member by content hash into one
                                            #   collection and report each member and refusal;
                                            #   one journal action, reverted with the printed id
+reportal backup [--output PATH] [--json]    # write the whole workspace (database,
+                                           #   binaries, reports) as one gzipped
+                                           #   tar; the database is copied through
+                                           #   SQLite's own backup API
+reportal restore ARCHIVE [--overwrite] [--yes] [--json]
+                                           # read an archive back into this
+                                           #   workspace; it is staged and checked
+                                           #   against its manifest first, so a
+                                           #   refused archive changes nothing
+reportal backup-info ARCHIVE [--json]      # one archive's manifest, without
+                                           #   restoring it
 reportal symbols <binary-id> <path> [--no-apply] [--json]
                                            # ingest a PDB or ELF/DWARF symbol file:
                                            #   parse it, rename the functions whose

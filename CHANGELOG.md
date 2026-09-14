@@ -7,6 +7,13 @@ view renders it from here.
 
 ## Unreleased
 
+- Workspace backup and restore: `reportal backup` writes the whole workspace
+  (database, stored binaries, reports) as one gzipped tar with a manifest, and
+  `reportal restore` reads it back.  The database is copied through SQLite's own
+  backup API after a WAL checkpoint, so the archive holds one consistent
+  snapshot, and a restore is staged and checked against its manifest before
+  anything moves.
+
 - Library identification and the bill of materials: the engine's signature match
   is stored as its own reading (one component per module with its kinds,
   function count, byte total and best confidence, plus the per-candidate list),
