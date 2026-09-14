@@ -12,6 +12,10 @@ const state = e2eState();
 // matches exactly one row whatever else the workspace holds.
 const FILTER_TARGET = "NP_ENTRY";
 
+// The single document the seeder ingests (`smoke_spa.DOCUMENT_TITLE`), whose
+// text carries "toolbar" and does not mention the seeded function's name.
+const KNOWLEDGE_DOCUMENT_TITLE = "Smoke knowledge note";
+
 test("a file-offset read renders the window's own bytes", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
   const memory = panelByTitle(page, "Memory");
@@ -96,4 +100,21 @@ test("a run a dead process left running can be recovered from the auto view", as
   // it was offered through is gone.
   await expect(auto.getByText(/Closed run #\d+ as \w+: 1 task\(s\) interrupted/)).toBeVisible();
   await expect(auto.getByRole("button", { name: "Recover run" })).toHaveCount(0);
+});
+
+test("the function knowledge panel retrieves the binary's documents", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const knowledge = panelByTitle(page, "Knowledge");
+
+  // A blank search asks about the function's own name, which the seeded note
+  // never mentions, so the explicit empty state is the honest first answer.
+  await knowledge.getByRole("button", { name: "Search documents" }).click();
+  await expect(knowledge.getByText(/0 chunk\(s\) for/)).toBeVisible();
+  await expect(knowledge.getByText("No matches", { exact: false })).toBeVisible();
+
+  // A term the seeded note carries returns its chunk, ranked.
+  await knowledge.getByLabel("Query", { exact: true }).fill("toolbar");
+  await knowledge.getByRole("button", { name: "Search documents" }).click();
+  await expect(knowledge.getByText(KNOWLEDGE_DOCUMENT_TITLE)).toBeVisible();
+  await expect(knowledge.getByText(/1 chunk\(s\) for "toolbar"/)).toBeVisible();
 });

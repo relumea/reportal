@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- The function detail can search its binary's stored documents.
+  `GET /api/functions/<id>/knowledge` ranks the binary's knowledge scope
+  against a query and resolves a blank one to the function's own name, and
+  nothing in the SPA read it: the Knowledge view searches a whole binary's
+  scope and the function page offered no way to ask what the documents say
+  about the function in front of the analyst.  The knowledge panel takes a
+  query, reports the chunk count the route resolved, and renders the same
+  ranked-hit list the Knowledge view uses, which now lives in
+  `panels/KnowledgePanel.tsx` rather than inside the view.
+
 - The auto-mode view can recover a run whose process died.  `reportal
   auto-recover <run-id>` and `POST /api/auto/runs/<id>/recover` closed a run a
   killed worker left `running`, and the SPA had no control for it: that run

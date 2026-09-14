@@ -15,33 +15,12 @@ import {
   Toolbar,
 } from "../components";
 import { DEFAULT_KNOWLEDGE_LIMIT, REMOTE_INGEST_DISABLED_DETAIL } from "../constants";
-import type { Binary, Document, KnowledgeConfig, KnowledgeHit, KnowledgeSearch } from "../types";
+import { KnowledgeResults } from "../panels/KnowledgePanel";
+import type { Binary, Document, KnowledgeConfig, KnowledgeSearch } from "../types";
 import { useAsync } from "../useAsync";
 
 /** A document as the ingest routes answer with, including the dedupe flag. */
 type IngestedDocument = Document & { duplicate: boolean };
-
-function Results({ hits }: { hits: KnowledgeHit[] }): ReactNode {
-  if (!hits.length) {
-    return <EmptyState>No matches. Try a broader phrase or ingest another document.</EmptyState>;
-  }
-  return (
-    <ol className="hits">
-      {hits.map((hit) => (
-        <li className="hit" key={hit.chunk_id}>
-          <div className="hit-head">
-            <span className="hit-title">{hit.title}</span>
-            <span className="hit-score">
-              {hit.score.toFixed(4)} · {hit.method}
-            </span>
-          </div>
-          <p className="hit-text">{hit.text}</p>
-          <p className="muted">{hit.source || "n/a"}</p>
-        </li>
-      ))}
-    </ol>
-  );
-}
 
 /** Knowledge documents of one binary: ingest a file or a note, list, search. */
 export function KnowledgeView(): ReactNode {
@@ -348,7 +327,7 @@ export function KnowledgeView(): ReactNode {
         {searchResult.error ? (
           <ErrorNote error={searchResult.error} onRetry={searchResult.reload} />
         ) : hits ? (
-          <Results hits={hits} />
+          <KnowledgeResults hits={hits} />
         ) : (
           <Muted>Search this scope&apos;s documents by meaning or keyword.</Muted>
         )}

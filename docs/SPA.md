@@ -414,7 +414,11 @@ import slot and an empty state naming the address when nothing points at it);
 matches (Apply per row, a Diff link per row to
 `#/diff/<function-id>/<candidate-id>`, candidate linked to its function detail)
 and history (Revert per row), plus the same Comments panel with the function
-scope.  `Apply` and `Revert` refetch
+scope and a knowledge panel (`panels/KnowledgePanel.tsx`): a Query box and a
+Search documents control reading `GET /api/functions/<id>/knowledge`, which
+ranks the binary's stored documents and resolves a blank query to the
+function's own name, so the panel reports the chunk count it resolved and
+renders the shared ranked-hit list or its explicit empty state.  `Apply` and `Revert` refetch
 the panels they changed and the function header, so the new name shows.  The
 diff view (`views/DiffView.tsx`) renders the two listings side by side with
 the changed lines marked (delete/insert styling), a `kind` select
@@ -841,7 +845,8 @@ to `POST /api/binaries/<id>/documents`) or from the paste area (posting JSON to
 `POST /api/documents`), lists the scope's documents with their title, source,
 size, chunk count and a Delete action, and searches the scope through
 `GET /api/knowledge/search`, rendering each ranked hit with its document title,
-score and ranking method.  Its `GET /api/knowledge/config` read decides whether
+score and ranking method (the same ranked-hit list the function detail's
+knowledge panel renders, from `panels/KnowledgePanel.tsx`).  Its `GET /api/knowledge/config` read decides whether
 the URL field renders: with remote ingestion enabled a URL input posts to
 `POST /api/knowledge/fetch`, and while it is disabled the control is replaced by
 the inline reason (`REMOTE_INGEST_DISABLED_DETAIL`), so the URL path is never

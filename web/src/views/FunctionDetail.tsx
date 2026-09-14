@@ -13,6 +13,7 @@ import {
 } from "../panels/FunctionPanels";
 import { CommentsPanel } from "../panels/CommentsPanel";
 import { FunctionExtrasPanel } from "../panels/FunctionExtrasPanel";
+import { FunctionKnowledgePanel } from "../panels/KnowledgePanel";
 import { PipelinePanel } from "../panels/PipelinePanel";
 import { SignaturePanel } from "../panels/SignaturePanel";
 import type { FunctionRow } from "../types";
@@ -73,6 +74,7 @@ export function FunctionDetail({ functionId }: { functionId: number }): ReactNod
       <CodeSection functionId={functionId} />
       <DecompilationPanel functionId={functionId} />
       <ReferencesSection functionId={functionId} binaryId={fn.binary_id} />
+      <FunctionKnowledgePanel functionId={functionId} />
       <FunctionExtrasPanel functionId={functionId} />
       <MatchesPanel functionId={functionId} onMutated={onMutated} />
       <HistoryPanel functionId={functionId} onMutated={onMutated} />
