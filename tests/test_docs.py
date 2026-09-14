@@ -283,3 +283,83 @@ class TestCli:
         result = runner.invoke(cli.app, ["docs", "nope"])
         assert result.exit_code == 1
         assert docs.ERROR_NO_DOC in result.output
+
+
+class TestNeighbours:
+    """The reading-order pair a page carries, which the pager renders."""
+
+    def test_the_first_page_has_no_previous(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _workspace(tmp_path, monkeypatch)
+
+        page = docs.page("alpha")
+
+        assert page["previous"] is None
+        assert page["next"] == {"slug": "beta", "title": "Beta"}
+
+    def test_a_middle_page_has_both(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _workspace(tmp_path, monkeypatch)
+
+        page = docs.page("beta")
+
+        assert page["previous"] == {"slug": "alpha", "title": "A page"}
+        assert page["next"] == {"slug": "changelog", "title": "Changelog"}
+
+    def test_the_last_page_is_the_changelog_with_no_next(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+
+        page = docs.page("changelog")
+
+        assert page["next"] is None
+        assert page["previous"] == {"slug": "beta", "title": "Beta"}
+
+    def test_the_slug_is_case_insensitive(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _workspace(tmp_path, monkeypatch)
+
+        assert docs.page("ALPHA")["next"] == {"slug": "beta", "title": "Beta"}
+
+    def test_a_lone_page_has_neither(self, tmp_path: Path, monkeypatch: Any) -> None:
+        monkeypatch.chdir(tmp_path)
+        root = tmp_path / "only"
+        root.mkdir()
+        (root / "solo.md").write_text("# Solo\n", encoding="utf-8")
+        monkeypatch.setenv(docs.DOCS_ENV, str(root))
+
+        page = docs.page("solo")
+
+        assert page["previous"] is None
+        assert page["next"] is None
+
+
+class TestPagerSurfaces:
+    def _seed(self, tmp_path: Path, monkeypatch: Any) -> None:
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "portal.db"))
+
+    def test_the_route_carries_the_pair(self, tmp_path: Path, monkeypatch: Any) -> None:
+        self._seed(tmp_path, monkeypatch)
+
+        status, headers, body = wsgi_request("GET", "/api/docs/beta")
+        payload = json_body(body, headers)
+
+        assert status.startswith("200")
+        assert payload["previous"]["slug"] == "alpha"
+        assert payload["next"]["slug"] == "changelog"
+
+    def test_the_mcp_tool_carries_the_pair(self, tmp_path: Path, monkeypatch: Any) -> None:
+        self._seed(tmp_path, monkeypatch)
+
+        page, failed = mcp_server.call_tool("get_doc", {"slug": "alpha"})
+
+        assert failed is False
+        assert page["next"]["slug"] == "beta"
+        assert page["previous"] is None
+
+    def test_the_command_names_the_next_page(self, tmp_path: Path, monkeypatch: Any) -> None:
+        self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["docs", "alpha"])
+
+        assert result.exit_code == 0
+        assert "Next: Beta (beta)" in result.output

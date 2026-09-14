@@ -31,6 +31,18 @@ documentation, `changelog.mjs` scrolls the feed, `auth.mjs` sets the
 (a URL a browser can open) or an API path the portal itself called, both
 re-checkable.
 
+**Re-crawled 2026-09-14 and nothing new.**  `changelog.mjs` came back
+byte-identical to the 2026-09-13 capture, so no weekly entry has been published
+since the 3 to 9 August one, and `crawl.mjs` walked 68 routes against the
+previous walk's 69, every one the same shape (the only differences are which
+concrete `/analyses/<id>` pages the walk happened to open, plus the dashboard's
+greeting, `Greetings maci` having become `Hello maci`, and one row's
+single-digit label moving with the data).  The `/v3/analyses` call the list
+makes still asks for `page_size=50` with no page parameter, and no route or form
+appeared that the entries below do not already name.  So the crawl feed is
+exhausted: what is left in this file is the gaps stated inside its closed
+entries, not surfaces the crawl has not seen.
+
 reportal's side of every comparison is its FastAPI schema, its MCP registry and
 `web/src/views/`.
 
@@ -290,9 +302,13 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   subset is the deliberate ceiling: a construct outside it becomes a paragraph,
   which is readable rather than lost.  `CHANGELOG.md` is new and holds 1.2.0
   (this backlog, closed) and 1.1.0.  A wheel with neither a workspace nor a
-  checkout answers 404 `no-docs` rather than an empty page.  Gap: the hosted
-  portal's per-page previous/next navigation is not built; the on-this-page
-  list and the index cards cover the same need.
+  checkout answers 404 `no-docs` rather than an empty page.  The hosted
+  portal's per-page previous/next navigation shipped later: `docs.neighbours`
+  reads the same `_page_files` order the index numbers, `docs.page` answers the
+  pair beside the blocks (null at either end), and the view renders it as a
+  pager at the foot of the body, so the index and the control cannot disagree.
+  `reportal docs <slug>` names the next page and the `get_doc` tool carries the
+  same pair.
 
 ### 8. Continuous whole-binary hex viewer (Memory)
 

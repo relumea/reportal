@@ -14,7 +14,7 @@ import { Link, useParams } from "react-router";
 
 import { api } from "../api";
 import { Button, ErrorNote, Loading, Muted, Panel } from "../components";
-import type { DocBlock, DocIndex, DocListItem, DocPageBody } from "../types";
+import type { DocBlock, DocIndex, DocListItem, DocPage, DocPageBody } from "../types";
 import { useAsync } from "../useAsync";
 
 /** The changelog is a page like any other, so its slug is the changelog route. */
@@ -262,9 +262,42 @@ function DocPageView({ slug }: { slug: string }): ReactNode {
               </div>
             );
           })}
+          <DocPager previous={data.previous} next={data.next} />
         </article>
       </div>
     </Panel>
+  );
+}
+
+/** The reading-order links at the foot of a page, the hosted manual's pair.
+ *  The server sends them, so the index and this control cannot disagree. */
+function DocPager({
+  previous,
+  next,
+}: {
+  previous: DocPage | null;
+  next: DocPage | null;
+}): ReactNode {
+  if (previous === null && next === null) return null;
+  return (
+    <nav className="doc-pager" aria-label="Previous and next page">
+      {previous === null ? (
+        <span />
+      ) : (
+        <Link className="doc-pager-link" to={`/docs/${previous.slug}`} rel="prev">
+          <span className="doc-pager-label">Previous</span>
+          {previous.title}
+        </Link>
+      )}
+      {next === null ? (
+        <span />
+      ) : (
+        <Link className="doc-pager-link next" to={`/docs/${next.slug}`} rel="next">
+          <span className="doc-pager-label">Next</span>
+          {next.title}
+        </Link>
+      )}
+    </nav>
   );
 }
 

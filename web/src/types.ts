@@ -3121,6 +3121,9 @@ export interface DocPageBody {
   title: string;
   headings: DocHeading[];
   blocks: DocBlock[];
+  /** The page before and after this one in reading order, or null at an end. */
+  previous: DocPage | null;
+  next: DocPage | null;
   source: string;
   version: string;
 }

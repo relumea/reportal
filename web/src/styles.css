@@ -2819,6 +2819,43 @@ kbd.key {
   min-width: 0;
 }
 
+/* The reading-order pair at the foot of a page; the empty side keeps the one
+   link on the side it belongs to rather than centring it. */
+.doc-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.doc-pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 45%;
+  font-size: 0.88rem;
+  color: var(--accent-hover);
+  text-decoration: none;
+}
+
+.doc-pager-link.next {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.doc-pager-link:hover {
+  text-decoration: underline;
+}
+
+.doc-pager-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .doc-heading {
   margin: var(--space-4) 0 var(--space-2);
   font-size: 1.02rem;

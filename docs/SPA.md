@@ -695,7 +695,10 @@ external one opens in a new tab with `rel="noreferrer noopener"`, so a document
 cannot navigate the app somewhere unexpected.  The reading column is sticky
 beside the body and becomes a wrapping strip above it at phone width, the
 current section is marked by an `IntersectionObserver` over the heading anchors,
-and the page list is the same view with no slug.  `#/changelog` renders
+and the page list is the same view with no slug.  Each page also carries the
+reading-order pair the server sends it (`docs.neighbours`, the same order the
+index numbers) as a pager at the foot of the body, so a reader walks the manual
+without going back to the index.  `#/changelog` renders
 `CHANGELOG.md` through the same reader, so the release notes ship with the
 release.  A deployment with neither a workspace `docs/` directory nor a checkout
 beside the package answers 404 `no-docs`, which the view shows as an error note

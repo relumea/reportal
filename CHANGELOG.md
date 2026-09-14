@@ -7,6 +7,14 @@ view renders it from here.
 
 ## Unreleased
 
+- The in-app manual reads in order: `docs.neighbours` answers the page before and
+  after one in the same order the index numbers, `GET /api/docs/<slug>` carries
+  the pair beside the page's blocks (null at either end), the Documentation view
+  renders it as a previous/next pager at the foot of the body, `reportal docs
+  <slug>` names the next page and the read-only `get_doc` MCP tool reports the
+  same pair.  A page with no neighbour answers null rather than erroring, so the
+  first page and the changelog (which is last) render one link.
+
 - The collections list carries the scope it was missing: `GET /api/collections`
   takes `?workspace=personal|team|public` against the collection's own
   `visibility`/`owner_team_id` (an unknown value is 400 `invalid workspace`) and

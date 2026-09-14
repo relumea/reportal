@@ -517,7 +517,8 @@ symbol and adds the aggregate types it declares as one journaled action, and
 `export_symbols` writes one parse out as a C header or JSON, so both are
 destructive.  `list_docs` reads the shipped manual's page index and `get_doc`
 parses one page into blocks (headings, paragraphs, lists, code, quotes and
-tables, never markup), so both are read-only.  `list_conversation_runs` and `get_conversation_run` read an agent conversation's runs
+tables, never markup) with the page before and after it in reading order, so
+both are read-only.  `list_conversation_runs` and `get_conversation_run` read an agent conversation's runs
 (the status, the tool-call count, the events, the call awaiting confirmation and the
 answer) and are read-only; `run_conversation_agent` runs one tool loop over the local
 MCP registry (a read-only tool runs at once, a destructive one pauses the run),

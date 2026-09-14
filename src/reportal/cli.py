@@ -6851,6 +6851,9 @@ def docs_command(
     console.print(f"[bold]{payload['title']}[/bold] ({payload['source']})")
     for block in payload["blocks"]:
         _print_doc_block(block)
+    following = payload.get("next")
+    if isinstance(following, dict):
+        console.print(f"\nNext: [bold]{following['title']}[/bold] ({following['slug']})")
 
 
 def _print_doc_block(block: dict[str, Any]) -> None:

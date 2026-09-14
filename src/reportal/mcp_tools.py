@@ -7844,7 +7844,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "get_doc",
             "One documentation page parsed into blocks (headings, paragraphs, lists, code, quotes"
-            " and tables); the slug is the file's stem, such as errors or cli.",
+            " and tables) with the page before and after it in reading order; the slug is the"
+            " file's stem, such as errors or cli.",
             _object({"slug": _str("A page slug from list_docs.")}, ("slug",)),
             _READ,
             _tool_get_doc,

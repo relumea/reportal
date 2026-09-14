@@ -324,8 +324,35 @@ def headings(parsed: list[dict[str, Any]]) -> list[dict[str, str]]:
     return found
 
 
+def _page_ref(path: Path) -> dict[str, str]:
+    """One page's slug and title, the pair a reader links to a neighbour with."""
+    text = _read(path)
+    fallback = "Changelog" if path.name == CHANGELOG_FILE else path.stem
+    return {"slug": _slug_of(path), "title": _title_of(text, fallback)}
+
+
+def neighbours(slug: str) -> tuple[dict[str, str] | None, dict[str, str] | None]:
+    """The page before and the page after *slug* in reading order.
+
+    Reading order is :func:`_page_files`, the same list :func:`pages` numbers,
+    so a previous/next control and the index cannot disagree.  The first page
+    has no previous and the last (the changelog) has no next.  An unknown slug
+    resolves to no neighbours rather than raising: the caller has already read
+    the page it asked for, and a page with no neighbour is not an error.
+    """
+    wanted = _slug_of(_slug_path(slug))
+    files = _page_files()
+    ordered = [_slug_of(path) for path in files]
+    if wanted not in ordered:
+        return None, None
+    index = ordered.index(wanted)
+    previous = _page_ref(files[index - 1]) if index > 0 else None
+    following = _page_ref(files[index + 1]) if index + 1 < len(ordered) else None
+    return previous, following
+
+
 def page(slug: str) -> dict[str, Any]:
-    """One page's title, headings and blocks.
+    """One page's title, headings, blocks and its neighbours in reading order.
 
     Raises :class:`UnknownDocError` for an unknown slug and
     :class:`NoDocsError` when no documentation directory resolves.
@@ -333,11 +360,14 @@ def page(slug: str) -> dict[str, Any]:
     path = _slug_path(slug)
     text = _read(path)
     parsed = blocks(text)
+    previous, following = neighbours(slug)
     return {
         "slug": slug,
         "title": _title_of(text, path.stem),
         "headings": headings(parsed),
         "blocks": parsed,
+        "previous": previous,
+        "next": following,
         "source": path.name,
         "version": __version__,
     }
