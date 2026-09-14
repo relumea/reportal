@@ -66,19 +66,19 @@ test("the status chips, platform filter, order and re-analyse drive the list", a
   await page.goto("/#/analyses");
   const panel = panelByTitle(page, "Analyses");
   const rows = panel.locator("tbody tr");
-  // The view is loaded on demand and its rows arrive with the query, so the
-  // table is waited for rather than counted while it is still empty.
+  // A filter change re-keys the query, so the table empties for as long as the
+  // fetch runs; every count below is read from a settled table rather than
+  // sampled while the rows are still out.
   await expect(rows.first()).toBeVisible();
+  await expect.poll(async () => rows.count()).toBeGreaterThan(1);
   const total = await rows.count();
-  expect(total).toBeGreaterThan(1);
 
   // The status control is a chip per status; selecting one filters the list and
   // puts the any-of set in the hash.
   await panel.getByRole("button", { name: "done", exact: true }).click();
   await expect(page).toHaveURL(/status=done/);
-  await expect(rows.first()).toBeVisible();
+  await expect.poll(async () => rows.count()).toBeGreaterThan(0);
   const done = await rows.count();
-  expect(done).toBeGreaterThan(0);
   expect(done).toBeLessThanOrEqual(total);
 
   // A second status widens the any-of set rather than replacing it.

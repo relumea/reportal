@@ -36,11 +36,34 @@ no request for them at all.  A file without a hash (the favicon) is answered
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-76 kB (22 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with 24 view
+77 kB (22 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with 24 view
 chunks behind them.  `tools/smoke_spa.py` asserts the split rather than trusting
 it: the entry chunk must not carry a marker only the binary detail view renders,
 and some other chunk must, so a view import that goes back to being static
 fails the gate.
+
+### Long tables
+
+A table carries `windowed` when its list is the stored rows themselves rather
+than a reading the server already bounded, which is the Functions list and the
+Matches list: `DataTable` then renders only the rows in view, with a spacer row
+above and below carrying the height of the rows it left out, `WINDOW_OVERSCAN`
+(20) extra rows on either side and a `WINDOW_THRESHOLD` of 200 below which it
+renders everything.  It measures the first row's height (a `useLayoutEffect`,
+re-measured on resize through a `ResizeObserver`) and multiplies, so the height
+is assumed rather than measured per row: a table whose rows differ in height (a
+cell that wraps at a narrow width) would drift.  That is why this is a prop per
+table and not the default, and why the tables whose rows carry blocks rather
+than one line of cells stay un-windowed.
+
+Measured in headless Chrome at 1440x900 over a seeded workspace, 20,000
+functions on `#/functions` cost 3,751 ms to the first row, 20,000 DOM rows,
+320,150 nodes and 106.5 MB of JS heap before the window, and 453 ms, 57 rows,
+1,048 nodes and 10.3 MB after.  The matches table with 25,000 stored rows on
+`#/matches` cost 6,441 ms, 25,000 rows, 400,128 nodes and 127.4 MB before, and
+311 ms, 53 rows, 962 nodes and 13.1 MB after.  The API time is not what changed
+(66 ms for the 20,000 functions, 145 ms for the 25,000 matches): a windowed
+table pays for the payload and the fetch, and no longer for the DOM.
 
 `src/main.tsx` mounts `QueryClientProvider` and `HashRouter` around
 `src/App.tsx`, the shell: a grouped sidebar (`NAV_GROUPS` in `src/router.ts`:

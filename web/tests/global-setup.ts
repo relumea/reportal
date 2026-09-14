@@ -54,5 +54,7 @@ export default async function globalSetup(): Promise<void> {
     collections: seed.collections,
     types: seed.types,
     tag_name: seed.tag_name,
+    large_binary_id: seed.large_binary_id,
+    large_function_count: seed.large_function_count,
   });
 }

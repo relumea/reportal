@@ -31,6 +31,10 @@ export interface SeedResult {
   types: string[];
   /** Tag applied to the seeded binary; the search modal's tag query uses it. */
   tag_name: string;
+  /** A binary whose function list is long enough for the table to window. */
+  large_binary_id: number;
+  /** How many functions it holds, so a spec can name the last row. */
+  large_function_count: number;
 }
 
 const SEED_SCRIPT_RELATIVE = join("tools", "seed_e2e.py");

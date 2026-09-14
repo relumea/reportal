@@ -589,6 +589,7 @@ export function FunctionsView({
               rows={functions}
               rowKey={(row) => row.id}
               onRowClick={(row) => navigate(`/functions/${row.id}`)}
+              windowed
             />
           </>
         )}

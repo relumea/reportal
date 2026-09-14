@@ -19,6 +19,8 @@ export interface E2eState {
   collections: SeedCollection[];
   types: string[];
   tag_name: string;
+  large_binary_id: number;
+  large_function_count: number;
 }
 
 const STATE_FILE = "state.json";

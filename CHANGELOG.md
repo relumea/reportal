@@ -7,17 +7,26 @@ view renders it from here.
 
 ## Unreleased
 
+- Long tables render only what is in view: `DataTable` takes a `windowed` prop,
+  set on the Functions and Matches lists, which renders the rows around the
+  viewport with a spacer row carrying the height of the rows it left out and
+  sizes them from the first row's measured height.  Measured in headless Chrome,
+  20,000 functions cost 3,751 ms to the first row and 106.5 MB of JS heap before
+  and 453 ms and 10.3 MB after; 25,000 match rows cost 6,441 ms and 127.4 MB
+  before and 311 ms and 13.1 MB after.  The API time is unchanged, so the cost
+  was the DOM rather than the request.
+
 - A faster first paint in the SPA: every view but the dashboard is now a lazy
   route (`React.lazy` plus a `Suspense` boundary), React and the router are one
   cached `vendor` chunk, and the initial payload drops from one 617 kB bundle
-  (172 kB gzip) to a 76 kB entry (22 kB gzip) plus a 289 kB vendor chunk (91 kB
+  (172 kB gzip) to a 77 kB entry (22 kB gzip) plus a 289 kB vendor chunk (91 kB
   gzip).  The binary detail view, which is a third of the source, is now 113 kB
   that only that route fetches.  `tools/smoke_spa.py` asserts the split, so a
   view import that goes back to being static fails the gate, and the analyses
   e2e spec waits for its table instead of counting it while the view loads.
   `GET /` is answered `no-cache` and the hashed bundles under
   `/static/assets/` `immutable`, so a repeat load serves them from the browser
-  cache instead of revalidating 26 files.
+  cache instead of revalidating 27 files.
 
 - Recorded scan inputs: a stored scan now carries the inputs the caller named
   beside its result (`scans.params_json`), so a reading can be run again the same

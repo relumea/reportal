@@ -800,6 +800,7 @@ export function MatchesView({
                   },
                 ]}
                 rows={ranked}
+                windowed
                 rowKey={(row) => rowKey(row)}
                 empty={
                   <EmptyState>

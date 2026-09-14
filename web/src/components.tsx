@@ -4,7 +4,7 @@
 // in styles.css under the matching class names, driven by the token layer;
 // the semantic hue names live in design.ts.
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 
 import { errorText, isApiErrorCode } from "./api";
@@ -513,6 +513,30 @@ function isInteractive(target: EventTarget | null): boolean {
   );
 }
 
+/** Rows a table renders before it starts windowing.  Below it every row is in
+ *  the DOM, which is what the small tables want (their rows are found by text,
+ *  by the browser's own find, and by a reader scrolling a short list). */
+const WINDOW_THRESHOLD = 200;
+
+/** Rows kept above and below the viewport, so a fast scroll shows content. */
+const WINDOW_OVERSCAN = 20;
+
+/** The height the window assumes a row has, in pixels.  A windowed table's rows
+ *  are one line each; the first render measures the real height and uses it. */
+const WINDOW_ROW_HEIGHT = 28;
+
+/** The visible slice of *total* rows for a container scrolled to *top*. */
+function windowRange(
+  total: number,
+  top: number,
+  viewport: number,
+  rowHeight: number,
+): { start: number; end: number } {
+  const visible = Math.max(1, Math.ceil(viewport / rowHeight));
+  const first = Math.max(0, Math.floor(top / rowHeight) - WINDOW_OVERSCAN);
+  return { start: first, end: Math.min(total, first + visible + WINDOW_OVERSCAN * 2) };
+}
+
 export function DataTable<T>({
   columns,
   rows,
@@ -520,6 +544,7 @@ export function DataTable<T>({
   rowKey,
   rowClassName,
   empty,
+  windowed = false,
 }: {
   columns: Array<Column<T>>;
   rows: T[];
@@ -529,10 +554,58 @@ export function DataTable<T>({
   rowClassName?: (row: T, index: number) => string | undefined;
   /** Rendered in place of the table when there are no rows. */
   empty?: ReactNode;
+  /** Render only the visible rows.  For a table whose rows are one line and
+   *  whose list can be thousands long: a 20k-row binary otherwise puts 20k rows
+   *  and 300k nodes in the DOM.  Requires uniform row heights, so it is opt-in
+   *  per table rather than the default. */
+  windowed?: boolean;
 }): ReactNode {
+  const active = windowed && rows.length > WINDOW_THRESHOLD;
+  const scroll = useRef<HTMLDivElement | null>(null);
+  const [rowHeight, setRowHeight] = useState(WINDOW_ROW_HEIGHT);
+  const [range, setRange] = useState({ start: 0, end: Math.min(rows.length, WINDOW_THRESHOLD) });
+
+  // Measure one rendered row, so the window follows the stylesheet rather than
+  // a number kept in two places.  A spacer carries the height of the rows it
+  // stands in for, so it is skipped: only a real row is the unit to measure.
+  useLayoutEffect(() => {
+    if (!active) return;
+    const row = scroll.current?.querySelector("tbody tr:not([aria-hidden])");
+    const height = row?.getBoundingClientRect().height ?? 0;
+    if (height >= 8 && Math.abs(height - rowHeight) > 0.5) setRowHeight(height);
+  }, [active, rowHeight, rows]);
+
+  useEffect(() => {
+    if (!active) return;
+    const container = scroll.current;
+    if (container === null) return;
+    const update = (): void => {
+      setRange(
+        windowRange(rows.length, container.scrollTop, container.clientHeight, rowHeight),
+      );
+    };
+    update();
+    container.addEventListener("scroll", update, { passive: true });
+    const observer = new ResizeObserver(update);
+    observer.observe(container);
+    return () => {
+      container.removeEventListener("scroll", update);
+      observer.disconnect();
+    };
+  }, [active, rows.length, rowHeight]);
+
   if (!rows.length && empty !== undefined) return empty;
+  const start = active ? range.start : 0;
+  const end = active ? range.end : rows.length;
+  const visible = rows.slice(start, end);
+  const pad = (height: number): ReactNode =>
+    height <= 0 ? null : (
+      <tr aria-hidden="true">
+        <td colSpan={columns.length} style={{ height, padding: 0, border: 0 }} />
+      </tr>
+    );
   return (
-    <div className="table-scroll">
+    <div className="table-scroll" ref={scroll}>
       <table className="data-table">
         <thead>
           <tr>
@@ -544,7 +617,10 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, index) => (
+          {active ? pad(start * rowHeight) : null}
+          {visible.map((row, offset) => {
+            const index = start + offset;
+            return (
             <tr
               key={rowKey ? rowKey(row, index) : index}
               className={
@@ -585,7 +661,9 @@ export function DataTable<T>({
                 );
               })}
             </tr>
-          ))}
+            );
+          })}
+          {active ? pad((rows.length - end) * rowHeight) : null}
         </tbody>
       </table>
     </div>

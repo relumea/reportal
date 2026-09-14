@@ -43,6 +43,13 @@ from tools import smoke_spa  # noqa: E402
 
 WORKSPACE_RELATIVE = Path(".scratch") / "e2e-web"
 
+# A second binary with a list long enough to window.  The Functions table
+# renders the visible rows only, and the spec that covers it needs a list where
+# that matters: at 5,000 rows, rendering every one would put ~80,000 nodes in
+# the DOM and take seconds.
+LARGE_BINARY_NAME = "wide.exe"
+LARGE_FUNCTIONS = 5000
+
 # Collections seeded so the Collections view and the Search view's collection
 # table list rows.  The first carries the seeded binary, the second stays empty
 # so the member count column renders both a number and a zero.
@@ -161,6 +168,7 @@ def seed(workspace: Path) -> dict[str, object]:
         # Every stored type name, not just the ones seeded here: the workspace
         # builder stores its own, and the panel lists all of them.
         stored_types = [row["name"] for row in store.list_data_types(conn, int(ids["binary_id"]))]
+        large_binary_id = _seed_large_binary(conn)
     return {
         "workspace": str(workspace),
         "ids": ids,
@@ -168,7 +176,53 @@ def seed(workspace: Path) -> dict[str, object]:
         "collections": collections,
         "types": stored_types,
         "tag_name": smoke_spa.TAG_NAME,
+        "large_binary_id": large_binary_id,
+        "large_function_count": LARGE_FUNCTIONS,
     }
+
+
+def _seed_large_binary(conn: object) -> int:
+    """One binary with a long function list, for the windowed table.
+
+    The rows are written with one ``executemany``: this is fixture data, and a
+    per-row helper call would spend the seed run on commits.  Names are
+    ``sub_<va>``, the placeholder shape an importer leaves, and the VA order
+    matches the id order so the last row is the address the spec scrolls to.
+    It is written under its own platform so the analyses spec's platform filter
+    still narrows to the one seeded target.
+    """
+    import sqlite3
+
+    from reportal import store as store_module
+
+    assert isinstance(conn, sqlite3.Connection)
+    binary_id = store_module.add_binary(
+        conn,
+        sha256="ff" * 32,
+        name=LARGE_BINARY_NAME,
+        size=1 << 20,
+        fmt="ELF",
+        arch="x86_64",
+    )
+    analysis_id = store_module.create_analysis(conn, binary_id=binary_id, engine="manual")
+    conn.executemany(
+        "INSERT INTO functions (analysis_id, va, name, size, status, name_source, confidence)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                analysis_id,
+                0x1000 + index * 0x20,
+                f"sub_{0x1000 + index * 0x20:x}",
+                16 + index % 64,
+                "STUB",
+                "rebrew",
+                0.5,
+            )
+            for index in range(LARGE_FUNCTIONS)
+        ],
+    )
+    conn.commit()
+    return binary_id
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
