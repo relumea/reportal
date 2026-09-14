@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- The auto-mode view can recover a run whose process died.  `reportal
+  auto-recover <run-id>` and `POST /api/auto/runs/<id>/recover` closed a run a
+  killed worker left `running`, and the SPA had no control for it: that run
+  never left `running`, so the view polled it forever, showed "a run is
+  working" and offered nothing but Revert.  The panel now offers Recover while
+  a run reads `running`, with a confirm saying the run is treated as stale, and
+  its notice reports how many tasks were interrupted, how many descriptors
+  stayed revertible and how many reserved writes may or may not have landed.
+
 - The binary detail lists the stored scans with the inputs each ran with.
   `GET /api/binaries/<id>/scans`, `GET /api/analyses/<id>/scans`, `reportal
   scans` and the `list_scans` tool served the listing (the recorded inputs

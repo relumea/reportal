@@ -30,7 +30,14 @@ import {
   DEFAULT_AUTO_WORKER,
 } from "../constants";
 import type { AutoWorker } from "../constants";
-import type { AutoRun, AutoRunStarted, AutoRevertResult, AutoTask, Binary } from "../types";
+import type {
+  AutoRecoverResult,
+  AutoRun,
+  AutoRunStarted,
+  AutoRevertResult,
+  AutoTask,
+  Binary,
+} from "../types";
 import { useAsync } from "../useAsync";
 
 /** One code reason carried by the outcome stored on a task result. */
@@ -212,6 +219,28 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
     }
   };
 
+  const recover = async (runId: number): Promise<void> => {
+    setActionError(null);
+    setNotice("");
+    setBusy("recover");
+    try {
+      const result = await api<AutoRecoverResult>(`/auto/runs/${runId}/recover`, { method: "POST" });
+      setNotice(
+        `Closed run #${result.run_id} as ${result.status}: ${result.recovered_tasks} task(s)`
+          + ` interrupted, ${result.added_descriptors} descriptor(s) kept revertible`
+          + (result.uncertain_intents.length
+            ? `, ${result.uncertain_intents.length} write(s) possibly applied`
+            : "")
+          + ".",
+      );
+      reload();
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
+
   let body: ReactNode;
   if (!data && error && isApiErrorCode(error, AUTO_NO_RUN)) {
     body = <EmptyState>No auto run for this binary yet. Start one from the form above.</EmptyState>;
@@ -249,6 +278,14 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
               onConfirm={() => void revert(data.run_id)}
             />
           ) : null}
+          {data?.status === "running" ? (
+            <ConfirmButton
+              label="Recover run"
+              message="Close this run as stale?"
+              pending={busy === "recover"}
+              onConfirm={() => void recover(data.run_id)}
+            />
+          ) : null}
         </>
       }
     >
@@ -258,7 +295,10 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
         pending={busy === "start"}
       />
       {running ? (
-        <Muted>A run is working. This view refreshes itself.</Muted>
+        <Muted>
+          A run is working. This view refreshes itself; Recover closes a run whose process died
+          without finishing it.
+        </Muted>
       ) : (
         <Muted>
           A dry run touches no source file and no function status. Execute writes candidate C files

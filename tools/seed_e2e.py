@@ -169,6 +169,7 @@ def seed(workspace: Path) -> dict[str, object]:
         # builder stores its own, and the panel lists all of them.
         stored_types = [row["name"] for row in store.list_data_types(conn, int(ids["binary_id"]))]
         large_binary_id = _seed_large_binary(conn)
+        stale_run = _seed_stale_run(conn, large_binary_id)
     return {
         "workspace": str(workspace),
         "ids": ids,
@@ -178,6 +179,7 @@ def seed(workspace: Path) -> dict[str, object]:
         "tag_name": smoke_spa.TAG_NAME,
         "large_binary_id": large_binary_id,
         "large_function_count": LARGE_FUNCTIONS,
+        "stale_run": stale_run,
     }
 
 
@@ -223,6 +225,39 @@ def _seed_large_binary(conn: object) -> int:
     )
     conn.commit()
     return binary_id
+
+
+def _seed_stale_run(conn: object, binary_id: int) -> dict[str, int]:
+    """A run a dead process left `running` on the large binary.
+
+    The Auto view offers Recover only while a run reads `running`, and that is
+    the state a killed process leaves behind, so the browser suite needs one to
+    drive the control.  It carries a root and one pending batch, which is what
+    the coordinator had planned when it died.
+    """
+    import sqlite3
+
+    from reportal import auto_store
+
+    assert isinstance(conn, sqlite3.Connection)
+    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={"worker": "offline"})
+    root_id = auto_store.create_auto_task(
+        conn,
+        run_id=run_id,
+        parent_id=None,
+        depth=auto_store.AUTO_ROOT_DEPTH,
+        kind=auto_store.AUTO_TASK_ROOT,
+        title="binary",
+    )
+    auto_store.create_auto_task(
+        conn,
+        run_id=run_id,
+        parent_id=root_id,
+        depth=auto_store.AUTO_BATCH_DEPTH,
+        kind=auto_store.AUTO_TASK_BATCH,
+        title="batch 0",
+    )
+    return {"binary_id": binary_id, "run_id": run_id, "tasks": 1}
 
 
 def parse_args(argv: list[str] | None) -> argparse.Namespace:

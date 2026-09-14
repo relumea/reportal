@@ -81,3 +81,19 @@ test("the scans panel lists the stored scans and the inputs they ran with", asyn
   // The security scan is the seeded one that recorded the floor it ran with.
   await expect(scans.getByText("min_severity=low", { exact: false })).toBeVisible();
 });
+
+test("a run a dead process left running can be recovered from the auto view", async ({ page }) => {
+  await page.goto(`/#/auto/${state.stale_run.binary_id}`);
+  // Located by its back link: the panel title names the binary, and the
+  // recovery control itself is gone once the run is closed.
+  const auto = page.locator(".panel").filter({ has: page.locator('a[href="#/auto"]') });
+
+  // The confirm control of a ConfirmButton carries the same label.
+  await auto.getByRole("button", { name: "Recover run" }).click();
+  await auto.getByRole("button", { name: "Recover run" }).click();
+
+  // The run is closed with its recorded writes kept revertible, so the control
+  // it was offered through is gone.
+  await expect(auto.getByText(/Closed run #\d+ as \w+: 1 task\(s\) interrupted/)).toBeVisible();
+  await expect(auto.getByRole("button", { name: "Recover run" })).toHaveCount(0);
+});

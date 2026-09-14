@@ -1498,6 +1498,16 @@ export interface AutoRevertResult {
   restored: Array<{ function_id: number; status: string }>;
 }
 
+/** `POST /api/auto/runs/<id>/recover`: what closing a stale run folded in. */
+export interface AutoRecoverResult {
+  run_id: number;
+  recovered_tasks: number;
+  added_descriptors: number;
+  /** Writes a dead process reserved but never confirmed; they may or may not be on disk. */
+  uncertain_intents: Array<Record<string, unknown>>;
+  status: string;
+}
+
 /** One stored knowledge document as the list and ingest routes return it. */
 export interface Document {
   id: number;

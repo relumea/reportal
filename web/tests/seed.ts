@@ -35,6 +35,15 @@ export interface SeedResult {
   large_binary_id: number;
   /** How many functions it holds, so a spec can name the last row. */
   large_function_count: number;
+  /** A run on that binary a dead process left `running`, for the recovery control. */
+  stale_run: StaleRun;
+}
+
+/** The run the seeder leaves `running` so the Auto view's recovery is reachable. */
+export interface StaleRun {
+  binary_id: number;
+  run_id: number;
+  tasks: number;
 }
 
 const SEED_SCRIPT_RELATIVE = join("tools", "seed_e2e.py");
