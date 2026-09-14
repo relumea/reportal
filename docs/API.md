@@ -278,11 +278,11 @@ their pages by the same rule.
 | `/api/jobs/run` | POST | run the oldest waiting jobs inline and answer what finished (`?limit=` bounded); the pool does this on its own in a serving process |
 | `/api/notifications` | GET | the notification feed, derived from the action journal (one item per action, with its `status`, row `entries` and whether it is still `revertible`) and the analysis log (one item per entry, with its `severity` and its binary's id and name), normalized to one shape and newest first; `?since=` is an inclusive ISO timestamp and must be percent-encoded (its `+` offset is a space otherwise), `?limit=` is bounded by `notifications.MAX_FEED_LIMIT` and `?sources=` narrows to `action`, `log` or both; each item carries `seq`, the source row id that breaks a same-second tie, and the payload carries `count`, the true `total` and `latest`, which a poller passes back as `since`; 400 `invalid since`/`invalid limit`/`invalid sources`; stores and writes nothing, and dismissal is the client's, keyed by each item's stable `id` |
 | `/api/journal/<action>` | GET | every entry of one action; 404 `action not found` for an action never recorded; read-only |
-| `/api/journal/revert` | POST | replay one action's active descriptors newest-first or one entry's; body `{"action"}` or `{"entry_id"}`; 404 `action not found`/`entry not found`, 400 `invalid body` (neither, both, a non-integer `entry_id`) or `not-active` for an entry already reverted, 500 `journal-error` for an unreadable stored descriptor |
+| `/api/journal/revert` | POST | replay one action's active descriptors newest-first or one entry's; body `{"action"}` or `{"entry_id"}`; a file inverse that refuses to remove a path another writer replaced reverts `partial` rather than reporting the file gone; 404 `action not found`/`entry not found`, 400 `invalid body` (neither, both, a non-integer `entry_id`) or `not-active` for an entry already reverted, 500 `journal-error` for an unreadable stored descriptor |
 | `/api/binaries/<id>/auto` | POST | plan an auto run and execute it in a background thread; body `{"worker", "execute", "concurrency", "functions_per_task", "max_attempts", "max_tasks"}`, all optional and every bound validated (400 `invalid params`); answers 202 `{"run_id", "binary_id", "status": "running"}`; `execute` defaults to false |
 | `/api/binaries/<id>/auto` | GET | the binary's latest auto run with its task tree and coverage delta; 404 `no-run` before the first run |
 | `/api/auto/runs/<id>` | GET | one auto run with its task tree and coverage; 404 `run not found` |
-| `/api/auto/runs/<id>/revert` | POST | remove the files the run wrote, restore the statuses it changed and delete its rows; 404 `run not found` |
+| `/api/auto/runs/<id>/revert` | POST | remove the files the run wrote and whose bytes it still wrote (a path another writer replaced is reported `diverged` and kept), restore the statuses it changed and delete its rows; 404 `run not found` |
 | `/api/conversations` | GET | conversations, optionally filtered by `?scope_kind=` and `?scope_id=` |
 | `/api/conversations` | POST | create a conversation; body `{"scope_kind": "function"\|"binary"\|"docs", "scope_id": ..., "title": optional}`; 404 for an unknown scope id. A `docs` conversation grounds its answers in the shipped manual, which is ingested into the `docs` knowledge scope on the first question; its `scope_id` is carried but never matched, and its default title is `reportal documentation` |
 | `/api/conversations/<id>` | GET | one conversation plus its messages |
@@ -807,8 +807,10 @@ the polling client always reaches a terminal status.  `GET
 /api/binaries/<id>/auto` serves the binary's latest run with its task tree and
 coverage delta and answers 404 `no-run` before the first run; `GET
 /api/auto/runs/<id>` serves one run (404 `run not found`).  `POST
-/api/auto/runs/<id>/revert` removes the files the run's task results recorded,
-restores the function statuses it replaced, deletes its rows, and returns
+/api/auto/runs/<id>/revert` removes the files the run's task results recorded
+and whose bytes are still the ones it wrote (a path another writer has replaced
+since is reported `diverged` in its entry and left alone), restores the function
+statuses it replaced, deletes its rows, and returns
 `{"run_id", "status", "removed", "restored"}` (404 `run not found`).  `POST
 /api/auto/runs/<id>/recover` closes a run a dead process left `running` (there
 is no registry of live runs, so any `running` run is treated as stale): it marks

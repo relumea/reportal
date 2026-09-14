@@ -224,13 +224,26 @@ read as a claim:
   same gap.  A `running` run is treated as stale because there is no registry of
   live runs: running recovery on a run another process is genuinely still
   working marks its live tasks `failed` under it.
-- **The file-write inverse does not check ownership.**  `effects._undo_file_write`
-  removes whatever file sits at the descriptor's path, so a revert whose path
-  something else re-created deletes that file instead.  Auto mode compensates
-  where it reserves, since `auto_mode._reservable_file` reserves only a path
-  that does not exist or that a previous attempt of the same run owns.  The
-  contract that would close it is recording the path's prior state in the
-  descriptor and refusing to delete a file the run did not write.
+- **A file inverse checks ownership only when the descriptor recorded the
+  bytes.**  Both `file-write` (auto mode and the pipeline) and `file-delete`
+  (the action journal) now carry the SHA-256 of the bytes the writer stored, and
+  their one inverse, `effects._remove_written_file`, removes the path only when
+  it still holds them.  A path whose bytes changed is reported `effects.
+  EFFECT_DIVERGED` and left alone, which is what stops a revert from deleting a
+  file another writer re-created at the same path, and a journalled entry that
+  hits it reverts `partial` rather than claiming the file went away.  Two cases
+  still claim nothing and remove whatever is there, as they always did: a
+  descriptor persisted before the field existed (a plan from an older install),
+  and a descriptor built for a write a crashed task never confirmed.  Recovery
+  reads the paths a dead task recorded (`auto_store.written_files_for_task`), not
+  the bytes it wrote, so it builds those descriptors with `verified=False`
+  deliberately: a digest taken at recovery time would describe whatever is on
+  disk then and would vouch for a file the run may never have written.  Those
+  intents are the ones `recover_auto_run` already lists in `uncertain_intents`,
+  and `auto_mode._reservable_file` still refuses to reserve a path the run does
+  not own.  A revert that keeps a file because its bytes diverged does not retry
+  later: the entry is no longer `active`, which is the same rule an oversized
+  file's `partial` restore follows.
 - **The journal is request-scoped state with an actor, not a session log.**  One
   `Journal` per HTTP request or CLI invocation is the unit the paper's revertible
   effect maps onto here, and each entry now records the `actor` the server set

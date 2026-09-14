@@ -322,8 +322,17 @@ def row_delete_descriptor(table: str, pk: int | str | Mapping[str, Any]) -> dict
 
 
 def file_delete_descriptor(path: str) -> dict[str, Any]:
-    """A descriptor whose inverse deletes the file an action wrote."""
-    return {"kind": effects.EFFECT_FILE_DELETE, "path": str(path)}
+    """A descriptor whose inverse deletes the file an action wrote.
+
+    It carries the digest of the bytes the action stored when the path is
+    readable, so the inverse removes that file and not whatever a later writer
+    put at the same path (which it reports ``diverged`` and leaves alone).
+    """
+    descriptor: dict[str, Any] = {"kind": effects.EFFECT_FILE_DELETE, "path": str(path)}
+    digest = effects.file_digest(Path(path))
+    if digest is not None:
+        descriptor["sha256"] = digest
+    return descriptor
 
 
 def read_bounded(path: Path, limit: int = MAX_FILE_BYTES) -> bytes:
@@ -890,11 +899,16 @@ def _load_descriptor(raw: str) -> dict[str, Any]:
 
 
 def _status_for(outcome: Mapping[str, Any]) -> str:
-    """The entry status an inverse's report maps to."""
+    """The entry status an inverse's report maps to.
+
+    A file the inverse refused to remove because another writer replaced it is
+    ``partial``: the action's rows went back, the file is still there, and the
+    entry's own report carries the ``diverged`` status that says why.
+    """
     reported = str(outcome.get("status", effects.EFFECT_REVERTED))
     if reported == effects.EFFECT_FAILED:
         return STATUS_ACTIVE
-    if reported == effects.EFFECT_PARTIAL:
+    if reported in (effects.EFFECT_PARTIAL, effects.EFFECT_DIVERGED):
         return STATUS_PARTIAL
     return STATUS_REVERTED
 

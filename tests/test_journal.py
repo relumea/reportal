@@ -170,6 +170,29 @@ class TestFileHelpers:
         )
         assert entry["status"] == effects.EFFECT_MISSING
 
+    def test_the_file_delete_descriptor_carries_its_digest(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        written = tmp_path / "stored.bin"
+        written.write_bytes(b"payload")
+
+        descriptor = journal.file_delete_descriptor(str(written))
+
+        assert descriptor["sha256"] == effects.file_digest(written)
+
+    def test_a_stored_file_another_writer_replaced_is_kept(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        written = tmp_path / "stored.bin"
+        written.write_bytes(b"payload")
+        descriptor = journal.file_delete_descriptor(str(written))
+        written.write_bytes(b"something else")
+
+        entry = effects.apply_descriptor(conn, descriptor)
+
+        assert written.read_bytes() == b"something else"
+        assert entry["status"] == effects.EFFECT_DIVERGED
+
     def test_file_restore_descriptor_writes_the_bytes_back(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:
@@ -1528,3 +1551,28 @@ class TestMcpWriters:
         assert not is_error
         journal.revert_action(conn, payload["journal_action"])
         assert store.get_conversation(conn, conversation_id) is not None
+
+
+class TestDivergedFileEntry:
+    """A revert that keeps a file another writer replaced reports it partial."""
+
+    def test_the_action_reports_partial_and_keeps_the_file(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "stored.bin"
+        target.write_bytes(b"payload")
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            log.record(
+                effects.EFFECT_FILE_DELETE,
+                f"stored {target}",
+                journal.file_delete_descriptor(str(target)),
+            )
+        target.write_bytes(b"replaced by someone else")
+
+        report = journal.revert_action(conn, action)
+
+        assert report["partial"] == 1
+        assert report["reverted"] == 0
+        assert target.read_bytes() == b"replaced by someone else"
+        assert report["entries"][0]["status"] == journal.STATUS_PARTIAL

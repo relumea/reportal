@@ -20,6 +20,7 @@ both in-process bindings and persisted writes.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import re
 import sqlite3
@@ -62,6 +63,9 @@ EFFECT_CONTEXT_CHANGE = "context-change"
 # EFFECT_PARTIAL when the descriptor carried no bytes to write.
 EFFECT_REMOVED = "removed"
 EFFECT_MISSING = "missing"
+# A file inverse refused to remove a path: it no longer holds the bytes the run
+# wrote, so deleting it would take another writer's file with it.
+EFFECT_DIVERGED = "diverged"
 EFFECT_RESTORED = "restored"
 EFFECT_PARTIAL = "partial"
 
@@ -143,14 +147,59 @@ def _undo_ai_artifact(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> d
     return _pipeline_entry(descriptor)
 
 
-def _undo_file_write(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
-    """Remove the source file a run wrote, reporting one already gone as missing."""
+def file_digest(path: Path) -> str | None:
+    """The SHA-256 of *path*'s bytes, or None when it cannot be read."""
+    try:
+        with path.open("rb") as handle:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def file_write_descriptor(path: str | Path) -> dict[str, Any]:
+    """The ``file-write`` descriptor for the file a run just wrote.
+
+    It carries the digest of the bytes on disk now, which is what lets the
+    inverse tell a file this run wrote from one another writer put there.  A
+    path that cannot be read carries no digest, and a descriptor without one
+    claims nothing (see :func:`_remove_written_file`).
+    """
+    target = str(path)
+    descriptor: dict[str, Any] = {"kind": EFFECT_FILE_WRITE, "path": target}
+    digest = file_digest(Path(target))
+    if digest is not None:
+        descriptor["sha256"] = digest
+    return descriptor
+
+
+def _remove_written_file(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
+    """Remove the file a run or an action wrote.
+
+    A path that is gone reports :data:`EFFECT_MISSING`, one that still holds the
+    bytes the descriptor recorded is removed, and one that no longer does
+    reports :data:`EFFECT_DIVERGED` and is left alone, so a revert never deletes
+    a file another writer re-created at the same path.  A descriptor with no
+    digest is one persisted before the field existed or built for a write a
+    crashed task never confirmed: it claims no bytes, so the path is removed as
+    it always was.
+    """
     raw = str(descriptor.get("path", ""))
     path = Path(raw) if raw else None
-    existed = path is not None and path.is_file()
-    if existed and path is not None:
-        path.unlink(missing_ok=True)
-    return {"path": raw, "status": EFFECT_REMOVED if existed else EFFECT_MISSING}
+    if path is None or not path.is_file():
+        return {"path": raw, "status": EFFECT_MISSING}
+    recorded = str(descriptor.get("sha256") or "")
+    if recorded and file_digest(path) != recorded:
+        return {"path": raw, "status": EFFECT_DIVERGED}
+    path.unlink(missing_ok=True)
+    return {"path": raw, "status": EFFECT_REMOVED}
+
+
+def _undo_file_write(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
+    """Remove the source file a run wrote, reporting one already gone as missing."""
+    return _remove_written_file(conn, descriptor)
 
 
 def _undo_status_change(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
@@ -238,12 +287,7 @@ def _undo_row_delete(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> di
 
 def _undo_file_delete(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
     """Remove the file an action wrote, reporting one already gone as missing."""
-    raw = str(descriptor.get("path", ""))
-    path = Path(raw) if raw else None
-    existed = path is not None and path.is_file()
-    if existed and path is not None:
-        path.unlink(missing_ok=True)
-    return {"path": raw, "status": EFFECT_REMOVED if existed else EFFECT_MISSING}
+    return _remove_written_file(conn, descriptor)
 
 
 def _undo_file_restore(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:

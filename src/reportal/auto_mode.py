@@ -673,7 +673,7 @@ def _run_batch(
         task_id=task_id,
         status=status,
         result=result,
-        descriptors=_task_undo_descriptors({"result": result}),
+        descriptors=_task_undo_descriptors({"result": result}, verified=True),
         attempts=sum(int(outcome["attempts"]) for outcome in outcomes),
     )
 
@@ -878,7 +878,7 @@ def _close_root(conn: sqlite3.Connection, *, root_id: int, tasks: Sequence[dict[
 # ── Undo plan ──────────────────────────────────────────────────────
 
 
-def _task_undo_descriptors(task: dict[str, Any]) -> list[dict[str, Any]]:
+def _task_undo_descriptors(task: dict[str, Any], *, verified: bool = False) -> list[dict[str, Any]]:
     """The undo descriptors of the writes one task recorded, in write order.
 
     A file the task wrote becomes a `file-write` descriptor and a status it
@@ -888,10 +888,20 @@ def _task_undo_descriptors(task: dict[str, Any]) -> list[dict[str, Any]]:
     each stamped with :data:`auto_store.INTENT_FIELD` so a plan reader can tell
     a confirmed write from a reserved one.  The same builders serve the per-task
     persistence and the recovery of a task that died before closing.
+
+    *verified* says the caller watched the write happen in this process, so each
+    file descriptor can carry the digest of what was written and the inverse can
+    refuse a path another writer has replaced since.  Recovery of a dead task
+    passes False: it reads the paths the task recorded, not the bytes it wrote,
+    so a digest taken now would claim a file the run may never have written and
+    the descriptor claims none instead.
     """
     descriptors: list[dict[str, Any]] = []
     for raw in auto_store.written_files_for_task(task):
-        descriptors.append({"kind": effects.EFFECT_FILE_WRITE, "path": raw})
+        if verified:
+            descriptors.append(effects.file_write_descriptor(raw))
+        else:
+            descriptors.append({"kind": effects.EFFECT_FILE_WRITE, "path": raw})
     for change in auto_store.status_changes_for_task(task):
         function_id = int(change.get("function_id", 0))
         before = str(change.get("before", ""))
@@ -917,8 +927,18 @@ def _undo_descriptors(tasks: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _descriptor_identity(descriptor: dict[str, Any]) -> str:
-    """A stable identity for one undo descriptor, used to de-duplicate a merge."""
-    return json.dumps(descriptor, sort_keys=True)
+    """A stable identity for one undo descriptor, used to de-duplicate a merge.
+
+    The rule is :func:`auto_store._intent_identity`'s, digest fields excluded:
+    a task's reservation and its confirmation describe one write, so they must
+    merge to one plan entry rather than two removals of the same path.
+    """
+    body = {
+        key: value
+        for key, value in descriptor.items()
+        if key not in auto_store._VOLATILE_DESCRIPTOR_FIELDS
+    }
+    return json.dumps(body, sort_keys=True)
 
 
 def _merge_descriptors(

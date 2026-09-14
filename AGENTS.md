@@ -786,7 +786,10 @@ thousand functions.
   replaced, each task folds its own undo descriptors into
   `auto_runs.effects_json` in the commit that records its result, and
   `auto-revert` replays that plan through the shared dispatcher to put both
-  back.  A run a dead process left `running` is closed by `auto-recover` (or
+  back, and each file descriptor carries the digest of what was written so the
+  inverse refuses to delete a path another writer has replaced since (reported
+  `diverged`; `docs/COMPONENTS.md` states the residual for a write a crashed
+  task never confirmed).  A run a dead process left `running` is closed by `auto-recover` (or
   `reportal auto --recover` / `POST /api/auto/runs/<id>/recover`), which merges
   the writes its unfinished tasks recorded before marking them `interrupted`.
 - MCP tools follow the same pattern (`src/reportal/mcp_tools.py`): built-ins

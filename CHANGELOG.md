@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- A revert no longer deletes a file another writer replaced.  A `file-write` (an
+  auto run's candidate source) and a `file-delete` (the action journal's stored
+  upload or export) descriptor now carries the SHA-256 of the bytes the writer
+  stored, and their shared inverse removes the path only when it still holds
+  them: a path whose bytes changed is reported `diverged` and left alone, and a
+  journal entry that hits it reverts `partial` instead of claiming the file went
+  away.  A descriptor with no digest (one persisted before the field existed, or
+  one a crashed task never confirmed) behaves as it always did.
+
 - The in-app manual reads in order: `docs.neighbours` answers the page before and
   after one in the same order the index numbers, `GET /api/docs/<slug>` carries
   the pair beside the page's blocks (null at either end), the Documentation view

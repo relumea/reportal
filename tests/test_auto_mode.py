@@ -374,14 +374,17 @@ class TestRunAuto:
         run = auto_mode.run_auto(conn, binary_id=ids["binary"], worker="writer", execute=True)
         stored = auto_store.get_auto_run(conn, run["run_id"])
         assert stored is not None
+        # The file descriptor carries the digest of what the run wrote, which is
+        # what lets the inverse refuse a path another writer has replaced.
         assert stored["effects"] == [
-            {"kind": effects.EFFECT_FILE_WRITE, "path": str(written)},
+            effects.file_write_descriptor(written),
             {
                 "kind": effects.EFFECT_STATUS_CHANGE,
                 "function_id": ids["functions"][0],
                 "before": "STUB",
             },
         ]
+        assert stored["effects"][0]["sha256"] == effects.file_digest(written)
 
     def test_dry_run_persists_no_undo_plan(self, conn: sqlite3.Connection) -> None:
         ids = seed_rows(conn, rows=SIZED_ROWS)

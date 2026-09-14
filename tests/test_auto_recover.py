@@ -100,7 +100,7 @@ class TestIncrementalPersistence:
         assert run is not None
         assert run["status"] == auto_store.AUTO_RUN_RUNNING
         assert run["effects"] == [
-            {"kind": effects.EFFECT_FILE_WRITE, "path": str(written)},
+            effects.file_write_descriptor(written),
             {
                 "kind": effects.EFFECT_STATUS_CHANGE,
                 "function_id": ids["functions"][0],
@@ -243,7 +243,7 @@ class TestRecoverAutoRun:
         assert run is not None
         assert run["status"] == auto_store.AUTO_RUN_FAILED
         assert run["effects"] == [
-            {"kind": effects.EFFECT_FILE_WRITE, "path": str(written)},
+            effects.file_write_descriptor(written),
             {
                 "kind": effects.EFFECT_STATUS_CHANGE,
                 "function_id": ids["functions"][0],

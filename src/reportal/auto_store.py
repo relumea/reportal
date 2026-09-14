@@ -413,9 +413,21 @@ def written_files_for_task(task: dict[str, Any]) -> Sequence[str]:
     return [str(entry) for entry in raw if isinstance(entry, str) and entry]
 
 
+# Fields a descriptor carries about one write rather than about what the write
+# is: a file descriptor's digest describes the bytes of that single write, so a
+# reservation made before the write and the confirmation made after it are the
+# same intent.  Identity ignores it, which is what keeps a plan from holding the
+# same path twice (once reserved, once confirmed) and a revert from removing the
+# file twice.  ``auto_mode._descriptor_identity`` applies the same rule.
+_VOLATILE_DESCRIPTOR_FIELDS = ("sha256",)
+
+
 def _intent_identity(descriptor: dict[str, Any]) -> str:
     """A stable identity for one intent descriptor, used to de-duplicate."""
-    return json.dumps(descriptor, sort_keys=True)
+    body = {
+        key: value for key, value in descriptor.items() if key not in _VOLATILE_DESCRIPTOR_FIELDS
+    }
+    return json.dumps(body, sort_keys=True)
 
 
 def task_intents(task: dict[str, Any]) -> list[dict[str, Any]]:

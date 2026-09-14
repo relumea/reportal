@@ -130,6 +130,57 @@ class TestApplyDescriptor:
         )
         assert entry == {"path": str(absent), "status": "missing"}
 
+    def test_the_written_file_descriptor_carries_its_digest(self, tmp_path: Path) -> None:
+        written = tmp_path / "Written.c"
+        written.write_text("void f(void) {}\n", encoding="utf-8")
+
+        descriptor = effects.file_write_descriptor(written)
+
+        assert descriptor["kind"] == effects.EFFECT_FILE_WRITE
+        assert descriptor["path"] == str(written)
+        assert descriptor["sha256"] == effects.file_digest(written)
+        # A path that cannot be read claims no bytes rather than inventing them.
+        assert "sha256" not in effects.file_write_descriptor(tmp_path / "absent.c")
+
+    def test_a_verified_descriptor_removes_the_file_it_wrote(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        written = tmp_path / "Written.c"
+        written.write_text("void f(void) {}\n", encoding="utf-8")
+
+        entry = effects.apply_descriptor(conn, effects.file_write_descriptor(written))
+
+        assert not written.exists()
+        assert entry == {"path": str(written), "status": effects.EFFECT_REMOVED}
+
+    def test_the_inverse_refuses_a_path_another_writer_replaced(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        written = tmp_path / "Written.c"
+        written.write_text("void f(void) {}\n", encoding="utf-8")
+        descriptor = effects.file_write_descriptor(written)
+        written.write_text("void g(void) {}\n", encoding="utf-8")
+
+        entry = effects.apply_descriptor(conn, descriptor)
+
+        assert written.exists()
+        assert entry == {"path": str(written), "status": effects.EFFECT_DIVERGED}
+
+    def test_a_descriptor_without_a_digest_still_removes_the_path(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        written = tmp_path / "Written.c"
+        written.write_text("void f(void) {}\n", encoding="utf-8")
+
+        # A plan persisted before the field existed claims no bytes, so a revert
+        # keeps the behaviour it always had rather than refusing to act.
+        entry = effects.apply_descriptor(
+            conn, {"kind": effects.EFFECT_FILE_WRITE, "path": str(written)}
+        )
+
+        assert not written.exists()
+        assert entry == {"path": str(written), "status": effects.EFFECT_REMOVED}
+
     def test_status_change_inverse_restores_the_status(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
