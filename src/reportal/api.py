@@ -7457,16 +7457,25 @@ def list_binary_tags(binary_id: int) -> Response:
 
 
 @router.post("/api/binaries/{binary_id}/tags")
-def add_binary_tag(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def add_binary_tag(
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Link a tag to a binary, addressed by ``name`` (created if needed) or ``tag_id``."""
     has_name = "name" in body
     has_tag_id = "tag_id" in body
     if has_name == has_tag_id:
         return json_error(400, error="invalid body", detail="provide exactly one of name or tag_id")
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if not auth.may_write(_caller(request), binary, team_ids=_caller_team_ids(conn, request)):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"binary {binary_id} belongs to a team you are not a member of",
             )
         if has_tag_id:
             tag_id = _require_int(body, "tag_id")
@@ -7500,12 +7509,19 @@ def add_binary_tag(binary_id: int, body: dict[str, Any] = Depends(json_body)) ->
 
 
 @router.delete("/api/binaries/{binary_id}/tags/{tag_id}")
-def remove_binary_tag(binary_id: int, tag_id: int) -> Response:
+def remove_binary_tag(request: Request, binary_id: int, tag_id: int) -> Response:
     """Unlink a tag from a binary; the link must exist."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if not auth.may_write(_caller(request), binary, team_ids=_caller_team_ids(conn, request)):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"binary {binary_id} belongs to a team you are not a member of",
             )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
