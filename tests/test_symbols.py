@@ -18,7 +18,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, journal, mcp_server, store, symbols
+from reportal import auth, cli, journal, mcp_server, store, symbols
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -832,6 +832,37 @@ class TestSymbolRoutes:
         )
         assert bad_format.startswith("400")
         assert json_body(response, response_headers)["error"] == "invalid format"
+
+    def test_upload_to_a_hidden_binary_is_404(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            owner, _token = auth.add_user(conn, name="owner", role="admin")
+            team_id = int(auth.create_team(conn, name="blue")["id"])
+            auth.add_member(conn, team_id, int(owner["id"]))
+            _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+            ana = auth.find_user(conn, "ana")
+            assert ana is not None
+            auth.add_member(conn, team_id, int(ana["id"]))
+            _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+            store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        body, headers = _multipart(_symbol_elf(), filename="demo.elf")
+        headers = {**headers, "Authorization": f"Bearer {outsider}"}
+        stranger_status, response_headers, response = wsgi_request(
+            "POST", f"/api/binaries/{ids['binary']}/symbols", body=body, headers=headers
+        )
+        assert stranger_status.startswith("403"), response
+        assert json_body(response, response_headers)["error"] == "scope-forbidden"
+
+        body, headers = _multipart(_symbol_elf(), filename="demo.elf")
+        headers = {**headers, "Authorization": f"Bearer {token}"}
+        member_status, _, _ = wsgi_request(
+            "POST", f"/api/binaries/{ids['binary']}/symbols", body=body, headers=headers
+        )
+        assert member_status.startswith("200"), member_status
 
     def test_a_binary_with_no_ingest_reports_no_symbols(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -9946,10 +9946,12 @@ async def upload_symbols(binary_id: int, request: Request) -> Response:
         return json_error(400, error="too-many-files", detail="one symbol file per request")
     raw_apply = _form_text(form.get("apply")).strip().lower()
     apply = raw_apply not in {"false", "0", "no", "off"}
-    return await run_in_threadpool(_ingest_symbols, binary_id, files[0], apply)
+    return await run_in_threadpool(_ingest_symbols, binary_id, files[0], apply, request)
 
 
-def _ingest_symbols(binary_id: int, upload: UploadFile, apply: bool) -> Response:
+def _ingest_symbols(
+    binary_id: int, upload: UploadFile, apply: bool, request: Request | None = None
+) -> Response:
     """Store and parse one uploaded symbol file (the blocking half of the route)."""
     directory = _paths.project_root() / symbols.SYMBOLS_DIR
     try:
@@ -9975,7 +9977,7 @@ def _ingest_symbols(binary_id: int, upload: UploadFile, apply: bool) -> Response
     target = directory / symbols.digest(data)
     os.replace(temp, target)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
+        if not _visible_binary(conn, binary_id, _caller(request) if request is not None else None):
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
