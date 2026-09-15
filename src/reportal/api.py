@@ -9188,7 +9188,7 @@ def get_job(request: Request, job_id: int) -> Response:
 
 
 @router.post("/api/jobs")
-def submit_job(body: dict[str, Any] = Depends(json_body)) -> Response:
+def submit_job(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Queue one operation and answer it with its run id.
 
     The body is ``{"kind", "binary_id", "params"?}``; the response is the queued
@@ -9202,6 +9202,17 @@ def submit_job(body: dict[str, Any] = Depends(json_body)) -> Response:
     if raw_params is not None and not isinstance(raw_params, dict):
         return json_error(400, error="invalid params", detail="params must be an object")
     with contextlib.closing(_open()) as conn:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if not auth.may_write(_caller(request), binary, team_ids=_caller_team_ids(conn, request)):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"binary {binary_id} belongs to a team you are not a member of",
+            )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
