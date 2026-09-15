@@ -20,6 +20,7 @@ binary; the payload's ``notes`` says when the bound bit.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -75,24 +76,58 @@ def _counts(conn: sqlite3.Connection, sql: str, *, since: str) -> dict[str, int]
     return {_day(str(row["day"])): int(row["n"]) for row in rows}
 
 
-def _analyses(conn: sqlite3.Connection, since: str) -> dict[str, int]:
-    """Analyses created per day since *since*."""
-    return _counts(
-        conn,
-        "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM analyses"
-        " WHERE created_at >= ? GROUP BY day",
-        since=since,
-    )
+def _analyses(
+    conn: sqlite3.Connection, since: str, visible_to: Mapping[str, Any] | None = None
+) -> dict[str, int]:
+    """Analyses created per day since *since*, on binaries the caller may see."""
+    from reportal import auth
+
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is None:
+        return _counts(
+            conn,
+            "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM analyses"
+            " WHERE created_at >= ? GROUP BY day",
+            since=since,
+        )
+    clause, params = scope
+    try:
+        rows = conn.execute(
+            "SELECT substr(a.created_at, 1, 10) AS day, COUNT(*) AS n FROM analyses a"
+            f" JOIN binaries b ON b.id = a.binary_id WHERE a.created_at >= ? AND {clause}"
+            " GROUP BY day",
+            [since, *params],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {_day(str(row["day"])): int(row["n"]) for row in rows}
 
 
-def _auto_runs(conn: sqlite3.Connection, since: str) -> dict[str, int]:
-    """Auto runs started per day since *since*."""
-    return _counts(
-        conn,
-        "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM auto_runs"
-        " WHERE created_at >= ? GROUP BY day",
-        since=since,
-    )
+def _auto_runs(
+    conn: sqlite3.Connection, since: str, visible_to: Mapping[str, Any] | None = None
+) -> dict[str, int]:
+    """Auto runs started per day since *since*, on binaries the caller may see."""
+    from reportal import auth
+
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is None:
+        return _counts(
+            conn,
+            "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM auto_runs"
+            " WHERE created_at >= ? GROUP BY day",
+            since=since,
+        )
+    clause, params = scope
+    try:
+        rows = conn.execute(
+            "SELECT substr(r.created_at, 1, 10) AS day, COUNT(*) AS n FROM auto_runs r"
+            f" JOIN binaries b ON b.id = r.binary_id WHERE r.created_at >= ? AND {clause}"
+            " GROUP BY day",
+            [since, *params],
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {_day(str(row["day"])): int(row["n"]) for row in rows}
 
 
 def _actions(conn: sqlite3.Connection, since: str) -> dict[str, int]:
@@ -106,19 +141,35 @@ def _actions(conn: sqlite3.Connection, since: str) -> dict[str, int]:
 
 
 def _software_types(
-    conn: sqlite3.Connection, since: str, notes: list[str]
+    conn: sqlite3.Connection,
+    since: str,
+    notes: list[str],
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, int]]:
     """Per-day, per-type counts of the software type each analysis's binary derives.
 
     One derivation per binary, reused for every analysis of it, and the list of
     analyses examined is capped: a workspace with a long history would otherwise
-    read every scan of every binary behind a dashboard load.
+    read every scan of every binary behind a dashboard load.  Only analyses of
+    binaries the caller may see are examined.
     """
-    rows = conn.execute(
-        "SELECT id, binary_id, created_at FROM analyses WHERE created_at >= ?"
-        " ORDER BY id DESC LIMIT ?",
-        (since, MAX_SERIES_ANALYSES + 1),
-    ).fetchall()
+    from reportal import auth
+
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is None:
+        rows = conn.execute(
+            "SELECT id, binary_id, created_at FROM analyses WHERE created_at >= ?"
+            " ORDER BY id DESC LIMIT ?",
+            (since, MAX_SERIES_ANALYSES + 1),
+        ).fetchall()
+    else:
+        clause, params = scope
+        rows = conn.execute(
+            "SELECT a.id, a.binary_id, a.created_at FROM analyses a"
+            f" JOIN binaries b ON b.id = a.binary_id WHERE a.created_at >= ? AND {clause}"
+            " ORDER BY a.id DESC LIMIT ?",
+            [since, *params, MAX_SERIES_ANALYSES + 1],
+        ).fetchall()
     if len(rows) > MAX_SERIES_ANALYSES:
         notes.append(f"the software-type series examines at most {MAX_SERIES_ANALYSES} analyses")
         rows = rows[:MAX_SERIES_ANALYSES]
@@ -138,14 +189,21 @@ def _software_types(
     return series
 
 
-def series(conn: sqlite3.Connection, *, days: int = DEFAULT_SERIES_DAYS) -> dict[str, Any]:
+def series(
+    conn: sqlite3.Connection,
+    *,
+    days: int = DEFAULT_SERIES_DAYS,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """The dashboard series over the last *days* days.
 
     Returns ``{"days", "range", "series", "software_types", "totals", "notes"}``:
     ``series`` carries one entry per counted key per day (a zero for a quiet
     day), ``software_types`` maps a day to its per-type counts, and ``totals``
     sums the window.  Raises :class:`SeriesError` for a window outside the
-    bounds.
+    bounds.  ``visible_to`` narrows the analyses, auto-run and software-type
+    counts to binaries the caller may see; the journaled-actions count stays
+    global, like the feed's journal half.
     """
     days = normalize_days(days)
     dates = window(days)
@@ -153,11 +211,11 @@ def series(conn: sqlite3.Connection, *, days: int = DEFAULT_SERIES_DAYS) -> dict
     notes: list[str] = []
 
     per_day = {
-        "analyses": _analyses(conn, since),
-        "auto_runs": _auto_runs(conn, since),
+        "analyses": _analyses(conn, since, visible_to),
+        "auto_runs": _auto_runs(conn, since, visible_to),
         "actions": _actions(conn, since),
     }
-    software = _software_types(conn, since, notes)
+    software = _software_types(conn, since, notes, visible_to)
 
     series_rows = [
         {"date": day, **{key: per_day[key].get(day, 0) for key in SERIES_KEYS}} for day in dates

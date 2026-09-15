@@ -8382,7 +8382,7 @@ def stats_series(request: Request) -> Response:
     except analytics.SeriesError as exc:
         return json_error(400, error="invalid days", detail=exc.detail)
     with contextlib.closing(_open()) as conn:
-        payload = analytics.series(conn, days=int(days))
+        payload = analytics.series(conn, days=int(days), visible_to=_caller(request))
     return json_response(payload)
 
 

@@ -17,7 +17,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import analytics, cli, mcp_server, store
+from reportal import analytics, auth, cli, mcp_server, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -115,6 +115,40 @@ class TestSeries:
             conn.execute("DROP TABLE IF EXISTS journal_entries")
             payload = analytics.series(conn, days=2)
         assert payload["totals"]["actions"] == 0
+
+    def test_a_non_member_counts_no_team_analyses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            owner, _token = auth.add_user(conn, name="owner", role="admin")
+            team_id = int(auth.create_team(conn, name="blue")["id"])
+            auth.add_member(conn, team_id, int(owner["id"]))
+            _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+            ana = auth.find_user(conn, "ana")
+            assert ana is not None
+            auth.add_member(conn, team_id, int(ana["id"]))
+            _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+            stranger = auth.find_user(conn, "bob")
+            assert stranger is not None
+            store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+            hidden = analytics.series(conn, days=7, visible_to=stranger)
+            assert hidden["totals"]["analyses"] == 0
+            assert hidden["totals"]["auto_runs"] == 0
+            member = analytics.series(conn, days=7, visible_to=ana)
+            assert member["totals"]["analyses"] == 2
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, headers, body = wsgi_request(
+            "GET",
+            "/api/stats/series?days=7",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert json_body(body, headers)["totals"]["analyses"] == 0
+        _status, headers, body = wsgi_request(
+            "GET", "/api/stats/series?days=7", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert json_body(body, headers)["totals"]["analyses"] == 2
 
 
 class TestSeriesRoutes:
