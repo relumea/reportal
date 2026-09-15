@@ -4404,13 +4404,19 @@ def list_families() -> Response:
 
 
 @router.post("/api/families")
-def create_family(body: dict[str, Any] = Depends(json_body)) -> Response:
+def create_family(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Register a family from a reference binary and store its signature bundle."""
     name = _require_str(body, "name")
     reference_binary_id = _require_int(body, "reference_binary_id")
     aliases = _optional_str_list(body, "aliases")
     notes = _optional_str(body, "notes")
     with contextlib.closing(_open()) as conn:
+        if not _visible_binary(conn, reference_binary_id, _caller(request)):
+            return json_error(
+                404,
+                error="binary not found",
+                detail=f"no binary with id {reference_binary_id}",
+            )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:

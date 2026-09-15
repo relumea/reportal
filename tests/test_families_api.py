@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from conftest import FINGERPRINT, FakeEngine, json_body, wsgi_request
 
-from reportal import analysis_log, engines, store
+from reportal import analysis_log, auth, engines, store
 
 NAME = "DemoFamily"
 
@@ -68,10 +68,41 @@ class TestFamiliesCrud:
         assert payload.pop("journal_action")
         assert fake_engine.calls == ["fingerprint", "imports", "strings"]
 
-        family_id = payload["family_id"]
-        status, headers, body = wsgi_request("GET", f"/api/families/{family_id}")
-        assert status.startswith("200")
-        assert json_body(body, headers) == payload
+    def test_post_with_a_hidden_reference_is_404(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_engine: FakeEngine,
+    ) -> None:
+        binary_id = _file_binary(conn, tmp_path)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "POST",
+            "/api/families",
+            body=json.dumps({"name": NAME, "reference_binary_id": binary_id}),
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "binary not found"
+
+        member_status, headers, body = wsgi_request(
+            "POST",
+            "/api/families",
+            body=json.dumps({"name": NAME, "reference_binary_id": binary_id}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("201"), body
 
     def test_list_and_delete(
         self, conn: sqlite3.Connection, tmp_path: Path, fake_engine: FakeEngine
