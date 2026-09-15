@@ -211,12 +211,15 @@ test("the auto run form sends every run knob the route takes", async ({ page }) 
   await page.goto(`/#/auto/${state.ids.binary_id}`);
   const auto = page.locator(".panel").filter({ has: page.locator('a[href="#/auto"]') });
 
-  // The three knobs the form did not carry, each filled to a value no default
+  // The knobs the form did not carry, each filled to a value no default
   // would produce.  The run itself is not started: the answer is written here,
   // because the pool would plan real batches behind the rest of the suite.
   await auto.getByLabel("Functions per task").fill("2");
   await auto.getByLabel("Max attempts").fill("3");
   await auto.getByLabel("Max tasks").fill("50");
+  await auto.getByLabel("Max tokens").fill("1000");
+  await auto.locator("#auto-max-usd").fill("0.25");
+  await auto.getByLabel("USD per million tokens").fill("1.5");
   await page.route("**/api/binaries/*/auto", async (route) => {
     if (route.request().method() !== "POST") return route.continue();
     await route.fulfill({
@@ -239,6 +242,68 @@ test("the auto run form sends every run knob the route takes", async ({ page }) 
     functions_per_task: 2,
     max_attempts: 3,
     max_tasks: 50,
+    max_tokens: 1000,
+    max_usd: 0.25,
+    usd_per_mtok: 1.5,
   });
   await expect(auto.getByText(/Started auto run #999/)).toBeVisible();
+});
+
+test("a gated scan panel carves without a prior fetch", async ({ page }) => {
+  // Firmware is one scan the seeder never stores, so the panel gates its GET
+  // off and renders the empty state with no request: the carve below is the
+  // first firmware traffic for this binary.
+  const firmwareGets: string[] = [];
+  await page.route("**/api/binaries/*/firmware", async (route) => {
+    if (route.request().method() === "GET") firmwareGets.push(route.request().url());
+    return route.continue();
+  });
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const firmware = panelByTitle(page, "Firmware carving");
+  await expect(firmware.getByText(/No firmware carve yet/)).toBeVisible();
+  expect(firmwareGets).toEqual([]);
+
+  // The Run control loads the gated panel through the same refresh path an
+  // ungated panel uses: the carve stores the scan and the panel renders it,
+  // all without a single GET (the POST's own payload populates the entry).
+  await firmware.getByRole("button", { name: "Carve" }).click();
+  await expect(firmware.getByText(/region\(s\) in \d+ bytes/)).toBeVisible();
+  expect(firmwareGets).toEqual([]);
+});
+
+test("an artifact note round-trips through the panel", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const feedback = panelByTitle(page, "Agent feedback");
+  const row = feedback.locator("table.table tbody tr").first();
+
+  // The seeded scans carry no notes, so the row starts clean and the note
+  // control is hidden until asked for.
+  await expect(row.getByText("unrated")).toBeVisible();
+  await expect(row.getByRole("button", { name: "Note", exact: true })).toBeVisible();
+
+  await row.getByRole("button", { name: "Note", exact: true }).click();
+  const noteField = feedback.getByLabel(/Note for /);
+  await noteField.fill("worth a second look");
+  await feedback.getByRole("button", { name: "Save note", exact: true }).click();
+
+  // The same verdict line now carries the stored text, not just the badge.
+  await expect(row.getByText("worth a second look")).toBeVisible();
+
+  // And the read behind the table reports it, so the assertion is the stored
+  // row rather than the row's own render.
+  const saved = await page.request.get(`/api/binaries/${state.ids.binary_id}/ratings`);
+  const payload = (await saved.json()) as {
+    artifacts: Array<{ rating: { rating: string; note: string } | null }>;
+  };
+  const noted = payload.artifacts.filter((entry) => entry.rating?.note === "worth a second look");
+  expect(noted.length).toBe(1);
+  expect(noted[0].rating?.rating).toBe("up");
+
+  // Clear the verdict so the seeded workspace reads unrated again for later
+  // specs: the clear path is the same one the table's Clear button uses.
+  await row.getByRole("button", { name: "Note", exact: true }).click();
+  await feedback.getByLabel(/Note for /).fill("x");
+  await feedback.getByRole("button", { name: "Save note", exact: true }).click();
+  await row.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect(row.getByText("unrated")).toBeVisible();
 });

@@ -509,7 +509,12 @@ never renders a value because no response carries one.  The signature panel carr
 Copy signature, posting to `POST /api/analyses/<id>/signatures/copy` with the
 panel's function as the source, and reporting how many targets took the copy.
 The binary detail's Agent feedback panel lists every stored agent artifact with
-its verdict and carries Up, Down and Clear per row, over
+its verdict and carries Up, Down, a Note control and Clear per row, over
+`GET`/`PUT /api/binaries/<id>/ratings[/<kind>]`; the Note control opens a
+verdict select prefilled with the stored verdict and a note input (capped at
+the route's 500 characters) posting `{rating, note}`, since a verdict recorded
+without a note is a bare badge; it says how many of the stored
+artifacts carry a verdict.
 `GET`/`PUT /api/binaries/<id>/ratings[/<kind>]`; it says how many of the stored
 artifacts carry a verdict.  The Integrations view ends with the "Connect an MCP
 client" card: the `claude mcp add` one-liner and the `~/.claude.json` snippet,

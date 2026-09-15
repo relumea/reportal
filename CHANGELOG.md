@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- The Agent feedback panel takes a verdict note.  The rating note existed on
+  the route, the CLI's `--note` and the MCP tool's `note`, but the panel that
+  records verdicts could not write one: it sent only `{rating}`, so the Note
+  column it already rendered stayed empty for SPA-recorded rows.  Each row now
+  carries a Note control beside Up, Down and Clear that opens a verdict select
+  and a 500-character note input posting `{rating, note}`, prefilled with the
+  stored verdict and note.  The panels spec saves a note through the control and
+  reads it back through the ratings read, then clears the verdict so the seeded
+  workspace is unchanged.
+
 - The auto run form sends the whole run configuration.  The route and the CLI
   take six knobs (the worker, execute, the concurrency, the functions per leaf
   batch, the attempts per function and the task cap) and the form carried three

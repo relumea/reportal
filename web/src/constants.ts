@@ -115,6 +115,10 @@ export type CommentScopeKind = (typeof COMMENT_SCOPE_KINDS)[number];
 // Longest comment body the API accepts; mirrors comments.MAX_COMMENT_CHARS.
 export const COMMENT_MAX_CHARS = 4000;
 
+// Longest verdict note the API accepts; mirrors ratings.MAX_NOTE_CHARS, the
+// bound the input below enforces before the request fires.
+export const RATING_NOTE_MAX_CHARS = 500;
+
 // Author recorded when the SPA's comment form names none; mirrors the API's
 // comments.DEFAULT_AUTHOR.
 export const DEFAULT_COMMENT_AUTHOR = "analyst";
@@ -184,6 +188,13 @@ export const DEFAULT_AUTO_MAX_ATTEMPTS = 2;
 export const AUTO_MAX_TASKS_MIN = 1;
 export const AUTO_MAX_TASKS_MAX = 5000;
 export const DEFAULT_AUTO_MAX_TASKS = 200;
+
+// Optional LLM spend caps. Empty on the form means unlimited; the bounds
+// match auto_mode's. USD needs a rate in dollars per million tokens.
+export const AUTO_MAX_TOKENS_MIN = 1;
+export const AUTO_MAX_TOKENS_MAX = 10_000_000;
+export const AUTO_MAX_USD_MIN = 0.000001;
+export const AUTO_MAX_USD_MAX = 1_000_000;
 
 // Results the Knowledge view's search asks for; mirrors the API's
 // knowledge.DEFAULT_SEARCH_LIMIT.

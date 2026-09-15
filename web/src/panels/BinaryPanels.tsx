@@ -58,6 +58,7 @@ import {
   MAX_LINEAGE_ROWS_SHOWN,
   MITRE_TECHNIQUE_URL,
   PROTOCOL_CONFIDENCES,
+  RATING_NOTE_MAX_CHARS,
   SECRET_CONFIDENCES,
   SECURITY_SEVERITIES,
   STRING_SORTS,
@@ -1314,7 +1315,8 @@ function UnpackProvenanceRows({
  *
  * One control per stored artifact: thumbs up, thumbs down, or clear.  An
  * artifact that was never produced is not listed, and the panel says how many
- * of the stored ones carry a verdict.
+ * of the stored ones carry a verdict.  A verdict takes an optional note through
+ * the same endpoint the CLI's `--note` and the MCP tool's `note` use.
  */
 export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const { data, error, reload } = useAsync(
@@ -1323,15 +1325,19 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
   );
   const [busy, setBusy] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
+  const [noting, setNoting] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [draftVerdict, setDraftVerdict] = useState("up");
 
-  const rate = async (kind: string, rating: string): Promise<void> => {
+  const rate = async (kind: string, rating: string, note?: string): Promise<void> => {
     setBusy(`${kind}-${rating}`);
     setActionError(null);
     try {
       await api(`/binaries/${binaryId}/ratings/${kind}`, {
         method: "PUT",
-        json: { rating },
+        json: note === undefined ? { rating } : { rating, note },
       });
+      setNoting(null);
       reload();
     } catch (failure) {
       setActionError(failure);
@@ -1372,28 +1378,82 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
                   <td>{entry.rating ? entry.rating.rating : "unrated"}</td>
                   <td className="muted">{entry.rating ? entry.rating.note : ""}</td>
                   <td>
-                    <Button
-                      size="sm"
-                      pending={busy === `${entry.kind}-up`}
-                      onClick={() => void rate(entry.kind, "up")}
-                    >
-                      Up
-                    </Button>{" "}
-                    <Button
-                      size="sm"
-                      pending={busy === `${entry.kind}-down`}
-                      onClick={() => void rate(entry.kind, "down")}
-                    >
-                      Down
-                    </Button>{" "}
-                    <Button
-                      size="sm"
-                      tone="ghost"
-                      pending={busy === `${entry.kind}-`}
-                      onClick={() => void rate(entry.kind, "")}
-                    >
-                      Clear
-                    </Button>
+{noting === entry.kind ? (
+                      <span className="toolbar">
+                        <Field label="Verdict">
+                          <select
+                            value={draftVerdict}
+                            onChange={(event) => setDraftVerdict(event.target.value)}
+                          >
+                            <option value="up">up</option>
+                            <option value="down">down</option>
+                          </select>
+                        </Field>
+                        <Field label={`Note for ${entry.kind}`}>
+                          <input
+                            value={draft}
+                            maxLength={RATING_NOTE_MAX_CHARS}
+                            onChange={(event) => setDraft(event.target.value)}
+                            placeholder="Why this verdict"
+                          />
+                        </Field>
+                        <Button
+                          size="sm"
+                          tone="primary"
+                          pending={busy === `${entry.kind}-${draftVerdict}`}
+                          disabled={!draft.trim()}
+                          onClick={() => void rate(entry.kind, draftVerdict, draft)}
+                        >
+                          Save note
+                        </Button>{" "}
+                        <Button
+                          size="sm"
+                          tone="ghost"
+                          onClick={() => {
+                            setNoting(null);
+                            setDraft("");
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      </span>
+                    ) : (
+                      <>
+                        <Button
+                          size="sm"
+                          pending={busy === `${entry.kind}-up`}
+                          onClick={() => void rate(entry.kind, "up")}
+                        >
+                          Up
+                        </Button>{" "}
+                        <Button
+                          size="sm"
+                          pending={busy === `${entry.kind}-down`}
+                          onClick={() => void rate(entry.kind, "down")}
+                        >
+                          Down
+                        </Button>{" "}
+                        <Button
+                          size="sm"
+                          tone="ghost"
+                          onClick={() => {
+                            setNoting(entry.kind);
+                            setDraft(entry.rating ? entry.rating.note : "");
+                            setDraftVerdict(entry.rating?.rating === "down" ? "down" : "up");
+                          }}
+                        >
+                          Note
+                        </Button>{" "}
+                        <Button
+                          size="sm"
+                          tone="ghost"
+                          pending={busy === `${entry.kind}-`}
+                          onClick={() => void rate(entry.kind, "")}
+                        >
+                          Clear
+                        </Button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
