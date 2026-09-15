@@ -68,6 +68,21 @@ def _is_named(name: str) -> bool:
     return bool(stripped) and not stripped.startswith(PLACEHOLDER_PREFIXES)
 
 
+def _literal(name: str) -> str:
+    """*name* as a Python string literal, safe to splice into a script.
+
+    ``repr`` already quotes and escapes, so a quote, a backslash or a newline
+    in a stored rename renders as text rather than code; the one form it
+    cannot express is a name holding both quote styles, which is refused
+    rather than guessed at.  The Binja document needs no quoting at all
+    (``json.dumps`` owns that boundary), so this is the two script formats
+    only.
+    """
+    if "'" in name and '"' in name:
+        raise ScriptError(f"rename is not a script-safe literal: {name!r}", code="unsafe name")
+    return repr(name)
+
+
 def _entries(functions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The renames a script carries: named functions as VA/name pairs."""
     found = [
@@ -123,7 +138,7 @@ def render(payload: dict[str, Any], *, fmt: str) -> str:
             "from ghidra.program.model.symbol import SourceType",
             "",
             "RENAMES = [",
-            *[f"    (0x{entry['va']:x}, {entry['name']!r})," for entry in entries],
+            *[f"    (0x{entry['va']:x}, {_literal(str(entry['name']))})," for entry in entries],
             "]",
             "",
             "for va, name in RENAMES:",
@@ -138,7 +153,9 @@ def render(payload: dict[str, Any], *, fmt: str) -> str:
         f"; binary: {payload['binary_name']} ({len(entries)} renames)",
         "",
     ]
-    lines.extend(f"MakeName(0x{entry['va']:x}, {entry['name']!r});" for entry in entries)
+    lines.extend(
+        f"MakeName(0x{entry['va']:x}, {_literal(str(entry['name']))});" for entry in entries
+    )
     return "\n".join(lines) + "\n"
 
 

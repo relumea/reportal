@@ -211,6 +211,13 @@ use the file-type scan when the question is only which runtime produced it.
 information. The row exists but its bytes do not, so there is nothing to
 scan; re-register the binary rather than retrying the scan.
 
+### unsafe-name
+
+`400`. A stored rename holds both quote styles, so no Python quoting renders
+it as text rather than code in a Ghidra or IDA script. Rename the function
+to a name with at most one quote style, or take the Binja document, which
+needs no quoting.
+
 ### no-file
 
 `400`. A multipart upload carried no `file` part. Send the file.

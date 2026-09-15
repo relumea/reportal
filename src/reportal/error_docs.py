@@ -151,6 +151,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "request body must be a JSON object": "request-body-must-be-a-json-object",
     "run not found": "run-not-found",
     "run-not-cancellable": "run-not-cancellable",
+    "unsafe name": "unsafe-name",
     "same binary": "same-binary",
     "sandbox-disabled": "sandbox-disabled",
     "sandbox-unavailable": "sandbox-unavailable",

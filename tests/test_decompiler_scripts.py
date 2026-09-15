@@ -73,6 +73,28 @@ class TestRender:
         document = json.loads(text)
         assert document["renames"] == [{"address": 0x1000, "name": "memcpy"}]
 
+    def test_a_quote_in_a_name_renders_as_text(self) -> None:
+        payload = {
+            "binary_name": "demo.exe",
+            "entries": [{"va": 0x1000, "name": 'say "hi"'}],
+        }
+        for fmt in ("ghidra", "ida"):
+            assert 'say "hi"' in decompiler_scripts.render(payload, fmt=fmt)
+
+    def test_a_name_with_both_quotes_is_refused(self) -> None:
+        payload = {
+            "binary_name": "demo.exe",
+            "entries": [{"va": 0x1000, "name": "a'b\"c"}],
+        }
+        for fmt in ("ghidra", "ida"):
+            try:
+                decompiler_scripts.render(payload, fmt=fmt)
+            except decompiler_scripts.ScriptError as exc:
+                assert exc.code == "unsafe name"
+            else:
+                raise AssertionError(f"{fmt} rendered an unsafe name")
+        assert json.loads(decompiler_scripts.render(payload, fmt="binja"))["renames"]
+
     def test_unknown_binary_is_404(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         _seed(conn, tmp_path)
         try:
