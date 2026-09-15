@@ -10,7 +10,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, data_types, mcp_server, store
+from reportal import auth, cli, data_types, mcp_server, store
 
 runner = CliRunner()
 
@@ -119,6 +119,46 @@ class TestTypeAndMemberEdits:
         status, headers, body = _patch(f"/api/data-types/{data_type_id}", {"name": "Player"})
         assert status.startswith("200")
         assert json_body(body, headers)["name"] == "Player"
+
+    def test_a_non_member_does_not_read_or_patch_a_team_type(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _seed_type(conn, binary_id)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/data-types/{data_type_id}/references",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "data-type-not-found"
+
+        stranger_status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/data-types/{data_type_id}",
+            body=json.dumps({"name": "Player"}),
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("403"), body
+        assert json_body(body, headers)["error"] == "scope-forbidden"
+
+        member_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/data-types/{data_type_id}/references",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), body
 
     def test_patch_invalid_name_is_400(self, conn: sqlite3.Connection) -> None:
         binary_id = _seed_binary(conn)

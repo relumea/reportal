@@ -101,6 +101,7 @@ _SCOPED_PATHS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/api/collections/(?P<id>\d+)"), "collection"),
     (re.compile(r"^/api/functions/(?P<id>\d+)"), "function"),
     (re.compile(r"^/api/analyses/(?P<id>\d+)"), "analysis"),
+    (re.compile(r"^/api/data-types/(?P<id>\d+)"), "data-type"),
 )
 
 # The 404 each object reports when the caller may not see it.  A team-scoped
@@ -111,14 +112,16 @@ _NOT_FOUND_NAME: dict[str, str] = {
     "collection": "collection not found",
     "function": "function not found",
     "analysis": "analysis not found",
+    "data-type": "data-type-not-found",
 }
 
 
 def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[str, Any]] | None:
     """The binary or collection a path names, and the kind it is.
 
-    A function or an analysis resolves to its owning binary, because that is the
-    object a team scope attaches to: reportal has no per-function owner.
+    A function, an analysis or a data type resolves to its owning binary,
+    because that is the object a team scope attaches to: reportal has no
+    per-function owner.
     """
     for pattern, kind in _SCOPED_PATHS:
         match = pattern.match(path)
@@ -134,6 +137,9 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
             analysis = (
                 None if function is None else store.get_analysis(conn, int(function["analysis_id"]))
             )
+        elif kind == "data-type":
+            data_type = store.get_data_type(conn, row_id)
+            analysis = None if data_type is None else {"binary_id": data_type["binary_id"]}
         else:
             analysis = store.get_analysis(conn, row_id)
         if kind != "binary" and kind != "collection":
