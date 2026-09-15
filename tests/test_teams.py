@@ -318,6 +318,30 @@ class TestScopeGate:
         assert status.startswith("403")
         assert payload["error"] == auth.ERROR_SCOPE_FORBIDDEN
 
+    def test_replacing_collection_members_with_a_scoped_binary_is_refused(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = self._scoped(conn)
+        collection_id = store.create_collection(conn, name="shared", description="")
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+
+        status, payload = _send(
+            "PATCH",
+            f"/api/collections/{collection_id}/binaries",
+            token=ids["bob"],
+            body={"binary_ids": [ids["binary"], ids["public"]]},
+        )
+        assert status.startswith("403")
+        assert payload["error"] == auth.ERROR_SCOPE_FORBIDDEN
+
+        member_status, member_payload = _send(
+            "PATCH",
+            f"/api/collections/{collection_id}/binaries",
+            token=ids["ana"],
+            body={"binary_ids": [ids["binary"], ids["public"]]},
+        )
+        assert member_status.startswith("200"), member_payload
+
     def test_auth_off_leaves_every_scope_open(self, conn: sqlite3.Connection) -> None:
         ids = self._scoped(conn)
 

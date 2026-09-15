@@ -7237,7 +7237,7 @@ def delete_collection(collection_id: int) -> Response:
 
 @router.patch("/api/collections/{collection_id}/binaries")
 def replace_collection_binaries(
-    collection_id: int, body: dict[str, Any] = Depends(json_body)
+    request: Request, collection_id: int, body: dict[str, Any] = Depends(json_body)
 ) -> Response:
     """Make the body's ids the exact members of one collection; 404 for an unknown id."""
     binary_ids = _optional_int_list(body, "binary_ids")
@@ -7246,6 +7246,20 @@ def replace_collection_binaries(
     with contextlib.closing(_open()) as conn:
         if store.get_collection(conn, collection_id) is None:
             return _no_collection(collection_id)
+        for binary_id in binary_ids:
+            binary = store.get_binary(conn, binary_id)
+            if binary is None:
+                return json_error(
+                    404, error="binary not found", detail=f"no binary with id {binary_id}"
+                )
+            if not auth.may_write(
+                _caller(request), binary, team_ids=_caller_team_ids(conn, request)
+            ):
+                return json_error(
+                    403,
+                    error=auth.ERROR_SCOPE_FORBIDDEN,
+                    detail=f"binary {binary_id} belongs to a team you are not a member of",
+                )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -7264,7 +7278,7 @@ def replace_collection_binaries(
 
 @router.delete("/api/collections/{collection_id}/binaries")
 def remove_collection_binaries(
-    collection_id: int, body: dict[str, Any] = Depends(optional_json_body)
+    request: Request, collection_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Remove the body's ids from one collection, keeping the rest of its members."""
     binary_ids = _optional_int_list(body, "binary_ids")
@@ -7274,6 +7288,20 @@ def remove_collection_binaries(
         collection = store.get_collection(conn, collection_id)
         if collection is None:
             return _no_collection(collection_id)
+        for binary_id in binary_ids:
+            binary = store.get_binary(conn, binary_id)
+            if binary is None:
+                return json_error(
+                    404, error="binary not found", detail=f"no binary with id {binary_id}"
+                )
+            if not auth.may_write(
+                _caller(request), binary, team_ids=_caller_team_ids(conn, request)
+            ):
+                return json_error(
+                    403,
+                    error=auth.ERROR_SCOPE_FORBIDDEN,
+                    detail=f"binary {binary_id} belongs to a team you are not a member of",
+                )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
