@@ -12,7 +12,7 @@ import pytest
 from auto_helpers import seed_rows, writer_worker
 from conftest import json_body, wsgi_request
 
-from reportal import auto_store, auto_workers, mcp_tools, store
+from reportal import auth, auto_store, auto_workers, mcp_tools, store
 
 # How long a background auto run may take in a test before the test gives up.
 RUN_WAIT_SECONDS = 15.0
@@ -211,6 +211,38 @@ class TestGet:
         status, headers, payload = wsgi_request("GET", "/api/auto/runs/999")
         assert int(status.split()[0]) == 404
         assert json_body(payload, headers)["error"] == "run not found"
+
+    def test_a_non_member_does_not_read_a_team_run(
+        self, portal_db: Path, conn: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),))
+        _status, started = _start(ids["binary"])
+        _wait_for_terminal(portal_db, ids["binary"])
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        status, headers, payload = wsgi_request(
+            "GET",
+            f"/api/auto/runs/{started['run_id']}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert int(status.split()[0]) == 404, payload
+        assert json_body(payload, headers)["error"] == "run not found"
+
+        status, headers, payload = wsgi_request(
+            "GET",
+            f"/api/auto/runs/{started['run_id']}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert int(status.split()[0]) == 200, payload
 
 
 class TestRevert:

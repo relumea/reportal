@@ -105,6 +105,8 @@ _SCOPED_PATHS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/api/comments/(?P<id>\d+)"), "comment"),
     (re.compile(r"^/api/documents/(?P<id>\d+)"), "document"),
     (re.compile(r"^/api/conversations/(?P<id>\d+)"), "conversation"),
+    (re.compile(r"^/api/pipeline/runs/(?P<id>\d+)"), "pipeline-run"),
+    (re.compile(r"^/api/auto/runs/(?P<id>\d+)"), "auto-run"),
 )
 
 # The 404 each object reports when the caller may not see it.  A team-scoped
@@ -119,16 +121,19 @@ _NOT_FOUND_NAME: dict[str, str] = {
     "comment": "comment not found",
     "document": "document not found",
     "conversation": "conversation not found",
+    "pipeline-run": "run not found",
+    "auto-run": "run not found",
 }
 
 
 def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[str, Any]] | None:
     """The binary or collection a path names, and the kind it is.
 
-    A function, an analysis, a data type, a comment, a binary-scoped document
-    or a binary/function-scoped conversation resolves to its owning binary,
-    because that is the object a team scope attaches to: reportal has no
-    per-function owner.  A comment's scope is its own row: a binary scope
+    A function, an analysis, a data type, a comment, a binary-scoped document,
+    a binary/function-scoped conversation, a pipeline run (through its
+    function) or an auto run (through its own binary) resolves to its owning
+    binary, because that is the object a team scope attaches to: reportal has
+    no per-function owner.  A comment's scope is its own row: a binary scope
     names the binary and a function scope names the function whose analysis
     names the binary.  A document or conversation of any other scope
     (project, docs) has no owning binary and is left to the route.
@@ -159,6 +164,14 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
         elif kind == "conversation":
             conversation = store.get_conversation(conn, row_id)
             analysis = None if conversation is None else _conversation_binary(conn, conversation)
+        elif kind == "pipeline-run":
+            run = store.get_pipeline_run(conn, row_id)
+            analysis = None if run is None else _pipeline_run_binary(conn, run)
+        elif kind == "auto-run":
+            from reportal import auto_store
+
+            run = auto_store.get_auto_run(conn, row_id)
+            analysis = None if run is None else {"binary_id": run["binary_id"]}
         else:
             analysis = store.get_analysis(conn, row_id)
         if kind != "binary" and kind != "collection":
@@ -167,6 +180,14 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
             return None
         return kind, row
     return None
+
+
+def _pipeline_run_binary(conn: sqlite3.Connection, run: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The ``{"binary_id"}`` a pipeline run's function resolves to, or None."""
+    function = store.get_function(conn, int(run["function_id"]))
+    if function is None:
+        return None
+    return {"binary_id": int(function["binary_id"])}
 
 
 def _conversation_binary(

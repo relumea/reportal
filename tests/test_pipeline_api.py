@@ -11,7 +11,7 @@ import pytest
 from conftest import FakeEngine, FakeLlmClient, json_body, wsgi_request
 from pipeline_helpers import ScriptedLlmClient, seed_portal, seed_unstrip_proposal
 
-from reportal import components, effects, journal, llm, pipeline, store
+from reportal import auth, components, effects, journal, llm, pipeline, store
 
 
 @pytest.fixture(autouse=True)
@@ -186,6 +186,37 @@ class TestLatestRoute:
         status, headers, body = wsgi_request("GET", "/api/pipeline/runs/999")
         assert status.startswith("404")
         assert json_body(body, headers)["error"] == "run not found"
+
+    def test_a_non_member_does_not_read_a_team_run(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        run_id = store.create_pipeline_run(conn, function_id=ids["function"], model="m")
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/pipeline/runs/{run_id}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "run not found"
+
+        member_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/pipeline/runs/{run_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), body
 
 
 class TestRevertRoute:
