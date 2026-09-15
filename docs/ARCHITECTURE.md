@@ -93,6 +93,13 @@ reportal/
 │   │                         #   (CycloneDX, SPDX, CSV) it feeds
 │   ├── decompiler_scripts.py # stored renames as runnable tool scripts (Ghidra,
 │   │                         #   IDA, Binja): pure render, no engine and no state dir
+│   ├── attack_surface.py     # the attack surface as a stored-only composition:
+│   │                         #   network entries, local input handlers, crypto usage
+│   ├── exploitability.py     # finding reachability over the stored security scan:
+│   │                         #   callers by text derivation, severity ordering
+│   ├── gobuildinfo.py        # Go build provenance from the stored file bytes:
+│   │                         #   compiler version, module path, dependency pins,
+│   │                         #   build settings
 │   ├── unpack.py             # packer detection and the rebuild: LZEXE in process
 │   │                         #   through the engine, UPX through the external tool
 │   ├── benchmark.py          # precision and recall of a match run against labelled

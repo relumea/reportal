@@ -285,6 +285,48 @@ def _component_purl(module: str) -> str:
     return f"pkg:generic/{module}"
 
 
+def _go_purl(module: str, version: str) -> str:
+    """A Go dependency's package URL, with the pinned version it declares."""
+    purl = f"pkg:golang/{module.strip('/')}"
+    return f"{purl}@{version}" if version else purl
+
+
+def _go_components(conn: sqlite3.Connection, binary_id: int) -> list[dict[str, Any]]:
+    """The stored gobuildinfo dependencies as SBOM components, or empty.
+
+    A component carries the module, its pinned version, the Go purl, the
+    `go-module` kind and zeroed engine counts: the buildinfo names versions,
+    not functions, so the counts are honestly zero rather than invented.
+    """
+    from reportal import details, gobuildinfo
+
+    scan = details.stored_scan(conn, binary_id, gobuildinfo.SCAN_KIND)
+    dependencies = scan.get("dependencies") if isinstance(scan, dict) else None
+    if not isinstance(dependencies, list):
+        return []
+    found: list[dict[str, Any]] = []
+    for entry in dependencies:
+        if not isinstance(entry, dict):
+            continue
+        module = str(entry.get("module") or "").strip()
+        version = str(entry.get("version") or "").strip()
+        if not module:
+            continue
+        found.append(
+            {
+                "module": module,
+                "kinds": ["go-module"],
+                "functions": 0,
+                "size": 0,
+                "confidence": 1.0,
+                "linkage": "static",
+                "version": version,
+                "source": gobuildinfo.SCAN_KIND,
+            }
+        )
+    return found
+
+
 def sbom(
     conn: sqlite3.Connection, binary_id: int, *, fmt: str = FORMAT_CYCLONEDX
 ) -> dict[str, Any]:
@@ -293,7 +335,9 @@ def sbom(
     Returns a document dict for the two schema shapes and a `{"columns",
     "rows"}` table for CSV.  Raises :class:`LibraryError` for an unknown binary
     and :class:`ValueError` for an unknown format.  The reading always comes
-    from the stored scan, so exporting never runs the engine again.
+    from the stored scans (the library identification plus the gobuildinfo
+    dependencies, when that scan exists), so exporting never runs the engine
+    again.
     """
     if fmt not in SBOM_FORMATS:
         raise ValueError(f"unknown format: {fmt}; expected one of {', '.join(SBOM_FORMATS)}")
@@ -302,6 +346,7 @@ def sbom(
         raise LibraryError(f"no binary with id {binary_id}", code="binary not found")
     stored = describe(conn, binary_id)
     found = stored.get("components") or []
+    go = _go_components(conn, binary_id)
     name = str(binary["name"])
     sha256 = str(binary.get("sha256") or "")
     if fmt == FORMAT_CSV:
@@ -317,7 +362,7 @@ def sbom(
                     "confidence": float(entry["confidence"]),
                     "linkage": str(entry["linkage"]),
                 }
-                for entry in found
+                for entry in [*found, *go]
             ],
         }
     if fmt == FORMAT_CYCLONEDX:
@@ -345,9 +390,20 @@ def sbom(
                         "properties": _component_properties(entry),
                     }
                     for entry in found
+                ]
+                + [
+                    {
+                        "type": "library",
+                        "name": str(entry["module"]),
+                        "version": str(entry.get("version") or ""),
+                        "purl": _go_purl(str(entry["module"]), str(entry.get("version") or "")),
+                        "properties": _component_properties(entry),
+                    }
+                    for entry in go
                 ],
             },
         }
+    offset = len(found)
     return {
         "format": fmt,
         "document": {
@@ -376,6 +432,16 @@ def sbom(
                         "filesAnalyzed": False,
                     }
                     for index, entry in enumerate(found, start=1)
+                ],
+                *[
+                    {
+                        "name": str(entry["module"]),
+                        "SPDXID": f"SPDXRef-Package-{index}",
+                        "versionInfo": str(entry.get("version") or ""),
+                        "downloadLocation": SPDX_LICENSE,
+                        "filesAnalyzed": False,
+                    }
+                    for index, entry in enumerate(go, start=offset + 1)
                 ],
             ],
         },

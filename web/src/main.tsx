@@ -6,7 +6,10 @@ import { HashRouter } from "react-router";
 import { queryClient } from "./queryClient";
 
 import { App } from "./App";
+import { installTheme } from "./theme";
 import "./styles.css";
+
+installTheme();
 
 const container = document.getElementById("root");
 if (!container) {

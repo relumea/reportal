@@ -334,6 +334,33 @@ SIGNATURES: tuple[FileSignature, ...] = (
             strings=_regex(r"@System@", r"\bBorland\b", r"\bEmbarcadero\b", r"\bDelphi\b")
         ),
     ),
+    FileSignature(
+        "Go",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(
+            section_prefixes=(".gopclntab",),
+            strings=_regex(r"gopclntab", r"runtime\.goexit", r"runtime\.gopanic", r"go\.buildid"),
+        ),
+    ),
+    FileSignature(
+        "Rust",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(
+            section_prefixes=(".rustc",),
+            strings=_regex(r"rust_begin_unwind", r"rust_panic", r"__rust_alloc", r"/rustc/"),
+        ),
+    ),
+    FileSignature(
+        "Swift",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(
+            section_prefixes=("__swift",),
+            strings=_regex(r"libswift", r"swift_allocObject", r"\bswift_once\b"),
+        ),
+    ),
     # ── Toolchains ─────────────────────────────────────────────────────────
     FileSignature(
         "Microsoft Visual C++",

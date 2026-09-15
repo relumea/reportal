@@ -708,6 +708,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # Debug symbol ingestion: the file control and its apply toggle.
             ("Debug symbols",),
             ("Ingest symbols",),
+            # The stored renames as runnable scripts, beside the C/JSON export.
+            ("Ghidra",),
+            ("Binja",),
             # The memory panel's mode select, and the section table's
             # addresses, which link into the continuous dump.
             ("Whole binary",),
@@ -746,6 +749,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             (SECURITY_LOW_RULE,),
             (SECURITY_LOW_CWE,),
             (SECURITY_BADGE_HUE,),
+            # The stored findings ranked by reachability, inside the same panel.
+            ("Exploitability",),
+            ("reachable",),
             ("Secrets",),
             ("Protocols",),
             ("Threat report",),
@@ -757,6 +763,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             (THREAT_SOFTWARE_TYPE,),
             (THREAT_SCORE_LABEL,),
             (THREAT_CONTRIBUTION,),
+            # The seeded threat URL flows into the attack-surface network group.
+            ("Attack surface",),
+            (THREAT_IOC_URL,),
             ("Remediation",),
             (REMEDIATION_RULE_FRAGMENT,),
             ("Snort",),

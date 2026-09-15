@@ -33,6 +33,7 @@ under the hyphenated heading.
 - Uploads and archives: [no-file](#no-file), [empty-file](#empty-file), [file-too-large](#file-too-large), [too-many-files](#too-many-files), [unsupported-format](#unsupported-format), [external-tool-required](#external-tool-required), [password-required](#password-required), [bad-password](#bad-password), [corrupt-archive](#corrupt-archive), [archive-too-large](#archive-too-large), [too-many-members](#too-many-members), [binary-not-on-disk](#binary-not-on-disk), [too-many-documents](#too-many-documents)
 - Not found: [edge-not-found](#edge-not-found), [string-not-found](#string-not-found), [binary-not-found](#binary-not-found), [function-not-found](#function-not-found), [collection-not-found](#collection-not-found), [family-not-found](#family-not-found), [comment-not-found](#comment-not-found), [conversation-not-found](#conversation-not-found), [data-type-not-found](#data-type-not-found), [document-not-found](#document-not-found), [member-not-found](#member-not-found), [node-not-found](#node-not-found), [project-not-found](#project-not-found), [run-not-found](#run-not-found), [tag-not-found](#tag-not-found), [format-not-found](#format-not-found), [domain-not-found](#domain-not-found), [component-not-found](#component-not-found), [action-not-found](#action-not-found), [entry-not-found](#entry-not-found), [history-not-found](#history-not-found), [analysis-not-found](#analysis-not-found), [candidate-not-found](#candidate-not-found), [signature-not-found](#signature-not-found), [not-found](#not-found)
 - Debug symbols: [symbols-unreadable](#symbols-unreadable), [no-symbols](#no-symbols)
+- Go binaries: [not-go](#not-go), [unreadable](#unreadable)
 - Agent artifacts: [no-artifact](#no-artifact)
 - Stored-only reads: [no-scan](#no-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
 - Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
@@ -197,6 +198,18 @@ instead.
 `404`. No debug symbol file has been ingested for the binary, so there is no
 stored parse to read or export. It is not an error state: a binary whose names
 came from the engine has no symbol file and needs none.
+
+### not-go
+
+`400`. The stored file carries no `go.buildinfo` magic, so it is not a Go
+binary the build-information scan can read. Run it against a Go binary, or
+use the file-type scan when the question is only which runtime produced it.
+
+### unreadable
+
+`400`. The stored file could not be read while recovering Go build
+information. The row exists but its bytes do not, so there is nothing to
+scan; re-register the binary rather than retrying the scan.
 
 ### no-file
 

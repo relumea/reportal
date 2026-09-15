@@ -215,6 +215,55 @@ class TestSbom:
         with pytest.raises(ValueError):
             library.sbom(conn, binary_id, fmt="xml")
 
+    def test_go_dependencies_join_every_shape(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        from reportal import gobuildinfo
+
+        binary_id = self._identified(conn, tmp_path)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        assert analysis_id is not None
+        store.set_scan(
+            conn,
+            analysis_id,
+            gobuildinfo.SCAN_KIND,
+            {
+                "binary_id": binary_id,
+                "version": "go1.27.1",
+                "module": "example.com/demo",
+                "dependencies": [{"module": "github.com/google/uuid", "version": "v1.6.0"}],
+                "settings": {},
+                "build_id": "",
+            },
+        )
+
+        cyclonedx = library.sbom(conn, binary_id, fmt=library.FORMAT_CYCLONEDX)["document"]
+        go = cyclonedx["components"][-1]
+        assert go["name"] == "github.com/google/uuid"
+        assert go["version"] == "v1.6.0"
+        assert go["purl"] == "pkg:golang/github.com/google/uuid@v1.6.0"
+
+        spdx = library.sbom(conn, binary_id, fmt=library.FORMAT_SPDX)["document"]
+        assert [package["name"] for package in spdx["packages"]] == [
+            "demo.exe",
+            "msvcrt",
+            "zlib",
+            "github.com/google/uuid",
+        ]
+        assert spdx["packages"][-1]["versionInfo"] == "v1.6.0"
+
+        payload = library.sbom(conn, binary_id, fmt=library.FORMAT_CSV)
+        lines = library.render_csv(payload).strip().splitlines()
+        assert len(lines) == 4
+        assert lines[-1].startswith("github.com/google/uuid,go-module,0,0,1.0,static")
+
+    def test_no_gobuildinfo_scan_changes_nothing(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = self._identified(conn, tmp_path)
+        document = library.sbom(conn, binary_id, fmt=library.FORMAT_CYCLONEDX)["document"]
+        assert [entry["name"] for entry in document["components"]] == ["msvcrt", "zlib"]
+
     def test_an_unidentified_binary_exports_empty(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:

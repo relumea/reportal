@@ -75,7 +75,8 @@ table pays for the payload and the fetch, and no longer for the DOM.
 `src/main.tsx` mounts `QueryClientProvider` and `HashRouter` around
 `src/App.tsx`, the shell: a grouped sidebar (`NAV_GROUPS` in `src/router.ts`:
 Overview, Targets, Analysis, Agent, System; the System group ends with Jobs,
-Journal, Components, Integrations, Users and Docs), a topbar title and the health line.
+Journal, Components, Integrations, Users and Docs), a topbar title, the theme
+picker and the health line.
 Routing is react-router's: `App` holds one route table, `useRoutes` renders it,
 and the same table is matched against the location for the topbar title and the
 sidebar's active section, so no path is written down twice.  Every view is
@@ -146,8 +147,34 @@ its nav keeps every group label and divider in a single horizontally scrollable
 strip, so the grouped information architecture survives at narrow widths.  The
 `src/styles.css` token layer carries the contrast contract: every 11-12px label
 clears 4.5:1 and every badge ink clears 4.5:1 over its soft fill on both
-`--surface` and `--surface-2` in both themes; `tools/audit_ui.py` measures the
+`--surface` and `--surface-2` in every theme; `tools/audit_ui.py` measures the
 rendered result.
+
+### Themes
+
+`src/theme.ts` owns which palette is live.  `THEMES` is `system`, `dark`,
+`light` and `zine`; every one but `system` is a `:root[data-theme="..."]` block
+in `src/styles.css`, and `system` resolves to dark or light from the OS
+preference, so the attribute is always set and the stylesheet carries no
+`prefers-color-scheme` query.  `installTheme()` runs once from `src/main.tsx`
+before React mounts, and keeps `system` following the OS through a `matchMedia`
+listener.  Resolution is first match wins: the `?theme=` query parameter, then
+`localStorage["reportal.theme"]` (`THEME_STORAGE_KEY`), then the OS.  The
+topbar's `ThemePicker` writes the choice through `setTheme`, and
+`web/tests/theme.spec.ts` covers the four rules.
+
+`zine` is the Windows 2000 "Windows Standard" scheme, taken from the sibling
+zine project's `src/gui/win2k.css`: the registry defaults for
+`HKCU\Control Panel\Colors` and its 96 DPI metrics, so ButtonFace surfaces,
+square corners, 11px MS Sans Serif and the ActiveTitle caption bar.  The
+instrument inks are darkened from the light palette, because ButtonFace is a
+much darker surface than white and every ink still has to clear 4.5:1 on it;
+the panel, card, button and field bevels are win2k.css's own 3D model, a 1px
+border for the outer ButtonHilight/ButtonDkShadow pair and a 1px inset
+box-shadow for the inner ButtonLight/ButtonShadow pair, inverted for a sunken
+control.  The caption bar is flat ActiveTitle rather than the registry's
+GradientActiveTitle blend, because caption text has to clear 4.5:1 at the right
+edge of the gradient too and `#a6caf0` under white does not.
 
 ### Instrument design language
 
@@ -335,7 +362,10 @@ by-confidence counts); security (auto-loads the stored security scan and never
 runs the engine on render; a `no-scan` response shows the nothing-scanned
 message with a severity `<select>` and a Run security scan control, which posts
 and renders each finding's severity, rule, CWE, file:line, function and snippet
-with the by-severity counts); secrets (auto-loads the stored secrets scan and
+with the by-severity counts, followed by the Exploitability section ranking the
+same findings by reachability (severity, then reachability, then function and
+rule, each row with its network-adjacency flag) from
+`GET .../exploitability`); secrets (auto-loads the stored secrets scan and
 never runs the engine on render; a `no-scan` response shows the nothing-scanned
 message with a Run secrets scan control, which posts and renders each finding's
 confidence, kind, name, redacted value and VA with the by-confidence and
@@ -378,6 +408,11 @@ stored scan for the selected domain and never runs the engine on render; a
 control, which posts and renders each finding's confidence, category, name and
 detail with the by-confidence counts, the packer likelihood badge for
 obfuscation and any recorded notes);
+attack surface (auto-loads the stored-only composition and never runs the
+engine on render; a `no-scan` response shows the nothing-stored message naming
+the capabilities, protocols, threat, behavior and crypto scans that feed it,
+and the render groups the network entries, the local input handlers and the
+crypto usage, each row with its source scan and the true count stated);
 threat (auto-loads the stored report and never runs
 the engine on render; a `no-scan` response shows the nothing-stored message with
 a Run threat report control and a narrative checkbox, rendering the software-type
@@ -463,7 +498,9 @@ The Data types panel's neighbour is the Debug symbols panel: a file control, an
 `multipart/form-data` to `POST /api/binaries/<id>/symbols` and renders the
 result (kind, symbol count, type count, names applied) with the parse's own
 notes under the table of ingests; each row exports the parse as a C header or
-JSON through `GET .../symbols/export`.  A binary with no ingest renders the
+JSON through `GET .../symbols/export`, and as a runnable decompiler script
+(Ghidra, IDA or Binja links to `GET .../decompiler-script`) carrying the
+stored renames into the tool.  A binary with no ingest renders the
 nothing-stored state from the route's 404 `no-symbols` rather than an error.
 
 The per-function extras render between the references tables and the matches
@@ -1000,9 +1037,9 @@ and a message when neither browser is on PATH, before it builds anything.
 `tools/audit_ui.py` is the UI gate over the same seeded workspace and route
 list: it drives headless Chrome over the DevTools protocol
 (`--remote-debugging-pipe`, so no websocket dependency), renders every route at
-each viewport in `VIEWPORTS` (1600x1000 and 480x900) and each colour scheme in
-`THEMES` (dark and light; headless Chrome defaults to light, so dark is
-emulated), and fails with a `route/selector` list on horizontal document
+each viewport in `VIEWPORTS` (1600x1000 and 480x900) and each palette in
+`THEMES` (dark, light and zine, selected through the SPA's own `?theme=`
+parameter), and fails with a `route/selector` list on horizontal document
 overflow, clipped text, text contrast under WCAG AA, a box outside the
 viewport, or an interactive element with no accessible name.  The thresholds
 are its module constants and are passed into the page, so the report and the

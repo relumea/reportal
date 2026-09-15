@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { api } from "../api";
 import { Panel, PanelBody } from "../components";
 import {
+  AttackSurfacePanel,
   BehaviorPanel,
   BinaryAnalysesPanel,
   BinaryHeader,
@@ -101,6 +102,7 @@ export function BinaryDetail({
           <SecretsPanel binaryId={binary.id} />
           <ProtocolsPanel binaryId={binary.id} />
           <ThreatPanel binaryId={binary.id} />
+          <AttackSurfacePanel binaryId={binary.id} />
           <RemediationPanel binaryId={binary.id} />
           <DataTypesPanel binaryId={binary.id} query={query} />
           <SymbolsPanel binaryId={binary.id} />

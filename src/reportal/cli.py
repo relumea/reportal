@@ -120,6 +120,7 @@ from reportal import (
     ai_decomp,
     analysis_log,
     analytics,
+    attack_surface,
     auth,
     auto_mode,
     auto_store,
@@ -134,16 +135,19 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    decompiler_scripts,
     details,
     diffview,
     doctor,
     effects,
     engines,
+    exploitability,
     external,
     families,
     filetypes,
     function_extras,
     function_triage,
+    gobuildinfo,
     graph,
     graph_backends,
     hardening,
@@ -7234,6 +7238,43 @@ def symbols_export(
     typer.echo(text, nl=False)
 
 
+@app.command("decompiler-script")
+def decompiler_script(
+    binary_id: int = typer.Argument(..., help="Binary whose renames to export"),
+    format_kind: str = typer.Option("ghidra", "--format", help="ghidra, ida or binja"),
+    output: str = typer.Option("", "--output", help="Write here instead of stdout"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Render the stored renames as a runnable decompiler script.
+
+    Stored-only: a function still carrying a decompiler placeholder is left
+    out, so the script only carries names the tool would not already show.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    kind = format_kind.strip().lower()
+    if kind not in decompiler_scripts.SCRIPT_FORMATS:
+        _fail(f"format must be one of {', '.join(decompiler_scripts.SCRIPT_FORMATS)}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            payload = decompiler_scripts.script(conn, binary_id, fmt=kind)
+        except decompiler_scripts.ScriptError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    text = str(payload["text"])
+    if output.strip():
+        try:
+            Path(output).write_text(text, encoding="utf-8")
+        except OSError as exc:
+            _fail(f"cannot write {output}: {exc}", json_output)
+        if json_output:
+            typer.echo(json.dumps({"path": output, "format": kind, "bytes": len(text)}))
+            return
+        console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
+        return
+    typer.echo(text, nl=False)
+
+
 # ── documentation ──────────────────────────────────────────────────
 
 
@@ -10113,6 +10154,42 @@ def additional_details(
     console.print(table)
 
 
+@app.command("attack-surface")
+def attack_surface_command(
+    binary_id: int = typer.Argument(..., help="Binary id to map"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Map a binary's attack surface from its stored scans.
+
+    A stored-only read over the `protocols`, `behavior`, `capabilities`,
+    `threat` and `crypto` scans: the network-reachable entries, the local
+    input handlers and the crypto usage.  Run those scans first when a group
+    comes back empty; the payload's `sources` names each one.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        try:
+            payload = attack_surface.attack_surface(conn, binary_id)
+        except KeyError as exc:
+            _fail(str(exc), json_output)
+    if not payload["available"]:
+        _fail(f"binary {binary_id} has no stored attack-surface source scan", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Group", style="cyan")
+    table.add_column("Entries")
+    for group in ("network", "local_input", "crypto"):
+        rows = payload[group]["rows"]
+        table.add_row(group, ", ".join(str(row["name"]) for row in rows) or "none")
+    console.print(table)
+
+
 @app.command("pe-info")
 def pe_info(
     binary_id: int = typer.Argument(..., help="Binary id to inspect"),
@@ -10297,6 +10374,51 @@ def _print_filetype(binary_id: int, result: dict[str, Any]) -> None:
     console.print(table)
     for note in notes:
         console.print(f"[yellow]{note}[/yellow]")
+
+
+@app.command("gobuildinfo")
+def gobuildinfo_command(
+    binary_id: int = typer.Argument(..., help="Binary id to inspect"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Recover a binary's Go build version, module and build settings."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        path = Path(str(binary["path"]))
+        if not path.is_file():
+            _fail(f"binary {binary_id} has no readable file at {path}", json_output)
+        try:
+            log, result = _run_scan_command(
+                conn,
+                binary_id,
+                gobuildinfo.SCAN_KIND,
+                lambda: gobuildinfo.recover(conn, binary_id=binary_id),
+            )
+        except gobuildinfo.GobuildinfoError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    console.print(f"\n[bold cyan]binary {binary_id}[/bold cyan]")
+    console.print(f"version: {result.get('version', '')}")
+    console.print(f"module: {result.get('module', '') or 'none'}")
+    dependencies = result.get("dependencies")
+    if isinstance(dependencies, list) and dependencies:
+        console.print(f"dependencies: {len(dependencies)}")
+        for entry in dependencies:
+            if isinstance(entry, dict):
+                console.print(f"  {entry.get('module', '')} {entry.get('version', '')}")
+    settings = result.get("settings")
+    if isinstance(settings, dict) and settings:
+        for key in sorted(settings):
+            console.print(f"{key}: {settings[key]}")
 
 
 # ── capabilities ───────────────────────────────────────────────────
@@ -10781,6 +10903,55 @@ def security_scan(
             f"{finding.get('file', '')}:{finding.get('line', '')}",
             str(finding.get("function", "")),
             str(finding.get("snippet", "")),
+        )
+    console.print(table)
+
+
+@app.command("exploitability")
+def exploitability_command(
+    binary_id: int = typer.Argument(..., help="Binary id to rank"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rank a binary's stored security findings by reachability.
+
+    Stored-only: a finding is reachable when another stored function's
+    decompilation mentions its function, and network-adjacent when its
+    function text mentions network imports or the binary carries the
+    networking capability.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        try:
+            payload = exploitability.rank(conn, binary_id)
+        except KeyError as exc:
+            _fail(str(exc), json_output)
+    if not payload["available"]:
+        _fail(f"binary {binary_id} has no stored security scan", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"\n[bold cyan]binary {binary_id}[/bold cyan]"
+        f" {payload['reachable']} reachable, {payload['unreachable']} unreachable"
+        f" of {payload['count']} findings"
+    )
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Severity", style="cyan")
+    table.add_column("Function")
+    table.add_column("Rule")
+    table.add_column("Reachability")
+    table.add_column("Callers")
+    for row in payload["rows"]:
+        table.add_row(
+            str(row.get("severity", "")),
+            str(row.get("function", "")),
+            str(row.get("rule", "")),
+            str(row.get("reachability", "")),
+            str(row.get("caller_count", 0)),
         )
     console.print(table)
 

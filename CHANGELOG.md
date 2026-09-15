@@ -7,6 +7,47 @@ view renders it from here.
 
 ## Unreleased
 
+- Go binaries report their own provenance.  `gobuildinfo.py` scans the stored
+  file for the `go.buildinfo` magic and keeps the compiler version, the main
+  module path, the module dependencies and the build settings as the
+  `gobuildinfo` scan, over
+  `POST`/`GET /api/binaries/<id>/gobuildinfo`, `reportal gobuildinfo` and the
+  `run_gobuildinfo`/`get_gobuildinfo` MCP tools.  No engine and no project
+  context: a file without the magic is `not-go` rather than an error.  The
+  pclntab function table stays out on purpose: the current aligned format
+  needs frame-table parsing to resolve names, verified against a real go1.27
+  binary, so Go function names keep arriving through the symbol import.  The
+  SBOM export joins those pins beside the engine's modules: each dependency
+  is a component with its declared version and a `pkg:golang` purl, in all
+  three shapes.
+- Security findings rank by reachability.  `exploitability.py` reads the stored
+  `security` scan beside the `capabilities` scan and the stored decompilations:
+  a finding is reachable when another stored function's text mentions its
+  function, network-adjacent when its function text mentions network imports or
+  the binary carries the networking capability, ordered by severity then
+  reachability, over `GET /api/binaries/<id>/exploitability`, `reportal
+  exploitability` and the read-only `get_exploitability` MCP tool.  Stored-only
+  with no engine and no writes; the callers are a text derivation, stated as
+  such, not a call graph.
+- A binary's attack surface reads off its stored scans.  `attack_surface.py`
+  composes the `protocols`, `behavior`, `capabilities`, `threat` and `crypto`
+  scans at read time into network entries, local input handlers and crypto
+  usage, over `GET /api/binaries/<id>/attack-surface`, `reportal
+  attack-surface` and the read-only `get_attack_surface` MCP tool.  Stored-only
+  with no engine and no writes: a binary with no source scan answers 404
+  `no-scan` with the commands that fill the gaps.
+- The file-type scan names Go, Rust and Swift binaries.  Three `runtime`
+  signatures join the `SIGNATURES` table beside .NET, Visual Basic and Delphi,
+  matched the same way over sections, strings and imports with the same
+  confidence rule, so `reportal filetype`, the stored scan and `run_filetype`
+  answer the runtimes modern malware and supply-chain targets are written in.
+- Stored renames now round-trip into the decompiler.  `decompiler_scripts.py`
+  renders a binary's named functions as a runnable script per tool, a Ghidra
+  Python script, an IDA script or a Binary Ninja rename document, over
+  `GET /api/binaries/<id>/decompiler-script`, `reportal decompiler-script`
+  and the read-only `export_decompiler_script` MCP tool.  Stored-only with no
+  engine and no state directory: a function still carrying a placeholder is
+  left out, so the script only carries names the tool would not already show.
 - reportal can be run as a service, and the plans are priced on what inference
   actually costs.  Three modules carry it: `plans.py` is the catalog,
   `metering.py` the append-only usage ledger and the quota checks, and

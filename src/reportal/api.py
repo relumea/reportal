@@ -45,6 +45,7 @@ from reportal import (
     analysis_log,
     analytics,
     archive,
+    attack_surface,
     auth,
     auto_mode,
     auto_store,
@@ -65,12 +66,14 @@ from reportal import (
     doctor,
     effects,
     engines,
+    exploitability,
     external,
     families,
     filetypes,
     firmware,
     function_extras,
     function_triage,
+    gobuildinfo,
     graph,
     graph_backends,
     hardening,
@@ -3372,6 +3375,31 @@ def get_binary_security_scan(binary_id: int) -> Response:
     return _no_scan(binary_id, "security", command="security-scan")
 
 
+@router.get("/api/binaries/{binary_id}/exploitability")
+def get_binary_exploitability(binary_id: int) -> Response:
+    """Rank the stored security findings by reachability.
+
+    A stored-only read over the ``security`` and ``capabilities`` scans: a
+    finding is ``reachable`` when another stored function's decompilation
+    mentions its function (whole-token text derivation, stated as such) and
+    ``network-adjacent`` when its function text mentions network imports or
+    the binary carries the networking capability.  404 `no-scan` without a
+    stored security scan.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        try:
+            payload = exploitability.rank(conn, binary_id)
+        except KeyError as exc:
+            return json_error(404, error="binary not found", detail=str(exc))
+    if not payload["available"]:
+        return _no_scan(binary_id, "exploitability", command="security-scan")
+    return json_response(payload)
+
+
 @router.post("/api/binaries/{binary_id}/threat")
 def store_binary_threat(
     binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
@@ -4609,6 +4637,47 @@ def get_binary_filetype(binary_id: int) -> Response:
     return _no_scan(binary_id, store.SCAN_KIND_FILETYPE)
 
 
+@router.post("/api/binaries/{binary_id}/gobuildinfo")
+def store_binary_gobuildinfo(binary_id: int) -> Response:
+    """Recover a binary's Go build information and store it as a scan.
+
+    Reads the stored file bytes for the ``go.buildinfo`` magic (version,
+    module path, build settings); no engine and no project context.
+    A file without the magic is 400 `not-go`.
+    """
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    gobuildinfo.SCAN_KIND,
+                    lambda: gobuildinfo.recover(conn, binary_id=binary_id),
+                )
+            except gobuildinfo.GobuildinfoError as exc:
+                return json_error(400, error=exc.code, detail=exc.detail)
+    return json_response(log.attach(payload))
+
+
+@router.get("/api/binaries/{binary_id}/gobuildinfo")
+def get_binary_gobuildinfo(binary_id: int) -> Response:
+    """Stored Go build information; a binary without one is a 404 no-scan."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        if analysis_id is not None:
+            stored = store.get_scan(conn, analysis_id, gobuildinfo.SCAN_KIND)
+            if stored is not None:
+                return json_response(stored)
+    return _no_scan(binary_id, gobuildinfo.SCAN_KIND)
+
+
 @router.get("/api/binaries/{binary_id}/die-info")
 def get_binary_die_info(binary_id: int) -> Response:
     """Detect-It-Easy shaped identity, composed from the stored scans.
@@ -4663,6 +4732,30 @@ def get_binary_additional_details_status(binary_id: int) -> Response:
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
         return json_response(details.status(conn, binary_id))
+
+
+@router.get("/api/binaries/{binary_id}/attack-surface")
+def get_binary_attack_surface(binary_id: int) -> Response:
+    """The attack surface of one binary, composed from its stored scans.
+
+    A stored-only read over the ``protocols``, ``behavior``, ``capabilities``,
+    ``threat`` and ``crypto`` scans: the network-reachable entries, the local
+    input handlers and the crypto usage, each with the evidence that named it
+    and the scan it came from.  ``sources`` names every input with the command
+    that fills it in.  404 `no-scan` when no source scan is stored.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        try:
+            payload = attack_surface.attack_surface(conn, binary_id)
+        except KeyError as exc:
+            return json_error(404, error="binary not found", detail=str(exc))
+    if not payload["available"]:
+        return _no_scan(binary_id, "attack-surface", command="capabilities")
+    return json_response(payload)
 
 
 # ── Functions ──────────────────────────────────────────────────────

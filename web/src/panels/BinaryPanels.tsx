@@ -111,12 +111,15 @@ import type {
   ReportResult,
   SecretsResult,
   SecurityResult,
+  Exploitability,
   SectionCoverage,
   SoftwareTypeClassification,
   StringTable,
   Tag,
   ThreatReport,
   ThreatScore,
+  AttackSurface,
+  AttackSurfaceRow,
   TriageDossier,
   BenchmarkResult,
   RenameBenchmarkResult,
@@ -2255,6 +2258,7 @@ export function SecurityPanel({ binaryId }: { binaryId: number }): ReactNode {
       >
         {(data) => <SecurityBody result={data} />}
       </PanelBody>
+      <ExploitabilitySection binaryId={binaryId} />
     </Panel>
   );
 }
@@ -2285,6 +2289,53 @@ function SecurityBody({ result }: { result: SecurityResult }): ReactNode {
         />
       )}
       <RawJson value={result} />
+    </>
+  );
+}
+
+function ExploitabilitySection({ binaryId }: { binaryId: number }): ReactNode {
+  const path = `/binaries/${binaryId}/exploitability`;
+  const key = panelKey("binary", binaryId, "exploitability");
+  const entry = usePanel(key, () => api<Exploitability>(path));
+  if (!entry || entry.state === "loading") return <Loading label="Loading exploitability" />;
+  if (entry.state === "error") {
+    return String(entry.error).includes("no-scan") ? (
+      <Muted>Exploitability ranks the stored security findings once a scan exists.</Muted>
+    ) : (
+      <ErrorNote error={entry.error} />
+    );
+  }
+  if (!entry.data) return null;
+  const rows = entry.data.rows ?? [];
+  return (
+    <>
+      <h3>
+        Exploitability ({entry.data.reachable ?? 0} reachable, {entry.data.unreachable ?? 0}{" "}
+        unreachable)
+      </h3>
+      {rows.length === 0 ? (
+        <Muted>No ranked findings.</Muted>
+      ) : (
+        <DataTable
+          columns={[
+            { label: "Severity", render: (row) => <SeverityBadge level={row.severity} /> },
+            {
+              label: "Reachability",
+              render: (row) => (
+                <>
+                  {row.reachability}
+                  {row.network_adjacent ? " · network" : ""}
+                </>
+              ),
+            },
+            { label: "Function", key: "function", mono: true },
+            { label: "Rule", key: "rule" },
+            { label: "CWE", key: "cwe", mono: true },
+          ]}
+          rows={rows}
+          rowKey={(row) => `${row.function}:${row.rule}`}
+        />
+      )}
     </>
   );
 }
@@ -2751,6 +2802,90 @@ export function ThreatPanel({ binaryId }: { binaryId: number }): ReactNode {
         {(data) => <ThreatBody result={data} />}
       </PanelBody>
     </Panel>
+  );
+}
+
+/** The attack surface, composed at read time from the binary's stored scans. */
+export function AttackSurfacePanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "attack-surface");
+  const path = `/binaries/${binaryId}/attack-surface`;
+  const entry = usePanel(key, () => api<AttackSurface>(path));
+  return (
+    <Panel
+      title="Attack surface"
+      subtitle="Network entries, local input handlers and crypto use, read off the stored scans."
+      actions={
+        <Button size="sm" tone="ghost" onClick={() => refreshPanel(key, () => api(path))}>
+          Refresh
+        </Button>
+      }
+    >
+      <PanelBody
+        entry={entry}
+        hint="Loading the attack surface"
+        noScanHint="No attack-surface source scan yet. Run a capabilities, protocols, threat, behavior or crypto scan first."
+      >
+        {(data) => <AttackSurfaceBody result={data} />}
+      </PanelBody>
+    </Panel>
+  );
+}
+
+function AttackSurfaceGroup({
+  title,
+  rows,
+  total,
+}: {
+  title: string;
+  rows: AttackSurfaceRow[];
+  total: number;
+}): ReactNode {
+  if (!total) return <Muted>No {title.toLowerCase()} entries in the stored scans.</Muted>;
+  return (
+    <>
+      <h3>
+        {title} ({total})
+      </h3>
+      <DataTable
+        columns={[
+          { label: "Name", mono: true, render: (row) => row.name },
+          { label: "Source", mono: true, render: (row) => row.source },
+          { label: "Confidence", render: (row) => row.confidence || "—" },
+          {
+            label: "Evidence",
+            numeric: true,
+            render: (row) => String(row.evidence_count),
+          },
+        ]}
+        rows={rows}
+        rowKey={(row) => `${row.source}:${row.name}`}
+      />
+    </>
+  );
+}
+
+function AttackSurfaceBody({ result }: { result: AttackSurface }): ReactNode {
+  return (
+    <>
+      <Muted>
+        {result.binary_name}: {result.network.count} network, {result.local_input.count} local
+        input, {result.crypto.count} crypto.
+      </Muted>
+      <AttackSurfaceGroup title="Network" rows={result.network.rows} total={result.network.count} />
+      <AttackSurfaceGroup
+        title="Local input"
+        rows={result.local_input.rows}
+        total={result.local_input.count}
+      />
+      <AttackSurfaceGroup title="Crypto" rows={result.crypto.rows} total={result.crypto.count} />
+      <Muted>
+        Sources:{" "}
+        {result.sources
+          .map((source) => `${source.scan} (${source.stored ? "stored" : source.command})`)
+          .join(", ")}
+        .
+      </Muted>
+    </>
   );
 }
 

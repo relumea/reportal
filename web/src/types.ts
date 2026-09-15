@@ -743,6 +743,29 @@ export interface SecurityResult {
   by_severity?: Record<string, number>;
 }
 
+/** One ranked finding `GET /api/binaries/<id>/exploitability` returns. */
+export interface ExploitabilityRow {
+  function: string;
+  rule: string;
+  cwe: string;
+  severity: string;
+  reachability: string;
+  caller_count: number;
+  network_adjacent: boolean;
+}
+
+/** The stored-only ranking `GET /api/binaries/<id>/exploitability` returns. */
+export interface Exploitability {
+  binary_id: number;
+  binary_name: string;
+  available: boolean;
+  rows: ExploitabilityRow[];
+  count: number;
+  reachable: number;
+  unreachable: number;
+  sources: { scan: string; stored: boolean; command: string }[];
+}
+
 export interface UnstripProposal {
   function_id: number;
   va: number;
@@ -929,6 +952,26 @@ export interface ThreatReport {
   notes?: string[];
   software_type?: SoftwareTypeClassification | null;
   threat_score?: ThreatScore | null;
+}
+
+/** One attack-surface row: a matched item with its evidence and source scan. */
+export interface AttackSurfaceRow {
+  name: string;
+  description: string;
+  confidence: string;
+  evidence_count: number;
+  source: string;
+}
+
+/** The stored-only composition `GET /api/binaries/<id>/attack-surface` returns. */
+export interface AttackSurface {
+  binary_id: number;
+  binary_name: string;
+  available: boolean;
+  network: { rows: AttackSurfaceRow[]; count: number };
+  local_input: { rows: AttackSurfaceRow[]; count: number };
+  crypto: { rows: AttackSurfaceRow[]; count: number };
+  sources: { scan: string; stored: boolean; command: string }[];
 }
 
 /** One Snort 2 rule a remediation scan carries. */

@@ -32,6 +32,7 @@ from reportal import (
     ai_decomp,
     analysis_log,
     analytics,
+    attack_surface,
     auth,
     auto_mode,
     auto_store,
@@ -45,18 +46,21 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    decompiler_scripts,
     details,
     diffview,
     docs,
     doctor,
     effects,
     engines,
+    exploitability,
     external,
     families,
     filetypes,
     firmware,
     function_extras,
     function_triage,
+    gobuildinfo,
     graph,
     graph_backends,
     hardening,
@@ -1520,6 +1524,19 @@ def _tool_get_security_scan(arguments: dict[str, Any]) -> dict[str, Any]:
         return _stored_scan(conn, binary_id, store.SCAN_KIND_SECURITY, "run_security_scan")
 
 
+def _tool_get_exploitability(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        payload = exploitability.rank(conn, binary_id)
+    if not payload["available"]:
+        raise ToolError(
+            "no-scan",
+            f"binary {binary_id} has no stored security scan; call run_security_scan first",
+        )
+    return payload
+
+
 def _tool_get_capabilities(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -2249,6 +2266,28 @@ def _tool_run_filetype(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError("engine-error", str(exc)) from exc
 
 
+def _tool_get_gobuildinfo(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        return _stored_scan(conn, binary_id, gobuildinfo.SCAN_KIND, "run_gobuildinfo")
+
+
+def _tool_run_gobuildinfo(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _binary_file(conn, binary_id)
+        try:
+            return _journaled_scan_run(
+                conn,
+                binary_id,
+                gobuildinfo.SCAN_KIND,
+                lambda: gobuildinfo.recover(conn, binary_id=binary_id),
+            )
+        except gobuildinfo.GobuildinfoError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
 def _tool_run_security_scan(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     min_severity = _arg_optional_str(
@@ -2464,6 +2503,21 @@ def _tool_export_sbom(arguments: dict[str, Any]) -> dict[str, Any]:
     if fmt == library.FORMAT_CSV:
         return {"format": fmt, "csv": library.render_csv(payload)}
     return {"format": fmt, "document": payload["document"]}
+
+
+def _tool_export_decompiler_script(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    fmt = _arg_optional_str(arguments, "format", decompiler_scripts.FORMAT_GHIDRA).strip().lower()
+    if fmt not in decompiler_scripts.SCRIPT_FORMATS:
+        raise ToolError(
+            "invalid format",
+            f"format must be one of {', '.join(decompiler_scripts.SCRIPT_FORMATS)}",
+        )
+    with contextlib.closing(_open()) as conn:
+        try:
+            return decompiler_scripts.script(conn, binary_id, fmt=fmt)
+        except decompiler_scripts.ScriptError as exc:
+            raise ToolError(exc.code, exc.detail) from None
 
 
 def _tool_get_unpack(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4031,6 +4085,20 @@ def _tool_get_details_status(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
         return details.status(conn, binary_id)
+
+
+def _tool_get_attack_surface(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        payload = attack_surface.attack_surface(conn, binary_id)
+    if not payload["available"]:
+        raise ToolError(
+            "no-scan",
+            f"binary {binary_id} has no stored attack-surface source scan;"
+            " call run_capabilities, run_protocols_scan or run_threat_report first",
+        )
+    return payload
 
 
 def _tool_get_config(_arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5823,11 +5891,28 @@ def builtin_tools() -> tuple[Tool, ...]:
             _tool_get_filetype,
         ),
         Tool(
+            "get_gobuildinfo",
+            "Return a binary's stored Go build information (compiler version, module"
+            " path, build settings); fails when none was stored.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_gobuildinfo,
+        ),
+        Tool(
             "get_security_scan",
             "Return a binary's stored security scan; fails when none was stored.",
             _object({"binary_id": _BINARY_ID}, ("binary_id",)),
             _READ,
             _tool_get_security_scan,
+        ),
+        Tool(
+            "get_exploitability",
+            "Rank a binary's stored security findings by reachability: reachable when"
+            " another stored function's decompilation mentions its function, with a"
+            " network-adjacency flag.  Stored-only; it runs no engine.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_exploitability,
         ),
         Tool(
             "get_capabilities",
@@ -6653,6 +6738,15 @@ def builtin_tools() -> tuple[Tool, ...]:
             _tool_run_filetype,
         ),
         Tool(
+            "run_gobuildinfo",
+            "Recover a binary's Go build version, module path and build settings from"
+            " its go.buildinfo section and store the result; fails when it is not"
+            " a Go binary.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _WRITE,
+            _tool_run_gobuildinfo,
+        ),
+        Tool(
             "run_security_scan",
             "Scan a binary's rebrew reversed sources for unsafe API use and store the findings.",
             _object(
@@ -6780,6 +6874,21 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _READ,
             _tool_export_sbom,
+        ),
+        Tool(
+            "export_decompiler_script",
+            "Render a binary's stored renames as a runnable decompiler script: a Ghidra"
+            " Python script, an IDA script or a Binary Ninja rename document.  Stored-only;"
+            " placeholders are left out, so only real names are carried.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "format": _enum("Script shape.", decompiler_scripts.SCRIPT_FORMATS),
+                },
+                ("binary_id",),
+            ),
+            _READ,
+            _tool_export_decompiler_script,
         ),
         Tool(
             "get_unpack",
@@ -7316,6 +7425,15 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"binary_id": _BINARY_ID}, ("binary_id",)),
             _READ,
             _tool_get_details_status,
+        ),
+        Tool(
+            "get_attack_surface",
+            "Map a binary's attack surface from its stored scans: the network-reachable"
+            " entries, the local input handlers and the crypto usage, each with its"
+            " evidence and source scan.  Stored-only; it runs no engine.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_attack_surface,
         ),
         Tool(
             "get_config",

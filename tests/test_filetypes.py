@@ -236,6 +236,42 @@ class TestRuntimeSignatures:
         result = filetypes.detect(_evidence(strings=[_string("@System@")]))
         assert _match(result, "Delphi")["confidence"] == CONFIDENCE_LOW
 
+    def test_go_section_is_medium(self) -> None:
+        result = filetypes.detect(_evidence(sections=[_section(".gopclntab")]))
+        match = _match(result, "Go")
+        assert match["category"] == CATEGORY_RUNTIME
+        assert match["confidence"] == CONFIDENCE_MEDIUM
+
+    def test_go_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("runtime.gopanic")]))
+        assert _match(result, "Go")["confidence"] == CONFIDENCE_LOW
+
+    def test_go_section_and_marker_is_high(self) -> None:
+        result = filetypes.detect(
+            _evidence(sections=[_section(".gopclntab")], strings=[_string("runtime.goexit")])
+        )
+        assert _match(result, "Go")["confidence"] == CONFIDENCE_HIGH
+
+    def test_rust_section_is_medium(self) -> None:
+        result = filetypes.detect(_evidence(sections=[_section(".rustc")]))
+        match = _match(result, "Rust")
+        assert match["category"] == CATEGORY_RUNTIME
+        assert match["confidence"] == CONFIDENCE_MEDIUM
+
+    def test_rust_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("rust_begin_unwind")]))
+        assert _match(result, "Rust")["confidence"] == CONFIDENCE_LOW
+
+    def test_swift_section_is_medium(self) -> None:
+        result = filetypes.detect(_evidence(sections=[_section("__swift5_typeref")]))
+        match = _match(result, "Swift")
+        assert match["category"] == CATEGORY_RUNTIME
+        assert match["confidence"] == CONFIDENCE_MEDIUM
+
+    def test_swift_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("libswiftCore.dylib")]))
+        assert _match(result, "Swift")["confidence"] == CONFIDENCE_LOW
+
 
 class TestToolchainSignatures:
     def test_msvc_from_rich_header(self) -> None:

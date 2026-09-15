@@ -86,6 +86,10 @@ reportal symbols-status <binary-id> [--file-id N] [--json]
 reportal symbols-export <binary-id> [--format c|json] [--output PATH] [--file-id N] [--json]
                                            # render one parse as a C header (through
                                            #   the type model's renderer) or as JSON
+reportal decompiler-script <binary-id> [--format ghidra|ida|binja] [--output PATH] [--json]
+                                           # render the stored renames as a runnable
+                                           #   decompiler script; stored-only,
+                                           #   placeholders are left out
 reportal enrich <binary-id> [--json]       # compute and store a rebrew fingerprint
 reportal fingerprint <binary-id> [--json]  # print the stored fingerprint, else compute
                                            #   one live without storing it
@@ -396,9 +400,18 @@ reportal additional-details <binary-id> [--status] [--json]
                                            #   presence and the section shape; --status
                                            #   reports which sources are stored instead,
                                            #   and never fails on an uninspected binary
+reportal attack-surface <binary-id> [--json]
+                                           # the attack surface from the stored scans:
+                                           #   network entries, local input handlers and
+                                           #   crypto usage, each with its evidence and
+                                           #   source scan; stored-only
 reportal filetype <binary-id> [--json]     # detect file type, packer and protector signatures
                                            #   over the pe-info sections and entry point, the
                                            #   section entropies, the imports and the strings,
+                                           #   store the result
+reportal gobuildinfo <binary-id> [--json]  # recover a Go binary's compiler version,
+                                           #   module path, dependency pins and build
+                                           #   settings from its go.buildinfo section,
                                            #   store the result
 reportal capabilities <binary-id> [--json] # classify a binary from its imports and strings
                                            # (deterministic rule table, no LLM), store the result
@@ -421,6 +434,9 @@ reportal hardening <binary-id> <domain> [--json]
 reportal security-scan <binary-id> [--min-severity high|medium|low] [--json]
                                            # scan the rebrew project's reversed C sources for
                                            # unsafe API use, store the findings
+reportal exploitability <binary-id> [--json]
+                                           # rank the stored security findings by
+                                           # reachability; stored-only
 reportal threat <binary-id> [--narrative] [--json]
                                            # extract IOCs from the binary's strings, map them and
                                            # its imports/capabilities to ATT&CK, store the report;
@@ -459,9 +475,10 @@ reportal library <binary-id> [--min-confidence F] [--json]
                                            #   a binary and store the module
                                            #   rollup; needs a rebrew project
 reportal sbom <binary-id> [--format cyclonedx|spdx|csv] [--output PATH] [--json]
-                                           # export the stored library reading
-                                           #   as a bill of materials; stored-only,
-                                           #   it never re-runs the engine
+                                           # export the stored library reading plus
+                                           #   the Go dependency pins as a bill of
+                                           #   materials; stored-only, it never
+                                           #   re-runs the engine
 reportal benchmark <left-id> <right-id> [--labels FILE] [--top N]
                    [--min-similarity F] [--min-confidence F] [--json]
                                            # score a match run against

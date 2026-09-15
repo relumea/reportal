@@ -135,6 +135,8 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "not found": "not-found",
     "not-a-team-member": "not-a-team-member",
     "not-active": "not-active",
+    "not-go": "not-go",
+    "unreadable": "unreadable",
     "not-reloadable": "not-reloadable",
     "not-withdrawable": "not-withdrawable",
     "password-required": "password-required",

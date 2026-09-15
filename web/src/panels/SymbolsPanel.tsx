@@ -94,6 +94,27 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
         </Button>
         {status ? <span className="muted">{status}</span> : null}
       </Toolbar>
+      <Toolbar>
+        <span className="muted">Stored renames as a script:</span>
+        <a
+          className="btn btn-ghost btn-sm"
+          href={`/binaries/${binaryId}/decompiler-script?format=ghidra`}
+        >
+          Ghidra
+        </a>{" "}
+        <a
+          className="btn btn-ghost btn-sm"
+          href={`/binaries/${binaryId}/decompiler-script?format=ida`}
+        >
+          IDA
+        </a>{" "}
+        <a
+          className="btn btn-ghost btn-sm"
+          href={`/binaries/${binaryId}/decompiler-script?format=binja`}
+        >
+          Binja
+        </a>
+      </Toolbar>
       {actionError ? <ErrorNote error={actionError} /> : null}
       {!entry || entry.state === "loading" ? (
         <Loading label="Loading the symbol files" rows={2} />

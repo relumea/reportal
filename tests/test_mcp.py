@@ -66,6 +66,7 @@ _READ_ONLY_TOOLS = frozenset(
         "list_artifact_ratings",
         "get_library",
         "export_sbom",
+        "export_decompiler_script",
         "get_unpack",
         "get_benchmark",
         "get_rename_benchmark",
@@ -124,8 +125,11 @@ _READ_ONLY_TOOLS = frozenset(
         "get_die_info",
         "get_additional_details",
         "get_details_status",
+        "get_attack_surface",
         "get_filetype",
+        "get_gobuildinfo",
         "get_security_scan",
+        "get_exploitability",
         "get_capabilities",
         "get_threat_report",
         "get_remediation",
@@ -249,6 +253,7 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "run_crypto_scan",
         "run_pe_info",
         "run_filetype",
+        "run_gobuildinfo",
         "run_security_scan",
         "run_capabilities",
         "run_threat_report",
@@ -477,9 +482,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 247
-        assert len(_READ_ONLY_TOOLS) == 116
-        assert len(_DESTRUCTIVE_TOOLS) == 131
+        assert len(names) == 252
+        assert len(_READ_ONLY_TOOLS) == 120
+        assert len(_DESTRUCTIVE_TOOLS) == 132
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
