@@ -306,6 +306,7 @@ def apply_analysis_action(
     ids: Sequence[int],
     tag: str = "",
     log: journal.Journal | None = None,
+    allowed: Collection[int] | None = None,
 ) -> dict[str, Any]:
     """Apply one bulk action to analyses and return its per-id result.
 
@@ -313,6 +314,9 @@ def apply_analysis_action(
     at.  A delete replays the same journaled snapshot the single-analysis route
     uses, and a binary's only analysis while it holds functions is skipped with
     a reason rather than taken with them (delete the binary instead).
+    *allowed* is the set of binary ids the caller may reach; an analysis of a
+    binary outside it is skipped with :data:`REASON_FORBIDDEN`.  None means
+    every id.
     """
     if action not in ANALYSIS_ACTIONS:
         raise BulkError(f"unsupported action: {action}")
@@ -321,10 +325,14 @@ def apply_analysis_action(
     if action != "delete" and not tag_name:
         raise BulkError(f"tag is required for action {action}")
     result = _result(action, len(resolved))
+    permitted = None if allowed is None else set(allowed)
     if action == "delete":
         for analysis_id in resolved:
-            if store.get_analysis(conn, analysis_id) is None:
+            analysis = store.get_analysis(conn, analysis_id)
+            if analysis is None:
                 _skip(result, analysis_id, REASON_NOT_FOUND)
+            elif permitted is not None and int(analysis["binary_id"]) not in permitted:
+                _skip(result, analysis_id, REASON_FORBIDDEN)
             elif store.is_last_analysis_with_functions(conn, analysis_id):
                 _skip(result, analysis_id, REASON_LAST_ANALYSIS)
             else:
@@ -339,6 +347,8 @@ def apply_analysis_action(
         analysis = store.get_analysis(conn, analysis_id)
         if analysis is None:
             _skip(result, analysis_id, REASON_NOT_FOUND)
+        elif permitted is not None and int(analysis["binary_id"]) not in permitted:
+            _skip(result, analysis_id, REASON_FORBIDDEN)
         elif not tag_id:
             _skip(result, analysis_id, REASON_NO_TAG)
         else:
@@ -369,8 +379,14 @@ def apply_function_action(
     prefix: str = "",
     replace: bool = False,
     log: journal.Journal | None = None,
+    allowed: Collection[int] | None = None,
 ) -> dict[str, Any]:
-    """Apply one bulk action to functions and return its per-id result."""
+    """Apply one bulk action to functions and return its per-id result.
+
+    *allowed* is the set of binary ids the caller may reach; a function of a
+    binary outside it is skipped with :data:`REASON_FORBIDDEN`.  None means
+    every id.
+    """
     if action not in FUNCTION_ACTIONS:
         raise BulkError(f"unsupported action: {action}")
     resolved = resolve_ids(ids)
@@ -378,10 +394,14 @@ def apply_function_action(
     if action == "rename" and not prefix:
         raise BulkError("prefix is required for action rename")
     result = _result(action, len(resolved))
+    permitted = None if allowed is None else set(allowed)
     for function_id in resolved:
         function = store.get_function(conn, function_id)
         if function is None:
             _skip(result, function_id, REASON_NOT_FOUND)
+            continue
+        if permitted is not None and int(function["binary_id"]) not in permitted:
+            _skip(result, function_id, REASON_FORBIDDEN)
             continue
         if action == "clear_matches":
             matches = (

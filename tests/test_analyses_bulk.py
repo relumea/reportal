@@ -8,10 +8,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import bulk_actions, cli, journal, store
+from reportal import auth, bulk_actions, cli, journal, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -118,6 +119,37 @@ class TestBulkApi:
         restored = store.get_analysis(conn, ids["second"])
         assert restored is not None
         assert store.count_functions(conn, analysis_id=ids["second"]) == 1
+
+    def test_a_non_member_skips_a_team_analysis(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        raw = json.dumps({"action": "add_tag", "analysis_ids": [ids["first"]], "tag": "x"}).encode()
+        _status, headers, payload = wsgi_request(
+            "POST", "/api/analyses/bulk", body=raw, headers={"Authorization": f"Bearer {outsider}"}
+        )
+        body = json_body(payload, headers)
+        assert body["applied"] == 0
+        assert body["skipped"] == [{"id": ids["first"], "reason": "not permitted"}]
+
+        _status, headers, payload = wsgi_request(
+            "POST",
+            "/api/analyses/bulk",
+            body=raw,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert json_body(payload, headers)["applied"] == 1
 
     def test_a_tag_action_reverts_to_the_previous_set(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)

@@ -7592,7 +7592,7 @@ def bulk_binaries(request: Request, body: dict[str, Any] = Depends(json_body)) -
 
 
 @router.post("/api/analyses/bulk")
-def bulk_analyses(body: dict[str, Any] = Depends(json_body)) -> Response:
+def bulk_analyses(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Apply one action (``add_tag``, ``remove_tag``, ``delete``) to many analyses.
 
     A tag action writes each analysis's owning binary, the scope reportal tags
@@ -7614,7 +7614,12 @@ def bulk_analyses(body: dict[str, Any] = Depends(json_body)) -> Response:
         with journal.journaled(conn, action_id) as log:
             try:
                 result = bulk_actions.apply_analysis_action(
-                    conn, action=action, ids=ids, tag=tag, log=log
+                    conn,
+                    action=action,
+                    ids=ids,
+                    tag=tag,
+                    log=log,
+                    allowed=_visible_binary_ids(conn, _caller(request)),
                 )
             except bulk_actions.BulkError as exc:
                 return _bulk_failure(exc)
@@ -7622,7 +7627,7 @@ def bulk_analyses(body: dict[str, Any] = Depends(json_body)) -> Response:
 
 
 @router.post("/api/functions/bulk")
-def bulk_functions(body: dict[str, Any] = Depends(json_body)) -> Response:
+def bulk_functions(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Apply one action (``rename``, ``clear_matches``) to many functions."""
     action = body.get("action")
     if not isinstance(action, str):
@@ -7641,7 +7646,13 @@ def bulk_functions(body: dict[str, Any] = Depends(json_body)) -> Response:
         with journal.journaled(conn, action_id) as log:
             try:
                 result = bulk_actions.apply_function_action(
-                    conn, action=action, ids=ids, prefix=prefix, replace=replace, log=log
+                    conn,
+                    action=action,
+                    ids=ids,
+                    prefix=prefix,
+                    replace=replace,
+                    log=log,
+                    allowed=_visible_binary_ids(conn, _caller(request)),
                 )
             except bulk_actions.BulkError as exc:
                 return _bulk_failure(exc)
@@ -10457,6 +10468,23 @@ def _caller(request: Request) -> dict[str, Any] | None:
     """The authenticated caller, or None while auth is off."""
     user = getattr(request.state, "user", None)
     return user if isinstance(user, dict) else None
+
+
+def _visible_binary_ids(conn: sqlite3.Connection, caller: dict[str, Any] | None) -> set[int] | None:
+    """The binary ids *caller* may reach, or None for no restriction.
+
+    None means auth is off or the caller is an admin; otherwise the shared
+    `auth.visible_clause` lists the visible binaries once for the whole
+    request, so a bulk action checks membership without a query per id.
+    """
+    scope = auth.visible_clause(conn, caller, prefix="b.")
+    if scope is None:
+        return None
+    clause, params = scope
+    return {
+        int(row["id"])
+        for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+    }
 
 
 @router.get("/api/iam/me")
