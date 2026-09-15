@@ -837,7 +837,7 @@ The Jobs view (`views/JobsView.tsx`, `#/jobs`) is the async operation workflow:
 a filter toolbar (Status, Kind, Binary and Show) whose four controls live in
 the route hash (`#/jobs?status=&kind=&binary_id=&limit=`) with a Clear that
 resets them, a Queue toolbar over the operations `GET /api/jobs` advertises (the
-kind, the binary, the domain a behavior or hardening job needs; a `match` job is queued with the default match settings, and a caller that needs others passes `params` to the route), the list of
+kind, the binary, the domain a behavior or hardening job needs and, for the `match` kind, a similarity floor; a `match` job with a blank floor runs the default 80, and a caller that needs the rest of the match settings passes `params` to the route), the list of
 queued and finished jobs with a status badge, the `progress`/`steps_total`
 readout, the created time and each job's message, result or error, a Cancel
 button on a job that has not started and a Run waiting now control that drains

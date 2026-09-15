@@ -96,6 +96,7 @@ export function JobsView({
   const [kind, setKind] = useState("");
   const [binaryId, setBinaryId] = useState("");
   const [domain, setDomain] = useState("");
+  const [minSimilarity, setMinSimilarity] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
   const path = listPath(filters);
@@ -130,11 +131,16 @@ export function JobsView({
   const submit = (): void => {
     const id = Number(binaryId);
     if (!kind || !Number.isFinite(id) || id <= 0) return;
-    const params = domain ? { domain } : {};
+    const params: Record<string, unknown> = domain ? { domain } : {};
+    if (kind === "match") {
+      const floor = Number(minSimilarity);
+      if (minSimilarity.trim() !== "" && Number.isFinite(floor)) params.min_similarity = floor;
+    }
     act(() =>
       api("/jobs", { method: "POST", json: { kind, binary_id: id, params } }).then(() => {
         setBinaryId("");
         setDomain("");
+        setMinSimilarity("");
       }),
     );
   };
@@ -221,6 +227,16 @@ export function JobsView({
             onChange={(event) => setDomain(event.target.value)}
           />
         </Field>
+        {kind === "match" ? (
+          <Field label="Similarity floor" hint="Blank runs the default floor of 80.">
+            <input
+              inputMode="decimal"
+              placeholder="80"
+              value={minSimilarity}
+              onChange={(event) => setMinSimilarity(event.target.value)}
+            />
+          </Field>
+        ) : null}
         <Button tone="primary" pending={busy} disabled={!kind || !binaryId} onClick={submit}>
           Queue
         </Button>

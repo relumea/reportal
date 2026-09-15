@@ -65,3 +65,19 @@ test("a queued job is listed and the filters narrow the queue", async ({ page })
   await panel.getByRole("spinbutton", { name: "Show" }).fill("5");
   await expect(page).toHaveURL(/limit=5/);
 });
+
+test("the queue form offers the match settings the kind takes", async ({ page }) => {
+  await page.goto("/#/jobs");
+  const panel = panelByTitle(page, "Jobs");
+
+  // The floor is a match setting, so it is offered only for that kind; the
+  // spec does not queue the run, because the pool would pick it up and score
+  // the whole corpus behind the rest of the suite.
+  await expect(panel.getByRole("textbox", { name: "Similarity floor" })).toHaveCount(0);
+
+  await panel.getByRole("combobox", { name: "Operation", exact: true }).selectOption("match");
+
+  await expect(panel.getByRole("textbox", { name: "Similarity floor" })).toBeVisible();
+  // A match run still needs the binary it matches.
+  await expect(panel.getByRole("button", { name: "Queue", exact: true })).toBeDisabled();
+});
