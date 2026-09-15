@@ -515,6 +515,27 @@ artifacts carry a verdict.  The Integrations view ends with the "Connect an MCP
 client" card: the `claude mcp add` one-liner and the `~/.claude.json` snippet,
 each with a copy control, above the tool counts read from `GET /api/config`.
 
+The Auto view (`views/AutoView.tsx`, `#/auto` and `#/auto/<id>`) decomposes one
+binary into worker batches.  Without an id it lists the register and opens a
+row's own page on click; with one, the start form carries the worker (`offline`
+or `llm_c_source`), the concurrency (1 to 32), the functions per leaf batch (1 to
+64), the attempts per function (1 to 10), the most task rows the run may create
+(1 to 5000) and the Execute switch, each bound mirroring `auto_mode`'s, and Start
+run posts them to `POST /api/binaries/<id>/auto` (202 with the run id) and
+reloads.  The page reads `GET /api/binaries/<id>/auto` (404 `no-run` is the
+nothing-stored state) and polls once a second while the run is `running`, then
+renders the coverage strip (before and after meters with their matched/total
+readouts, then the matched, improved, failed, skipped, task and attempt counts)
+over the task tree: each node carries its status cell, its kind, its title, the
+worker, its attempt count and the reason an outcome returned, with the attempt
+log and the child batches nested under it.  A dry run is the default and touches
+no source file and no function status; Execute writes the candidate C files into
+the rebrew project and compiles them.  Revert run (behind the confirm pattern)
+posts to `POST /api/auto/runs/<id>/revert` and reports what it put back, and
+Recover run appears only while the run reads `running`, closing a run a dead
+process left behind and reporting the tasks it interrupted and the writes it kept
+revertible.
+
 The Matches view (`views/MatchesView.tsx`, `#/matches`) starts from a function
 id: Load reads that function's binary through `GET /api/functions/<id>` and then
 the candidates recorded for it from `GET /api/binaries/<id>/matches`, each row

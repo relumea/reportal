@@ -23,10 +23,19 @@ import {
 import {
   AUTO_CONCURRENCY_MAX,
   AUTO_CONCURRENCY_MIN,
+  AUTO_FUNCTIONS_PER_TASK_MAX,
+  AUTO_FUNCTIONS_PER_TASK_MIN,
+  AUTO_MAX_ATTEMPTS_MAX,
+  AUTO_MAX_ATTEMPTS_MIN,
+  AUTO_MAX_TASKS_MAX,
+  AUTO_MAX_TASKS_MIN,
   AUTO_NO_RUN,
   AUTO_POLL_MS,
   AUTO_WORKERS,
   DEFAULT_AUTO_CONCURRENCY,
+  DEFAULT_AUTO_FUNCTIONS_PER_TASK,
+  DEFAULT_AUTO_MAX_ATTEMPTS,
+  DEFAULT_AUTO_MAX_TASKS,
   DEFAULT_AUTO_WORKER,
 } from "../constants";
 import type { AutoWorker } from "../constants";
@@ -113,24 +122,36 @@ function CoverageLine({ run }: { run: AutoRun }): ReactNode {
   );
 }
 
+/** The run knobs the start form sends beside the worker. */
+interface AutoRunOptions {
+  execute: boolean;
+  concurrency: number;
+  functionsPerTask: number;
+  maxAttempts: number;
+  maxTasks: number;
+}
+
 function StartForm({
   onStart,
   disabled,
   pending,
 }: {
-  onStart: (worker: AutoWorker, execute: boolean, concurrency: number) => void;
+  onStart: (worker: AutoWorker, options: AutoRunOptions) => void;
   disabled: boolean;
   pending: boolean;
 }): ReactNode {
   const [worker, setWorker] = useState<AutoWorker>(DEFAULT_AUTO_WORKER);
   const [execute, setExecute] = useState(false);
   const [concurrency, setConcurrency] = useState(DEFAULT_AUTO_CONCURRENCY);
+  const [functionsPerTask, setFunctionsPerTask] = useState(DEFAULT_AUTO_FUNCTIONS_PER_TASK);
+  const [maxAttempts, setMaxAttempts] = useState(DEFAULT_AUTO_MAX_ATTEMPTS);
+  const [maxTasks, setMaxTasks] = useState(DEFAULT_AUTO_MAX_TASKS);
   return (
     <form
       className="toolbar"
       onSubmit={(event) => {
         event.preventDefault();
-        onStart(worker, execute, concurrency);
+        onStart(worker, { execute, concurrency, functionsPerTask, maxAttempts, maxTasks });
       }}
     >
       <Field label="Worker">
@@ -156,6 +177,39 @@ function StartForm({
           value={concurrency}
           disabled={disabled}
           onChange={(event) => setConcurrency(Number(event.target.value))}
+        />
+      </Field>
+      <Field label="Functions per task" hint={`${AUTO_FUNCTIONS_PER_TASK_MIN}-${AUTO_FUNCTIONS_PER_TASK_MAX} per leaf batch`}>
+        <input
+          id="auto-functions-per-task"
+          type="number"
+          min={AUTO_FUNCTIONS_PER_TASK_MIN}
+          max={AUTO_FUNCTIONS_PER_TASK_MAX}
+          value={functionsPerTask}
+          disabled={disabled}
+          onChange={(event) => setFunctionsPerTask(Number(event.target.value))}
+        />
+      </Field>
+      <Field label="Max attempts" hint={`${AUTO_MAX_ATTEMPTS_MIN}-${AUTO_MAX_ATTEMPTS_MAX} per function`}>
+        <input
+          id="auto-max-attempts"
+          type="number"
+          min={AUTO_MAX_ATTEMPTS_MIN}
+          max={AUTO_MAX_ATTEMPTS_MAX}
+          value={maxAttempts}
+          disabled={disabled}
+          onChange={(event) => setMaxAttempts(Number(event.target.value))}
+        />
+      </Field>
+      <Field label="Max tasks" hint={`at most ${AUTO_MAX_TASKS_MAX} task rows`}>
+        <input
+          id="auto-max-tasks"
+          type="number"
+          min={AUTO_MAX_TASKS_MIN}
+          max={AUTO_MAX_TASKS_MAX}
+          value={maxTasks}
+          disabled={disabled}
+          onChange={(event) => setMaxTasks(Number(event.target.value))}
         />
       </Field>
       <CheckboxField
@@ -184,14 +238,21 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
     return () => window.clearInterval(timer);
   }, [running, reload]);
 
-  const start = async (worker: AutoWorker, execute: boolean, concurrency: number): Promise<void> => {
+  const start = async (worker: AutoWorker, options: AutoRunOptions): Promise<void> => {
     setActionError(null);
     setNotice("");
     setBusy("start");
     try {
       const started = await api<AutoRunStarted>(`/binaries/${binaryId}/auto`, {
         method: "POST",
-        json: { worker, execute, concurrency },
+        json: {
+          worker,
+          execute: options.execute,
+          concurrency: options.concurrency,
+          functions_per_task: options.functionsPerTask,
+          max_attempts: options.maxAttempts,
+          max_tasks: options.maxTasks,
+        },
       });
       setNotice(`Started auto run #${started.run_id}.`);
       reload();
@@ -290,7 +351,7 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
       }
     >
       <StartForm
-        onStart={(worker, execute, concurrency) => void start(worker, execute, concurrency)}
+        onStart={(worker, options) => void start(worker, options)}
         disabled={running}
         pending={busy === "start"}
       />

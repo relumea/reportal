@@ -173,6 +173,18 @@ export const AUTO_CONCURRENCY_MIN = 1;
 export const AUTO_CONCURRENCY_MAX = 32;
 export const DEFAULT_AUTO_CONCURRENCY = 4;
 
+// The other three run knobs the form sends, each with the bound auto_mode
+// validates against and the default the route would use without it.
+export const AUTO_FUNCTIONS_PER_TASK_MIN = 1;
+export const AUTO_FUNCTIONS_PER_TASK_MAX = 64;
+export const DEFAULT_AUTO_FUNCTIONS_PER_TASK = 1;
+export const AUTO_MAX_ATTEMPTS_MIN = 1;
+export const AUTO_MAX_ATTEMPTS_MAX = 10;
+export const DEFAULT_AUTO_MAX_ATTEMPTS = 2;
+export const AUTO_MAX_TASKS_MIN = 1;
+export const AUTO_MAX_TASKS_MAX = 5000;
+export const DEFAULT_AUTO_MAX_TASKS = 200;
+
 // Results the Knowledge view's search asks for; mirrors the API's
 // knowledge.DEFAULT_SEARCH_LIMIT.
 export const DEFAULT_KNOWLEDGE_LIMIT = 10;

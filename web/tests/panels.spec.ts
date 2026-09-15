@@ -206,3 +206,39 @@ test("a binary's detail lists only that binary's analyses", async ({ page }) => 
   await expect(rowContaining(analyses, String(state.ids.analysis_id))).toBeVisible();
   await expect(analyses.getByRole("link", { name: "All analyses" })).toBeVisible();
 });
+
+test("the auto run form sends every run knob the route takes", async ({ page }) => {
+  await page.goto(`/#/auto/${state.ids.binary_id}`);
+  const auto = page.locator(".panel").filter({ has: page.locator('a[href="#/auto"]') });
+
+  // The three knobs the form did not carry, each filled to a value no default
+  // would produce.  The run itself is not started: the answer is written here,
+  // because the pool would plan real batches behind the rest of the suite.
+  await auto.getByLabel("Functions per task").fill("2");
+  await auto.getByLabel("Max attempts").fill("3");
+  await auto.getByLabel("Max tasks").fill("50");
+  await page.route("**/api/binaries/*/auto", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        run_id: 999,
+        binary_id: state.ids.binary_id,
+        status: "running",
+      }),
+    });
+  });
+
+  const sent = page.waitForRequest(
+    (request) => request.method() === "POST" && request.url().endsWith("/auto"),
+  );
+  await auto.getByRole("button", { name: "Start run" }).click();
+
+  expect((await sent).postDataJSON()).toMatchObject({
+    functions_per_task: 2,
+    max_attempts: 3,
+    max_tasks: 50,
+  });
+  await expect(auto.getByText(/Started auto run #999/)).toBeVisible();
+});

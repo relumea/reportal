@@ -152,10 +152,21 @@ class TestStart:
 
     def test_start_honours_the_requested_bounds(self, portal_db: Path, conn: Any) -> None:
         ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),))
-        _start(ids["binary"], {"worker": "offline", "concurrency": 2, "max_attempts": 1})
+        _start(
+            ids["binary"],
+            {
+                "worker": "offline",
+                "concurrency": 2,
+                "max_attempts": 1,
+                "functions_per_task": 2,
+                "max_tasks": 5,
+            },
+        )
         run = _wait_for_terminal(portal_db, ids["binary"])
         assert run["config"]["concurrency"] == 2
         assert run["config"]["max_attempts"] == 1
+        assert run["config"]["functions_per_task"] == 2
+        assert run["config"]["max_tasks"] == 5
 
 
 class TestGet:

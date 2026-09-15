@@ -7,6 +7,17 @@ view renders it from here.
 
 ## Unreleased
 
+- The auto run form sends the whole run configuration.  The route and the CLI
+  take six knobs (the worker, execute, the concurrency, the functions per leaf
+  batch, the attempts per function and the task cap) and the form carried three
+  of them, so a run started from the UI always planned one function per batch
+  with two attempts under the 200-task ceiling, whatever the workspace wanted
+  the decomposition to be.  The form now carries all six, each with the bound
+  `auto_mode` validates against, and the round-trip test asserts the two knobs
+  it did not cover (`functions_per_task`, `max_tasks`) land in the stored
+  config.  `docs/SPA.md` also gains the Auto view, which had no paragraph at
+  all.
+
 - The match settings sheet can set the candidate cap.  `top` is part of
   `matching.MatchSettings`, and the route, the CLI and the MCP tool each take
   it, but the sheet offered the other seven settings and not this one: a run
