@@ -29,6 +29,7 @@ import hashlib
 import math
 import re
 import sqlite3
+from collections.abc import Mapping
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -548,6 +549,7 @@ def search_knowledge(
     scope_kind: str | None = None,
     scope_id: int | None = None,
     limit: int = DEFAULT_SEARCH_LIMIT,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Rank stored chunks against *query*, best first.
 
@@ -556,13 +558,34 @@ def search_knowledge(
     otherwise the local TF-IDF cosine ranks the same chunks, so search works
     with zero configuration.  Every result reports the ``method`` that scored
     it.  An empty query, a non-positive limit or no stored chunk returns [].
+
+    ``visible_to`` drops chunks of binary-scoped documents on binaries the
+    caller may not see, like the other scoped reads; chunks of other scopes
+    (project, docs) have no owning binary and stay.
     """
+    from reportal import auth
+
     text = query.strip()
     if not text or limit < 1:
         return []
     chunks = store.iter_chunks_with_embeddings(conn, scope_kind=scope_kind, scope_id=scope_id)
     if not chunks:
         return []
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, params = scope
+        visible_ids = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+        }
+        chunks = [
+            chunk
+            for chunk in chunks
+            if str(chunk.get("scope_kind")) != SCOPE_KIND_BINARY
+            or int(chunk["scope_id"]) in visible_ids
+        ]
+        if not chunks:
+            return []
     vector = _query_vector(text)
     method = METHOD_EMBEDDINGS
     scored: list[tuple[float, dict[str, Any]]] = []

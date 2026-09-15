@@ -449,3 +449,32 @@ class TestSearch:
         status, headers, raw = wsgi_request("GET", "/api/knowledge/search?q=x&binary_id=abc")
         assert status.startswith("400")
         assert json_body(raw, headers)["error"] == "binary_id must be an integer"
+
+    def test_a_non_member_does_not_search_a_team_binary_scope(
+        self, conn: sqlite3.Connection, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = self._seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, headers, raw = wsgi_request(
+            "GET",
+            "/api/knowledge/search?q=retry+counter",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert json_body(raw, headers)["count"] == 0
+
+        _status, headers, raw = wsgi_request(
+            "GET",
+            "/api/knowledge/search?q=retry+counter",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert json_body(raw, headers)["count"] == 1

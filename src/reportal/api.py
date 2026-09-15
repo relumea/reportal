@@ -8035,7 +8035,12 @@ def search_knowledge(request: Request) -> Response:
         scope_kind = knowledge.SCOPE_KIND_BINARY
     with contextlib.closing(_open()) as conn:
         results = knowledge.search_knowledge(
-            conn, query=query, scope_kind=scope_kind, scope_id=scope_id, limit=limit
+            conn,
+            query=query,
+            scope_kind=scope_kind,
+            scope_id=scope_id,
+            limit=limit,
+            visible_to=_caller(request),
         )
     return json_response({"query": query, "count": len(results), "results": results})
 
