@@ -204,6 +204,16 @@ class TestBinaries:
         assert status.startswith("404")
         assert json_body(body, headers)["error"] == "binary not found"
 
+    def test_get_names_the_rebrew_project_or_none(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        _, headers, body = wsgi_request("GET", f"/api/binaries/{ids['binary']}")
+        assert json_body(body, headers)["rebrew_project"] is None
+
+        store.set_rebrew_context(conn, ids["binary"], "/projects/demo-rebrew")
+        _, headers, body = wsgi_request("GET", f"/api/binaries/{ids['binary']}")
+
+        assert json_body(body, headers)["rebrew_project"] == "/projects/demo-rebrew"
+
     def test_functions_for_binary(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
         _, headers, body = wsgi_request("GET", f"/api/binaries/{ids['binary']}/functions")

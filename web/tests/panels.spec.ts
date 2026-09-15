@@ -168,3 +168,11 @@ test("the external view names the analysis's own status before a pull", async ({
   await pull.getByRole("button", { name: "Pull", exact: true }).click();
   await expect(pull.getByText(/stored, fetched/)).toBeVisible();
 });
+
+test("the binary header names the rebrew project its engine reads use", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+
+  // The seeder imports a project, and every engine-backed panel on this page
+  // (disassembly, cross-references, structs) reads through it.
+  await expect(page.getByText(/rebrew project: .*notepad-rebrew/)).toBeVisible();
+});

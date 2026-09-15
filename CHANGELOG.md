@@ -7,6 +7,14 @@ view renders it from here.
 
 ## Unreleased
 
+- A binary reports the rebrew project its engine-backed reads use.  The context
+  was stored per binary and every engine-backed route answered 400
+  `no-engine-context` without one, but no read returned it, so a client could
+  only discover the gap by watching a read fail.  `GET /api/binaries/<id>` and
+  the `get_binary` MCP tool now carry `rebrew_project` (null when there is
+  none), `reportal binary <binary-id>` prints it with the `import-rebrew`
+  command that sets one, and the binary detail's header names it in place.
+
 - A user's active team can be set from the terminal and over MCP.  The stored
   preference was settable only from the SPA (`PUT /api/iam/active-team`, the
   caller's own switch), so an operator driving an authenticated install from

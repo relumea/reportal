@@ -11,6 +11,11 @@ export interface Binary {
   visibility: "public" | "team";
   /** The team that owns it while `visibility` is `team`. */
   owner_team_id: number | null;
+  /**
+   * The rebrew project its engine-backed reads load, from the single-binary
+   * read only; a list row leaves it out rather than claiming there is none.
+   */
+  rebrew_project?: string | null;
 }
 
 export interface FunctionRow {

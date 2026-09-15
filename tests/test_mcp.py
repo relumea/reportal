@@ -1012,6 +1012,24 @@ class TestDestructiveTools:
         assert is_error is True
         assert payload["error"] == "binary not found"
 
+    def test_get_binary_names_the_rebrew_project(
+        self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
+        binary_id = store.add_binary(conn, sha256="dd" * 32, name="demo.exe")
+
+        payload, is_error = _call("get_binary", {"binary_id": binary_id})
+        assert is_error is False
+        assert payload["rebrew_project"] is None
+
+        store.set_rebrew_context(conn, binary_id, "/projects/demo-rebrew")
+
+        named, is_error = _call("get_binary", {"binary_id": binary_id})
+
+        assert is_error is False
+        assert named["rebrew_project"] == "/projects/demo-rebrew"
+
     def test_register_binary_stores_a_local_file(
         self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

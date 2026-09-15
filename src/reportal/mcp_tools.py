@@ -580,7 +580,10 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_get_binary(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
-        return _require_binary(conn, binary_id)
+        binary = _require_binary(conn, binary_id)
+        # The rebrew project every engine-backed read of this binary needs, null
+        # when it has none.
+        return {**binary, "rebrew_project": store.get_rebrew_context(conn, binary_id)}
 
 
 def _tool_list_functions(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5580,7 +5583,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_binary",
-            "Return one binary by id.",
+            "Return one binary by id, with the rebrew project its engine-backed reads use"
+            " (null when it was imported without one).",
             _object({"binary_id": _BINARY_ID}, ("binary_id",)),
             _READ,
             _tool_get_binary,

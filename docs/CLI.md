@@ -22,6 +22,10 @@ reportal binaries [--search TEXT] [--tag NAME] [--format FMT] [--order ORDER] [-
                                            #   counts; --search matches the name or the
                                            #   SHA-256, --order is id (default), newest,
                                            #   name, name-desc, size or size-desc
+reportal binary <binary-id> [--json]
+                                           # one binary: identity, scope and the rebrew
+                                           #   project its engine-backed reads use, or the
+                                           #   command that sets one when it has none
 reportal functions <binary-id> [--name TEXT] [--va ADDRESS] [--sort SORT] [--order ORDER] [--json]
                                            # list one binary's stored functions, filtered
                                            #   by a name substring or one exact address

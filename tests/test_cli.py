@@ -758,6 +758,41 @@ class TestBinariesCommand:
         assert "no reportal database" in result.stdout
 
 
+class TestBinaryCommand:
+    def _seed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> int:
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "portal.db"))
+        store.init_db(tmp_path / "portal.db")
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            return store.add_binary(conn, sha256="cc" * 32, name="demo.exe", fmt="PE")
+
+    def test_it_prints_the_rebrew_project_or_the_hint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = self._seed(tmp_path, monkeypatch)
+
+        bare = runner.invoke(cli.app, ["binary", str(binary_id)])
+        assert bare.exit_code == 0, bare.output
+        assert "no rebrew project context" in bare.output
+        assert "import-rebrew" in bare.output
+
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            store.set_rebrew_context(conn, binary_id, "/projects/demo-rebrew")
+        named = runner.invoke(cli.app, ["binary", str(binary_id), "--json"])
+
+        assert named.exit_code == 0, named.output
+        payload = json.loads(named.stdout)
+        assert payload["rebrew_project"] == "/projects/demo-rebrew"
+        assert payload["name"] == "demo.exe"
+
+    def test_an_unknown_binary_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["binary", "999"])
+
+        assert result.exit_code == 1
+        assert "no binary with id 999" in result.output
+
+
 class TestAddBinary:
     def test_registers_and_dedupes_by_sha256(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

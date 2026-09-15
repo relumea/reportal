@@ -1182,6 +1182,50 @@ def _run_scope(
     return log.attach(updated or {})
 
 
+@app.command("binary")
+def binary_command(
+    binary_id: int = typer.Argument(..., help="Binary id to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """One binary: its identity, its scope and the rebrew project it reads through.
+
+    The rebrew project is what every engine-backed read of the binary uses; a
+    binary imported without one reports the command that sets it rather than
+    failing one read at a time.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        project = store.get_rebrew_context(conn, binary_id)
+    payload = {**binary, "rebrew_project": project}
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    owner = binary.get("owner_team_id")
+    console.print(f"[bold cyan]{binary['name']}[/bold cyan] (id {binary_id})")
+    console.print(f"  path:     {binary.get('path') or '-'}")
+    console.print(f"  sha256:   {binary.get('sha256') or '-'}")
+    console.print(f"  size:     {binary.get('size') or 0} bytes")
+    console.print(f"  format:   {binary.get('format') or '-'} / {binary.get('arch') or '-'}")
+    console.print(
+        f"  scope:    {binary.get('visibility') or 'public'}"
+        + (f" (team {owner})" if owner else "")
+    )
+    console.print(f"  functions: {binary.get('function_count') or 0}")
+    if project:
+        console.print(f"  rebrew project: {project}")
+    else:
+        console.print(
+            "[yellow]no rebrew project context[/yellow]; engine-backed reads of this"
+            " binary answer no-engine-context. Set one with"
+            " 'reportal import-rebrew <project-dir>'."
+        )
+
+
 @app.command("binary-scope")
 def binary_scope(
     binary_id: int = typer.Argument(..., help="Binary id"),

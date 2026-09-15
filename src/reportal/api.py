@@ -725,11 +725,20 @@ def _upload_error_entry(name: str, error: str, detail: str, status: int = 400) -
 
 @router.get("/api/binaries/{binary_id}")
 def get_binary(binary_id: int) -> Response:
+    """One binary's row, plus the rebrew project the engine reads it through.
+
+    ``rebrew_project`` is null for a binary imported without one, which is what
+    every engine-backed read of the binary answers 400 ``no-engine-context``
+    for; the route reports it so a client can say so before a read fails.
+    """
     with contextlib.closing(_open()) as conn:
         binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        return json_error(404, error="binary not found", detail=f"no binary with id {binary_id}")
-    return json_response(binary)
+        if binary is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        project = store.get_rebrew_context(conn, binary_id)
+    return json_response({**binary, "rebrew_project": project})
 
 
 class ExtractError(Exception):

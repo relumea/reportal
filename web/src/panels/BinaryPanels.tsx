@@ -231,6 +231,14 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         <div className="detail-facts">
           <CopyValue value={binary.sha256} />
         </div>
+        {binary.rebrew_project === undefined ? null : binary.rebrew_project ? (
+          <Muted>rebrew project: {binary.rebrew_project}</Muted>
+        ) : (
+          <Muted>
+            No rebrew project context, so this binary&apos;s engine-backed reads answer
+            no-engine-context. Set one with <code>reportal import-rebrew &lt;project-dir&gt;</code>.
+          </Muted>
+        )}
       </div>
       <div className="panel-actions">
         <a className="btn btn-ghost" href={`#/binaries/${binary.id}/functions`}>
