@@ -13,7 +13,7 @@ from conftest import FakeEngine, decode, json_body, wsgi_request
 from mcp.shared.exceptions import MCPError
 from typer.testing import CliRunner
 
-from reportal import cli, engines, lineage, mcp_server, mcp_tools, similarity, store
+from reportal import auth, cli, engines, lineage, mcp_server, mcp_tools, similarity, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -653,6 +653,38 @@ class TestLineageRoutes:
         payload = json_body(body, headers)
         assert payload["error"] == "no-scan"
         assert f"lineage {ids['left']} {ids['right']}" in payload["detail"]
+
+    def test_post_404_hidden_other_binary(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = self._seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["right"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "POST",
+            f"/api/binaries/{ids['left']}/lineage",
+            body=json.dumps({"other_binary_id": ids["right"], "refine": False}),
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "binary not found"
+
+        member_status, headers, body = wsgi_request(
+            "POST",
+            f"/api/binaries/{ids['left']}/lineage",
+            body=json.dumps({"other_binary_id": ids["right"], "refine": False}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), body
 
     def test_get_400_non_integer_other_binary_id(self, conn: sqlite3.Connection) -> None:
         ids = self._seed(conn)

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from reportal import engines, related, store
+from reportal import auth, engines, related, store
 
 SHA = "aa" * 32
 IMPHASH = "11" * 16
@@ -481,6 +481,37 @@ class TestFindRelated:
     def test_default_limit_is_a_named_constant(self) -> None:
         assert related.DEFAULT_LIMIT == 20
         assert related.MAX_LIMIT >= related.DEFAULT_LIMIT
+
+    def test_a_non_member_ranks_only_visible_binaries(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
+        other = _binary(conn, tmp_path, name="other.exe", sha="b1" * 32)
+        _store_fingerprint(conn, other, sha256=SHA, size=1000)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, other, visibility="team", owner_team_id=team_id)
+
+        hidden = related.find_related(
+            conn,
+            binary_id=target,
+            engine=engines.RebrewEngine(enabled=False),
+            visible_to=stranger,
+        )
+        assert hidden["related"] == []
+        assert hidden["candidates_considered"] == 0
+        member = related.find_related(
+            conn, binary_id=target, engine=engines.RebrewEngine(enabled=False), visible_to=ana
+        )
+        assert [row["binary_id"] for row in member["related"]] == [other]
 
     def test_unknown_binary_raises_key_error(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(KeyError, match="no binary with id 4242"):

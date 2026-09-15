@@ -31,7 +31,7 @@ holds and records a note.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -389,6 +389,7 @@ def find_related(
     engine: RelatedIO | None = None,
     limit: int = DEFAULT_LIMIT,
     include_unrelated: bool = False,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Rank every other stored binary against *binary_id* and store the result.
 
@@ -403,8 +404,11 @@ def find_related(
     rather than failing.
 
     Raises :class:`KeyError` for an unknown target binary and :class:`ValueError`
-    for a non-positive or oversized *limit*.
+    for a non-positive or oversized *limit*.  ``visible_to`` narrows the
+    candidates to binaries the caller may see, like the other scoped reads.
     """
+    from reportal import auth
+
     if limit <= 0:
         raise ValueError(f"limit must be positive, got {limit}")
     if limit > MAX_LIMIT:
@@ -419,6 +423,15 @@ def find_related(
     if resolved is None or not resolved.available():
         notes.append(NO_ENGINE_NOTE)
 
+    visible: set[int] | None = None
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, params = scope
+        visible = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+        }
+
     target = _bundle(conn, binary, io=resolved)
     considered = 0
     missing_paths = 0
@@ -426,6 +439,8 @@ def find_related(
     for candidate in store.list_binaries(conn):
         candidate_id = int(candidate["id"])
         if candidate_id == binary_id:
+            continue
+        if visible is not None and candidate_id not in visible:
             continue
         if not Path(str(candidate["path"])).is_file():
             missing_paths += 1

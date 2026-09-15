@@ -4241,7 +4241,7 @@ def get_binary_rename_benchmark(binary_id: int) -> Response:
 
 @router.post("/api/binaries/{binary_id}/lineage")
 def store_binary_lineage(
-    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Compare a binary with another and store the comparison on the left binary."""
     other_binary_id = _lineage_other_id(body)
@@ -4251,7 +4251,7 @@ def store_binary_lineage(
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
-        if store.get_binary(conn, other_binary_id) is None:
+        if not _visible_binary(conn, other_binary_id, _caller(request)):
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {other_binary_id}"
             )
@@ -4502,7 +4502,7 @@ def get_binary_detect(binary_id: int) -> Response:
 
 @router.post("/api/binaries/{binary_id}/related")
 def store_binary_related(
-    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Rank the other stored binaries against this one and store the result."""
     limit = _optional_int(body, "limit", related.DEFAULT_LIMIT)
@@ -4526,6 +4526,7 @@ def store_binary_related(
                         engine=engines.get_engine(),
                         limit=limit,
                         include_unrelated=include_unrelated,
+                        visible_to=_caller(request),
                     ),
                 )
             except ValueError as exc:
@@ -10518,6 +10519,16 @@ def _visible_binary_ids(conn: sqlite3.Connection, caller: dict[str, Any] | None)
         int(row["id"])
         for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
     }
+
+
+def _visible_binary(
+    conn: sqlite3.Connection, binary_id: int, caller: dict[str, Any] | None
+) -> bool:
+    """Whether *caller* may see *binary_id*: present and in the visible set."""
+    if store.get_binary(conn, binary_id) is None:
+        return False
+    allowed = _visible_binary_ids(conn, caller)
+    return allowed is None or binary_id in allowed
 
 
 @router.get("/api/iam/me")
