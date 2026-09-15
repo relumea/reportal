@@ -3218,9 +3218,20 @@ def get_document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any] |
 
 
 def list_documents(
-    conn: sqlite3.Connection, *, scope_kind: str | None = None, scope_id: int | None = None
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str | None = None,
+    scope_id: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Documents (optionally scoped), newest id last, without their stored text."""
+    """Documents (optionally scoped), newest id last, without their stored text.
+
+    ``visible_to`` drops binary-scoped documents on binaries the caller may
+    not see, like the other scoped reads; documents of other scopes (project,
+    docs) have no owning binary and stay.
+    """
+    from reportal import knowledge
+
     sql = (
         "SELECT d.id, d.scope_kind, d.scope_id, d.title, d.source, d.mime, d.sha256,"
         " d.size, d.created_at, ("
@@ -3235,6 +3246,14 @@ def list_documents(
     if scope_id is not None:
         clauses.append("d.scope_id = ?")
         params.append(scope_id)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, scope_params = scope
+        clauses.append(
+            f"(d.scope_kind != ? OR EXISTS (SELECT 1 FROM binaries b"
+            f" WHERE b.id = d.scope_id AND {clause}))"
+        )
+        params.extend([knowledge.SCOPE_KIND_BINARY, *scope_params])
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY d.id"

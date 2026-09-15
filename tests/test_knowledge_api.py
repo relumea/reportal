@@ -273,6 +273,34 @@ class TestListAndGet:
         documents = json_body(raw, headers)["documents"]
         assert [document["title"] for document in documents] == ["font"]
 
+    def test_a_non_member_lists_only_unscoped_documents(
+        self, conn: sqlite3.Connection, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = self._seed_two(conn, portal_db)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, headers, raw = wsgi_request(
+            "GET", "/api/documents", headers={"Authorization": f"Bearer {outsider}"}
+        )
+        assert [row["title"] for row in json_body(raw, headers)["documents"]] == ["font"]
+
+        _status, headers, raw = wsgi_request(
+            "GET", "/api/documents", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert [row["title"] for row in json_body(raw, headers)["documents"]] == [
+            "note",
+            "font",
+        ]
+
     def test_non_integer_scope_id_is_400(self, conn: sqlite3.Connection, portal_db: Path) -> None:
         status, headers, raw = wsgi_request("GET", "/api/documents?scope_id=abc")
         assert status.startswith("400")

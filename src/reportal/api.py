@@ -7902,7 +7902,9 @@ def list_documents(request: Request) -> Response:
         except ValueError:
             return json_error(400, error="scope_id must be an integer")
     with contextlib.closing(_open()) as conn:
-        documents = store.list_documents(conn, scope_kind=scope_kind, scope_id=scope_id)
+        documents = store.list_documents(
+            conn, scope_kind=scope_kind, scope_id=scope_id, visible_to=_caller(request)
+        )
     return json_response({"documents": documents})
 
 
