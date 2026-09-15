@@ -254,12 +254,39 @@ def get_string(conn: sqlite3.Connection, *, string_id: int) -> dict[str, Any]:
 
 
 def list_strings(
-    conn: sqlite3.Connection, *, scope_kind: str, scope_id: int
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str,
+    scope_id: int,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Every analyst string at one scope, oldest first; the scope must exist."""
+    """Every analyst string at one scope, oldest first; the scope must exist.
+
+    ``visible_to`` answers [] for a scope on a binary the caller may not
+    see, so a listing never names what the single-read gate would 404; the
+    parent row stays the authority for existence.
+    """
+    from reportal import auth
+
     ensure_schema(conn)
     resolved_kind, resolved_id = normalize_scope(scope_kind, scope_id)
     check_scope(conn, scope_kind=resolved_kind, scope_id=resolved_id)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, params = scope
+        if resolved_kind == SCOPE_FUNCTION:
+            function = store.get_function(conn, resolved_id)
+            owner = None if function is None else store.get_binary(conn, int(function["binary_id"]))
+        else:
+            analysis = store.get_analysis(conn, resolved_id)
+            owner = None if analysis is None else store.get_binary(conn, int(analysis["binary_id"]))
+        if owner is not None:
+            visible = conn.execute(
+                f"SELECT b.id AS id FROM binaries b WHERE b.id = ? AND {clause}",
+                [int(owner["id"]), *params],
+            ).fetchone()
+            if visible is None:
+                return []
     rows = conn.execute(
         f"SELECT * FROM {TABLE} WHERE scope_kind = ? AND scope_id = ? ORDER BY id",
         (resolved_kind, resolved_id),
@@ -347,16 +374,45 @@ def derived_literals(code: str, *, limit: int = MAX_STRINGS_PER_SCOPE) -> list[s
     return found
 
 
-def function_strings(conn: sqlite3.Connection, function_id: int) -> dict[str, Any]:
+def function_strings(
+    conn: sqlite3.Connection,
+    function_id: int,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """One function's strings: the analyst's, and the derived literals beside them.
 
     The two halves are never merged, so a reader can tell what a human recorded
     from what the text scan found, and the payload carries the note saying which
-    is which.
+    is which.  ``visible_to`` empties both halves for a function on a hidden
+    binary, so the read never names what the gate would 404.
     """
-    if store.get_function(conn, function_id) is None:
+    from reportal import auth
+
+    function = store.get_function(conn, function_id)
+    if function is None:
         raise UnknownStringError(f"no function with id {function_id}")
-    analyst = list_strings(conn, scope_kind=SCOPE_FUNCTION, scope_id=function_id)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, params = scope
+        owner = store.get_binary(conn, int(function["binary_id"]))
+        visible = (
+            None
+            if owner is None
+            else conn.execute(
+                f"SELECT b.id AS id FROM binaries b WHERE b.id = ? AND {clause}",
+                [int(owner["id"]), *params],
+            ).fetchone()
+        )
+        if visible is None:
+            return {
+                "function_id": function_id,
+                "analyst": [],
+                "derived": [],
+                "count": 0,
+            }
+    analyst = list_strings(
+        conn, scope_kind=SCOPE_FUNCTION, scope_id=function_id, visible_to=visible_to
+    )
     stored = store.get_decompilation(conn, function_id)
     derived = derived_literals(str(stored["code"])) if stored is not None else []
     recorded = {entry["value"] for entry in analyst}

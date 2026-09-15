@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from reportal import journal, store, user_strings
+from reportal import auth, journal, store, user_strings
 from reportal._paths import DB_ENV
 
 
@@ -364,3 +364,39 @@ class TestDerivedAndFunctionRead:
             pytest.raises(user_strings.UnknownStringError),
         ):
             user_strings.function_strings(conn, 999)
+
+    def test_a_hidden_function_reads_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            user_strings.add_string(
+                conn,
+                scope_kind=user_strings.SCOPE_FUNCTION,
+                scope_id=ids["function"],
+                value="/etc/passwd",
+                note="why",
+            )
+            owner, _token = auth.add_user(conn, name="owner", role="admin")
+            team_id = int(auth.create_team(conn, name="blue")["id"])
+            auth.add_member(conn, team_id, int(owner["id"]))
+            _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+            ana = auth.find_user(conn, "ana")
+            assert ana is not None
+            auth.add_member(conn, team_id, int(ana["id"]))
+            _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+            stranger = auth.find_user(conn, "bob")
+            assert stranger is not None
+            store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+            hidden = user_strings.function_strings(conn, ids["function"], visible_to=stranger)
+            assert hidden["analyst"] == []
+            assert hidden["derived"] == []
+            member = user_strings.function_strings(conn, ids["function"], visible_to=ana)
+            assert [entry["value"] for entry in member["analyst"]] == ["/etc/passwd"]
+            listed = user_strings.list_strings(
+                conn,
+                scope_kind=user_strings.SCOPE_FUNCTION,
+                scope_id=ids["function"],
+                visible_to=stranger,
+            )
+            assert listed == []

@@ -9583,14 +9583,14 @@ def get_function_capabilities(function_id: int) -> Response:
 
 
 @router.get("/api/functions/{function_id}/strings")
-def get_function_strings(function_id: int) -> Response:
+def get_function_strings(request: Request, function_id: int) -> Response:
     """The analyst's strings for a function, and the literals its decompilation carries."""
     with contextlib.closing(_open()) as conn:
         missing = _function_or_404(conn, function_id)
         if missing is not None:
             return missing
         try:
-            payload = user_strings.function_strings(conn, function_id)
+            payload = user_strings.function_strings(conn, function_id, visible_to=_caller(request))
         except user_strings.UnknownStringError as exc:
             return json_error(404, error="function not found", detail=exc.detail)
     return json_response(payload)
@@ -9777,7 +9777,7 @@ def add_analysis_string(analysis_id: int, body: dict[str, Any] = Depends(json_bo
 
 
 @router.get("/api/analyses/{analysis_id}/strings")
-def list_analysis_strings(analysis_id: int) -> Response:
+def list_analysis_strings(request: Request, analysis_id: int) -> Response:
     """Every analyst string recorded at analysis scope."""
     with contextlib.closing(_open()) as conn:
         if store.get_analysis(conn, analysis_id) is None:
@@ -9785,7 +9785,10 @@ def list_analysis_strings(analysis_id: int) -> Response:
                 404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
             )
         rows = user_strings.list_strings(
-            conn, scope_kind=user_strings.SCOPE_ANALYSIS, scope_id=analysis_id
+            conn,
+            scope_kind=user_strings.SCOPE_ANALYSIS,
+            scope_id=analysis_id,
+            visible_to=_caller(request),
         )
     return json_response({"analysis_id": analysis_id, "strings": rows, "count": len(rows)})
 
