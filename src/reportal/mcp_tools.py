@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import sqlite3
+import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -3499,7 +3501,18 @@ def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError(exc.code, exc.detail) from exc
     text = symbols.render_symbols(row["parsed"], kind=kind)
     try:
-        Path(path).write_text(text, encoding="utf-8")
+        target = Path(path).expanduser()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handle, temp_name = tempfile.mkstemp(
+            dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                stream.write(text)
+            os.replace(temp_name, target)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temp_name)
     except OSError as exc:
         raise ToolError("write-failed", f"cannot write {path}: {exc}") from exc
     return {"path": path, "format": kind, "bytes": len(text)}
