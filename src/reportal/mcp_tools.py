@@ -4355,8 +4355,12 @@ def _tool_update_user(arguments: dict[str, Any]) -> dict[str, Any]:
     disabled = arguments.get("disabled")
     if disabled is not None and not isinstance(disabled, bool):
         raise ToolError("invalid params", "disabled must be a boolean")
-    if role is None and disabled is None:
-        raise ToolError("invalid user", "provide role or disabled")
+    active_team = _arg_optional_int(arguments, "active_team_id", 0) or None
+    clear_active_team = _arg_optional_bool(arguments, "clear_active_team", False)
+    if active_team is not None and clear_active_team:
+        raise ToolError("invalid user", "active_team_id and clear_active_team are exclusive")
+    if role is None and disabled is None and active_team is None and not clear_active_team:
+        raise ToolError("invalid user", "provide role, disabled or an active team")
     with contextlib.closing(_open()) as conn:
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
@@ -4371,6 +4375,9 @@ def _tool_update_user(arguments: dict[str, Any]) -> dict[str, Any]:
             )
             try:
                 updated = auth.update_user(conn, user_id, role=role, disabled=disabled)
+                if active_team is not None or clear_active_team:
+                    auth.set_active_team(conn, user_id, None if clear_active_team else active_team)
+                    updated = auth.get_user(conn, user_id)
             except auth.AuthError as exc:
                 raise ToolError(exc.code, exc.detail) from exc
             assert updated is not None, "the row was just read"
@@ -7472,12 +7479,14 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "update_user",
-            "Set one user's role or disabled flag; journaled and revertible.",
+            "Set one user's role, disabled flag or active team; journaled and revertible.",
             _object(
                 {
                     "user_id": _int("User id."),
                     "role": _enum("New role.", auth.ROLES),
                     "disabled": _bool("Whether the user's token stops authenticating."),
+                    "active_team_id": _int("Team the user's views start in (membership required)."),
+                    "clear_active_team": _bool("Clear the user's active team."),
                 },
                 ("user_id",),
             ),

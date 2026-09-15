@@ -900,6 +900,32 @@ class TestTeamStructureTools:
         assert failed is True
         assert missing["error"] == auth.ERROR_TEAM_NOT_FOUND
 
+    def test_the_user_tool_sets_and_clears_the_active_team(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        user, _token = auth.add_user(conn, name="alice", role="analyst")
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(user["id"]))
+        conn.commit()
+
+        switched, failed = mcp_server.call_tool(
+            "update_user", {"user_id": int(user["id"]), "active_team_id": team}
+        )
+        assert failed is False, switched
+        assert switched["active_team_id"] == team
+
+        cleared, failed = mcp_server.call_tool(
+            "update_user", {"user_id": int(user["id"]), "clear_active_team": True}
+        )
+        assert failed is False, cleared
+        assert cleared["active_team_id"] is None
+
+        refused, failed = mcp_server.call_tool(
+            "update_user", {"user_id": int(user["id"]), "active_team_id": 999}
+        )
+        assert failed is True
+        assert refused["error"] == auth.ERROR_TEAM_NOT_FOUND
+
     def test_the_organisation_tools_round_trip(
         self, portal_db: Path, conn: sqlite3.Connection
     ) -> None:

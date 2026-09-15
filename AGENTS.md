@@ -462,7 +462,8 @@ comment store and is read-only; `add_comment`, `update_comment` and
 `bulk_functions` and `bulk_analyses` apply one action to a bounded id list through
 `bulk_actions`, so all three are destructive.  `list_users` reads the user table
 (never a digest) and is read-only; `add_user`, `rotate_user_token`,
-`update_user` and `delete_user` write it and are destructive.  `list_teams`
+`update_user` (which also sets or clears the user's active team, membership
+required) and `delete_user` write it and are destructive.  `list_teams`
 reads the team store and is read-only; `create_team`, `delete_team`,
 `add_team_member`, `remove_team_member`, `set_binary_scope`,
 `set_collection_scope`, `set_team_member_role`, `create_organisation`,

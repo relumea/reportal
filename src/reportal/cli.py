@@ -1361,16 +1361,32 @@ def user_edit(
     role: str | None = typer.Option(None, "--role", help="New role"),
     disable: bool = typer.Option(False, "--disable", help="Disable the user's token"),
     enable: bool = typer.Option(False, "--enable", help="Re-enable the user's token"),
+    active_team: int | None = typer.Option(
+        None, "--active-team", help="Team the user's views start in (membership required)"
+    ),
+    clear_active_team: bool = typer.Option(
+        False, "--clear-active-team", help="Clear the user's active team"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Set a user's role, or disable or re-enable it; journaled."""
+    """Set a user's role, disabled flag or active team; journaled."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if role is None and not disable and not enable:
-        _fail("provide --role, --disable or --enable", json_output)
+    if (
+        role is None
+        and not disable
+        and not enable
+        and active_team is None
+        and not clear_active_team
+    ):
+        _fail(
+            "provide --role, --disable, --enable, --active-team or --clear-active-team", json_output
+        )
     if disable and enable:
         _fail("--disable and --enable are mutually exclusive", json_output)
+    if active_team is not None and clear_active_team:
+        _fail("--active-team and --clear-active-team are mutually exclusive", json_output)
     disabled = True if disable else (False if enable else None)
     with contextlib.closing(store.connect(portal_db)) as conn:
         if auth.get_user(conn, user_id) is None:
@@ -1387,6 +1403,9 @@ def user_edit(
             )
             try:
                 updated = auth.update_user(conn, user_id, role=role, disabled=disabled)
+                if active_team is not None or clear_active_team:
+                    auth.set_active_team(conn, user_id, None if clear_active_team else active_team)
+                    updated = auth.get_user(conn, user_id)
             except auth.AuthError as exc:
                 _fail(f"{exc.code}: {exc.detail}", json_output)
     payload = log.attach(updated or {})

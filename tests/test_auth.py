@@ -369,6 +369,57 @@ class TestCli:
         with contextlib.closing(store.connect(db)) as conn:
             assert auth.authenticate(conn, token) is None
 
+    def test_user_edit_sets_and_clears_the_active_team(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        db = self._portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(db)) as conn:
+            user, _token = auth.add_user(conn, name="ana")
+            team = auth.create_team(conn, name="blue")
+            auth.add_member(conn, int(team["id"]), int(user["id"]))
+
+        switched = runner.invoke(
+            cli.app, ["user-edit", str(user["id"]), "--active-team", str(team["id"]), "--json"]
+        )
+        assert switched.exit_code == 0, switched.output
+        assert json.loads(switched.stdout)["active_team_id"] == int(team["id"])
+
+        cleared = runner.invoke(
+            cli.app, ["user-edit", str(user["id"]), "--clear-active-team", "--json"]
+        )
+        assert cleared.exit_code == 0, cleared.output
+        assert json.loads(cleared.stdout)["active_team_id"] is None
+
+    def test_user_edit_refuses_a_team_the_user_is_not_in(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        db = self._portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(db)) as conn:
+            user, _token = auth.add_user(conn, name="ana")
+            team = auth.create_team(conn, name="blue")
+
+        result = runner.invoke(
+            cli.app, ["user-edit", str(user["id"]), "--active-team", str(team["id"])]
+        )
+
+        assert result.exit_code == 1
+        assert "not-a-team-member" in result.output
+
+    def test_user_edit_refuses_two_active_team_flags(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        db = self._portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(db)) as conn:
+            user, _token = auth.add_user(conn, name="ana")
+
+        result = runner.invoke(
+            cli.app,
+            ["user-edit", str(user["id"]), "--active-team", "1", "--clear-active-team"],
+        )
+
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
     def test_user_token_rotates(self, tmp_path: Path, monkeypatch: Any) -> None:
         db = self._portal(tmp_path, monkeypatch)
         with contextlib.closing(store.connect(db)) as conn:

@@ -651,8 +651,10 @@ reportal user-add <name> [--role viewer|analyst|admin] [--json]
                                            # create a user and print its token once
                                            #   (only the digest is stored); journaled
 reportal user-token <user-id> [--json]     # replace a user's token, printed once
-reportal user-edit <user-id> [--role R] [--disable|--enable] [--json]
-                                           # set the role or the disabled state; journaled
+reportal user-edit <user-id> [--role R] [--disable|--enable]
+                        [--active-team ID|--clear-active-team] [--json]
+                                           # set the role, the disabled state or the team
+                                           #   the user's views start in; journaled
 reportal user-rm <user-id> [--yes] [--json]
                                            # delete a user; journaled
 reportal config [--json]                   # what this instance can do: versions,

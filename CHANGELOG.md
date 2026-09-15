@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- A user's active team can be set from the terminal and over MCP.  The stored
+  preference was settable only from the SPA (`PUT /api/iam/active-team`, the
+  caller's own switch), so an operator driving an authenticated install from
+  the CLI or an agent had no way to set it for a user.  `reportal user-edit`
+  takes `--active-team <id>` and `--clear-active-team` and the `update_user`
+  MCP tool takes `active_team_id`/`clear_active_team`, both inside the same
+  journaled action as the user's other fields (so a revert puts the previous
+  team back) and both refusing a team the user is not in.
+
 - A queued match run reports its progress.  A job was one step (`progress` 0 or
   100) because the engine calls a scan makes cannot be interrupted; a match run
   is the one kind whose loop is reportal's own, so `match_binary` now takes a
