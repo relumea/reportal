@@ -7,6 +7,19 @@ view renders it from here.
 
 ## Unreleased
 
+- IPv6 literals are indicators now.  The threat extractor reports them in
+  their own `ipv6` category (`ipv6` public, `ipv6-private` for private,
+  loopback and link-local, validated with the standard library so compressed
+  and full forms both parse): an IPv4-mapped tail stays one IPv4 finding, a
+  zone id is not an indicator, and bracketed URL hosts parse.  The T1071 and
+  T1041 techniques, the Snort families, the STIX patterns
+  (`[ipv6-addr:value = ...]`), the attack-surface network group and the SPA
+  category list all follow the new category.
+- Staged second stages get their own finding kind.  The secrets scan reports
+  a base64-shaped run at or above 4 KiB as `embedded-payload` rather than a
+  key-sized entropy blob: the fileless-dropper shape (a script blob decoded
+  and piped to a shell at runtime) reads as staging at triage time, with the
+  same redaction and pipeline as every other finding.
 - Cloud recon lights up by provider.  The threat extractor flags instance
   metadata endpoints with the cloud they belong to (`cloud-aws`,
   `cloud-aws-ecs`, `cloud-gcp`, `cloud-alibaba`, `cloud-tencent`) instead of

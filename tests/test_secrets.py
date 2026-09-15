@@ -18,6 +18,7 @@ from reportal.secrets import (
     MIN_ENTROPY_BITS,
     MIN_ENTROPY_LENGTH,
     MIN_LITERAL_LENGTH,
+    MIN_PAYLOAD_LENGTH,
     SECRET_PATTERNS,
 )
 
@@ -187,6 +188,28 @@ class TestEntropy:
         assert finding["kind"] == "entropy"
         assert finding["confidence"] == CONFIDENCE_MEDIUM
         assert finding["value"] == BASE64_BLOB
+
+
+class TestStagedPayload:
+    def test_a_large_base64_run_is_a_payload_not_entropy(self) -> None:
+        blob = "aB3dE9fG2hJ5kL8mN1pQ4rS7tU0vW6xY9zA2bC5dE7fG8==" * 100
+        assert len(blob) >= MIN_PAYLOAD_LENGTH
+        assert secrets.looks_staged_payload(blob) is True
+        result = secrets.scan_secrets([_string(blob)])
+        finding = _finding(result, secrets.PAYLOAD_NAME)
+        assert finding["kind"] == "embedded-payload"
+        assert finding["confidence"] == CONFIDENCE_MEDIUM
+        assert "high-entropy" not in {entry["name"] for entry in result["findings"]}
+
+    def test_a_key_sized_blob_is_not_a_payload(self) -> None:
+        assert secrets.looks_staged_payload(BASE64_BLOB) is False
+
+    def test_whitespace_disqualifies(self) -> None:
+        blob = ("aB3dE9fG2hJ5kL8mN1pQ4rS7tU0vW6xY9zA2bC5dE7fG8==" * 100)[:4090] + " dead beef"
+        assert secrets.looks_staged_payload(blob) is False
+
+    def test_non_base64_bytes_disqualify(self) -> None:
+        assert secrets.looks_staged_payload("!" * MIN_PAYLOAD_LENGTH) is False
 
 
 class TestScan:

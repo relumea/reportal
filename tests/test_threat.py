@@ -118,6 +118,33 @@ class TestExtractIocs:
         iocs = threat.extract_iocs([_string("999.1.2.3 and 1.2.3.999")])
         assert iocs[threat.IOC_CATEGORY_IPV4] == []
 
+    def test_public_ipv6_is_extracted(self) -> None:
+        iocs = threat.extract_iocs([_string("c2 at 2606:4700:4700::1111 now")])
+        assert iocs[threat.IOC_CATEGORY_IPV6][0] == {
+            "value": "2606:4700:4700::1111",
+            "kind": threat.KIND_IPV6,
+            "source_va": 0x402000,
+        }
+
+    def test_private_ipv6_is_kept_and_flagged(self) -> None:
+        iocs = threat.extract_iocs([_string("link fe80::1 and loopback ::1 here")])
+        assert {
+            finding["value"]: finding["kind"] for finding in iocs[threat.IOC_CATEGORY_IPV6]
+        } == {"fe80::1": threat.KIND_IPV6_PRIVATE, "::1": threat.KIND_IPV6_PRIVATE}
+
+    def test_ipv4_mapped_stays_an_ipv4_finding(self) -> None:
+        iocs = threat.extract_iocs([_string("mapped ::ffff:8.8.8.8 here")])
+        assert iocs[threat.IOC_CATEGORY_IPV6] == []
+        assert _values(iocs, threat.IOC_CATEGORY_IPV4) == ["8.8.8.8"]
+
+    def test_zone_id_and_double_compression_are_not_findings(self) -> None:
+        iocs = threat.extract_iocs([_string("zone fe80::1%eth0 and 1::2::3 here")])
+        assert iocs[threat.IOC_CATEGORY_IPV6] == []
+
+    def test_bracketed_url_is_extracted(self) -> None:
+        iocs = threat.extract_iocs([_string("see http://[2001:db8::1]/beacon")])
+        assert _values(iocs, threat.IOC_CATEGORY_URLS) == ["http://[2001:db8::1]/beacon"]
+
     @pytest.mark.parametrize(
         ("address", "kind"),
         [

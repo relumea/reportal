@@ -52,7 +52,7 @@ LOCAL_CAPABILITIES = frozenset({"file-io", "registry", "process-execution"})
 CRYPTO_CAPABILITIES = frozenset({"crypto"})
 
 # Threat IOC categories that name a remote endpoint.
-NETWORK_IOCS = ("urls", "domains", "ipv4")
+NETWORK_IOCS = ("urls", "domains", "ipv4", "ipv6")
 
 # Rows a group carries.  The summary counts stay exact when capped.
 MAX_ROWS = 100

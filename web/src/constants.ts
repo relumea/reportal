@@ -69,6 +69,7 @@ export const THREAT_IOC_CATEGORIES = [
   "urls",
   "domains",
   "ipv4",
+  "ipv6",
   "emails",
   "registry_paths",
   "file_paths",

@@ -877,6 +877,15 @@ class TestBuildSnortRule:
         )
         assert result["rules"][0]["port"] == 22
 
+    def test_an_ipv6_finding_emits_a_rule(self) -> None:
+        result = remediation.build_snort_rule(
+            name="demo.exe",
+            indicators=_iocs(ipv6=[_ioc("2001:db8::1", "ipv6")]),
+            meta={},
+        )
+        assert result["rules"][0]["family"] == "ipv6"
+        assert 'content:"2001:db8::1"; http_header;' in result["text"]
+
     def test_an_explicit_url_port_wins_over_the_scan(self) -> None:
         result = remediation.build_snort_rule(
             name="demo.exe",
@@ -1010,6 +1019,15 @@ class TestBuildStixBundle:
         ) in patterns
         assert "[ipv4-addr:value = '1.2.3.4']" in patterns
         assert "[file:hashes.'SHA-256' = '" + "ab" * 32 + "']" in patterns
+
+    def test_an_ipv6_finding_emits_an_ipv6_pattern(self) -> None:
+        bundle = remediation.build_stix_bundle(
+            name="demo.exe",
+            indicators=_iocs(ipv6=[_ioc("2001:db8::1", "ipv6")]),
+            meta=self._meta(),
+        )
+        patterns = [str(obj["pattern"]) for obj in bundle["objects"] if obj["type"] == "indicator"]
+        assert patterns == ["[ipv6-addr:value = '2001:db8::1']"]
 
     def test_the_hash_kind_selects_the_stix_property(self) -> None:
         bundle = remediation.build_stix_bundle(

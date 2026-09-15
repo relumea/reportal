@@ -54,6 +54,7 @@ Rule choices, all on the conservative side:
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import sqlite3
 from collections.abc import Sequence
@@ -68,6 +69,7 @@ from reportal import engines, llm, store
 IOC_CATEGORY_URLS = "urls"
 IOC_CATEGORY_DOMAINS = "domains"
 IOC_CATEGORY_IPV4 = "ipv4"
+IOC_CATEGORY_IPV6 = "ipv6"
 IOC_CATEGORY_EMAILS = "emails"
 IOC_CATEGORY_REGISTRY = "registry_paths"
 IOC_CATEGORY_FILES = "file_paths"
@@ -77,6 +79,7 @@ IOC_CATEGORIES: tuple[str, ...] = (
     IOC_CATEGORY_URLS,
     IOC_CATEGORY_DOMAINS,
     IOC_CATEGORY_IPV4,
+    IOC_CATEGORY_IPV6,
     IOC_CATEGORY_EMAILS,
     IOC_CATEGORY_REGISTRY,
     IOC_CATEGORY_FILES,
@@ -107,6 +110,10 @@ CONFIDENCE_LOW = "low"
 # records that it is not routable.
 KIND_IPV4 = "ipv4"
 KIND_IPV4_PRIVATE = "ipv4-private"
+
+# Kinds the IPv6 rule reports, mirroring the IPv4 pair.
+KIND_IPV6 = "ipv6"
+KIND_IPV6_PRIVATE = "ipv6-private"
 
 # Cloud instance-metadata endpoints, by finding kind.  A literal hit is
 # post-exploitation cloud recon (the LinPEAS-shaped behavior Zenyard's
@@ -231,11 +238,12 @@ COMMON_TLDS: frozenset[str] = frozenset(
 # conversion, so a string carrying only that still gets scanned.
 _FORMAT_SPECIFIER = re.compile(r"%[-+ #0]*\d*(?:\.\d+)?[hlLqjzt]*[diouxXeEfFgGaAcspn]")
 
-_URL = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>`\\{}\[\]|]+", re.IGNORECASE)
+_URL = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>`\\{}|]+", re.IGNORECASE)
 _DOMAIN = re.compile(
     r"(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}", re.IGNORECASE
 )
 _IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
+_IPV6 = re.compile(r"(?<![\w.:])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f:.]{1,}(?![\w.:])")
 _EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,24}")
 _REGISTRY = re.compile(
     r"\b(?:HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER|HKEY_CLASSES_ROOT|HKEY_USERS"
@@ -331,7 +339,7 @@ TECHNIQUES: tuple[Technique, ...] = (
             r"^URLDownloadToFile$",
         ),
         capabilities=("networking",),
-        iocs=(IOC_CATEGORY_URLS, IOC_CATEGORY_DOMAINS, IOC_CATEGORY_IPV4),
+        iocs=(IOC_CATEGORY_URLS, IOC_CATEGORY_DOMAINS, IOC_CATEGORY_IPV4, IOC_CATEGORY_IPV6),
     ),
     Technique(
         attack_id="T1041",
@@ -342,7 +350,12 @@ TECHNIQUES: tuple[Technique, ...] = (
             r"^(?:FtpPutFile|InternetWriteFile)$",
         ),
         capabilities=("networking",),
-        iocs=(IOC_CATEGORY_URLS, IOC_CATEGORY_DOMAINS, IOC_CATEGORY_IPV4),
+        iocs=(
+            IOC_CATEGORY_URLS,
+            IOC_CATEGORY_DOMAINS,
+            IOC_CATEGORY_IPV4,
+            IOC_CATEGORY_IPV6,
+        ),
     ),
     Technique(
         attack_id="T1082",
@@ -527,6 +540,36 @@ def _valid_ipv4(value: str) -> bool:
     return all(int(octet) <= 255 for octet in value.split("."))
 
 
+def _strip_ipv4_mapped(text: str) -> str:
+    """Blank the IPv4-mapped IPv6 tails so they stay IPv4 findings.
+
+    ``::ffff:8.8.8.8`` parses as an address, but the indicator an analyst
+    wants is the dotted quad the IPv4 rule already reports; blanking the
+    dotted tail (same length, so offsets hold) keeps one finding, not two.
+    """
+    return re.sub(r"::ffff:\d{1,3}(?:\.\d{1,3}){3}", lambda m: " " * len(m.group(0)), text)
+
+
+def _valid_ipv6(value: str) -> str | None:
+    """The canonical IPv6 literal in *value*, or None when it is not one.
+
+    ``ipaddress`` is the validator, so compressed and full forms both parse;
+    an IPv4-mapped address answers its v4 form and stays in the IPv4
+    category, and anything else unparseable is not a finding.  A zone id
+    (``fe80::1%eth0``) is an interface name, not an indicator.
+    """
+    candidate = value.strip("[]").split("%", 1)[0]
+    try:
+        parsed = ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+    if isinstance(parsed, ipaddress.IPv4Address):
+        return None
+    if parsed.ipv4_mapped is not None:
+        return None
+    return str(parsed)
+
+
 def _hash_findings(text: str) -> list[tuple[str, str]]:
     """Return ``(value, kind)`` for each hash of an accepted length in *text*."""
     found: list[tuple[str, str]] = []
@@ -578,6 +621,16 @@ def extract_iocs(strings: Sequence[dict[str, Any]]) -> dict[str, list[dict[str, 
                     KIND_IPV4_PRIVATE if _private_ipv4(value) else KIND_IPV4
                 )
                 add(IOC_CATEGORY_IPV4, value, kind, va)
+        for match in _IPV6.finditer(_strip_ipv4_mapped(text)):
+            parsed = _valid_ipv6(match.group(0))
+            if parsed is not None:
+                address = ipaddress.ip_address(parsed)
+                kind = (
+                    KIND_IPV6_PRIVATE
+                    if address.is_private or address.is_loopback or address.is_link_local
+                    else KIND_IPV6
+                )
+                add(IOC_CATEGORY_IPV6, parsed, kind, va)
         for match in _EMAIL.finditer(text):
             value = match.group(0)
             if _plausible_domain(value):
@@ -1284,6 +1337,7 @@ IOC_POINTS: dict[str, int] = {
     IOC_CATEGORY_URLS: 8,
     IOC_CATEGORY_DOMAINS: 5,
     IOC_CATEGORY_IPV4: 5,
+    IOC_CATEGORY_IPV6: 5,
     IOC_CATEGORY_EMAILS: 3,
     IOC_CATEGORY_REGISTRY: 3,
     IOC_CATEGORY_FILES: 2,

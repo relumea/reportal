@@ -55,12 +55,17 @@ CONFIDENCE_MEDIUM = "medium"
 # Sort rank per confidence; lower sorts first so specific shapes lead the list.
 _CONFIDENCE_RANK = {CONFIDENCE_HIGH: 0, CONFIDENCE_MEDIUM: 1}
 
-# Finding kinds: a pattern-table match, or a high-entropy blob.
+# Finding kinds: a pattern-table match, a high-entropy blob, or an embedded
+# staged payload (a blob large enough to be a second stage, not a key).
 KIND_PATTERN = "pattern"
 KIND_ENTROPY = "entropy"
+KIND_PAYLOAD = "embedded-payload"
 
 # Name an entropy finding carries; it is not a pattern-table name.
 ENTROPY_NAME = "high-entropy"
+
+# Name a staged-payload finding carries.
+PAYLOAD_NAME = "embedded-payload"
 
 # Characters kept at each end of a redacted value.
 REDACT_PREFIX_CHARS = 4
@@ -74,6 +79,12 @@ REDACT_SUFFIX_CHARS = 4
 MIN_ENTROPY_LENGTH = 20
 MIN_ENTROPY_BITS = 3.5
 HEX_MIN_ENTROPY_BITS = 3.4
+
+# Length at or above which a high-entropy base64-shaped value stops being a
+# key and starts being a staged second stage (the LinPEAS-dropper shape:
+# a base64 blob decoded and piped to a shell at runtime).  Well above any
+# API key or token, comfortably below a real staged script.
+MIN_PAYLOAD_LENGTH = 4096
 
 # Shortest quoted literal the generic assignment rule accepts.
 MIN_LITERAL_LENGTH = 8
@@ -244,6 +255,23 @@ def looks_high_entropy(
     return entropy(value) >= min_entropy
 
 
+_BASE64_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=_-")
+
+
+def looks_staged_payload(value: str) -> bool:
+    """True when *value* looks like an embedded staged second stage.
+
+    A base64-shaped run at or above :data:`MIN_PAYLOAD_LENGTH` with no
+    whitespace: far too large for a key or token, the shape of a script
+    blob a dropper decodes and pipes to a shell at runtime.
+    """
+    if len(value) < MIN_PAYLOAD_LENGTH:
+        return False
+    if any(character.isspace() for character in value):
+        return False
+    return all(character in _BASE64_CHARS for character in value)
+
+
 def redact(value: str) -> str:
     """Mask all but the first and last :data:`REDACT_PREFIX_CHARS` characters.
 
@@ -303,11 +331,12 @@ def scan_secrets(strings: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
     Returns ``{"findings", "count", "by_confidence"}``.  A finding is
     ``{"kind", "name", "value", "redacted", "va", "confidence"}``, where ``kind``
-    is ``pattern`` or ``entropy``, ``va`` is the entry's VA when it carries one,
-    and ``redacted`` is the value with its middle masked.  Findings deduplicate
-    by value, keeping the highest confidence and the first VA; the list sorts by
-    confidence, then name, then VA; ``count`` and ``by_confidence`` stay exact
-    while the list itself is capped at :data:`MAX_FINDINGS`.
+    is ``pattern``, ``entropy`` or ``embedded-payload``, ``va`` is the entry's
+    VA when it carries one, and ``redacted`` is the value with its middle
+    masked.  Findings deduplicate by value, keeping the highest confidence
+    and the first VA; the list sorts by confidence, then name, then VA;
+    ``count`` and ``by_confidence`` stay exact while the list itself is
+    capped at :data:`MAX_FINDINGS`.
     """
     findings: dict[str, dict[str, Any]] = {}
     for entry in strings[:MAX_STRINGS_INSPECTED]:
@@ -328,7 +357,16 @@ def scan_secrets(strings: Sequence[dict[str, Any]]) -> dict[str, Any]:
                     va=va,
                     confidence=secret.confidence,
                 )
-        if looks_high_entropy(text):
+        if looks_staged_payload(text):
+            _add(
+                findings,
+                kind=KIND_PAYLOAD,
+                name=PAYLOAD_NAME,
+                value=text,
+                va=va,
+                confidence=CONFIDENCE_MEDIUM,
+            )
+        elif looks_high_entropy(text):
             _add(
                 findings,
                 kind=KIND_ENTROPY,

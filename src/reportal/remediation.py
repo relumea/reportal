@@ -690,6 +690,7 @@ SNORT_FAMILIES: tuple[tuple[str, str], ...] = (
     (threat.IOC_CATEGORY_URLS, "url"),
     (threat.IOC_CATEGORY_DOMAINS, "domain"),
     (threat.IOC_CATEGORY_IPV4, "ipv4"),
+    (threat.IOC_CATEGORY_IPV6, "ipv6"),
 )
 
 # Protocol name a URL scheme names, so a scheme's port can be looked up in the
@@ -927,6 +928,7 @@ STIX_SUPPORTED_CATEGORIES: tuple[str, ...] = (
     threat.IOC_CATEGORY_URLS,
     threat.IOC_CATEGORY_DOMAINS,
     threat.IOC_CATEGORY_IPV4,
+    threat.IOC_CATEGORY_IPV6,
     threat.IOC_CATEGORY_EMAILS,
     threat.IOC_CATEGORY_HASHES,
 )
@@ -962,6 +964,8 @@ def _stix_pattern(finding: Mapping[str, Any], category: str) -> str | None:
         )
     if category == threat.IOC_CATEGORY_IPV4:
         return f"[ipv4-addr:value = '{escaped}']"
+    if category == threat.IOC_CATEGORY_IPV6:
+        return f"[ipv6-addr:value = '{escaped}']"
     if category == threat.IOC_CATEGORY_EMAILS:
         return f"[email-addr:value = '{escaped}']"
     if category == threat.IOC_CATEGORY_HASHES:
