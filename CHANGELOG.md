@@ -7,6 +7,16 @@ view renders it from here.
 
 ## Unreleased
 
+- The API reference covers every route and proves it.  `tests/test_api_docs.py`
+  walks the live router tables and fails the gate for a route with no
+  `docs/API.md` row (or no same-method family row, which is how the
+  `remediation/yara` row covers `remediation/<fmt>`); it caught sixteen
+  missing rows on landing, all from uncommitted feature work: the plans,
+  usage, billing, checkout, portal, webhook, sync, plan, manual and manual
+  cancel reads and writes, the two user-provider link reads, the provider list
+  and the binary options, binary summaries, detonation status and auto recover
+  rows.  `tests/test_cli_docs.py` keeps the same promise for `docs/CLI.md`.
+
 - The Agent feedback panel takes a verdict note.  The rating note existed on
   the route, the CLI's `--note` and the MCP tool's `note`, but the panel that
   records verdicts could not write one: it sent only `{rating}`, so the Note
