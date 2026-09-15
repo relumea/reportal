@@ -382,6 +382,18 @@ class TestRender:
         assert "/* make_point */" in header
         assert "counter" not in header
 
+    def test_a_comment_terminator_in_a_name_does_not_close_the_comment(self) -> None:
+        parsed = {
+            "kind": "dwarf",
+            "symbols": [
+                {"name": "evil */ #define PWNED 1 /*", "va": 1, "kind": "function"},
+            ],
+            "types": [],
+        }
+        header = symbols.render_symbols(parsed, kind="c")
+        assert "/* evil x| #define PWNED 1 |x */" in header
+        assert "#define PWNED" not in header.split("/* evil")[0]
+
 
 # ── The reader's own branches ──────────────────────────────────────
 #

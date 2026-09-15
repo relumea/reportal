@@ -1200,5 +1200,9 @@ def render_symbols(parsed: Mapping[str, Any], *, kind: str = "json") -> str:
     if not functions:
         return header
     lines = [header.rstrip("\n"), "", "/* function symbols */"]
-    lines.extend(f"/* {name} */" for name in functions)
+    # A symbol name is parsed-file text going into a comment: a `*` or `/`
+    # inside one could combine with the delimiters into a terminator, so both
+    # are folded to characters that render the name without closing anything.
+    safe = str.maketrans({"*": "x", "/": "|"})
+    lines.extend(f"/* {name.translate(safe)} */" for name in functions)
     return "\n".join(lines) + "\n"
