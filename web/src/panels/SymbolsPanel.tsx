@@ -98,19 +98,19 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
         <span className="muted">Stored renames as a script:</span>
         <a
           className="btn btn-ghost btn-sm"
-          href={`/binaries/${binaryId}/decompiler-script?format=ghidra`}
+          href={`/api/binaries/${binaryId}/decompiler-script?format=ghidra`}
         >
           Ghidra
         </a>{" "}
         <a
           className="btn btn-ghost btn-sm"
-          href={`/binaries/${binaryId}/decompiler-script?format=ida`}
+          href={`/api/binaries/${binaryId}/decompiler-script?format=ida`}
         >
           IDA
         </a>{" "}
         <a
           className="btn btn-ghost btn-sm"
-          href={`/binaries/${binaryId}/decompiler-script?format=binja`}
+          href={`/api/binaries/${binaryId}/decompiler-script?format=binja`}
         >
           Binja
         </a>
