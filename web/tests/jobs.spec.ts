@@ -44,7 +44,6 @@ test("a queued job is listed and the filters narrow the queue", async ({ page })
     jobs: Array<{ status: string }>;
   };
   await expect(rows).toHaveCount(listed.jobs.length);
-
   // One status keeps the job, another empties the list without emptying the
   // queue: the count line reports the filtered and the matched total.
   const status = listed.jobs[0].status;
@@ -80,4 +79,46 @@ test("the queue form offers the match settings the kind takes", async ({ page })
   await expect(panel.getByRole("textbox", { name: "Similarity floor" })).toBeVisible();
   // A match run still needs the binary it matches.
   await expect(panel.getByRole("button", { name: "Queue", exact: true })).toBeDisabled();
+});
+
+test("a running job keeps the table polling until it finishes", async ({ page }) => {
+  // Queue one composition job and let the pool finish it, so the API's own
+  // answer is terminal and the assertion has a fixed target.
+  const queued = await page.request.post("/api/jobs", {
+    data: { kind: "composition", binary_id: state.ids.binary_id },
+  });
+  const job = (await queued.json()) as { id: number };
+  await expect
+    .poll(async () => {
+      const one = await page.request.get(`/api/jobs/${job.id}`);
+      return ((await one.json()) as { status: string }).status;
+    })
+    .not.toBe("queued");
+
+  // The first list read is answered as if the job were still running with an
+  // empty waiting queue, which is the state a poll keyed on that count stops
+  // at.  Only a poll that follows the live row reaches the real status.
+  let firstRead = true;
+  await page.route(
+    (url) => url.pathname === "/api/jobs",
+    async (route) => {
+      if (!firstRead) return route.continue();
+      firstRead = false;
+      const response = await route.fetch();
+      const payload = (await response.json()) as {
+        jobs: Array<Record<string, unknown>>;
+      };
+      payload.jobs = payload.jobs.map((row) =>
+        row.id === job.id ? { ...row, status: "running", live: true } : row,
+      );
+      await route.fulfill({ response, json: payload });
+    },
+  );
+  await page.goto("/#/jobs");
+  const rows = panelByTitle(page, "Jobs").locator("table.data-table tbody tr");
+  const row = rows.filter({
+    has: page.getByRole("cell", { name: String(job.id), exact: true }),
+  });
+  await expect(row.getByRole("cell").nth(3)).toHaveText("running");
+  await expect(row.getByRole("cell").nth(3)).toHaveText("done");
 });

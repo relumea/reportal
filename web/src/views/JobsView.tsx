@@ -104,7 +104,11 @@ export function JobsView({
     () => api<JobsPayload>(path),
     [path],
     true,
-    (payload) => (payload && payload.queued > 0 ? 2000 : false),
+    // `queued` counts the whole queue's waiting jobs, not the ones already
+    // running, so polling on it stopped the moment a job started: a running
+    // job's progress froze and its row never reached the terminal status.  Any
+    // live row (queued or running) is what keeps the poll going.
+    (payload) => (payload?.jobs.some((job) => job.live) ? 2000 : false),
   );
 
   const apply = (patch: Partial<JobFilters>): void => {

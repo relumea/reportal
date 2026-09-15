@@ -849,7 +849,9 @@ kind, the binary, the domain a behavior or hardening job needs and, for the `mat
 queued and finished jobs with a status badge, the `progress`/`steps_total`
 readout, the created time and each job's message, result or error, a Cancel
 button on a job that has not started and a Run waiting now control that drains
-the queue inline.  It polls while anything is queued and runs nothing itself:
+the queue inline.  It polls while any listed job is live (queued or running),
+so a running `match` job's progress and its row's terminal status arrive on
+their own rather than freezing at the first load, and it runs nothing itself:
 what the view shows is what the server's pool did.  The status and kind controls
 are built from the `statuses` and `kinds` the payload carries, so neither can
 drift from the registry, and the line above the table reads

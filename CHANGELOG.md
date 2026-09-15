@@ -7,6 +7,13 @@ view renders it from here.
 
 ## Unreleased
 
+- The Jobs view keeps following a live job to its end.  Its poll asked the
+  queue's `queued` count, which counts the jobs still waiting, so the refresh
+  stopped the moment a job started running: a `match` job's `progress` and
+  `steps_total` froze at the value the first load saw and its row never reached
+  `done`.  The poll now follows any live row (queued or running), the same
+  signal the job payload's `live` field carries.
+
 - A binary's analyses are reachable from the binary.  `GET /api/analyses`
   already took `?binary_id=`, but the other read surfaces did not:
   `reportal analyses --binary <binary-id>` narrows the listing (and counts its
