@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -484,6 +485,18 @@ class TestRegistry:
             assert tool.name
             assert tool.name == tool.name.strip().lower()
             assert tool.description.strip()
+            # No stubs: the description must say what the tool does, not just
+            # name it.  A description that only repeats the tool's own words
+            # (underscores and the get/run/list/create/delete/update prefix
+            # stripped) teaches an agent nothing `tools/list` does not already
+            # say.
+            words = {
+                word
+                for word in re.sub(r"[^a-z ]", " ", tool.name.lower()).split()
+                if word not in {"get", "run", "list", "create", "delete", "update"}
+            }
+            content = set(re.sub(r"[^a-z ]", " ", tool.description.lower()).split())
+            assert content - words, f"{tool.name} description restates only its name"
             assert tool.input_schema["type"] == "object"
             assert isinstance(tool.input_schema.get("properties", {}), dict)
             assert callable(tool.handler)
