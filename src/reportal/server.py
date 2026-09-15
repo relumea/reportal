@@ -104,6 +104,7 @@ _SCOPED_PATHS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/api/data-types/(?P<id>\d+)"), "data-type"),
     (re.compile(r"^/api/comments/(?P<id>\d+)"), "comment"),
     (re.compile(r"^/api/documents/(?P<id>\d+)"), "document"),
+    (re.compile(r"^/api/conversations/(?P<id>\d+)"), "conversation"),
 )
 
 # The 404 each object reports when the caller may not see it.  A team-scoped
@@ -117,18 +118,20 @@ _NOT_FOUND_NAME: dict[str, str] = {
     "data-type": "data-type-not-found",
     "comment": "comment not found",
     "document": "document not found",
+    "conversation": "conversation not found",
 }
 
 
 def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[str, Any]] | None:
     """The binary or collection a path names, and the kind it is.
 
-    A function, an analysis, a data type, a comment or a binary-scoped
-    document resolves to its owning binary, because that is the object a team
-    scope attaches to: reportal has no per-function owner.  A comment's scope
-    is its own row: a binary scope names the binary and a function scope names
-    the function whose analysis names the binary.  A document of any other
-    scope (project, docs) has no owning binary and is left to the route.
+    A function, an analysis, a data type, a comment, a binary-scoped document
+    or a binary/function-scoped conversation resolves to its owning binary,
+    because that is the object a team scope attaches to: reportal has no
+    per-function owner.  A comment's scope is its own row: a binary scope
+    names the binary and a function scope names the function whose analysis
+    names the binary.  A document or conversation of any other scope
+    (project, docs) has no owning binary and is left to the route.
     """
     for pattern, kind in _SCOPED_PATHS:
         match = pattern.match(path)
@@ -153,6 +156,9 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
         elif kind == "document":
             document = store.get_document(conn, row_id)
             analysis = None if document is None else _document_binary(document)
+        elif kind == "conversation":
+            conversation = store.get_conversation(conn, row_id)
+            analysis = None if conversation is None else _conversation_binary(conn, conversation)
         else:
             analysis = store.get_analysis(conn, row_id)
         if kind != "binary" and kind != "collection":
@@ -160,6 +166,22 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
         if row is None:
             return None
         return kind, row
+    return None
+
+
+def _conversation_binary(
+    conn: sqlite3.Connection, conversation: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """The ``{"binary_id"}`` a binary/function-scoped conversation resolves to, or None."""
+    from reportal import conversations
+
+    if str(conversation.get("scope_kind")) == conversations.SCOPE_KIND_BINARY:
+        return {"binary_id": int(conversation["scope_id"])}
+    if str(conversation.get("scope_kind")) == conversations.SCOPE_KIND_FUNCTION:
+        function = store.get_function(conn, int(conversation["scope_id"]))
+        if function is None:
+            return None
+        return {"binary_id": int(function["binary_id"])}
     return None
 
 
