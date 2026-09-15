@@ -49,11 +49,15 @@ full below.
    request.  Every `/api` route, `/api/health` included, is behind the gate.
    Authorization beyond the route kind is per object: a binary or a collection
    carries a `visibility` (`public` or `team`) and an `owner_team_id`, and
-   `server._enforce_scope` resolves the object a path names (a function or an
-   analysis through its binary) to refuse a non-member's read with the object's
-   own 404 and its write with 403 `scope-forbidden`.  The listings and
-   `/api/search` filter their pages by the same rule (`auth.visible_clause`) and
-   a bulk action skips the ids outside it.
+   `server._enforce_scope` resolves the object a path names (a function, an
+   analysis, a data type, a comment, a document, a conversation, a pipeline
+   run or an auto run through its owning binary) to refuse a non-member's
+   read with the object's own 404 and its write with 403 `scope-forbidden`.
+   The listings (`/api/binaries`, `/api/collections`, `/api/analyses`,
+   `/api/jobs`), the batch reads (`/api/functions/matches`,
+   `/api/functions/callees-callers`, `/api/functions/signatures`) and
+   `/api/search` filter their pages by the same rule (`auth.visible_clause`)
+   and a bulk action skips the ids outside it.
 2. **Application to durable local state.**  The database and workspace are
    written by the store, the journal and auto mode.  Filesystem permissions and
    host-user access therefore cross this boundary; there is no encryption.
@@ -177,11 +181,13 @@ full below.
   and writes region files; it never mounts an image or runs what it holds, and
   the analysis paths (filetype, capabilities, secrets, triage) are static.  Only
   boundary 7 executes anything.
-- **Documents, comments and conversations have no scope of their own.**  The
-  team scope lives on binaries and collections; a document, a comment or a
-  conversation is reached through the binary or function it hangs off, so it
-  follows that object's scope, but there is no per-document restriction inside a
-  visible binary.  The comment `author` remains free text kept in the browser
+- **Documents, comments, conversations and runs have no scope of their own.**
+  The team scope lives on binaries and collections; a document, a comment, a
+  conversation, a pipeline run or an auto run is reached through the binary
+  or function it hangs off, so it follows that object's scope (a project- or
+  docs-scoped document or conversation names no binary and stays global),
+  but there is no per-document restriction inside a visible binary.  The
+  comment `author` remains free text kept in the browser
   (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an attribution
   convenience, not a security principal.
 - **A registered binary points at its path.**  `reportal add-binary`, its
