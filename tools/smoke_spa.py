@@ -264,10 +264,14 @@ THREAT_SOFTWARE_TYPE = "packed-executable"
 THREAT_SCORE_LABEL = "Threat score"
 THREAT_CONTRIBUTION = "packing"
 THREAT_TECHNIQUE_LINK = "attack.mitre.org"
+THREAT_IPV6 = "2001:db8::1"
 THREAT_SCAN: dict[str, object] = {
     "binary_id": 0,
-    "iocs": {"urls": [{"value": THREAT_IOC_URL, "kind": "url", "source_va": 0x402000}]},
-    "ioc_counts": {"urls": 1},
+    "iocs": {
+        "urls": [{"value": THREAT_IOC_URL, "kind": "url", "source_va": 0x402000}],
+        "ipv6": [{"value": THREAT_IPV6, "kind": "ipv6", "source_va": 0x402000}],
+    },
+    "ioc_counts": {"urls": 1, "ipv6": 1},
     "techniques": [
         {
             "id": THREAT_TECHNIQUE_ID,
@@ -756,6 +760,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Protocols",),
             ("Threat report",),
             (THREAT_IOC_URL,),
+            # The seeded IPv6 literal renders in its own IOC group.
+            ("ipv6",),
+            (THREAT_IPV6,),
             (THREAT_TECHNIQUE_ID,),
             # The technique id is a link to attack.mitre.org, the software-type
             # badge carries its name and the score meter its readout.
