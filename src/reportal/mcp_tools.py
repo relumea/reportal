@@ -48,6 +48,7 @@ from reportal import (
     details,
     diffview,
     docs,
+    doctor,
     effects,
     engines,
     external,
@@ -4036,6 +4037,11 @@ def _tool_get_config(_arguments: dict[str, Any]) -> dict[str, Any]:
     return instance.describe()
 
 
+def _tool_get_doctor(arguments: dict[str, Any]) -> dict[str, Any]:
+    port = _arg_optional_int(arguments, "port", doctor.DEFAULT_PORT)
+    return doctor.report(port=port)
+
+
 def _tool_list_collections(arguments: dict[str, Any]) -> dict[str, Any]:
     order = _arg_optional_str(arguments, "order", store.DEFAULT_COLLECTION_ORDER)
     workspace = _arg_optional_str(arguments, "workspace", "")
@@ -7317,6 +7323,16 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({}),
             _READ,
             _tool_get_config,
+        ),
+        Tool(
+            "get_doctor",
+            "Check this install can serve before anything starts: workspace, database"
+            " and schema, auth posture, engine, SPA build, optional paths and a free"
+            " port. Every check is a read; nothing is written and no database is"
+            " created. The port probe defaults to 8002, and 0 skips it.",
+            _object({"port": _int("Port 'reportal serve' would bind.")}),
+            _READ,
+            _tool_get_doctor,
         ),
         Tool(
             "list_collections",
