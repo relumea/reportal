@@ -4818,7 +4818,9 @@ def post_functions_matches(request: Request, body: dict[str, Any] = Depends(json
 
 
 @router.post("/api/functions/canonical-names")
-def canonicalize_function_names(body: dict[str, Any] = Depends(json_body)) -> Response:
+def canonicalize_function_names(
+    request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Rename many functions to the canonical name the store already recorded.
 
     The body is ``{"function_ids": [...], "apply": bool}``; ``apply`` defaults to
@@ -4834,15 +4836,20 @@ def canonicalize_function_names(body: dict[str, Any] = Depends(json_body)) -> Re
     if apply_renames is not None and not isinstance(apply_renames, bool):
         return json_error(400, error="invalid apply", detail="apply must be a boolean")
     with contextlib.closing(_open()) as conn:
-        plan = function_extras.canonical_names(conn, ids)
+        plan = function_extras.canonical_names(conn, ids, visible_to=_caller(request))
         if apply_renames is False:
             return json_response({**plan, "applied": [], "applied_count": 0, "dry_run": True})
+        allowed = _visible_binary_ids(conn, _caller(request))
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             applied: list[dict[str, Any]] = []
             for entry in plan["planned"]:
                 if not entry["changed"]:
                     continue
+                if allowed is not None:
+                    owner = store.get_function(conn, int(entry["function_id"]))
+                    if owner is None or int(owner["binary_id"]) not in allowed:
+                        continue
                 result = journal.journaled_rename(
                     conn,
                     log,

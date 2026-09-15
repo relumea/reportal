@@ -506,6 +506,53 @@ class TestRoutes:
         assert bad.startswith("400")
         assert json_body(body, headers)["error"] == "invalid apply"
 
+    def test_a_hidden_function_plans_as_not_found_and_applies_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            store.set_ai_artifact(
+                conn,
+                ids["functions"][0],
+                "predicted-name",
+                {"name": "handle_open", "confidence": 0.9},
+                "test-llm",
+            )
+            owner, _token = auth.add_user(conn, name="owner", role="admin")
+            team_id = int(auth.create_team(conn, name="blue")["id"])
+            auth.add_member(conn, team_id, int(owner["id"]))
+            _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+            ana = auth.find_user(conn, "ana")
+            assert ana is not None
+            auth.add_member(conn, team_id, int(ana["id"]))
+            _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+            stranger = auth.find_user(conn, "bob")
+            assert stranger is not None
+            store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+            hidden = function_extras.canonical_names(
+                conn, [ids["functions"][0]], visible_to=stranger
+            )
+            assert hidden["planned"] == []
+            assert [entry["reason"] for entry in hidden["skipped"]] == ["not found"]
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "POST",
+            "/api/functions/canonical-names",
+            body=json.dumps({"function_ids": [ids["functions"][0]]}),
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("200"), body
+        assert json_body(body, headers)["applied_count"] == 0
+        member_status, headers, body = wsgi_request(
+            "POST",
+            "/api/functions/canonical-names",
+            body=json.dumps({"function_ids": [ids["functions"][0]]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), body
+        assert json_body(body, headers)["applied_count"] == 1
+
 
 class TestCli:
     def test_the_read_commands(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

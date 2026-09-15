@@ -374,17 +374,34 @@ def canonical_candidate(conn: sqlite3.Connection, function_id: int) -> dict[str,
     return None
 
 
-def canonical_names(conn: sqlite3.Connection, function_ids: Sequence[int]) -> dict[str, Any]:
+def canonical_names(
+    conn: sqlite3.Connection,
+    function_ids: Sequence[int],
+    *,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """The canonical candidate of each requested function; writes nothing.
 
     The caller renames through :func:`reportal.journal.journaled_name_change`, so
     this only decides what the candidate is and reports the ones that have none.
+    ``visible_to`` reports a function on a hidden binary as not found, like
+    the other batch reads, so the plan never names what the caller may not see.
     """
+    from reportal import auth
+
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    visible: set[int] | None = None
+    if scope is not None:
+        clause, params = scope
+        visible = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+        }
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     for function_id in function_ids:
         function = store.get_function(conn, int(function_id))
-        if function is None:
+        if function is None or (visible is not None and int(function["binary_id"]) not in visible):
             skipped.append({"function_id": int(function_id), "reason": "not found"})
             continue
         candidate = canonical_candidate(conn, int(function_id))
