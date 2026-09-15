@@ -328,6 +328,13 @@ class TestBatchReads:
         )
         assert stranger_status.startswith("200"), body
         assert json_body(body, headers)["functions"][0]["found"] is False
+        stranger_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/functions/{ids['functions'][0]}/callees",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "function not found"
         member_status, headers, body = wsgi_request(
             "GET",
             f"/api/functions/matches?ids={ids['functions'][0]}",

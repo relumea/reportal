@@ -9657,7 +9657,7 @@ def delete_function_string(function_id: int, string_id: int) -> Response:
 
 
 @router.get("/api/functions/{function_id}/callees")
-def get_function_callees(function_id: int) -> Response:
+def get_function_callees(request: Request, function_id: int) -> Response:
     """A function's derived callees and its analyst-declared edges.
 
     The derived half is a text scan of the stored decompilation against the
@@ -9668,7 +9668,9 @@ def get_function_callees(function_id: int) -> Response:
         missing = _function_or_404(conn, function_id)
         if missing is not None:
             return missing
-        rows = function_extras.callers_and_callees(conn, [function_id])["functions"]
+        rows = function_extras.callers_and_callees(
+            conn, [function_id], visible_to=_caller(request)
+        )["functions"]
     payload: dict[str, Any] = (
         rows[0] if rows else {"function_id": function_id, "callees": [], "declared": []}
     )
