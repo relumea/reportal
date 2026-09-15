@@ -107,6 +107,7 @@ _SCOPED_PATHS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/api/conversations/(?P<id>\d+)"), "conversation"),
     (re.compile(r"^/api/pipeline/runs/(?P<id>\d+)"), "pipeline-run"),
     (re.compile(r"^/api/auto/runs/(?P<id>\d+)"), "auto-run"),
+    (re.compile(r"^/api/graph/nodes/(?P<id>.+)"), "graph-node"),
 )
 
 # The 404 each object reports when the caller may not see it.  A team-scoped
@@ -123,6 +124,7 @@ _NOT_FOUND_NAME: dict[str, str] = {
     "conversation": "conversation not found",
     "pipeline-run": "run not found",
     "auto-run": "run not found",
+    "graph-node": "node not found",
 }
 
 
@@ -131,18 +133,27 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
 
     A function, an analysis, a data type, a comment, a binary-scoped document,
     a binary/function-scoped conversation, a pipeline run (through its
-    function) or an auto run (through its own binary) resolves to its owning
-    binary, because that is the object a team scope attaches to: reportal has
-    no per-function owner.  A comment's scope is its own row: a binary scope
-    names the binary and a function scope names the function whose analysis
-    names the binary.  A document or conversation of any other scope
-    (project, docs) has no owning binary and is left to the route.
+    function), an auto run (through its own binary) or a graph node (through
+    its own binary) resolves to its owning binary, because that is the object
+    a team scope attaches to: reportal has no per-function owner.  A comment's
+    scope is its own row: a binary scope names the binary and a function scope
+    names the function whose analysis names the binary.  A document or
+    conversation of any other scope (project, docs) has no owning binary and
+    is left to the route.
     """
     for pattern, kind in _SCOPED_PATHS:
         match = pattern.match(path)
         if match is None:
             continue
-        row_id = int(match.group("id"))
+        raw_id = match.group("id")
+        if kind == "graph-node":
+            node = store.get_graph_node(conn, raw_id)
+            analysis = None if node is None else {"binary_id": node["binary_id"]}
+            row = None if analysis is None else store.get_binary(conn, int(analysis["binary_id"]))
+            if row is None:
+                return None
+            return kind, row
+        row_id = int(raw_id)
         if kind == "binary":
             row = store.get_binary(conn, row_id)
         elif kind == "collection":

@@ -17,7 +17,7 @@ from graph_helpers import (
     seed_corpus,
 )
 
-from reportal import graph, store
+from reportal import auth, graph, store
 
 
 def _build(binary_id: int) -> tuple[str, dict[str, str], bytes]:
@@ -170,3 +170,35 @@ class TestNodeRoute:
         status, headers, raw = _node("b1:function:999")
         assert status.startswith("404")
         assert json_body(raw, headers)["error"] == "node not found"
+
+    def test_a_non_member_does_not_read_a_team_node(
+        self, conn: sqlite3.Connection, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_corpus(conn)
+        _build(ids["binary"])
+        target = node_id(ids["binary"], "function", ids["first"])
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, raw = wsgi_request(
+            "GET",
+            f"/api/graph/nodes/{target}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), raw
+        assert json_body(raw, headers)["error"] == "node not found"
+
+        member_status, headers, raw = wsgi_request(
+            "GET",
+            f"/api/graph/nodes/{target}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), raw
