@@ -102,6 +102,7 @@ _SCOPED_PATHS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^/api/functions/(?P<id>\d+)"), "function"),
     (re.compile(r"^/api/analyses/(?P<id>\d+)"), "analysis"),
     (re.compile(r"^/api/data-types/(?P<id>\d+)"), "data-type"),
+    (re.compile(r"^/api/comments/(?P<id>\d+)"), "comment"),
 )
 
 # The 404 each object reports when the caller may not see it.  A team-scoped
@@ -113,15 +114,18 @@ _NOT_FOUND_NAME: dict[str, str] = {
     "function": "function not found",
     "analysis": "analysis not found",
     "data-type": "data-type-not-found",
+    "comment": "comment not found",
 }
 
 
 def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[str, Any]] | None:
     """The binary or collection a path names, and the kind it is.
 
-    A function, an analysis or a data type resolves to its owning binary,
-    because that is the object a team scope attaches to: reportal has no
-    per-function owner.
+    A function, an analysis, a data type or a comment resolves to its owning
+    binary, because that is the object a team scope attaches to: reportal has
+    no per-function owner.  A comment's scope is its own row: a binary scope
+    names the binary and a function scope names the function whose analysis
+    names the binary.
     """
     for pattern, kind in _SCOPED_PATHS:
         match = pattern.match(path)
@@ -140,6 +144,9 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
         elif kind == "data-type":
             data_type = store.get_data_type(conn, row_id)
             analysis = None if data_type is None else {"binary_id": data_type["binary_id"]}
+        elif kind == "comment":
+            comment = store.get_comment(conn, row_id)
+            analysis = None if comment is None else _comment_binary(conn, comment)
         else:
             analysis = store.get_analysis(conn, row_id)
         if kind != "binary" and kind != "collection":
@@ -147,6 +154,20 @@ def _scoped_object(conn: sqlite3.Connection, path: str) -> tuple[str, Mapping[st
         if row is None:
             return None
         return kind, row
+    return None
+
+
+def _comment_binary(conn: sqlite3.Connection, comment: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The ``{"binary_id"}`` the comment's scope resolves to, or None."""
+    from reportal import comments
+
+    if str(comment.get("scope_kind")) == comments.SCOPE_BINARY:
+        return {"binary_id": int(comment["scope_id"])}
+    if str(comment.get("scope_kind")) == comments.SCOPE_FUNCTION:
+        function = store.get_function(conn, int(comment["scope_id"]))
+        if function is None:
+            return None
+        return {"binary_id": int(function["binary_id"])}
     return None
 
 
