@@ -10,9 +10,10 @@ from typing import Any
 
 import pytest
 from conftest import json_body, wsgi_request
+from graph_helpers import node_id
 from typer.testing import CliRunner
 
-from reportal import auth, auto_store, cli, journal, mcp_server, store
+from reportal import auth, auto_store, cli, graph, journal, mcp_server, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -197,6 +198,8 @@ class TestScopeGate:
         )
         run_id = store.create_pipeline_run(conn, function_id=function_id, model="m")
         auto_run_id = auto_store.create_auto_run(conn, binary_id=ids["binary"], config={})
+        graph.build_graph(conn, binary_id=ids["binary"])
+        target = node_id(ids["binary"], "function", function_id)
         paths = {
             f"/api/binaries/{ids['binary']}": "binary",
             f"/api/functions/{function_id}": "function",
@@ -207,6 +210,7 @@ class TestScopeGate:
             f"/api/conversations/{conversation_id}": "conversation",
             f"/api/pipeline/runs/{run_id}": "pipeline-run",
             f"/api/auto/runs/{auto_run_id}": "auto-run",
+            f"/api/graph/nodes/{target}": "graph-node",
         }
         for path, kind in paths.items():
             found = server._scoped_object(conn, path)
