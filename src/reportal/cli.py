@@ -7227,7 +7227,7 @@ def symbols_export(
     text = symbols.render_symbols(row["parsed"], kind=kind)
     if output.strip():
         try:
-            Path(output).write_text(text, encoding="utf-8")
+            _write_text_atomic(Path(output).expanduser(), text)
         except OSError as exc:
             _fail(f"cannot write {output}: {exc}", json_output)
         if json_output:
@@ -7264,7 +7264,7 @@ def decompiler_script(
     text = str(payload["text"])
     if output.strip():
         try:
-            Path(output).write_text(text, encoding="utf-8")
+            _write_text_atomic(Path(output).expanduser(), text)
         except OSError as exc:
             _fail(f"cannot write {output}: {exc}", json_output)
         if json_output:
@@ -11610,7 +11610,7 @@ def sbom_command(
         text = json.dumps(payload["document"], indent=2)
     if output.strip():
         try:
-            Path(output).write_text(text, encoding="utf-8")
+            _write_text_atomic(Path(output).expanduser(), text)
         except OSError as exc:
             _fail(f"cannot write {output}: {exc}", json_output)
         if json_output:
