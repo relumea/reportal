@@ -395,7 +395,7 @@ export function App(): ReactNode {
 
   const openMatches = (functionId: number): void => {
     setSelectedFunctionId(functionId);
-    navigate("#/matches");
+    navigate(navPath("matches"));
   };
 
   // One table is the single source of truth: react-router renders it, and the
