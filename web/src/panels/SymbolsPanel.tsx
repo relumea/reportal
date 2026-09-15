@@ -30,9 +30,9 @@ function noteList(notes: string[]): ReactNode {
  * without touching either.
  */
 export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
-  const path = `/binaries/${binaryId}/symbols`;
+  const apiPath = `/binaries/${binaryId}/symbols`;
   const key = panelKey("binary", binaryId, "symbols");
-  const load = (): Promise<SymbolFileList> => api<SymbolFileList>(path);
+  const load = (): Promise<SymbolFileList> => api<SymbolFileList>(apiPath);
   const entry = usePanel<SymbolFileList>(key, load);
   const [file, setFile] = useState<File | null>(null);
   const [apply, setApply] = useState(true);
@@ -51,7 +51,7 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
       const body = new FormData();
       body.append("file", file);
       body.append("apply", apply ? "true" : "false");
-      const report = await api<SymbolFile>(path, { method: "POST", body });
+      const report = await api<SymbolFile>(apiPath, { method: "POST", body });
       setStatus(
         `Ingested ${report.kind}: ${report.symbols} symbol(s), ${report.types} type(s), ` +
           `${report.applied} name(s) applied.`,
@@ -146,12 +146,15 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
                   <td className="mono">{row.applied}</td>
                   <td className="muted">{row.created_at}</td>
                   <td>
-                    <a className="btn btn-ghost btn-sm" href={`${path}/export?format=c&file_id=${row.id}`}>
+                    <a
+                      className="btn btn-ghost btn-sm"
+                      href={`/api${apiPath}/export?format=c&file_id=${row.id}`}
+                    >
                       C header
                     </a>{" "}
                     <a
                       className="btn btn-ghost btn-sm"
-                      href={`${path}/export?format=json&file_id=${row.id}`}
+                      href={`/api${apiPath}/export?format=json&file_id=${row.id}`}
                     >
                       JSON
                     </a>
