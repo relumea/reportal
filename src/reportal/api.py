@@ -4775,7 +4775,7 @@ def get_functions_callees_callers(request: Request) -> Response:
     if ids is None:
         return _batch_error()
     with contextlib.closing(_open()) as conn:
-        rows = function_extras.callers_and_callees(conn, ids)
+        rows = function_extras.callers_and_callees(conn, ids, visible_to=_caller(request))
     return json_response(rows)
 
 
@@ -4790,18 +4790,18 @@ def get_functions_matches(request: Request) -> Response:
     if ids is None:
         return _batch_error()
     with contextlib.closing(_open()) as conn:
-        rows = function_extras.match_rows(conn, ids)
+        rows = function_extras.match_rows(conn, ids, visible_to=_caller(request))
     return json_response(rows)
 
 
 @router.post("/api/functions/matches")
-def post_functions_matches(body: dict[str, Any] = Depends(json_body)) -> Response:
+def post_functions_matches(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """The same read as the GET, with the ids in the body: ``{"function_ids": [...]}``."""
     ids = _body_ids(body)
     if ids is None:
         return _batch_error()
     with contextlib.closing(_open()) as conn:
-        rows = function_extras.match_rows(conn, ids)
+        rows = function_extras.match_rows(conn, ids, visible_to=_caller(request))
     return json_response(rows)
 
 
@@ -4872,8 +4872,8 @@ def get_function_signatures(request: Request) -> Response:
     if not ids:
         return json_error(400, error="invalid ids", detail="ids must name at least one function")
     with contextlib.closing(_open()) as conn:
-        seen = [function_id for function_id in ids if store.get_function(conn, function_id)]
-        rows = signatures.signatures_for(conn, ids)
+        rows = signatures.signatures_for(conn, ids, visible_to=_caller(request))
+        seen = [row for row in rows if row["found"]]
     return json_response({"signatures": rows, "count": len(rows), "found": len(seen)})
 
 

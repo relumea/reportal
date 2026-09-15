@@ -17,7 +17,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, data_types, journal, mcp_server, signatures, store, surface
+from reportal import auth, cli, data_types, journal, mcp_server, signatures, store, surface
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -267,6 +267,48 @@ class TestRoutes:
         assert payload["found"] == 2
         assert payload["signatures"][1]["signature"] is None
         assert payload["signatures"][2]["found"] is False
+
+    def test_a_function_of_a_hidden_binary_reads_as_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            _signature(conn, ids["functions"][0])
+            owner, _token = auth.add_user(conn, name="owner", role="admin")
+            team_id = int(auth.create_team(conn, name="blue")["id"])
+            auth.add_member(conn, team_id, int(owner["id"]))
+            _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+            ana = auth.find_user(conn, "ana")
+            assert ana is not None
+            auth.add_member(conn, team_id, int(ana["id"]))
+            _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+            store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+            member = auth.find_user(conn, "ana")
+            stranger = auth.find_user(conn, "bob")
+            assert member is not None and stranger is not None
+            visible = signatures.signatures_for(conn, ids["functions"], visible_to=member)
+            assert [row["found"] for row in visible] == [True, True, True]
+            hidden = signatures.signatures_for(conn, ids["functions"], visible_to=stranger)
+            assert [row["found"] for row in hidden] == [False, False, False]
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        query = f"{ids['functions'][0]},{ids['functions'][1]}"
+        stranger_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/functions/signatures?ids={query}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("200"), body
+        payload = json_body(body, headers)
+        assert payload["found"] == 0
+        assert all(row["found"] is False for row in payload["signatures"])
+        member_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/functions/signatures?ids={query}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), body
+        assert json_body(body, headers)["found"] == 2
 
     def test_a_bad_id_list_is_400(self) -> None:
         for query in ("ids=abc", "ids=", "ids=1,x", "ids=" + ",".join(str(n) for n in range(300))):

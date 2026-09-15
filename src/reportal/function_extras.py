@@ -406,18 +406,47 @@ def canonical_names(conn: sqlite3.Connection, function_ids: Sequence[int]) -> di
     return {"planned": applied, "skipped": skipped, "count": len(applied), "note": CANONICAL_NOTE}
 
 
-def match_rows(conn: sqlite3.Connection, function_ids: Sequence[int]) -> dict[str, Any]:
+def _visible_binary_ids(
+    conn: sqlite3.Connection, visible_to: Mapping[str, Any] | None
+) -> set[int] | None:
+    """The binary ids *visible_to* may see, or None for no restriction.
+
+    None means "no restriction": auth is off (the local operator sees the
+    whole workspace) or the caller is an admin.  Otherwise a function of a
+    team binary the caller is not in reads as missing, the same 404-as-absent
+    the per-object gate reports, so a batch read cannot leak what a single
+    read refuses.
+    """
+    from reportal import auth
+
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is None:
+        return None
+    clause, params = scope
+    rows = conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params).fetchall()
+    return {int(row["id"]) for row in rows}
+
+
+def match_rows(
+    conn: sqlite3.Connection,
+    function_ids: Sequence[int],
+    *,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """The recorded match rows of each function, in the caller's order.
 
     The metrics are the same derived pair the single-function route reports
     (`difference` and `band`), so a batch read and a single read cannot disagree.
+    A function of a binary *visible_to* may not see reads as missing, like the
+    per-object gate.
     """
     from reportal import composition, matching
 
+    visible = _visible_binary_ids(conn, visible_to)
     rows: list[dict[str, Any]] = []
     for function_id in function_ids:
         function = store.get_function(conn, int(function_id))
-        if function is None:
+        if function is None or (visible is not None and int(function["binary_id"]) not in visible):
             rows.append({"function_id": int(function_id), "found": False, "matches": []})
             continue
         matches = []
@@ -625,7 +654,12 @@ def journaled_delete_edge(
 # ── The batch read ─────────────────────────────────────────────────
 
 
-def callers_and_callees(conn: sqlite3.Connection, function_ids: Sequence[int]) -> dict[str, Any]:
+def callers_and_callees(
+    conn: sqlite3.Connection,
+    function_ids: Sequence[int],
+    *,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Each requested function's derived callers and callees, in the caller's order.
 
     A callee is a name the function's stored decompilation mentions that the
@@ -633,12 +667,14 @@ def callers_and_callees(conn: sqlite3.Connection, function_ids: Sequence[int]) -
     analyst-declared edge; a caller is a function whose text mentions this one.
     All of it is a text derivation over stored rows and the payload says so; a
     function with no stored decompilation reports empty lists rather than
-    spawning the engine.
+    spawning the engine.  A function of a binary *visible_to* may not see
+    reads as missing, like the per-object gate.
     """
+    visible = _visible_binary_ids(conn, visible_to)
     rows: list[dict[str, Any]] = []
     for function_id in function_ids:
         function = store.get_function(conn, int(function_id))
-        if function is None:
+        if function is None or (visible is not None and int(function["binary_id"]) not in visible):
             rows.append(
                 {
                     "function_id": int(function_id),

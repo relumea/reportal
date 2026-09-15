@@ -16,7 +16,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, function_extras, journal, mcp_server, store
+from reportal import auth, cli, function_extras, journal, mcp_server, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -282,6 +282,59 @@ class TestBatchReads:
         assert payload["functions"][0]["count"] == 1
         assert payload["functions"][0]["matches"][0]["band"]
         assert payload["functions"][1]["found"] is False
+
+    def test_a_function_of_a_hidden_binary_reads_as_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            owner, _token = auth.add_user(conn, name="owner", role="admin")
+            team_id = int(auth.create_team(conn, name="blue")["id"])
+            auth.add_member(conn, team_id, int(owner["id"]))
+            _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+            ana = auth.find_user(conn, "ana")
+            assert ana is not None
+            auth.add_member(conn, team_id, int(ana["id"]))
+            _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+            store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+            member = auth.find_user(conn, "ana")
+            stranger = auth.find_user(conn, "bob")
+            assert member is not None and stranger is not None
+            function_id = ids["functions"][0]
+            assert (
+                function_extras.match_rows(conn, [function_id], visible_to=member)["functions"][0][
+                    "found"
+                ]
+                is True
+            )
+            assert (
+                function_extras.match_rows(conn, [function_id], visible_to=stranger)["functions"][
+                    0
+                ]["found"]
+                is False
+            )
+            assert (
+                function_extras.callers_and_callees(conn, [function_id], visible_to=stranger)[
+                    "functions"
+                ][0]["found"]
+                is False
+            )
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/functions/matches?ids={ids['functions'][0]}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("200"), body
+        assert json_body(body, headers)["functions"][0]["found"] is False
+        member_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/functions/matches?ids={ids['functions'][0]}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), body
+        assert json_body(body, headers)["functions"][0]["found"] is True
 
 
 class TestRoutes:

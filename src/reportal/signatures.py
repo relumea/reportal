@@ -583,18 +583,37 @@ def get_signature(conn: sqlite3.Connection, function_id: int) -> dict[str, Any] 
     return _signature_view(row) if row is not None else None
 
 
-def signatures_for(conn: sqlite3.Connection, function_ids: Sequence[int]) -> list[dict[str, Any]]:
+def signatures_for(
+    conn: sqlite3.Connection,
+    function_ids: Sequence[int],
+    *,
+    visible_to: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """One row per requested function: its stored signature, or None for one.
 
     This is the batch read the hosted `GET /v3/functions/signatures` serves: the
     order is the caller's, a function with no signature yet reports ``null``,
     and a function the store does not know is reported with ``found: false``
     rather than omitted, so a caller can tell "no signature" from "no function".
+    A function of a binary *visible_to* may not see reads as missing, like the
+    per-object gate.
     """
+    from reportal import auth
+
+    visible: set[int] | None = None
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, params = scope
+        visible = {
+            int(row["id"])
+            for row in conn.execute(
+                f"SELECT b.id AS id FROM binaries b WHERE {clause}", params
+            ).fetchall()
+        }
     rows: list[dict[str, Any]] = []
     for function_id in function_ids:
         function = store.get_function(conn, function_id)
-        if function is None:
+        if function is None or (visible is not None and int(function["binary_id"]) not in visible):
             rows.append({"function_id": function_id, "found": False, "signature": None})
             continue
         rows.append(
