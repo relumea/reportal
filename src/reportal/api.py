@@ -1688,7 +1688,9 @@ def binary_matches(binary_id: int) -> Response:
 
 
 @router.post("/api/binaries/{binary_id}/matches/transfer")
-def transfer_binary_matches(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def transfer_binary_matches(
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Transfer candidate names and signatures for a list of matches at once.
 
     The body carries ``transfers`` (a non-empty list of objects with
@@ -1729,6 +1731,7 @@ def transfer_binary_matches(binary_id: int, body: dict[str, Any] = Depends(json_
                 actor=actor,
                 binary_id=binary_id,
                 dry_run=dry_run,
+                visible_to=_caller(request),
             )
     return json_response(log.attach(report))
 

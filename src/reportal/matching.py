@@ -1102,6 +1102,7 @@ def transfer_matches(
     actor: str,
     binary_id: int | None = None,
     dry_run: bool = False,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Plan and apply a batch of symbol transfers as one journaled action.
 
@@ -1114,7 +1115,20 @@ def transfer_matches(
 
     A write that fails mid-batch is that row's failure, not the whole batch's:
     the rows that already applied keep their result and stay journaled.
+    ``visible_to`` refuses a row whose candidate sits on a binary the caller
+    may not see, so a transfer never copies a hidden name or signature; the
+    refusal reads as unknown, like the match scope.
     """
+    from reportal import auth
+
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    visible: set[int] | None = None
+    if scope is not None:
+        clause, params = scope
+        visible = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+        }
     rows: list[dict[str, Any]] = []
     applied = 0
     skipped = 0
@@ -1126,6 +1140,17 @@ def transfer_matches(
             candidate_function_id=request.candidate_function_id,
             mode=request.mode,
         )
+        if plan.status == TRANSFER_STATUS_APPLIED and visible is not None:
+            candidate = store.get_function(conn, request.candidate_function_id)
+            candidate_binary = int(candidate["binary_id"]) if candidate is not None else -1
+            if candidate_binary not in visible:
+                plan = _failed_plan(
+                    request.function_id,
+                    request.candidate_function_id,
+                    request.mode,
+                    REASON_UNKNOWN_CANDIDATE,
+                    f"no function with id {request.candidate_function_id}",
+                )
         if plan.status == TRANSFER_STATUS_APPLIED and binary_id is not None:
             owner = store.get_function(conn, request.function_id)
             owner_binary = int(owner["binary_id"]) if owner is not None else -1

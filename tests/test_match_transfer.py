@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from reportal import data_types, journal, matching, store
+from reportal import auth, data_types, journal, matching, store
 
 CANDIDATE_SIGNATURE: dict[str, Any] = {
     "return_type": "int",
@@ -399,6 +399,47 @@ class TestBulkTransfer:
         assert report["applied"] == 1
         assert report["failed"] == 1
         assert report["transfers"][1]["reason"] == matching.REASON_OUT_OF_BINARY
+
+    def test_hidden_candidate_fails_alone(self, conn: sqlite3.Connection) -> None:
+        ids = _seed_pair(conn)
+        other_binary = store.add_binary(conn, sha256="bb" * 32, name="b.exe")
+        other_analysis = store.create_analysis(conn, binary_id=other_binary, engine="manual")
+        other = store.add_function(
+            conn, analysis_id=other_analysis, va=0x7000, name="NP_Other", size=16
+        )
+        store.record_match(
+            conn,
+            function_id=ids["target"],
+            candidate_function_id=other,
+            similarity=90.0,
+            confidence=0.5,
+        )
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, other_binary, visibility="team", owner_team_id=team_id)
+
+        requests = [
+            matching.TransferRequest(ids["target"], ids["candidate"], matching.TRANSFER_MODE_NAME),
+            matching.TransferRequest(ids["target"], other, matching.TRANSFER_MODE_NAME),
+        ]
+        report = matching.transfer_matches(
+            conn, None, requests=requests, actor="test", dry_run=True, visible_to=stranger
+        )
+        assert report["applied"] == 1
+        assert report["failed"] == 1
+        assert report["transfers"][1]["reason"] == matching.REASON_UNKNOWN_CANDIDATE
+        member = matching.transfer_matches(
+            conn, None, requests=requests, actor="test", dry_run=True, visible_to=ana
+        )
+        assert member["applied"] == 2
 
 
 class TestTransferRequests:
