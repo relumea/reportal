@@ -128,6 +128,10 @@ reportal ai-decompile <function-id> [--json]
                                            #   with its token map and per-line attributions
 reportal ai-decompilation <function-id> [--json]
                                            # the stored rewrite rendered with its token overrides
+reportal ai-clear <function-id> [--kind KIND] [--json]
+                                           # discard one stored AI artifact of a
+                                           #   function (the rewrite by default); the
+                                           #   printed action restores it
 reportal ai-decompilation-status <function-id> [--json]
                                            # the artifact's counts, model, rating and times
 reportal ai-tokens <function-id> [--json]  # the placeholder tokens and the name each one carries

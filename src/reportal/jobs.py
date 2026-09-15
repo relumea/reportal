@@ -51,6 +51,7 @@ from reportal import (
     pdf,
     protocols,
     secrets,
+    similarity,
     store,
     unstrip,
 )
@@ -482,8 +483,14 @@ def submit(
             _domain_of(params or {}, domains, what)
     if kind == "match":
         # The settings are the match routes' body shape, so a run queued here
-        # records what the same settings would record there; a bad value or an
-        # unknown scope id is refused now rather than when the job runs.
+        # records what the same settings would record there; a bad value, an
+        # unknown scope id or an install without the scorer is refused now
+        # rather than when the job runs.
+        if not similarity.available():
+            raise ValueError(
+                "function matching requires the optional 'similarity' extra"
+                " (uv sync --extra similarity)"
+            )
         try:
             settings = matching.MatchSettings.from_request(dict(params or {}))
             matching.resolve_scope(conn, settings)

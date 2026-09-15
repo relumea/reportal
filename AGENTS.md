@@ -492,7 +492,10 @@ configured LLM for a whole rewritten function and stores it,
 `set_ai_decompilation_overrides` sets or clears the analyst names of its
 placeholder tokens, `rate_ai_decompilation` records feedback and
 `add_ai_line_comment`, `update_ai_line_comment` and `delete_ai_line_comment`
-write its per-line comments, so all six are destructive.  `get_signature_batch` reads many functions'
+write its per-line comments, so all six are destructive, and
+`clear_ai_artifact` discards one stored artifact of any of the four kinds
+(journaled, so a revert restores the payload with its rating, overrides and line
+comments).  `get_signature_batch` reads many functions'
 signatures in one call and `get_data_type_functions` reads the functions using
 one type, so both are read-only; `copy_signature` copies one function's
 signature onto others in its analysis and `import_type_definitions` creates or
@@ -557,7 +560,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 245 built-in tools, 115 read-only and 130 destructive.
+declares 246 built-in tools, 115 read-only and 131 destructive.
 
 ## SPA
 
@@ -669,8 +672,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 245 built-in
-tools (115 read-only, 130 destructive).
+and `run_match` expose the same over MCP, and the counts stay 246 built-in
+tools (115 read-only, 131 destructive).
 
 ### Scaling
 

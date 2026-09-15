@@ -546,6 +546,147 @@ class TestRoutes:
 # ── CLI ────────────────────────────────────────────────────────────
 
 
+class TestDiscard:
+    """The four artifacts can be discarded, revertibly."""
+
+    def test_discarding_the_rewrite_clears_it_and_the_revert_restores_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+        _install_rewrite()
+        _post(function_id)
+
+        status, headers, body = wsgi_request(
+            "DELETE", f"/api/functions/{function_id}/ai-decompilation"
+        )
+
+        assert status.startswith("200"), body
+        payload = json_body(body, headers)
+        assert payload["discarded"] is True
+        assert payload["journal_action"]
+        with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+            assert store.get_ai_artifact(conn, function_id, ai_decomp.KIND) is None
+
+            journal.revert_action(conn, payload["journal_action"])
+
+            restored = store.get_ai_artifact(conn, function_id, ai_decomp.KIND)
+        assert restored is not None
+        assert restored["payload"]["rewritten_code"] == REWRITE
+
+    def test_discarding_a_missing_artifact_is_the_stored_only_404(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+
+        status, headers, body = wsgi_request("DELETE", f"/api/functions/{function_id}/summary")
+
+        assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "no-artifact"
+
+    def test_discarding_an_unknown_function_is_404(self, tmp_path: Path) -> None:
+        status, headers, body = wsgi_request("DELETE", "/api/functions/999/summary")
+
+        assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "function not found"
+
+    def test_every_kind_has_a_discard_route(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+            for kind in (llm.AI_KIND_SUMMARY, llm.AI_KIND_COMMENTS, llm.AI_KIND_TYPES):
+                store.set_ai_artifact(conn, function_id, kind, {"note": kind}, "stub")
+
+        for path, kind in (
+            ("summary", llm.AI_KIND_SUMMARY),
+            ("ai-comments", llm.AI_KIND_COMMENTS),
+            ("type-suggestions", llm.AI_KIND_TYPES),
+        ):
+            status, headers, body = wsgi_request("DELETE", f"/api/functions/{function_id}/{path}")
+            assert status.startswith("200"), body
+            assert json_body(body, headers)["kind"] == kind
+            with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+                assert store.get_ai_artifact(conn, function_id, kind) is None
+
+
+class TestDiscardSurfaces:
+    """The CLI and MCP discard paths, journaled like the routes."""
+
+    def test_the_cli_discards_and_prints_the_action(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+            store.set_ai_artifact(conn, function_id, llm.AI_KIND_COMMENTS, {"note": "x"}, "stub")
+
+        result = runner.invoke(
+            cli.app,
+            ["ai-clear", str(function_id), "--kind", llm.AI_KIND_COMMENTS, "--json"],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["discarded"] is True
+        assert payload["journal_action"]
+        with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+            assert store.get_ai_artifact(conn, function_id, llm.AI_KIND_COMMENTS) is None
+
+    def test_the_cli_refuses_an_unknown_kind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["ai-clear", str(function_id), "--kind", "nope"])
+
+        assert result.exit_code == 1
+        assert "unknown artifact kind" in result.output
+
+    def test_the_cli_reports_an_absent_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+
+        result = runner.invoke(cli.app, ["ai-clear", str(function_id)])
+
+        assert result.exit_code == 1
+        assert "no ai-decompilation artifact" in result.output
+
+    def test_the_mcp_tool_discards_one_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+        _install_rewrite()
+        _post(function_id)
+
+        payload, failed = _call("clear_ai_artifact", {"function_id": function_id})
+
+        assert not failed, payload
+        assert payload["discarded"] is True
+        assert payload["kind"] == ai_decomp.KIND
+        with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+            assert store.get_ai_artifact(conn, function_id, ai_decomp.KIND) is None
+
+    def test_the_mcp_tool_answers_a_missing_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+
+        payload, failed = _call("clear_ai_artifact", {"function_id": function_id})
+
+        assert failed is True
+        assert payload["error"] == "no-artifact"
+
+    def test_the_mcp_tool_refuses_an_unknown_kind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+
+        payload, failed = _call("clear_ai_artifact", {"function_id": function_id, "kind": "nope"})
+
+        assert failed is True
+        assert payload["error"] == "unknown artifact kind"
+
+
 class TestCli:
     def test_ai_decompile_prints_the_rewrite(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -195,16 +195,20 @@ their pages by the same rule.
 | `/api/functions/<id>/references` | GET | the function's globals, callers and callees from one `rebrew describe` call (through its rebrew project context): each global names its `address`, the engine `kind`, the `access` (`read`/`write`, or `null` when the instruction does not make it clear) and the owning `section` from the stored `pe-info` scan (or `null`); each caller names its `from_va` and the containing function's `name`; each callee names its `to_va`, `name`, `kind` and an `indirect` flag for an import-slot call with no resolved name; `counts` reports the row counts and `count_note` states that callers counts call sites while callees counts (target, kind) pairs; 404 `function not found`, 400 `no-engine-context`, 503 `engine-unavailable`, 500 `engine-error` |
 | `/api/functions/<id>/summary` | GET | stored AI summary; 404 `no-artifact` without one; never calls the LLM |
 | `/api/functions/<id>/summary` | POST | summarize the stored decompilation with the configured LLM and store the result |
+| `/api/functions/<id>/summary` | DELETE | discard the stored summary; journaled, so the action's revert restores it; 404 `no-artifact` without one |
 | `/api/functions/<id>/ai-comments` | GET | stored AI inline comments; 404 `no-artifact` without any; never calls the LLM |
 | `/api/functions/<id>/ai-comments` | POST | ask the configured LLM for inline comments on the stored decompilation and store them |
+| `/api/functions/<id>/ai-comments` | DELETE | discard the stored inline comments; journaled; 404 `no-artifact` without any |
 | `/api/functions/<id>/type-suggestions` | GET | stored AI type suggestions; 404 `no-artifact` without any; never calls the LLM |
 | `/api/functions/<id>/type-suggestions` | POST | ask the configured LLM for type suggestions on the stored decompilation and store them |
+| `/api/functions/<id>/type-suggestions` | DELETE | discard the stored type suggestions; journaled; 404 `no-artifact` without any |
 | `/api/functions/<id>/renames` | GET | stored identifier rename suggestions; 404 `no-artifact` without any; never calls the LLM |
 | `/api/functions/<id>/renames` | POST | ask the configured LLM for identifier renames on the stored decompilation and store them |
 | `/api/functions/<id>/renames/apply` | POST | rewrite whole-token identifiers in the stored decompilation (refusing keywords and short names), journaling the previous text; body `{"applied": [...], "rename_function": bool}`, both optional and an omitted `applied` applies every stored suggestion |
 | `/api/functions/<id>/renames/revert` | POST | restore the decompilation text the last apply journaled and drop the journal |
 | `/api/functions/<id>/ai-decompilation` | GET | the stored AI decompilation rendered with its overrides, plus its token map, per-line attributions, rating and line comments; 404 `no-artifact` without one; never calls the LLM |
 | `/api/functions/<id>/ai-decompilation` | POST | ask the configured LLM for a complete rewritten function over the stored decompilation and store the artifact; 404 `no-decompilation` without one, 503 `llm-unavailable`, 502 `llm-error` |
+| `/api/functions/<id>/ai-decompilation` | DELETE | discard the stored rewrite with everything inside it (its overrides, its line comments and its rating); journaled; 404 `no-artifact` without one |
 | `/api/functions/<id>/ai-decompilation/status` | GET | the artifact's workflow state (line, token, override, attribution, rating and comment counts, with the model and its time) without its text |
 | `/api/functions/<id>/ai-decompilation/events` | GET | the workflow as server-sent events: the current state and its terminal marker, because the one model call is already over when a client can attach |
 | `/api/functions/<id>/ai-decompilation/tokens` | GET | the rewrite's placeholder tokens with the analyst name each one carries |

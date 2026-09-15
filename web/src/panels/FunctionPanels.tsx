@@ -785,6 +785,19 @@ function AiArtifactPanel<T>({
     }
   };
 
+  const discard = async (): Promise<void> => {
+    setActionError(null);
+    setBusy(true);
+    try {
+      await api(`/functions/${functionId}/${path}`, { method: "DELETE" });
+      refreshPanel(key, loader);
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   let body: ReactNode;
   if (!entry || entry.state === "loading") body = <Loading label={loading} />;
   else if (entry.state === "error") {
@@ -800,9 +813,19 @@ function AiArtifactPanel<T>({
       title={title}
       subtitle={subtitle}
       actions={
-        <Button tone="primary" pending={busy} onClick={() => void generate()}>
-          {entry?.state === "ready" ? "Regenerate" : "Generate"}
-        </Button>
+        <>
+          <Button tone="primary" pending={busy} onClick={() => void generate()}>
+            {entry?.state === "ready" ? "Regenerate" : "Generate"}
+          </Button>
+          {entry?.state === "ready" ? (
+            <ConfirmButton
+              label="Discard"
+              message="Discard this stored artifact?"
+              pending={busy}
+              onConfirm={() => void discard()}
+            />
+          ) : null}
+        </>
       }
     >
       {actionError ? <ErrorNote error={actionError} /> : null}
@@ -1114,6 +1137,11 @@ export function AiDecompilationPanel({ functionId }: { functionId: number }): Re
       api(`/functions/${functionId}/ai-decompilation`, { method: "POST" }),
     );
 
+  const discard = (): Promise<void> =>
+    run("discard", "Rewrite discarded.", () =>
+      api(`/functions/${functionId}/ai-decompilation`, { method: "DELETE" }),
+    );
+
   const setOverride = (token: string, name: string | null): Promise<void> =>
     run(`override:${token}`, name === null ? `Override cleared for ${token}.` : `Override set for ${token}.`, () =>
       api(`/functions/${functionId}/ai-decompilation/overrides`, {
@@ -1292,9 +1320,19 @@ export function AiDecompilationPanel({ functionId }: { functionId: number }): Re
       title="AI decompilation"
       subtitle="A whole-function rewrite, the placeholders it still carries and the overrides that name them."
       actions={
-        <Button tone="primary" pending={busy === "generate"} onClick={() => void generate()}>
-          {entry?.state === "ready" ? "Rewrite again" : "Rewrite"}
-        </Button>
+        <>
+          <Button tone="primary" pending={busy === "generate"} onClick={() => void generate()}>
+            {entry?.state === "ready" ? "Rewrite again" : "Rewrite"}
+          </Button>
+          {entry?.state === "ready" ? (
+            <ConfirmButton
+              label="Discard"
+              message="Discard the stored rewrite, its overrides, comments and rating?"
+              pending={busy === "discard"}
+              onConfirm={() => void discard()}
+            />
+          ) : null}
+        </>
       }
     >
       {actionError ? <ErrorNote error={actionError} /> : null}

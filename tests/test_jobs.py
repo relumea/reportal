@@ -297,6 +297,22 @@ class TestMatchJob:
         assert final is not None
         assert final["progress"] == 100
 
+    def test_the_kind_is_refused_without_the_scorer(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The route answers 503 before running; a queued job is refused at
+        # submit for the same reason, rather than failing when it is picked up.
+        binary_id = self._seed(conn, tmp_path)
+        monkeypatch.setattr(similarity, "available", lambda: False)
+
+        try:
+            jobs.submit(conn, kind="match", binary_id=binary_id, params={})
+        except ValueError as exc:
+            assert "similarity" in str(exc)
+            assert "uv sync --extra similarity" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("a match job needs the scorer installed")
+
     @requires_similarity
     def test_a_queued_run_reports_its_steps(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         binary_id = _binary(conn, tmp_path, "steps.exe")

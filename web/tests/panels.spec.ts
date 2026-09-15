@@ -176,3 +176,18 @@ test("the binary header names the rebrew project its engine reads use", async ({
   // (disassembly, cross-references, structs) reads through it.
   await expect(page.getByText(/rebrew project: .*notepad-rebrew/)).toBeVisible();
 });
+
+test("the AI summary panel discards the artifact it shows", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const summary = panelByTitle(page, "Summary");
+
+  // The seeder stores one, so the panel renders its payload rather than the
+  // nothing-stored hint, and offers the discard.
+  await expect(summary.getByText(/Reads the configuration file/)).toBeVisible();
+
+  // The confirm control of a ConfirmButton carries the same label.
+  await summary.getByRole("button", { name: "Discard", exact: true }).click();
+  await summary.getByRole("button", { name: "Discard", exact: true }).click();
+
+  await expect(summary.getByText("No AI summary stored for this function")).toBeVisible();
+});

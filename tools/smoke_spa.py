@@ -31,9 +31,10 @@ checkout.  The build output is generated and gitignored.
 
 The list views need no engine.  The function detail route runs ``rebrew asm``
 through the stored project context, so its marker (``bits 32``) proves the
-engine wiring end to end, and its AI section renders stored-only hints (the AI
-panels never call a model on render) so the ``AI comments`` marker proves the
-bridge's panels exist without an endpoint configured, and the seeded rename
+engine wiring end to end, and its AI section renders the panels without a
+model call (the seeded summary gives the panel a payload to show and discard,
+and the rest render their stored-only hints), so the ``AI comments`` marker
+proves the bridge's panels exist without an endpoint configured, and the seeded rename
 suggestion gives the Renames panel a row to assert.  The seeded loop function
 (``CFG_LOOP_FUNCTION_VA``) is what the control-flow check switches to, so the
 graph's blocks, its edges and a labelled back edge all render from a real
@@ -94,6 +95,7 @@ from reportal import (  # noqa: E402
     journal,
     knowledge,
     lineage,
+    llm,
     renames,
     signatures,
     store,
@@ -234,6 +236,9 @@ RENAMES_SCAN: dict[str, object] = {
 # scope's documents through a stored-only GET and its search reads the stored
 # chunks, so pre-seeding one gives the smoke a real document and a rankable
 # snippet to assert.
+# The stored AI summary the function detail renders (no model is called).
+AI_SUMMARY_TEXT = "Reads the configuration file and applies the stored settings."
+
 DOCUMENT_TITLE = "Smoke knowledge note"
 
 # A seeded journal action, so the Journal view has a row to render; the
@@ -1263,6 +1268,11 @@ def build_workspace(
         ):
             store.set_decompilation(conn, function_id, code, "kuna")
         store.set_ai_artifact(conn, function_ids[0], renames.RENAMES_KIND, RENAMES_SCAN, "smoke")
+        # A stored summary, so the AI Summary panel renders a payload (and its
+        # Discard control) without an endpoint configured.
+        store.set_ai_artifact(
+            conn, function_ids[0], llm.AI_KIND_SUMMARY, {"summary": AI_SUMMARY_TEXT}, "smoke"
+        )
         store.add_comment(
             conn,
             scope_kind="binary",

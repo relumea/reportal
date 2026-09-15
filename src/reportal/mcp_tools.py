@@ -2832,6 +2832,33 @@ def _tool_run_ai_decompilation(arguments: dict[str, Any]) -> dict[str, Any]:
         return log.attach({"function_id": function_id, **ai_decomp.view(artifact)})
 
 
+def _tool_clear_ai_artifact(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Discard one stored AI artifact of a function; journaled, so a revert restores it."""
+    function_id = _arg_int(arguments, "function_id")
+    kind = _arg_optional_str(arguments, "kind", ai_decomp.KIND)
+    kinds = (ai_decomp.KIND, *llm.AI_KINDS)
+    if kind not in kinds:
+        raise ToolError("unknown artifact kind", f"artifact kind must be one of {', '.join(kinds)}")
+    with contextlib.closing(_open()) as conn:
+        _require_function(conn, function_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="ai_artifacts",
+                where="function_id = ? AND kind = ?",
+                params=(function_id, kind),
+            )
+            if not before:
+                raise ToolError("no-artifact", f"no {kind} artifact for function {function_id}")
+            store.clear_ai_artifact(conn, function_id, kind)
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"discarded the {kind} artifact of function {function_id}",
+                journal.row_restore_descriptor("ai_artifacts", before),
+            )
+            return log.attach({"function_id": function_id, "kind": kind, "discarded": True})
+
+
 def _tool_get_ai_decompilation(arguments: dict[str, Any]) -> dict[str, Any]:
     function_id = _arg_int(arguments, "function_id")
     with contextlib.closing(_open()) as conn:
@@ -6945,6 +6972,26 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"function_id": _FUNCTION_ID}, ("function_id",)),
             _WRITE,
             _tool_revert_renames,
+        ),
+        Tool(
+            "clear_ai_artifact",
+            "Discard one stored AI artifact of a function (the rewrite by default, else a"
+            " summary, its inline comments or its type suggestions). The artifact's rating,"
+            " overrides and line comments live inside it and come back with the revert."
+            " Destructive.",
+            _object(
+                {
+                    "function_id": _int("Function id."),
+                    "kind": {
+                        "type": "string",
+                        "enum": [ai_decomp.KIND, *llm.AI_KINDS],
+                        "description": "Artifact to discard (default: the rewrite).",
+                    },
+                },
+                ("function_id",),
+            ),
+            _WRITE,
+            _tool_clear_ai_artifact,
         ),
         Tool(
             "run_ai_decompilation",

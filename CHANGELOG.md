@@ -7,6 +7,17 @@ view renders it from here.
 
 ## Unreleased
 
+- A stored AI artifact can be discarded.  The four artifacts (the rewrite, the
+  summary, the inline comments and the type suggestions) could be generated,
+  read, rated and commented and never removed: an analyst who disliked a
+  rewrite could only rate it down or generate another.  `DELETE` on each of the
+  four routes drops the artifact with everything inside it, journaled through
+  the same restore descriptor the other deletes use, so the journal's revert
+  puts the payload (rating, overrides and line comments included) back;
+  `reportal ai-clear <function-id> [--kind KIND]` and the `clear_ai_artifact`
+  MCP tool expose it, and each panel carries a Discard behind the confirm
+  pattern.  That is 246 built-in tools, 115 read-only and 131 destructive.
+
 - A binary reports the rebrew project its engine-backed reads use.  The context
   was stored per binary and every engine-backed route answered 400
   `no-engine-context` without one, but no read returned it, so a client could

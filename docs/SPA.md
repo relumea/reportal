@@ -487,6 +487,10 @@ error in place.  The four flat artifacts each auto-load their stored-only `GET`
 and never call a model on render, a
 `no-artifact` answer shows a nothing-stored hint, and Generate (Suggest for
 Renames) posts to the AI route, surfacing 503 `llm-unavailable` in place.  The
+rewrite panel and the shared flat-artifact panel each carry a Discard behind the
+confirm pattern once an artifact is stored (`DELETE` on the same route),
+which drops the artifact with everything inside it and leaves the nothing-stored
+hint; the action is journaled, so the journal's revert brings it back.  The
 Models view (System group) tabulates the model registry, `GET /api/models`, with
 each entry's kind, version, availability and reason, and carries the upgrade
 form: an analysis id, an `llm` model and an optional function bound, posting to

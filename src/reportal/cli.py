@@ -6344,6 +6344,55 @@ def ai_decompilation(
     console.print(str(served["code"]), markup=False)
 
 
+@app.command("ai-clear")
+def ai_clear(
+    function_id: int = typer.Argument(..., help="Function id whose stored artifact to discard"),
+    kind: str = typer.Option(
+        ai_decomp.KIND,
+        "--kind",
+        help=f"Artifact to discard: {ai_decomp.KIND}, {', '.join(llm.AI_KINDS)}",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Discard one stored AI artifact of a function; journaled, so a revert restores it.
+
+    The artifact's rating, its overrides and its per-line comments live inside
+    the payload, so they go with it and come back with the revert.  Nothing
+    calls the model: this is the inverse of the run, not another one.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    kinds = (ai_decomp.KIND, *llm.AI_KINDS)
+    if kind not in kinds:
+        _fail(f"unknown artifact kind {kind!r}; expected one of {', '.join(kinds)}", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="ai_artifacts",
+                where="function_id = ? AND kind = ?",
+                params=(function_id, kind),
+            )
+            if not before:
+                _fail(f"no {kind} artifact for function {function_id}", json_output)
+            store.clear_ai_artifact(conn, function_id, kind)
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"discarded the {kind} artifact of function {function_id}",
+                journal.row_restore_descriptor("ai_artifacts", before),
+            )
+    payload = log.attach({"function_id": function_id, "kind": kind, "discarded": True})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Discarded[/green] the {kind} artifact of function {function_id}")
+    _print_journal_action(log, json_output)
+
+
 @app.command("ai-decompilation-status")
 def ai_decompilation_status(
     function_id: int = typer.Argument(..., help="Function id whose workflow state to read"),

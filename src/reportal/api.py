@@ -5486,6 +5486,39 @@ def _store_ai_artifact(function_id: int, kind: str) -> Response:
     )
 
 
+def _clear_ai_artifact(function_id: int, kind: str, *, missing: Response) -> Response:
+    """Discard one stored AI artifact inside a journaled action.
+
+    The row is snapshotted before it is dropped and its restore descriptor
+    recorded, so the action's revert puts the artifact back (rating, overrides
+    and line comments included: they live inside the payload).  *missing* is the
+    stored-only 404 the caller's kind answers with when there is nothing to
+    discard.
+    """
+    with contextlib.closing(_open()) as conn:
+        if store.get_function(conn, function_id) is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            before = journal.snapshot_rows(
+                conn,
+                table="ai_artifacts",
+                where="function_id = ? AND kind = ?",
+                params=(function_id, kind),
+            )
+            if not before:
+                return missing
+            store.clear_ai_artifact(conn, function_id, kind)
+            log.record(
+                effects.EFFECT_ROW_RESTORE,
+                f"discarded the {kind} artifact of function {function_id}",
+                journal.row_restore_descriptor("ai_artifacts", before),
+            )
+    return json_response(log.attach({"function_id": function_id, "kind": kind, "discarded": True}))
+
+
 def _get_ai_artifact(function_id: int, kind: str) -> Response:
     """Serve one stored AI artifact; never calls the LLM."""
     with contextlib.closing(_open()) as conn:
@@ -5505,6 +5538,14 @@ def store_function_summary(function_id: int) -> bytes | Any:
     return _store_ai_artifact(function_id, llm.AI_KIND_SUMMARY)
 
 
+@router.delete("/api/functions/{function_id}/summary")
+def discard_function_summary(function_id: int) -> bytes | Any:
+    """Discard the stored artifact of this kind; journaled, so a revert restores it."""
+    return _clear_ai_artifact(
+        function_id, llm.AI_KIND_SUMMARY, missing=_no_ai_artifact(function_id, llm.AI_KIND_SUMMARY)
+    )
+
+
 @router.get("/api/functions/{function_id}/summary")
 def get_function_summary(function_id: int) -> bytes | Any:
     """Stored AI summary; a function without one is a 404 no-artifact."""
@@ -5517,6 +5558,16 @@ def store_function_ai_comments(function_id: int) -> bytes | Any:
     return _store_ai_artifact(function_id, llm.AI_KIND_COMMENTS)
 
 
+@router.delete("/api/functions/{function_id}/ai-comments")
+def discard_function_ai_comments(function_id: int) -> bytes | Any:
+    """Discard the stored artifact of this kind; journaled, so a revert restores it."""
+    return _clear_ai_artifact(
+        function_id,
+        llm.AI_KIND_COMMENTS,
+        missing=_no_ai_artifact(function_id, llm.AI_KIND_COMMENTS),
+    )
+
+
 @router.get("/api/functions/{function_id}/ai-comments")
 def get_function_ai_comments(function_id: int) -> bytes | Any:
     """Stored AI comments; a function without any is a 404 no-artifact."""
@@ -5527,6 +5578,14 @@ def get_function_ai_comments(function_id: int) -> bytes | Any:
 def store_function_type_suggestions(function_id: int) -> bytes | Any:
     """Ask the configured LLM for type suggestions on a stored decompilation."""
     return _store_ai_artifact(function_id, llm.AI_KIND_TYPES)
+
+
+@router.delete("/api/functions/{function_id}/type-suggestions")
+def discard_function_type_suggestions(function_id: int) -> bytes | Any:
+    """Discard the stored artifact of this kind; journaled, so a revert restores it."""
+    return _clear_ai_artifact(
+        function_id, llm.AI_KIND_TYPES, missing=_no_ai_artifact(function_id, llm.AI_KIND_TYPES)
+    )
 
 
 @router.get("/api/functions/{function_id}/type-suggestions")
@@ -5844,6 +5903,14 @@ def get_ai_decompilation(function_id: int) -> Response:
                 404, error="function not found", detail=f"no function with id {function_id}"
             )
         return _ai_decomp_view(conn, function_id)
+
+
+@router.delete("/api/functions/{function_id}/ai-decompilation")
+def discard_ai_decompilation(function_id: int) -> bytes | Any:
+    """Discard the stored AI decompilation; journaled, so a revert restores it."""
+    return _clear_ai_artifact(
+        function_id, ai_decomp.KIND, missing=_no_ai_decomp_artifact(function_id)
+    )
 
 
 @router.get("/api/functions/{function_id}/ai-decompilation/status")

@@ -310,6 +310,7 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "delete_document",
         "extract_archive",
         "register_binary",
+        "clear_ai_artifact",
         "revert_journal_entry",
     }
 )
@@ -474,9 +475,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 245
+        assert len(names) == 246
         assert len(_READ_ONLY_TOOLS) == 115
-        assert len(_DESTRUCTIVE_TOOLS) == 130
+        assert len(_DESTRUCTIVE_TOOLS) == 131
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
