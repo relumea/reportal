@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- A queued match run reports its progress.  A job was one step (`progress` 0 or
+  100) because the engine calls a scan makes cannot be interrupted; a match run
+  is the one kind whose loop is reportal's own, so `match_binary` now takes a
+  `progress(done, total)` sink and calls it once per source function, and the
+  runner writes the job's `progress`/`steps_total` from it (`match` declares
+  `JobKind.perform_progress` for that, written at most every
+  `jobs.PROGRESS_REPORT_EVERY` functions).  The Jobs view's Progress cell shows
+  it without any change, since the fields were already in the payload.
+
 - A match run can be queued as a job.  Matching is the longest operation the
   portal runs (every function against the whole corpus) and it was the one
   operation with no queued form: `POST /api/binaries/<id>/match` blocks for the

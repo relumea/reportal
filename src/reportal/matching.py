@@ -547,6 +547,7 @@ def journaled_match(
     binary_id: int,
     settings: MatchSettings,
     engine: engines.RebrewEngine,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Run one binary's match inside a journaled action; the one write path.
 
@@ -567,7 +568,9 @@ def journaled_match(
             params=(binary_id,),
             description=f"replaced the matches of binary {binary_id}",
         )
-        summary = match_binary(conn, binary_id=binary_id, engine=engine, settings=settings)
+        summary = match_binary(
+            conn, binary_id=binary_id, engine=engine, settings=settings, progress=progress
+        )
         journal.journaled_new_rows(
             conn,
             log,
@@ -596,6 +599,7 @@ def match_binary(
     disassembler: Disassembler | None = None,
     scorer: Scorer | None = None,
     settings: MatchSettings | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, int]:
     """Match every function of *binary_id* against the candidate corpus.
 
@@ -612,6 +616,11 @@ def match_binary(
     survivors, so it drops candidates without re-ranking the ones it keeps.
     Returns ``{"functions", "matched", "pairs"}`` counts and raises
     :class:`InvalidSettingsError` for a scope id no row carries.
+
+    *progress* is called with ``(done, total)`` after each source function, the
+    one granularity a run has: the disassembly it reads is cached and the
+    scoring loop is this module's, while the engine calls themselves are not
+    interruptible.  A queued run turns that into a job's progress.
     """
     resolved = settings if settings is not None else MatchSettings()
     default_scorer = scorer is None
@@ -651,11 +660,14 @@ def match_binary(
     payload = resolved.payload()
     summary = {"functions": len(sources), "matched": 0, "pairs": 0}
 
-    for source in sources:
+    total = len(sources)
+    for index, source in enumerate(sources, start=1):
         source_id = int(source["id"])
         store.clear_matches_for(conn, source_id)
         source_text = texts.get(source_id)
         if not source_text:
+            if progress is not None:
+                progress(index, total)
             continue
         scored: list[tuple[float, int]] = []
         for candidate_id in candidate_ids:
@@ -690,6 +702,8 @@ def match_binary(
         if recorded:
             summary["matched"] += 1
         summary["pairs"] += recorded
+        if progress is not None:
+            progress(index, total)
 
     return summary
 

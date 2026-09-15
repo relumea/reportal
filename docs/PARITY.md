@@ -178,7 +178,11 @@ every function against the corpus) and takes the match settings as its
 Two ceilings are deliberate and stated rather than hidden.  A job is one step
 (`steps_total` is 1, so `progress` is 0 or 100): the engine calls a scan makes
 cannot be interrupted, so there is nothing finer to report, and the hosted
-agents that decompose into many steps are not ported.  And cancelling a
+agents that decompose into many steps are not ported.  The one exception is
+`match`, whose scoring loop is reportal's own: it reports one step per source
+function (`steps_total` is the function count, `progress` the share scored),
+written at most every `jobs.PROGRESS_REPORT_EVERY` functions so the row does not
+cost more than the scoring.  And cancelling a
 `running` job is refused with 409 `job-not-cancellable` rather than faked: the
 scan has already entered the engine, and reporting a stop that would not happen
 would leave a result written after the client was told it had stopped.

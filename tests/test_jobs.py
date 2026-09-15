@@ -68,7 +68,11 @@ class TestRegistry:
             # or journals a write of its own (`perform`) instead of a scan.
             params = dict.fromkeys(spec.params, "")
             params["domain"] = "execution" if spec.name == "behavior" else "obfuscation"
-            assert spec.scan_kind_for(params) or spec.perform is not None
+            assert (
+                spec.scan_kind_for(params)
+                or spec.perform is not None
+                or spec.perform_progress is not None
+            )
 
     def test_a_domain_kind_resolves_one_scan_kind_per_domain(self) -> None:
         hardening = jobs.JOB_KINDS["hardening"]
@@ -265,6 +269,57 @@ class TestMatchJob:
             assert "domain" in str(exc)
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("an unexpected parameter must be refused")
+
+    def test_the_progress_sink_writes_the_row_at_its_own_pace(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        job = _submit(conn, tmp_path)
+        job_id = int(job["id"])
+        sink = jobs._progress_sink(conn, job_id)
+
+        # Under the reporting interval nothing is written, so a long run does
+        # not spend its time on the database.
+        sink(1, 100)
+        quiet = jobs.get_job(conn, job_id)
+        assert quiet is not None
+        assert quiet["progress"] == 0
+
+        sink(25, 100)
+        row = jobs.get_job(conn, job_id)
+        assert row is not None
+        assert row["progress"] == 25
+        assert row["steps_total"] == 100
+        assert row["message"] == "25 of 100 steps"
+
+        # The last step always writes, whatever the interval.
+        sink(100, 100)
+        final = jobs.get_job(conn, job_id)
+        assert final is not None
+        assert final["progress"] == 100
+
+    @requires_similarity
+    def test_a_queued_run_reports_its_steps(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        binary_id = _binary(conn, tmp_path, "steps.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        for index in range(3):
+            store.add_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000 + index * 0x10,
+                name=f"sub_{index}",
+                size=16,
+            )
+        job = jobs.submit(conn, kind="match", binary_id=binary_id, params={})
+
+        finished = jobs.run_pending(conn, limit=1)
+
+        assert finished[0]["status"] == jobs.STATUS_DONE, finished[0]["error"]
+        # A finished run is complete, and the step total is the source count.
+        assert finished[0]["progress"] == 100
+        assert finished[0]["steps_total"] == 3
+        stored = jobs.get_job(conn, int(job["id"]))
+        assert stored is not None
+        assert stored["message"] == "finished"
 
     @requires_similarity
     def test_a_queued_run_records_its_settings(

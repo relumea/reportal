@@ -84,6 +84,7 @@ def _run(
     *,
     settings: matching.MatchSettings | None = None,
     disassembler: matching.Disassembler | None = None,
+    progress: Any = None,
 ) -> dict[str, int]:
     return matching.match_binary(
         conn,
@@ -92,6 +93,7 @@ def _run(
         disassembler=disassembler or _disassembler,
         scorer=_scorer,
         settings=settings,
+        progress=progress,
     )
 
 
@@ -155,6 +157,25 @@ def _match_rows(conn: sqlite3.Connection) -> list[tuple[int, int, float]]:
         " ORDER BY function_id, candidate_function_id"
     )
     return [(int(row[0]), int(row[1]), float(row[2])) for row in cur.fetchall()]
+
+
+class TestProgress:
+    """The one granularity a run has: one report per source function."""
+
+    def test_it_reports_every_source_function_in_order(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        seen: list[tuple[int, int]] = []
+
+        _run(conn, ids["a"], progress=lambda done, total: seen.append((done, total)))
+
+        assert seen == [(1, 2), (2, 2)]
+
+    def test_a_run_without_a_sink_reports_nothing(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+
+        summary = _run(conn, ids["a"])
+
+        assert summary["functions"] == 2
 
 
 class TestPrefilter:

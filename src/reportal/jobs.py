@@ -36,7 +36,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from reportal import (
     _paths,
@@ -115,6 +115,19 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
 
 
+class ProgressPerform(Protocol):
+    """A `perform` that also takes the runner's step sink."""
+
+    def __call__(
+        self,
+        conn: sqlite3.Connection,
+        binary_id: int,
+        params: Mapping[str, Any],
+        *,
+        progress: Callable[[int, int], None] | None = None,
+    ) -> dict[str, Any]: ...
+
+
 @dataclass(frozen=True)
 class JobKind:
     """One queued operation: what it is called and how it runs.
@@ -134,6 +147,11 @@ class JobKind:
     # journaling through this, and the runner calls it instead of wrapping the
     # run in `journaled_scan`.
     perform: Callable[[sqlite3.Connection, int, Mapping[str, Any]], dict[str, Any]] | None = None
+    # A kind that can report its own steps sets this instead of `perform`: the
+    # runner passes a `progress(done, total)` sink that writes the job's row as
+    # the run goes.  Every other kind is one step, because its engine calls are
+    # not interruptible and there is nothing finer to report.
+    perform_progress: ProgressPerform | None = None
 
     def scan_kind_for(self, params: Mapping[str, Any]) -> str | None:
         """The ``scans`` kind this job stores, or None when it stores another row."""
@@ -153,17 +171,27 @@ def _domain_of(params: Mapping[str, Any], domains: tuple[str, ...], what: str) -
 
 
 def _perform_match(
-    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+    conn: sqlite3.Connection,
+    binary_id: int,
+    params: Mapping[str, Any],
+    *,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Run one binary's match, journaled the way its route runs it.
 
     The settings come from the job's params, so a queued run records the same
     rows a direct one would; ``matching.journaled_match`` snapshots and journals
     them, which is why this kind declares ``perform`` rather than a scan kind.
+    *progress* is the runner's sink: a match run scores one source function at a
+    time, so it is the one kind with steps to report.
     """
     settings = matching.MatchSettings.from_request(dict(params))
     return matching.journaled_match(
-        conn, binary_id=binary_id, settings=settings, engine=engines.get_engine()
+        conn,
+        binary_id=binary_id,
+        settings=settings,
+        engine=engines.get_engine(),
+        progress=progress,
     )
 
 
@@ -304,7 +332,7 @@ def builtin_kinds() -> tuple[JobKind, ...]:
                 "collection_ids",
             ),
             run=_perform_match,
-            perform=_perform_match,
+            perform_progress=_perform_match,
         ),
     )
 
@@ -520,6 +548,27 @@ def _claim(conn: sqlite3.Connection) -> dict[str, Any] | None:
     return get_job(conn, job_id)
 
 
+# A progress report writes the job's row at most this often: a match run calls
+# the sink once per source function, and a row write per function would spend
+# more time on the database than on scoring.
+PROGRESS_REPORT_EVERY = 25
+
+
+def _progress_sink(conn: sqlite3.Connection, job_id: int) -> Callable[[int, int], None]:
+    """A throttled writer for a kind that reports its own steps."""
+
+    def report(done: int, total: int) -> None:
+        if total <= 0 or (done % PROGRESS_REPORT_EVERY and done != total):
+            return
+        conn.execute(
+            f"UPDATE {TABLE} SET progress = ?, steps_total = ?, message = ? WHERE id = ?",
+            (min(100, int(100 * done / total)), total, f"{done} of {total} steps", job_id),
+        )
+        conn.commit()
+
+    return report
+
+
 def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     """Run one claimed job to its terminal state and return the stored row.
 
@@ -531,9 +580,14 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     spec = JOB_KINDS[job["kind"]]
     binary_id = int(job["binary_id"])
     params = dict(job.get("params") or {})
+    job_id = int(job["id"])
     try:
         scan_kind = spec.scan_kind_for(params)
-        if spec.perform is not None:
+        if spec.perform_progress is not None:
+            payload = spec.perform_progress(
+                conn, binary_id, params, progress=_progress_sink(conn, job_id)
+            )
+        elif spec.perform is not None:
             payload = spec.perform(conn, binary_id, params)
         elif scan_kind is None:  # pragma: no cover - every other kind stores a scan
             payload = spec.run(conn, binary_id, params)
