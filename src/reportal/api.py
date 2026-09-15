@@ -6568,7 +6568,9 @@ def list_conversations(request: Request) -> Response:
         except ValueError:
             return json_error(400, error="scope_id must be an integer")
     with contextlib.closing(_open()) as conn:
-        rows = store.list_conversations(conn, scope_kind=scope_kind, scope_id=scope_id)
+        rows = store.list_conversations(
+            conn, scope_kind=scope_kind, scope_id=scope_id, visible_to=_caller(request)
+        )
     return json_response({"conversations": rows})
 
 

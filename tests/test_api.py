@@ -3833,6 +3833,40 @@ class TestConversationsRoutes:
         rows = json_body(body, headers)["conversations"]
         assert [row["id"] for row in rows] == [first]
 
+    def test_a_non_member_lists_no_team_conversations(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn)
+        # Built directly: `_create` re-seeds its own binary per call, which
+        # would scope the wrong binary.
+        team_conv = store.create_conversation(
+            conn, scope_kind="binary", scope_id=ids["binary"], title="team thread"
+        )
+        docs_conv = store.create_conversation(conn, scope_kind="docs", scope_id=0, title="manual")
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, headers, body = wsgi_request(
+            "GET", "/api/conversations", headers={"Authorization": f"Bearer {outsider}"}
+        )
+        assert [row["id"] for row in json_body(body, headers)["conversations"]] == [docs_conv]
+
+        _status, headers, body = wsgi_request(
+            "GET", "/api/conversations", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert [row["id"] for row in json_body(body, headers)["conversations"]] == [
+            team_conv,
+            docs_conv,
+        ]
+
     def test_list_non_integer_scope_id_400(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("GET", "/api/conversations?scope_id=abc")
         assert status.startswith("400")

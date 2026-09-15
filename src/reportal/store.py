@@ -2940,9 +2940,20 @@ def create_conversation(
 
 
 def list_conversations(
-    conn: sqlite3.Connection, *, scope_kind: str | None = None, scope_id: int | None = None
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str | None = None,
+    scope_id: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Conversations, newest id last, each with its stored message count."""
+    """Conversations, newest id last, each with its stored message count.
+
+    ``visible_to`` drops binary/function-scoped conversations on binaries
+    the caller may not see, like the other scoped reads; conversations of
+    other scopes (docs, project) have no owning binary and stay.
+    """
+    from reportal import conversations
+
     sql = (
         "SELECT c.*, ("
         "  SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id"
@@ -2956,6 +2967,28 @@ def list_conversations(
     if scope_id is not None:
         clauses.append("c.scope_id = ?")
         params.append(scope_id)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, scope_params = scope
+        clauses.append(
+            "((c.scope_kind != ? AND c.scope_kind != ?)"
+            f" OR (c.scope_kind = ? AND EXISTS (SELECT 1 FROM binaries b"
+            f" WHERE b.id = c.scope_id AND {clause}))"
+            f" OR (c.scope_kind = ? AND EXISTS (SELECT 1 FROM functions f"
+            " JOIN analyses a ON f.analysis_id = a.id"
+            " JOIN binaries b ON a.binary_id = b.id"
+            f" WHERE f.id = c.scope_id AND {clause})))"
+        )
+        params.extend(
+            [
+                conversations.SCOPE_KIND_BINARY,
+                conversations.SCOPE_KIND_FUNCTION,
+                conversations.SCOPE_KIND_BINARY,
+                *scope_params,
+                conversations.SCOPE_KIND_FUNCTION,
+                *scope_params,
+            ]
+        )
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY c.id"
