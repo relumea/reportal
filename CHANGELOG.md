@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- A match job is refused at submit when the similarity extra is not installed.
+  The route already answers 503 before it runs, and a queued job would have run
+  and failed later; `jobs.submit` now names the extra and the command that
+  installs it, the way every other parameter a kind needs is checked before the
+  job is queued.
+
 - A stored AI artifact can be discarded.  The four artifacts (the rewrite, the
   summary, the inline comments and the type suggestions) could be generated,
   read, rated and commented and never removed: an analyst who disliked a
