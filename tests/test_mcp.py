@@ -701,6 +701,18 @@ class TestProtocol:
 
 
 class TestReadTools:
+    def test_get_doctor_answers_the_cli_report(self, conn: Any, tmp_path: Path) -> None:
+        _seed_binary(conn, tmp_path)
+        payload, is_error = _call("get_doctor", {"port": 0})
+        assert is_error is False
+        assert payload["status"] == "ok"
+        assert payload["port"] == 0
+        assert {row["name"] for row in payload["checks"]} >= {"workspace", "port"}
+
+        payload, is_error = _call("get_doctor", {"port": "nope"})
+        assert is_error is True
+        assert payload["error"] == "invalid params"
+
     def test_list_binaries_and_get_binary(self, conn: Any, tmp_path: Path) -> None:
         ids = _seed_binary(conn, tmp_path)
         payload, is_error = _call("list_binaries")
