@@ -500,6 +500,38 @@ class TestWorkspaceFilter:
         assert json_body(body, headers)["count"] == 0
         assert json_body(body, headers)["total"] == 0
 
+    def test_creating_an_analysis_on_a_hidden_binary_is_404(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "POST",
+            "/api/analyses",
+            body=json.dumps({"binary_id": ids["binary"]}),
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "binary not found"
+
+        member_status, headers, body = wsgi_request(
+            "POST",
+            "/api/analyses",
+            body=json.dumps({"binary_id": ids["binary"]}),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("201"), body
+
     def test_the_cli_and_the_tool(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 

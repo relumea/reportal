@@ -7021,11 +7021,11 @@ def delete_analysis(analysis_id: int) -> Response:
 
 
 @router.post("/api/analyses")
-def create_analysis(body: dict[str, Any] = Depends(json_body)) -> Response:
+def create_analysis(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     binary_id = _require_int(body, "binary_id")
     engine = _optional_str(body, "engine", "manual")
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
+        if not _visible_binary(conn, binary_id, _caller(request)):
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
