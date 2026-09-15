@@ -5092,16 +5092,18 @@ def _tool_list_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
             f"workspace must be one of {', '.join(store.WORKSPACE_FILTERS)}",
         )
     search = _arg_optional_str(arguments, "search")
+    binary_id = _arg_optional_int(arguments, "binary_id", 0)
     limit = _arg_optional_int(arguments, "limit", store.DEFAULT_ANALYSIS_LIMIT)
     with contextlib.closing(_open()) as conn:
         rows = store.list_analyses(
             conn,
+            binary_id=binary_id or None,
             status=status or None,
             search=search or None,
             workspace=workspace or None,
             limit=limit,
         )
-        total = store.count_analyses(conn)
+        total = store.count_analyses(conn, binary_id=binary_id or None)
     return {"analyses": rows, "count": len(rows), "total": total}
 
 
@@ -7876,11 +7878,13 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "list_analyses",
-            "List analyses with their binary, status and scope; `workspace` reads the owning"
-            " binary's scope as personal (no owning team), team or public.",
+            "List analyses with their binary, status and scope; `binary_id` lists one"
+            " binary's analyses, and `workspace` reads the owning binary's scope as"
+            " personal (no owning team), team or public.",
             _object(
                 {
                     "status": _enum("Keep only this status.", store.ANALYSIS_STATUSES),
+                    "binary_id": _int("Keep only this binary's analyses."),
                     "workspace": _enum("Keep only this scope.", store.WORKSPACE_FILTERS),
                     "search": _str(
                         "Match the binary name, its SHA-256 (a prefix works) or the engine label."

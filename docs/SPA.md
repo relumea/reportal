@@ -240,7 +240,11 @@ which streams the stored bytes with a `Content-Disposition` filename), and a
 and reports how many applied and how many were skipped.
 
 Binary detail (`#/binaries/<id>`) opens with the portal's binary-detail surface.
-header (name, sha256, format, arch, size, path and the rebrew project its engine-backed panels read, or the `import-rebrew` command that sets one when the binary has none); binary details (auto-loads the
+header (name, sha256, format, arch, size, path and the rebrew project its engine-backed panels read, or the `import-rebrew` command that sets one when the binary has none); analyses (the binary's own runs from
+`GET /api/analyses?binary_id=`, newest first: each row's id, engine, created and
+finished times, status badge and the importer's log line, the scoped
+`count of total` line, an `All analyses` link to the workspace-wide view and a
+nothing-stored state for a binary no analysis exists for); binary details (auto-loads the
 stored PE metadata and, for the build-identity rows, the fingerprint bundle; a
 `no-scan` response shows the nothing-stored message with a Run PE details
 control that posts and stores it; the identity table carries the PE type, base

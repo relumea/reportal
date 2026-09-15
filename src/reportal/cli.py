@@ -2812,6 +2812,7 @@ def analyses(
     status: list[str] = typer.Option(
         [], "--status", help="Only analyses in this state; repeat for any-of"
     ),
+    binary: int | None = typer.Option(None, "--binary", help="Only this binary's analyses"),
     workspace: str | None = typer.Option(None, "--workspace", help="personal, team or public"),
     platform: str | None = typer.Option(None, "--platform", help="Only this binary format"),
     arch: str | None = typer.Option(None, "--arch", help="Only this architecture"),
@@ -2827,6 +2828,12 @@ def analyses(
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """List analyses with their binary, status, size, tags and scope.
+
+    ``--binary`` narrows the listing to one binary's analyses, which is how an
+    analyst gets from a binary row to the runs stored for it; the same filter is
+    ``?binary_id=`` on ``GET /api/analyses`` and ``binary_id`` on the
+    ``list_analyses`` MCP tool.  ``total`` counts that binary's analyses before
+    the other filters, so a filter that matched nothing says so.
 
     ``--workspace`` reads the owning binary's scope the way the hosted portal's
     three controls do: ``personal`` for an object no team owns, ``team`` for one
@@ -2857,8 +2864,11 @@ def analyses(
     if limit < 1 or limit > store.MAX_ANALYSIS_LIMIT:
         _fail(f"limit must be between 1 and {store.MAX_ANALYSIS_LIMIT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
+        if binary is not None and store.get_binary(conn, binary) is None:
+            _fail(f"no binary with id {binary}", json_output)
         rows = store.list_analyses(
             conn,
+            binary_id=binary,
             statuses=tuple(status),
             search=search,
             workspace=workspace,
@@ -2867,7 +2877,7 @@ def analyses(
             order=order,
             limit=limit,
         )
-        total = store.count_analyses(conn)
+        total = store.count_analyses(conn, binary_id=binary)
     if json_output:
         typer.echo(json.dumps({"analyses": rows, "count": len(rows), "total": total}))
         return

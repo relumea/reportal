@@ -501,6 +501,27 @@ class TestWorkspaceFilter:
         assert failed
         assert refused["error"] == "invalid workspace"
 
+        # The binary-scoped read `GET /api/analyses?binary_id=` already offered.
+        binary_id = json.loads(runner.invoke(cli.app, ["analyses", "--json"]).output)["analyses"][
+            0
+        ]["binary_id"]
+        scoped = json.loads(
+            runner.invoke(cli.app, ["analyses", "--binary", str(binary_id), "--json"]).output
+        )
+        assert scoped["count"] == 1
+        assert scoped["total"] == 1
+        assert scoped["analyses"][0]["binary_id"] == binary_id
+
+        missing = runner.invoke(cli.app, ["analyses", "--binary", "999999"])
+        assert missing.exit_code == 1
+        assert "no binary with id 999999" in missing.output
+
+        one, failed = mcp_server.call_tool("list_analyses", {"binary_id": binary_id})
+        assert not failed, one
+        assert one["count"] == 1
+        assert one["total"] == 1
+        assert one["analyses"][0]["binary_id"] == binary_id
+
 
 class TestAnalysisFilters:
     """The list's multi-status, platform and architecture filters (entry 10)."""

@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Panel, PanelBody } from "../components";
 import {
   BehaviorPanel,
+  BinaryAnalysesPanel,
   BinaryHeader,
   CapabilitiesPanel,
   CodeSignaturePanel,
@@ -64,6 +65,7 @@ export function BinaryDetail({
       {(binary) => (
         <>
           <BinaryHeader binary={binary} />
+          <BinaryAnalysesPanel binaryId={binary.id} />
           <IdentityPanel binaryId={binary.id} />
           <HashesPanel binaryId={binary.id} />
           <SecurityMitigationsPanel binaryId={binary.id} />

@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- A binary's analyses are reachable from the binary.  `GET /api/analyses`
+  already took `?binary_id=`, but the other read surfaces did not:
+  `reportal analyses --binary <binary-id>` narrows the listing (and counts its
+  `total` over that binary), the `list_analyses` MCP tool takes `binary_id`, and
+  the binary detail opens with an Analyses panel listing that binary's runs
+  with the engine, the created and finished times, the status and the
+  importer's log line inside a scoped `count of total` line.  An unknown binary
+  id fails the command instead of reading as an empty list.
+
 - A match job is refused at submit when the similarity extra is not installed.
   The route already answers 503 before it runs, and a queued job would have run
   and failed later; `jobs.submit` now names the extra and the command that

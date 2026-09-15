@@ -668,10 +668,12 @@ reportal user-rm <user-id> [--yes] [--json]
 reportal config [--json]                   # what this instance can do: versions,
                                            #   features, limits and MCP tool counts;
                                            #   needs no workspace
-reportal analyses [--status S]... [--workspace W] [--platform P] [--arch A]
+reportal analyses [--status S]... [--binary B] [--workspace W] [--platform P] [--arch A]
              [--search TEXT] [--order O] [--limit N] [--json]
                                            # the analyses list with each row's
-                                           #   owner team and visibility; the
+                                           #   owner team and visibility; --binary
+                                           #   narrows it to one binary's analyses
+                                           #   (an unknown id fails), and the
                                            #   workspace filter is personal,
                                            #   team or public, --status repeats
                                            #   as any-of, --platform/--arch match
@@ -693,11 +695,14 @@ reportal imported-functions <id> [--limit N] [--json]
                                            # the analysis's import stubs, each with the
                                            #   functions whose stored decompilation
                                            #   mentions it (text derived callers)
-reportal analyses [--status S] [--search TEXT] [--order newest|oldest]
+reportal analyses [--status S] [--binary B] [--search TEXT] [--order newest|oldest]
              [--limit N] [--json]
                                            # list analyses with their binary, status,
-                                           #   size, tags and log tail; an unknown
-                                           #   status/order or an out-of-range limit fails
+                                           #   size, tags and log tail; --binary keeps
+                                           #   one binary's analyses and counts the
+                                           #   total over that binary; an unknown
+                                           #   binary, an unknown status/order or an
+                                           #   out-of-range limit fails
 reportal analysis-logs <analysis-id> [--limit N] [--offset N] [--json]
                                            # one analysis's structured log, newest first,
                                            #   with the log's true total

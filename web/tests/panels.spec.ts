@@ -3,7 +3,7 @@
 // Both assert the rendered state, not just that the panel exists.
 
 import { e2eState } from "./e2e-state";
-import { panelByTitle } from "./helpers";
+import { panelByTitle, rowContaining } from "./helpers";
 import { expect, test } from "./fixtures";
 
 const state = e2eState();
@@ -190,4 +190,19 @@ test("the AI summary panel discards the artifact it shows", async ({ page }) => 
   await summary.getByRole("button", { name: "Discard", exact: true }).click();
 
   await expect(summary.getByText("No AI summary stored for this function")).toBeVisible();
+});
+
+test("a binary's detail lists only that binary's analyses", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const analyses = panelByTitle(page, "Analyses");
+
+  // The counts are the binary-scoped ones, so a panel that ignored the filter
+  // and listed the workspace's analyses would disagree with this read.
+  const scoped = await page.request.get(`/api/analyses?binary_id=${state.ids.binary_id}`);
+  const payload = (await scoped.json()) as { count: number; total: number };
+  await expect(
+    analyses.getByText(`${payload.count} of ${payload.total} analyses`),
+  ).toBeVisible();
+  await expect(rowContaining(analyses, String(state.ids.analysis_id))).toBeVisible();
+  await expect(analyses.getByRole("link", { name: "All analyses" })).toBeVisible();
 });

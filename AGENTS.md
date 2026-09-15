@@ -98,7 +98,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.13%, 32285 statements with 2540 missed. `[tool.coverage.report] fail_under`
+92.17%, 32562 statements with 2548 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -478,7 +478,8 @@ assembles the evidence, detects and stores the matches, and is destructive.
 `run_firmware_scan` carves and stores one and `extract_firmware_regions` carves
 its regions out as binaries, so both are destructive.  `list_analyses` lists analyses with their binary, status and scope (the owning
 binary's `visibility`, owner team and the `personal`/`team`/`public` workspace
-filter) and is read-only.  `list_artifact_ratings` reads every stored agent artifact of a binary with the
+filter; `binary_id` narrows it to one binary's analyses, which is the CLI's
+`analyses --binary` and the binary detail's analyses panel) and is read-only.  `list_artifact_ratings` reads every stored agent artifact of a binary with the
 analyst's verdict on it and is read-only; `rate_artifact` records or clears that
 verdict, journaled, and is destructive.  `get_stats_series` reads the dashboard's 30-day series (analyses, auto runs,
 journaled actions and the derived software types) from stored rows and is read-only.

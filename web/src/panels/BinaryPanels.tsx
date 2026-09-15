@@ -71,6 +71,7 @@ import {
 } from "../constants";
 import type {
   AdditionalDetails,
+  AnalysisList,
   ArtifactRatings,
   BehaviorScan,
   Binary,
@@ -372,6 +373,56 @@ function HashesBody({ fingerprint }: { fingerprint: Fingerprint }): ReactNode {
     ];
   });
   return <KeyValue rows={rows} />;
+}
+
+/** The analyses stored for this binary.  An analysis is what a scan, a report
+ *  and a match hang off, and the binary detail was a dead end for finding one:
+ *  it listed nothing and the analyses view has no binary-scoped control.  This
+ *  reads `GET /api/analyses?binary_id=` (the CLI's `analyses --binary` and the
+ *  `list_analyses` MCP tool's `binary_id`). */
+export function BinaryAnalysesPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "analyses");
+  const entry = usePanel(key, () => api<AnalysisList>(`/analyses?binary_id=${binaryId}`));
+  return (
+    <Panel
+      title="Analyses"
+      subtitle="Every run stored for this binary, newest first."
+      actions={
+        <Link className="btn btn-ghost" to="/analyses">
+          All analyses
+        </Link>
+      }
+    >
+      <PanelBody entry={entry} hint="Loading the analyses">
+        {(data) =>
+          data.analyses.length === 0 ? (
+            <EmptyState>
+              No analysis yet. Create one from the analyses view, or import the binary's rebrew
+              project, which registers one.
+            </EmptyState>
+          ) : (
+            <>
+              <Muted>
+                {data.count} of {data.total} analyses
+              </Muted>
+              <DataTable
+                columns={[
+                  { label: "ID", key: "id", numeric: true },
+                  { label: "Engine", key: "engine" },
+                  { label: "Created", key: "created_at", mono: true },
+                  { label: "Finished", render: (row) => row.finished_at ?? NA },
+                  { label: "Status", render: (row) => <StatusCell status={row.status} /> },
+                  { label: "Note", render: (row) => cellText(row.log) },
+                ]}
+                rows={data.analyses}
+                rowKey={(row) => String(row.id)}
+              />
+            </>
+          )
+        }
+      </PanelBody>
+    </Panel>
+  );
 }
 
 export function SecurityMitigationsPanel({ binaryId }: { binaryId: number }): ReactNode {
