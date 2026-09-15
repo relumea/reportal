@@ -23,7 +23,10 @@ metadata-owned, so the generated file carries only the marker.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -334,7 +337,14 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
         return _skip(ctx, REASON_ENGINE_UNAVAILABLE)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(source, encoding="utf-8")
+    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(source)
+        os.replace(temp_name, path)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_name)
     try:
         result = engine.test_source(ctx.project_dir, str(path))
     except engines.EngineError as exc:
