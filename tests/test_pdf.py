@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from conftest import REPORT, FakeEngine
 
-from reportal import mcp_tools, pdf, store
+from reportal import gobuildinfo, mcp_tools, pdf, store
 from reportal._paths import DB_ENV
 
 PDFINFO = shutil.which("pdfinfo")
@@ -261,6 +261,57 @@ def _seed_scans(conn: sqlite3.Connection, analysis_id: int, binary_id: int) -> N
             }
         },
     )
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_PROTOCOLS,
+        {
+            "binary_id": binary_id,
+            "protocols": [
+                {
+                    "protocol": "https",
+                    "description": "HTTP over TLS",
+                    "confidence": "high",
+                    "evidence": [{"kind": "import", "value": "HttpSendRequestW"}],
+                    "ports": [443],
+                }
+            ],
+            "count": 1,
+        },
+    )
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_SECURITY,
+        {
+            "binary_id": binary_id,
+            "findings": [
+                {
+                    "rule": "unbounded-copy",
+                    "cwe": "CWE-120",
+                    "severity": "high",
+                    "confidence": "high",
+                    "file": "a.c",
+                    "line": 3,
+                    "function": "vuln_copy",
+                }
+            ],
+            "count": 1,
+        },
+    )
+    store.set_scan(
+        conn,
+        analysis_id,
+        gobuildinfo.SCAN_KIND,
+        {
+            "binary_id": binary_id,
+            "version": "go1.27.1",
+            "module": "example.com/demo",
+            "dependencies": [{"module": "github.com/google/uuid", "version": "v1.6.0"}],
+            "settings": {"GOOS": "linux"},
+            "build_id": "",
+        },
+    )
 
 
 def _project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -394,8 +445,50 @@ class TestPageCountAndText:
         _seed_scans(conn, analysis_id, binary_id)
         text = _render(pdf.render_report(conn, binary_id=binary_id, generated=GENERATED), tmp_path)
         assert text is not None
-        for marker in ("Coverage", "Fingerprint", "Capabilities", "Security", "Crypto"):
+        for marker in (
+            "Coverage",
+            "Fingerprint",
+            "Capabilities",
+            "Security",
+            "Crypto",
+            "Attack surface",
+            "Exploitability",
+            "Go build",
+        ):
             assert marker in text
+
+    def test_new_sections_render_stored_rows(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        if PDFTOTEXT is None:
+            pytest.skip("pdftotext not installed")
+        binary_id, analysis_id = _binary(conn)
+        _seed_scans(conn, analysis_id, binary_id)
+        text = _render(pdf.render_report(conn, binary_id=binary_id, generated=GENERATED), tmp_path)
+        assert text is not None
+        assert "https" in text
+        assert "vuln_copy" in text
+        assert "go1.27.1" in text
+        assert "github.com/google/uuid" in text
+
+    def test_renames_section_lists_a_named_function(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        if PDFTOTEXT is None:
+            pytest.skip("pdftotext not installed")
+        binary_id, analysis_id = _binary(conn)
+        store.add_function(
+            conn,
+            analysis_id=analysis_id,
+            name="main",
+            va=0x401000,
+            size=64,
+            status="analyzed",
+        )
+        text = _render(pdf.render_report(conn, binary_id=binary_id, generated=GENERATED), tmp_path)
+        assert text is not None
+        assert "Renames" in text
+        assert "main" in text
 
     def test_pdftotext_shows_title_block(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         if PDFTOTEXT is None:

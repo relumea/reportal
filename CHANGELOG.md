@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- The PDF deliverable covers the new compositions.  The report renders Attack
+  surface, Exploitability, Go build and Renames sections from the stored
+  scans (each omitted when its source is absent, like every other section),
+  so an assessment export carries the network entries, the ranked findings,
+  the Go provenance and the carried rename list beside the scans they were
+  read from.
 - IPv6 literals are indicators now.  The threat extractor reports them in
   their own `ipv6` category (`ipv6` public, `ipv6-private` for private,
   loopback and link-local, validated with the standard library so compressed

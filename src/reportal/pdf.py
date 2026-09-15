@@ -33,7 +33,17 @@ from typing import Any
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas as pdfcanvas
 
-from reportal import behavior, engines, hardening, lineage, store
+from reportal import (
+    attack_surface,
+    behavior,
+    decompiler_scripts,
+    engines,
+    exploitability,
+    gobuildinfo,
+    hardening,
+    lineage,
+    store,
+)
 from reportal._paths import reports_dir
 
 # File name a generated PDF takes inside a binary's workspace report directory.
@@ -715,6 +725,108 @@ def _lineage_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int
     )
 
 
+def _attack_surface_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    try:
+        payload = attack_surface.attack_surface(conn, binary_id)
+    except KeyError:
+        return
+    if not payload["available"]:
+        return
+    layout.heading("Attack surface")
+    layout.key_values(
+        [
+            ("network", _text(payload["network"]["count"])),
+            ("local input", _text(payload["local_input"]["count"])),
+            ("crypto", _text(payload["crypto"]["count"])),
+        ]
+    )
+    rows: list[list[Any]] = []
+    for group in ("network", "local_input", "crypto"):
+        for row in payload[group]["rows"][:MAX_ROWS_PER_SECTION]:
+            rows.append([group, _truncate(row["name"], 48), _truncate(row["source"], 24)])
+            if len(rows) >= MAX_ROWS_PER_SECTION:
+                break
+        if len(rows) >= MAX_ROWS_PER_SECTION:
+            break
+    if rows:
+        layout.table(["group", "entry", "source"], rows, [0.25, 0.5, 0.25])
+
+
+def _exploitability_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    try:
+        payload = exploitability.rank(conn, binary_id)
+    except KeyError:
+        return
+    if not payload["available"]:
+        return
+    layout.heading("Exploitability")
+    layout.key_values(
+        [
+            ("findings", _text(payload["count"])),
+            ("reachable", _text(payload["reachable"])),
+            ("unreachable", _text(payload["unreachable"])),
+        ]
+    )
+    rows = payload["rows"]
+    if rows:
+        layout.table(
+            ["severity", "function", "reachability"],
+            [
+                [row.get("severity"), _truncate(row.get("function"), 40), row.get("reachability")]
+                for row in rows[:MAX_ROWS_PER_SECTION]
+            ],
+            [0.25, 0.45, 0.3],
+        )
+
+
+def _gobuildinfo_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    scan = _scan(conn, binary_id, gobuildinfo.SCAN_KIND)
+    if not scan:
+        return
+    layout.heading("Go build")
+    layout.key_values(
+        [
+            ("version", _text(scan.get("version"))),
+            ("module", _text(scan.get("module")) or "none"),
+        ]
+    )
+    dependencies = scan.get("dependencies")
+    rows = (
+        [
+            [entry.get("module"), entry.get("version")]
+            for entry in dependencies[:MAX_ROWS_PER_SECTION]
+            if isinstance(entry, dict)
+        ]
+        if isinstance(dependencies, list)
+        else []
+    )
+    if rows:
+        layout.table(["module", "version"], rows, [0.65, 0.35])
+
+
+def _renames_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    try:
+        payload = decompiler_scripts.collect(conn, binary_id)
+    except decompiler_scripts.ScriptError:
+        return
+    if not payload["entries"]:
+        return
+    layout.heading("Renames")
+    layout.key_values(
+        [
+            ("renames", _text(len(payload["entries"]))),
+            ("functions", _text(payload["count"])),
+        ]
+    )
+    rows = [
+        [_truncate(hex(int(entry.get("va", 0))), 18), _truncate(str(entry.get("name")), 48)]
+        for entry in payload["entries"][:MAX_ROWS_PER_SECTION]
+        if isinstance(entry, dict)
+    ]
+    if rows:
+        layout.table(["address", "name"], rows, [0.3, 0.7])
+
+
 # ── Public entry points ────────────────────────────────────────────
 
 
@@ -749,6 +861,10 @@ def _render(
     _hardening_section(layout, conn, binary_id)
     _remediation_section(layout, conn, binary_id)
     _lineage_section(layout, conn, binary_id)
+    _attack_surface_section(layout, conn, binary_id)
+    _exploitability_section(layout, conn, binary_id)
+    _gobuildinfo_section(layout, conn, binary_id)
+    _renames_section(layout, conn, binary_id)
     data = layout.build()
     return RenderedReport(data=data, sections=layout.sections, pages=page_count(data))
 
