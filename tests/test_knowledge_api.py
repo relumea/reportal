@@ -98,6 +98,39 @@ class TestCreateDocument:
         assert payload["embedded"] is False
         assert "text" not in payload
 
+    def test_creating_on_a_hidden_binary_is_404(
+        self, conn: sqlite3.Connection, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = _seed_binary(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        body = {"scope_kind": "binary", "scope_id": binary_id, "text": NOTE_TEXT}
+        raw = json.dumps(body).encode("utf-8")
+        stranger_status, headers, content = wsgi_request(
+            "POST",
+            "/api/documents",
+            body=raw,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), content
+        assert json_body(content, headers)["error"] == "binary not found"
+        member_status, _, _ = wsgi_request(
+            "POST",
+            "/api/documents",
+            body=raw,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("201"), member_status
+
     def test_duplicate_answers_200_with_the_flag(
         self, conn: sqlite3.Connection, portal_db: Path
     ) -> None:

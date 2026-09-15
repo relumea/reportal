@@ -6594,7 +6594,7 @@ def list_conversations(request: Request) -> Response:
 
 
 @router.post("/api/conversations")
-def create_conversation(body: dict[str, Any] = Depends(json_body)) -> Response:
+def create_conversation(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Create a conversation for a function or binary scope."""
     scope_kind = _require_str(body, "scope_kind")
     scope_id = _require_int(body, "scope_id")
@@ -6607,6 +6607,18 @@ def create_conversation(body: dict[str, Any] = Depends(json_body)) -> Response:
         detail = _conversation_scope_detail(conn, scope_kind, scope_id)
         if detail is not None:
             return json_error(404, error=f"{scope_kind} not found", detail=detail)
+        if scope_kind != conversations.SCOPE_KIND_DOCS:
+            if scope_kind == conversations.SCOPE_KIND_FUNCTION:
+                function = store.get_function(conn, scope_id)
+                owner_id = None if function is None else int(function["binary_id"])
+            else:
+                owner_id = scope_id
+            if owner_id is None or not _visible_binary(conn, owner_id, _caller(request)):
+                return json_error(
+                    404,
+                    error=f"{scope_kind} not found",
+                    detail=f"no {scope_kind} with id {scope_id}",
+                )
         resolved = title.strip() or conversations.default_title(
             conn, scope_kind=scope_kind, scope_id=scope_id
         )
@@ -7900,7 +7912,7 @@ def _check_document_scope(
 
 
 @router.post("/api/documents")
-def create_document(body: dict[str, Any] = Depends(json_body)) -> Response:
+def create_document(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Ingest a pasted note as a document.
 
     The body is ``{"scope_kind", "scope_id", "title", "text", "source"}``.  The
@@ -7920,6 +7932,10 @@ def create_document(body: dict[str, Any] = Depends(json_body)) -> Response:
         failure = _check_document_scope(conn, scope_kind, scope_id)
         if failure is not None:
             return failure
+        if scope_kind == knowledge.SCOPE_KIND_BINARY and not _visible_binary(
+            conn, scope_id, _caller(request)
+        ):
+            return json_error(404, error="binary not found", detail=f"no binary with id {scope_id}")
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
