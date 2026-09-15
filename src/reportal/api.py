@@ -9057,8 +9057,9 @@ def list_jobs(request: Request) -> Response:
             kind=kind,
             binary_id=binary_id,
             limit=limit or jobs.DEFAULT_JOB_LIMIT,
+            visible_to=_caller(request),
         )
-        queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED)
+        queued = jobs.count_jobs(conn, status=jobs.STATUS_QUEUED, visible_to=_caller(request))
     return json_response(
         {
             "jobs": rows,
@@ -9077,10 +9078,10 @@ def list_jobs(request: Request) -> Response:
 
 
 @router.get("/api/jobs/{job_id}")
-def get_job(job_id: int) -> Response:
+def get_job(request: Request, job_id: int) -> Response:
     """One job with its status, progress and result or error."""
     with contextlib.closing(_open()) as conn:
-        job = jobs.get_job(conn, job_id)
+        job = jobs.visible_job(conn, job_id, _caller(request))
     if job is None:
         return json_error(404, error="job not found", detail=f"no job with id {job_id}")
     return json_response(job)
@@ -9126,7 +9127,7 @@ def submit_job(body: dict[str, Any] = Depends(json_body)) -> Response:
 
 
 @router.post("/api/jobs/{job_id}/cancel")
-def cancel_job(job_id: int) -> Response:
+def cancel_job(request: Request, job_id: int) -> Response:
     """Cancel a job that has not started; 409 ``job-not-cancellable`` once it has.
 
     A running scan has already entered the engine, so the cancel refuses rather
@@ -9134,7 +9135,7 @@ def cancel_job(job_id: int) -> Response:
     result or leaves it running.
     """
     with contextlib.closing(_open()) as conn:
-        if jobs.get_job(conn, job_id) is None:
+        if jobs.visible_job(conn, job_id, _caller(request)) is None:
             return json_error(404, error="job not found", detail=f"no job with id {job_id}")
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -9174,7 +9175,7 @@ def run_jobs(request: Request) -> Response:
 
 
 @router.get("/api/jobs/{job_id}/events")
-def job_events(job_id: int) -> Response:
+def job_events(request: Request, job_id: int) -> Response:
     """The job's state as server-sent events, ending when the job is terminal.
 
     One ``event: job`` frame per observed change, the current state first so a
@@ -9183,7 +9184,7 @@ def job_events(job_id: int) -> Response:
     state again rather than hold a socket open.
     """
     with contextlib.closing(_open()) as conn:
-        if jobs.get_job(conn, job_id) is None:
+        if jobs.visible_job(conn, job_id, _caller(request)) is None:
             return json_error(404, error="job not found", detail=f"no job with id {job_id}")
 
     def stream() -> Any:

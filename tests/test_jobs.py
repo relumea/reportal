@@ -13,7 +13,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, engines, jobs, journal, mcp_tools, similarity, store
+from reportal import auth, cli, engines, jobs, journal, mcp_tools, similarity, store
 
 HAS_SIMILARITY = similarity.available()
 requires_similarity = pytest.mark.skipif(
@@ -452,6 +452,44 @@ class TestListing:
 
         assert jobs.count_jobs(conn, status=jobs.STATUS_QUEUED) == 1
         assert jobs.count_jobs(conn, status=jobs.STATUS_DONE) == 0
+
+    def test_a_non_member_does_not_list_or_read_a_team_job(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job = _submit(conn, tmp_path, kind="composition")
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(
+            conn, int(job["binary_id"]), visibility="team", owner_team_id=team_id
+        )
+        member = auth.find_user(conn, "ana")
+        stranger = auth.find_user(conn, "bob")
+        assert member is not None and stranger is not None
+        assert jobs.visible_job(conn, int(job["id"]), member) is not None
+        assert jobs.visible_job(conn, int(job["id"]), stranger) is None
+        rows, total = jobs.list_jobs(conn, visible_to=stranger)
+        assert (rows, total) == ([], 0)
+        assert jobs.count_jobs(conn, visible_to=stranger) == 0
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, _, stranger_body = wsgi_request(
+            "GET",
+            f"/api/jobs/{int(job['id'])}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), stranger_body
+        member_status, _, member_body = wsgi_request(
+            "GET",
+            f"/api/jobs/{int(job['id'])}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), member_body
 
 
 class TestEvents:

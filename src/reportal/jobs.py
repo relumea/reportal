@@ -373,6 +373,31 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
     return _row(row) if row else None
 
 
+def visible_job(
+    conn: sqlite3.Connection, job_id: int, visible_to: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """One job by id when *visible_to* may see its binary, else None.
+
+    A job names the binary it runs on, so it resolves to that binary like
+    every other second-order kind; a missing job and a hidden one both read
+    as None, the same 404-as-absent the per-object gate reports.
+    """
+    from reportal import auth
+
+    job = get_job(conn, job_id)
+    if job is None:
+        return None
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is None:
+        return job
+    clause, params = scope
+    row = conn.execute(
+        f"SELECT b.id AS id FROM binaries b WHERE b.id = ? AND {clause}",
+        [int(job["binary_id"]), *params],
+    ).fetchone()
+    return job if row is not None else None
+
+
 def latest_job(
     conn: sqlite3.Connection, *, kind: str, binary_id: int | None = None
 ) -> dict[str, Any] | None:
@@ -390,14 +415,35 @@ def latest_job(
     return _row(row) if row else None
 
 
-def count_jobs(conn: sqlite3.Connection, *, status: str | None = None) -> int:
-    """How many jobs there are, optionally of one status."""
+def count_jobs(
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    visible_to: Mapping[str, Any] | None = None,
+) -> int:
+    """How many jobs there are, optionally of one status.
+
+    ``visible_to`` narrows to jobs of binaries the caller may see, like
+    :func:`list_jobs`.
+    """
+    from reportal import auth
+
     ensure_schema(conn)
-    sql = f"SELECT COUNT(*) FROM {TABLE}"
+    clauses: list[str] = []
     params: list[Any] = []
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        scope_clause, scope_params = scope
+        clauses.append(
+            f"EXISTS (SELECT 1 FROM binaries b WHERE b.id = {TABLE}.binary_id AND {scope_clause})"
+        )
+        params.extend(scope_params)
     if status is not None:
-        sql += " WHERE status = ?"
+        clauses.append(f"{TABLE}.status = ?")
         params.append(status)
+    sql = f"SELECT COUNT(*) FROM {TABLE}"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     return int(conn.execute(sql, params).fetchone()[0])
 
 
@@ -408,13 +454,17 @@ def list_jobs(
     kind: str | None = None,
     binary_id: int | None = None,
     limit: int = DEFAULT_JOB_LIMIT,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """``(rows, total)`` newest first, optionally narrowed by status, kind and binary.
 
     *total* is the whole match, so a bounded page never reads as the whole
     queue.  An unknown status, an unknown kind or an out-of-range limit raises
-    ``ValueError``.
+    ``ValueError``.  ``visible_to`` narrows to jobs of binaries the caller may
+    see, like the other listings.
     """
+    from reportal import auth
+
     if status is not None and status not in STATUSES:
         raise ValueError(f"unknown job status: {status}")
     if kind is not None and kind not in JOB_KINDS:
@@ -424,19 +474,27 @@ def list_jobs(
     ensure_schema(conn)
     clauses: list[str] = []
     params: list[Any] = []
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        scope_clause, scope_params = scope
+        clauses.append(
+            f"EXISTS (SELECT 1 FROM binaries b WHERE b.id = {TABLE}.binary_id AND {scope_clause})"
+        )
+        params.extend(scope_params)
     if status is not None:
-        clauses.append("status = ?")
+        clauses.append(f"{TABLE}.status = ?")
         params.append(status)
     if kind is not None:
-        clauses.append("kind = ?")
+        clauses.append(f"{TABLE}.kind = ?")
         params.append(kind)
     if binary_id is not None:
-        clauses.append("binary_id = ?")
+        clauses.append(f"{TABLE}.binary_id = ?")
         params.append(binary_id)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
     total = int(conn.execute(f"SELECT COUNT(*) FROM {TABLE}{where}", params).fetchone()[0])
     rows = conn.execute(
-        f"SELECT * FROM {TABLE}{where} ORDER BY id DESC LIMIT ?", [*params, limit]
+        f"SELECT {TABLE}.* FROM {TABLE}{where} ORDER BY {TABLE}.id DESC LIMIT ?",
+        [*params, limit],
     ).fetchall()
     return [_row(row) for row in rows], total
 
