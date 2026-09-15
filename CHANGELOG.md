@@ -7,6 +7,14 @@ view renders it from here.
 
 ## Unreleased
 
+- Readiness is readable over HTTP.  `reportal doctor` was CLI-only, so a remote
+  caller or a supervisor without shell access could not ask what the unit file
+  gates on.  `GET /api/doctor` answers `doctor.report` with an optional
+  `?port=` (default 8002, 0 or blank skips the bind probe): workspace, database
+  and schema, auth posture, engine, SPA build, optional paths and the port,
+  every check a read, 200 either way with the same `ok`/`degraded` vocabulary;
+  400 `port must be an integer`.  Covered beside the CLI cases.
+
 - The API reference covers every route and proves it.  `tests/test_api_docs.py`
   walks the live router tables and fails the gate for a route with no
   `docs/API.md` row (or no same-method family row, which is how the

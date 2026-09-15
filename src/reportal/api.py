@@ -60,6 +60,7 @@ from reportal import (
     data_types,
     details,
     diffview,
+    doctor,
     effects,
     engines,
     external,
@@ -8596,6 +8597,29 @@ def _last_auto_run(conn: Any) -> dict[str, Any] | None:
         "status": str(run["status"]),
         "finished_at": run["finished_at"],
     }
+
+
+@router.get("/api/doctor")
+def doctor_report(request: Request) -> Response:
+    """The pre-flight half of ``GET /api/health``, over HTTP.
+
+    ``health`` answers from inside a running server; it cannot check the two
+    things a start depends on, the SPA build and a free port.  This is
+    ``doctor.report`` with an optional ``?port=`` (default 8002, 0 or blank
+    skips the bind probe), so a remote caller gets the same readiness a unit
+    file gates on.  Every check is a read: nothing is written and no database
+    is created, and the answer is 200 with the same ``ok``/``degraded``
+    vocabulary either way.
+    """
+    raw = request.query_params.get("port")
+    if raw is None or not raw.strip():
+        port = doctor.DEFAULT_PORT
+    else:
+        try:
+            port = int(raw)
+        except ValueError:
+            return json_error(400, error="port must be an integer")
+    return json_response(doctor.report(port=port))
 
 
 @router.get("/api/health")

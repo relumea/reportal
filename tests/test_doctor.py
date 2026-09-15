@@ -289,6 +289,37 @@ class TestHealthRouteAgrees:
         assert report["checks"][0]["detail"] == str(tmp_path)
 
 
+class TestDoctorRoute:
+    def test_the_route_answers_the_cli_report(self, conn: sqlite3.Connection) -> None:
+        status, headers, body = wsgi_request("GET", "/api/doctor?port=0")
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        report = doctor.report(port=0)
+        assert payload["status"] == report["status"]
+        assert [row["name"] for row in payload["checks"]] == [
+            row["name"] for row in report["checks"]
+        ]
+        assert payload["failures"] == report["failures"]
+        assert payload["port"] == 0
+
+    def test_the_default_port_is_checked(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        status, headers, body = wsgi_request("GET", "/api/doctor")
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert payload["port"] == doctor.DEFAULT_PORT
+        assert {row["name"] for row in payload["checks"]} == {
+            row["name"] for row in doctor.report()["checks"]
+        }
+
+    def test_a_non_integer_port_is_a_400(self, conn: sqlite3.Connection) -> None:
+        status, headers, body = wsgi_request("GET", "/api/doctor?port=nope")
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "port must be an integer"
+
+
 class TestUnit:
     def test_the_unit_carries_the_readiness_gate(self) -> None:
         text = UNIT.read_text(encoding="utf-8")
