@@ -129,6 +129,37 @@ class TestFeed:
 
         assert all(item["kind"] == activity.SOURCE_ACTION for item in payload["items"])
 
+    def test_a_non_member_sees_no_team_log_items(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import analysis_log
+
+        binary_id = store.add_binary(conn, sha256="e" * 64, name="team.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        analysis_log.append_entry(conn, analysis_id, message="engine failed", severity="error")
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        member = activity.feed(conn, sources=(activity.SOURCE_LOG,), visible_to=ana)
+        assert any("engine failed" in item["description"] for item in member["items"])
+        hidden = activity.feed(conn, sources=(activity.SOURCE_LOG,), visible_to=stranger)
+        assert hidden["items"] == []
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, outsider_feed = _get("/api/users/activity?sources=log", token=outsider)
+        assert outsider_feed["items"] == []
+        _status, member_feed = _get("/api/users/activity?sources=log", token=token)
+        assert any("engine failed" in item["description"] for item in member_feed["items"])
+
     def test_the_limit_bounds_the_page_and_the_total_stays_true(
         self, conn: sqlite3.Connection
     ) -> None:

@@ -20,6 +20,7 @@ than over what the user table happens to hold.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from typing import Any
 
 from reportal import analysis_log, journal, notifications
@@ -70,6 +71,7 @@ def feed(
     since: str | None = None,
     limit: int = DEFAULT_ACTIVITY_LIMIT,
     sources: tuple[str, ...] = SOURCES,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The merged activity feed, newest first, bounded, with the true total.
 
@@ -93,7 +95,9 @@ def feed(
     if SOURCE_LOG in sources and actor is None:
         # An analysis-log entry carries no actor: the log records what the
         # engine or the analyst did, and only the journal knows who asked.
-        entries = analysis_log.list_recent(conn, limit=analysis_log.MAX_LOG_LIMIT, since=since)
+        entries = analysis_log.list_recent(
+            conn, limit=analysis_log.MAX_LOG_LIMIT, since=since, visible_to=visible_to
+        )
         items.extend(_item_from_log(row) for row in entries)
     items.sort(key=lambda item: (item["at"], item["id"]), reverse=True)
     return {
