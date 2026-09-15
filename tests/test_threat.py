@@ -118,6 +118,28 @@ class TestExtractIocs:
         iocs = threat.extract_iocs([_string("999.1.2.3 and 1.2.3.999")])
         assert iocs[threat.IOC_CATEGORY_IPV4] == []
 
+    @pytest.mark.parametrize(
+        ("address", "kind"),
+        [
+            ("169.254.169.254", "cloud-aws"),
+            ("169.254.170.2", "cloud-aws-ecs"),
+            ("100.100.100.200", "cloud-alibaba"),
+            ("169.254.0.23", "cloud-tencent"),
+        ],
+    )
+    def test_cloud_metadata_ips_are_flagged_by_provider(self, address: str, kind: str) -> None:
+        iocs = threat.extract_iocs([_string(f"curl http://{address}/latest/meta")])
+        assert iocs[threat.IOC_CATEGORY_IPV4][0]["value"] == address
+        assert iocs[threat.IOC_CATEGORY_IPV4][0]["kind"] == kind
+
+    def test_cloud_metadata_hostname_is_flagged(self) -> None:
+        iocs = threat.extract_iocs([_string("curl metadata.google.internal now")])
+        assert iocs[threat.IOC_CATEGORY_DOMAINS][0] == {
+            "value": "metadata.google.internal",
+            "kind": "cloud-gcp",
+            "source_va": 0x402000,
+        }
+
     def test_email_is_extracted(self) -> None:
         iocs = threat.extract_iocs([_string("report to analyst@evil.com please")])
         assert _values(iocs, threat.IOC_CATEGORY_EMAILS) == ["analyst@evil.com"]

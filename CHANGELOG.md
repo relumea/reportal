@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- Cloud recon lights up by provider.  The threat extractor flags instance
+  metadata endpoints with the cloud they belong to (`cloud-aws`,
+  `cloud-aws-ecs`, `cloud-gcp`, `cloud-alibaba`, `cloud-tencent`) instead of
+  a bare `ipv4-private`, so a LinPEAS-shaped post-exploitation binary reads
+  as cloud recon at triage time.  Same categories, same pipeline, no new
+  surfaces.
 - Go binaries report their own provenance.  `gobuildinfo.py` scans the stored
   file for the `go.buildinfo` magic and keeps the compiler version, the main
   module path, the module dependencies and the build settings as the

@@ -108,6 +108,29 @@ CONFIDENCE_LOW = "low"
 KIND_IPV4 = "ipv4"
 KIND_IPV4_PRIVATE = "ipv4-private"
 
+# Cloud instance-metadata endpoints, by finding kind.  A literal hit is
+# post-exploitation cloud recon (the LinPEAS-shaped behavior Zenyard's
+# malware posts dissect), so the kind names the provider rather than
+# merely flagging the address as private.
+CLOUD_METADATA_IPS: dict[str, str] = {
+    "169.254.169.254": "cloud-aws",
+    "169.254.170.2": "cloud-aws-ecs",
+    "100.100.100.200": "cloud-alibaba",
+    "169.254.0.23": "cloud-tencent",
+}
+CLOUD_METADATA_HOSTS: dict[str, str] = {
+    "metadata.google.internal": "cloud-gcp",
+}
+
+
+def _cloud_kind(value: str) -> str | None:
+    """The cloud-metadata kind for an IP or host literal, or None."""
+    lowered = value.casefold().rstrip(".")
+    if lowered in CLOUD_METADATA_IPS:
+        return CLOUD_METADATA_IPS[lowered]
+    return CLOUD_METADATA_HOSTS.get(lowered)
+
+
 # Digest name per hexadecimal length.
 HASH_KINDS: dict[int, str] = {32: "md5", 40: "sha1", 64: "sha256"}
 
@@ -543,12 +566,17 @@ def extract_iocs(strings: Sequence[dict[str, Any]]) -> dict[str, list[dict[str, 
                 add(IOC_CATEGORY_URLS, value, "url", va)
         for match in _DOMAIN.finditer(text):
             value = _trim(match.group(0)).casefold()
-            if _plausible_domain(value):
+            cloud = _cloud_kind(value)
+            if cloud is not None:
+                add(IOC_CATEGORY_DOMAINS, value, cloud, va)
+            elif _plausible_domain(value):
                 add(IOC_CATEGORY_DOMAINS, value, "domain", va)
         for match in _IPV4.finditer(text):
             value = match.group(0)
             if _valid_ipv4(value):
-                kind = KIND_IPV4_PRIVATE if _private_ipv4(value) else KIND_IPV4
+                kind = _cloud_kind(value) or (
+                    KIND_IPV4_PRIVATE if _private_ipv4(value) else KIND_IPV4
+                )
                 add(IOC_CATEGORY_IPV4, value, kind, va)
         for match in _EMAIL.finditer(text):
             value = match.group(0)
