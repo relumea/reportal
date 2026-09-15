@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import knowledge, llm, store
+from reportal import auth, knowledge, llm, store
 
 # Boundary of the multipart requests these tests build; fixed so a failure is
 # readable.
@@ -338,6 +338,48 @@ class TestDelete:
         status, headers, raw = wsgi_request("DELETE", "/api/documents/4242")
         assert status.startswith("404")
         assert json_body(raw, headers)["error"] == "document not found"
+
+    def test_a_non_member_does_not_read_or_delete_a_team_document(
+        self, conn: sqlite3.Connection, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = _seed_binary(conn)
+        _status, headers, raw = _post(
+            {"scope_kind": "binary", "scope_id": binary_id, "text": NOTE_TEXT}
+        )
+        document_id = int(json_body(raw, headers)["id"])
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, raw = wsgi_request(
+            "GET",
+            f"/api/documents/{document_id}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), raw
+        assert json_body(raw, headers)["error"] == "document not found"
+
+        stranger_status, headers, raw = wsgi_request(
+            "DELETE",
+            f"/api/documents/{document_id}",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("403"), raw
+        assert json_body(raw, headers)["error"] == "scope-forbidden"
+
+        member_status, headers, raw = wsgi_request(
+            "GET",
+            f"/api/documents/{document_id}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert member_status.startswith("200"), raw
 
 
 class TestSearch:
