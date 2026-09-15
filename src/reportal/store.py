@@ -3711,9 +3711,9 @@ def search(
         tags, tag_total = _search_tags(conn, needle, limit)
 
     # The page is bounded, so the visibility filter runs over the returned rows:
-    # a binary in a team the caller is not in drops out of the page.  The
-    # *total* stays the unfiltered match count, which is a stated residual
-    # (docs/THREAT_MODEL.md) rather than a wrong page.
+    # a binary in a team the caller is not in drops out of the page, as do
+    # its functions.  The *total* stays the unfiltered match count, which is
+    # a stated residual (docs/THREAT_MODEL.md) rather than a wrong page.
     scope = auth.visible_clause(conn, visible_to)
     if scope is not None:
         visible_ids = {
@@ -3721,6 +3721,7 @@ def search(
             for row in conn.execute(f"SELECT id FROM binaries WHERE {scope[0]}", scope[1])
         }
         binaries = [row for row in binaries if int(row["id"]) in visible_ids]
+        functions = [row for row in functions if int(row["binary_id"]) in visible_ids]
 
     return {
         "binaries": binaries,

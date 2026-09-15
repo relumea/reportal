@@ -11,7 +11,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import api, cli, store
+from reportal import api, auth, cli, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -217,6 +217,34 @@ class TestSearchRoute:
         _seed(conn)
         _, headers, body = wsgi_request("GET", "/api/search?q=alpha")
         assert json.loads(json.dumps(json_body(body, headers)))["query"] == "alpha"
+
+    def test_a_non_member_does_not_see_a_team_binary_or_its_functions(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["alpha"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, headers, body = wsgi_request(
+            "GET", "/api/search?q=alpha", headers={"Authorization": f"Bearer {outsider}"}
+        )
+        payload = json_body(body, headers)
+        assert payload["binaries"] == []
+        assert payload["functions"] == []
+        _status, headers, body = wsgi_request(
+            "GET", "/api/search?q=alpha", headers={"Authorization": f"Bearer {token}"}
+        )
+        payload = json_body(body, headers)
+        assert [row["name"] for row in payload["binaries"]] == ["alpha.dll"]
+        assert [row["name"] for row in payload["functions"]] == ["parse_alpha"]
 
 
 # ── The regular-expression search and the any-of string filter ─────
