@@ -6,9 +6,10 @@ the authority when the two disagree; README.md carries worked examples.
 
 ```bash
 reportal init [--dir PATH]                 # write reportal.toml + reportal.db
-reportal import-rebrew <project-dir>       # ingest a rebrew workspace (idempotent; stores its context)
+reportal import-rebrew <project-dir> [--json]
+                                           # ingest a rebrew workspace (idempotent; stores its context)
                                            #   plus the target binary's import stubs as THUNK rows
-reportal add-binary <path> [--name TEXT] [--team ID]   # register a binary by sha256 (dedupe)
+reportal add-binary <path> [--name TEXT] [--team ID] [--json]   # register a binary by sha256 (dedupe)
 reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--password TEXT] [--json]
                                            # write the stored binary's bytes to a path (default:
                                            #   the stored name in the current directory), copying
@@ -82,10 +83,10 @@ reportal symbols <binary-id> <path> [--no-apply] [--json]
 reportal symbols-status <binary-id> [--file-id N] [--json]
                                            # the ingested symbol files, or one in
                                            #   full with its notes and its symbols
-reportal symbols-export <binary-id> [--format c|json] [--output PATH] [--file-id N]
+reportal symbols-export <binary-id> [--format c|json] [--output PATH] [--file-id N] [--json]
                                            # render one parse as a C header (through
                                            #   the type model's renderer) or as JSON
-reportal enrich <binary-id>                # compute and store a rebrew fingerprint
+reportal enrich <binary-id> [--json]       # compute and store a rebrew fingerprint
 reportal fingerprint <binary-id> [--json]  # print the stored fingerprint, else compute
                                            #   one live without storing it
 reportal decompile <function-id> [--backend kuna] [--named] [--json]
@@ -361,8 +362,19 @@ reportal section-coverage <binary-id> [--json]
                                            # report per-section byte coverage over the stored
                                            #   function table and the stored pe-info sections;
                                            #   reportal's own metric, not a portal feature
-reportal match <binary-id> [--min-similarity 80] [--top 10] [--json]
-                                           # rank each function against the local corpus
+reportal match <binary-id> [--min-similarity 80] [--min-confidence 0]
+             [--top 10] [--no-self] [--platform P]... [--arch A]...
+             [--binary ID]... [--collection ID]... [--json]
+                                           # rank each function against the local
+                                           #   corpus under the match settings:
+                                           #   the two floors, the candidates kept
+                                           #   per function (--top, at least 1),
+                                           #   whether the binary's own functions
+                                           #   may be candidates (--self/--no-self),
+                                           #   and the platform, architecture,
+                                           #   binary and collection scopes, each
+                                           #   repeatable; an unknown scope id or
+                                           #   an out-of-range value exits 1
 reportal triage <binary-id> [--json]       # store the rebrew one-shot dossier
 reportal function-triage <binary-id> [--limit N] [--function ID]... [--json]
                                            # score and summarize the binary's selected

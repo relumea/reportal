@@ -515,6 +515,22 @@ artifacts carry a verdict.  The Integrations view ends with the "Connect an MCP
 client" card: the `claude mcp add` one-liner and the `~/.claude.json` snippet,
 each with a copy control, above the tool counts read from `GET /api/config`.
 
+The Matches view (`views/MatchesView.tsx`, `#/matches`) starts from a function
+id: Load reads that function's binary through `GET /api/functions/<id>` and then
+the candidates recorded for it from `GET /api/binaries/<id>/matches`, each row
+carrying the source and candidate function (both linked), the similarity, its
+band and the confidence.  Match settings opens the sheet the next run uses: the
+0-100 similarity floor, the 0-1 confidence floor, the most candidates kept per
+function (the API's `top`, 1 or more, default 10), whether the binary's own
+functions may be candidates, and the platform, architecture, binary and
+collection scopes; Run match posts them to `POST /api/binaries/<id>/match` and
+renders the run's function, matched and pair counts, the note it carries and the
+journal action the run recorded, then reloads the rows.  Every value that
+differs from its default shows as a chip above the sheet and clearing the chip
+restores the default, and the transfer panel copies names and signatures from
+the chosen rows through `POST /api/binaries/<id>/matches/transfer` (a dry run is
+the default, so the report is read before anything is written).
+
 The analyses list carries Owner and Seen by columns and a Workspace filter
 (personal, team or public) beside the status and search filters, all of them in
 the route hash, so a filtered list is a link.  The scope is the owning binary's,

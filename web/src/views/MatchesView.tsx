@@ -19,6 +19,7 @@ import {
 import {
   DEFAULT_INCLUDE_SELF,
   DEFAULT_MATCH_METRIC,
+  DEFAULT_MATCH_TOP,
   DEFAULT_MIN_MATCH_CONFIDENCE,
   DEFAULT_MIN_SIMILARITY,
   DEFAULT_TRANSFER_MODE,
@@ -179,6 +180,7 @@ export function MatchesView({
   const [minSimilarity, setMinSimilarity] = useState(DEFAULT_MIN_SIMILARITY);
   const [minConfidence, setMinConfidence] = useState(DEFAULT_MIN_MATCH_CONFIDENCE);
   const [includeSelf, setIncludeSelf] = useState(DEFAULT_INCLUDE_SELF);
+  const [top, setTop] = useState(DEFAULT_MATCH_TOP);
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [architectures, setArchitectures] = useState<string[]>([]);
   const [scopeBinaries, setScopeBinaries] = useState<number[]>([]);
@@ -240,6 +242,7 @@ export function MatchesView({
     setMinSimilarity(settings.min_similarity);
     setMinConfidence(settings.min_confidence);
     setIncludeSelf(settings.include_self);
+    setTop(settings.top);
     setPlatforms(settings.platforms);
     setArchitectures(settings.architectures);
     setScopeBinaries(settings.binary_ids);
@@ -251,7 +254,7 @@ export function MatchesView({
       min_similarity: DEFAULT_MIN_SIMILARITY,
       min_confidence: DEFAULT_MIN_MATCH_CONFIDENCE,
       include_self: DEFAULT_INCLUDE_SELF,
-      top: matchesResult.data?.settings?.top ?? 10,
+      top: DEFAULT_MATCH_TOP,
       platforms: [],
       architectures: [],
       binary_ids: [],
@@ -270,6 +273,7 @@ export function MatchesView({
           min_similarity: minSimilarity,
           min_confidence: minConfidence,
           include_self: includeSelf,
+          top,
           platforms,
           architectures,
           binary_ids: scopeBinaries,
@@ -397,6 +401,15 @@ export function MatchesView({
       />,
     );
   }
+  if (top !== DEFAULT_MATCH_TOP) {
+    chips.push(
+      <ScopeChip
+        key="top"
+        label={`Top ${top} per function`}
+        onClear={() => setTop(DEFAULT_MATCH_TOP)}
+      />,
+    );
+  }
   for (const platform of platforms) {
     chips.push(
       <ScopeChip
@@ -519,6 +532,15 @@ export function MatchesView({
                     step="0.05"
                     value={minConfidence}
                     onChange={(event) => setMinConfidence(Number(event.target.value))}
+                  />
+                </Field>
+                <Field label="Top candidates" hint="Most candidates kept per function">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={top}
+                    onChange={(event) => setTop(Number(event.target.value))}
                   />
                 </Field>
                 <CheckboxField

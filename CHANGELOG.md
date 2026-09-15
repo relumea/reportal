@@ -7,6 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
+- The match settings sheet can set the candidate cap.  `top` is part of
+  `matching.MatchSettings`, and the route, the CLI and the MCP tool each take
+  it, but the sheet offered the other seven settings and not this one: a run
+  started from the SPA kept the server's default of 10 candidates per function
+  whatever the corpus held, and the sheet then wrote that default back as if it
+  had been chosen.  The sheet now offers Top candidates (1 or more), sends it
+  with the run, records it in the settings the run stores and shows it as a
+  clearable chip like the other settings.
+
 - The Jobs view keeps following a live job to its end.  Its poll asked the
   queue's `queued` count, which counts the jobs still waiting, so the refresh
   stopped the moment a job started running: a `match` job's `progress` and

@@ -429,6 +429,7 @@ export const MATCH_ARCHITECTURE_LABELS: Record<string, string> = {
 export const DEFAULT_MIN_SIMILARITY = 80;
 export const DEFAULT_MIN_MATCH_CONFIDENCE = 0.0;
 export const DEFAULT_INCLUDE_SELF = true;
+export const DEFAULT_MATCH_TOP = 10;
 
 // Declaration kinds the type model carries; mirrors the API's
 // data_types.KINDS.  The panel offers exactly these, since the API refuses
