@@ -1247,17 +1247,30 @@ def analysis_filter_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
     return {"platforms": distinct("format"), "architectures": distinct("arch")}
 
 
-def count_analyses(conn: sqlite3.Connection, *, binary_id: int | None = None) -> int:
+def count_analyses(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
+) -> int:
     """How many analyses exist, optionally of one binary.
 
     A filtered listing reports this beside its rows so a reader can tell a
     filter that matched nothing from a project with no analyses at all.
+    ``visible_to`` narrows to what the caller may see, like :func:`list_analyses`.
     """
-    sql = "SELECT COUNT(*) AS total FROM analyses"
+    sql = "SELECT COUNT(*) AS total FROM analyses a JOIN binaries b ON a.binary_id = b.id"
+    clauses: list[str] = []
     params: list[Any] = []
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clauses.append(scope[0])
+        params.extend(scope[1])
     if binary_id is not None:
-        sql += " WHERE binary_id = ?"
+        clauses.append("a.binary_id = ?")
         params.append(binary_id)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     row = conn.execute(sql, params).fetchone()
     return int(row["total"]) if row else 0
 
@@ -1291,6 +1304,7 @@ def list_analyses(
     arch: str | None = None,
     order: str = DEFAULT_ANALYSIS_ORDER,
     limit: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Analyses with their binary name, owner, visibility, size, format and tags.
 
@@ -1308,7 +1322,9 @@ def list_analyses(
     ``visibility``, ``owner_team_id`` and ``owner_team_name``.  ``workspace``
     reads that scope as the hosted portal's three controls: ``personal`` is an
     object no team owns, ``team`` one a team does, and ``public`` one the whole
-    workspace may see.
+    workspace may see.  ``visible_to`` is the authenticated caller (None while
+    auth is off); a non-admin caller sees only analyses of public binaries
+    and its own teams', which is what `auth.visible_clause` expresses.
     """
     for value in (status, *statuses):
         if value is not None and value not in ANALYSIS_STATUSES:
@@ -1329,6 +1345,10 @@ def list_analyses(
     )
     clauses: list[str] = []
     params: list[Any] = []
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clauses.append(scope[0])
+        params.extend(scope[1])
     if binary_id is not None:
         clauses.append("a.binary_id = ?")
         params.append(binary_id)

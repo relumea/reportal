@@ -6895,8 +6895,9 @@ def list_analyses(request: Request) -> Response:
             arch=arch,
             order=order,
             limit=limit,
+            visible_to=_caller(request),
         )
-        total = store.count_analyses(conn, binary_id=binary_id)
+        total = store.count_analyses(conn, binary_id=binary_id, visible_to=_caller(request))
         values = store.analysis_filter_values(conn)
     return json_response(
         {

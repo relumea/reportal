@@ -471,6 +471,35 @@ class TestWorkspaceFilter:
         with pytest.raises(ValueError):
             store.list_analyses(conn, workspace="nonsense")
 
+    def test_a_non_member_does_not_list_a_team_analysis(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        binary_id = store.add_binary(conn, sha256="07" * 32, name="scoped.exe")
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+        store.create_analysis(conn, binary_id=binary_id, engine="manual")
+
+        member, headers, body = wsgi_request(
+            "GET", "/api/analyses", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert member.startswith("200"), body
+        assert json_body(body, headers)["count"] == 1
+
+        stranger, headers, body = wsgi_request(
+            "GET", "/api/analyses", headers={"Authorization": f"Bearer {outsider}"}
+        )
+        assert stranger.startswith("200"), body
+        assert json_body(body, headers)["count"] == 0
+        assert json_body(body, headers)["total"] == 0
+
     def test_the_cli_and_the_tool(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         from typer.testing import CliRunner
 
