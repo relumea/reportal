@@ -4130,7 +4130,7 @@ def _lineage_other_id(body: dict[str, Any]) -> int:
 
 @router.post("/api/binaries/{binary_id}/benchmark")
 def store_binary_benchmark(
-    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Score a match run against known counterpart addresses.
 
@@ -4176,6 +4176,7 @@ def store_binary_benchmark(
                 engine=_engine(),
                 labels=raw_labels,
                 settings=settings,
+                visible_to=_caller(request),
             )
         except benchmark.BenchmarkError as exc:
             status = 404 if exc.code == "binary not found" else 400

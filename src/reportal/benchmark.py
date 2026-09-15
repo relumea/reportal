@@ -322,6 +322,7 @@ def run(
     settings: matching.MatchSettings | None = None,
     scorer: matching.Scorer | None = None,
     disassembler: matching.Disassembler | None = None,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Match the left binary against the right and score the run against labels.
 
@@ -334,11 +335,26 @@ def run(
     still states the labels that scope cannot reach.
 
     Raises :class:`BenchmarkError` for an unknown binary, the same binary twice,
-    a malformed label, or a label set that resolves to nothing.
+    a malformed label, or a label set that resolves to nothing.  ``visible_to``
+    narrows the run to binaries the caller may see, like the match run it
+    performs; a hidden partner reads as `binary not found`.
     """
+    from reportal import auth
+
     left = store.get_binary(conn, left_binary_id)
     if left is None:
         raise BenchmarkError(f"no binary with id {left_binary_id}", code="binary not found")
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, params = scope
+        visible = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+        }
+        if right_binary_id not in visible:
+            raise BenchmarkError(f"no binary with id {right_binary_id}", code="binary not found")
+        if left_binary_id not in visible:
+            raise BenchmarkError(f"no binary with id {left_binary_id}", code="binary not found")
     right = store.get_binary(conn, right_binary_id)
     if right is None:
         raise BenchmarkError(f"no binary with id {right_binary_id}", code="binary not found")
@@ -376,6 +392,7 @@ def run(
         scorer=scorer,
         disassembler=disassembler,
         settings=resolved_settings,
+        visible_to=visible_to,
     )
     scored = metrics(
         resolved_labels, matching.binary_match_rows(conn, left_binary_id), top=resolved_settings.top

@@ -16,7 +16,7 @@ import pytest
 from conftest import FakeEngine, json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import benchmark, cli, engines, matching, mcp_server, similarity, store
+from reportal import auth, benchmark, cli, engines, matching, mcp_server, similarity, store
 
 runner = CliRunner()
 
@@ -479,6 +479,33 @@ class TestRoutes:
         )
         assert status.startswith("400")
         assert payload["error"] == "invalid-labels"
+
+    def test_a_hidden_partner_is_a_404(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["right"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "POST",
+            f"/api/binaries/{ids['left']}/benchmark",
+            body=json.dumps({"right_binary_id": ids["right"]}),
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "binary not found"
+
+        with pytest.raises(benchmark.BenchmarkError, match="no binary"):
+            _run(conn, ids, visible_to=auth.find_user(conn, "bob"))
 
     def test_a_bad_setting_is_a_400(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
