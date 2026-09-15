@@ -7695,7 +7695,9 @@ def list_notifications(request: Request) -> Response:
         sources = tuple(part.strip() for part in raw_sources.split(",") if part.strip())
     with contextlib.closing(_open()) as conn:
         try:
-            payload = notifications.feed(conn, since=since, limit=limit, sources=sources)
+            payload = notifications.feed(
+                conn, since=since, limit=limit, sources=sources, visible_to=_caller(request)
+            )
         except ValueError as exc:
             return json_error(400, error="invalid sources", detail=str(exc))
         payload["latest"] = notifications.latest(conn)

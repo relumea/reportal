@@ -21,6 +21,7 @@ after one.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -160,19 +161,42 @@ def list_entries(
     return [_entry_row(row) for row in cursor.fetchall()], total
 
 
-def count_recent(conn: sqlite3.Connection, *, since: str | None = None) -> int:
-    """How many entries there are, whatever a reader's page is."""
+def count_recent(
+    conn: sqlite3.Connection,
+    *,
+    since: str | None = None,
+    visible_to: Mapping[str, Any] | None = None,
+) -> int:
+    """How many entries there are, whatever a reader's page is.
+
+    ``visible_to`` counts only entries on analyses of binaries the caller
+    may see, like :func:`list_recent`.
+    """
+    from reportal import auth
+
     ensure_schema(conn)
-    sql = f"SELECT COUNT(*) FROM {TABLE}"
+    sql = f"SELECT COUNT(*) FROM {TABLE} l JOIN analyses a ON a.id = l.analysis_id"
     params: list[Any] = []
+    clauses: list[str] = []
     if since is not None:
-        sql += " WHERE created_at >= ?"
+        clauses.append("l.created_at >= ?")
         params.append(since)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, scope_params = scope
+        clauses.append(f"EXISTS (SELECT 1 FROM binaries b WHERE b.id = a.binary_id AND {clause})")
+        params.extend(scope_params)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     return int(conn.execute(sql, params).fetchone()[0])
 
 
 def list_recent(
-    conn: sqlite3.Connection, *, since: str | None = None, limit: int = DEFAULT_LOG_LIMIT
+    conn: sqlite3.Connection,
+    *,
+    since: str | None = None,
+    limit: int = DEFAULT_LOG_LIMIT,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The newest entries across every analysis, with their binary's name.
 
@@ -181,8 +205,11 @@ def list_recent(
     client to link.  *since* is an ISO timestamp compared as text, the format
     the rows are written in, and it is inclusive, so an entry written at the
     named second is still returned.  *limit* is bounded by
-    :data:`MAX_LOG_LIMIT`.
+    :data:`MAX_LOG_LIMIT`.  ``visible_to`` narrows to entries on analyses of
+    binaries the caller may see, like the other scoped reads.
     """
+    from reportal import auth
+
     if limit < 1:
         raise ValueError("limit must be positive")
     ensure_schema(conn)
@@ -192,9 +219,17 @@ def list_recent(
         f" JOIN binaries b ON b.id = a.binary_id"
     )
     params: list[Any] = []
+    clauses: list[str] = []
     if since is not None:
-        sql += " WHERE l.created_at >= ?"
+        clauses.append("l.created_at >= ?")
         params.append(since)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, scope_params = scope
+        clauses.append(f"({clause})")
+        params.extend(scope_params)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY l.id DESC LIMIT ?"
     params.append(min(limit, MAX_LOG_LIMIT))
     rows = []

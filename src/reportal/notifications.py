@@ -22,6 +22,7 @@ what it dismissed without a server round trip.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -105,6 +106,7 @@ def feed(
     since: str | None = None,
     limit: int = DEFAULT_FEED_LIMIT,
     sources: tuple[str, ...] = SOURCES,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The notification feed, newest first, bounded, with its true total.
 
@@ -130,9 +132,12 @@ def feed(
         total += journal.count_actions(conn, since=since)
     if SOURCE_LOG in sources:
         items.extend(
-            _item_from_log(row) for row in analysis_log.list_recent(conn, since=since, limit=limit)
+            _item_from_log(row)
+            for row in analysis_log.list_recent(
+                conn, since=since, limit=limit, visible_to=visible_to
+            )
         )
-        total += analysis_log.count_recent(conn, since=since)
+        total += analysis_log.count_recent(conn, since=since, visible_to=visible_to)
     # Newest first.  Timestamps have second resolution, so the source row's own
     # id breaks a tie and keeps two items written in the same second in a
     # stable order between reads.

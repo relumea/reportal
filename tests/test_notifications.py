@@ -9,10 +9,11 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import analysis_log, cli, journal, mcp_tools, notifications, store
+from reportal import analysis_log, auth, cli, journal, mcp_tools, notifications, store
 
 runner = CliRunner()
 
@@ -81,6 +82,45 @@ class TestFeed:
         assert item["binary_id"] == binary_id
         assert item["binary_name"] == "victim.exe"
         assert item["analysis_id"] == analysis_id
+
+    def test_a_non_member_sees_no_team_log_entries(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id, analysis_id = _analysis(conn, "victim.exe")
+        analysis_log.append_entry(conn, analysis_id, message="engine failed", severity="error")
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        member = notifications.feed(conn, sources=(notifications.SOURCE_LOG,), visible_to=ana)
+        assert "engine failed" in [item["message"] for item in member["notifications"]]
+        hidden = notifications.feed(conn, sources=(notifications.SOURCE_LOG,), visible_to=stranger)
+        assert hidden["notifications"] == []
+        assert hidden["total"] == 0
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, headers, body = wsgi_request(
+            "GET",
+            "/api/notifications?sources=log",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert json_body(body, headers)["notifications"] == []
+        _status, headers, body = wsgi_request(
+            "GET",
+            "/api/notifications?sources=log",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert "engine failed" in [
+            item["message"] for item in json_body(body, headers)["notifications"]
+        ]
 
     def test_both_sources_merge_into_one_newest_first_feed(self, conn: sqlite3.Connection) -> None:
         _, analysis_id = _analysis(conn)
