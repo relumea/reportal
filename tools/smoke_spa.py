@@ -919,6 +919,15 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         ),
     ),
     (
+        "billing",
+        "#/billing",
+        (
+            ("Billing",),
+            # No seeded organisation, so the view names where to create one.
+            ("Create one in Users",),
+        ),
+    ),
+    (
         "external sources",
         "#/external",
         (
