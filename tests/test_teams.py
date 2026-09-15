@@ -12,7 +12,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, journal, mcp_server, store
+from reportal import auth, auto_store, cli, journal, mcp_server, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -161,6 +161,58 @@ class TestScopeGate:
         assert member[0].startswith("200")
         assert outsider[0].startswith("404")
         assert outsider[1]["error"] == "binary not found"
+
+    def test_every_gated_kind_resolves_through_the_gate(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each `_SCOPED_PATHS` kind maps to a row the gate can resolve.
+
+        A kind whose resolver raises or returns the wrong shape fails here,
+        not as a scope leak in production: the gate only refuses what it can
+        see, so a broken resolver is an open door.
+        """
+        from reportal import server
+
+        ids = self._scoped(conn)
+        analysis_id = store.create_analysis(conn, binary_id=ids["binary"], engine="manual")
+        function_id = store.add_function(
+            conn, analysis_id=analysis_id, va=0x1000, name="sub_1000", size=48, status="STUB"
+        )
+        data_type_id = store.add_data_type(
+            conn, binary_id=ids["binary"], name="handle", kind="struct", size=4, members=[]
+        )
+        comment_id = store.add_comment(
+            conn, scope_kind="binary", scope_id=ids["binary"], author="ana", body="note"
+        )["id"]
+        document_id = store.add_document(
+            conn,
+            scope_kind="binary",
+            scope_id=ids["binary"],
+            title="n",
+            sha256="d" * 64,
+            text="t",
+        )
+        conversation_id = store.create_conversation(
+            conn, scope_kind="binary", scope_id=ids["binary"], title="t"
+        )
+        run_id = store.create_pipeline_run(conn, function_id=function_id, model="m")
+        auto_run_id = auto_store.create_auto_run(conn, binary_id=ids["binary"], config={})
+        paths = {
+            f"/api/binaries/{ids['binary']}": "binary",
+            f"/api/functions/{function_id}": "function",
+            f"/api/analyses/{analysis_id}": "analysis",
+            f"/api/data-types/{data_type_id}": "data-type",
+            f"/api/comments/{comment_id}": "comment",
+            f"/api/documents/{document_id}": "document",
+            f"/api/conversations/{conversation_id}": "conversation",
+            f"/api/pipeline/runs/{run_id}": "pipeline-run",
+            f"/api/auto/runs/{auto_run_id}": "auto-run",
+        }
+        for path, kind in paths.items():
+            found = server._scoped_object(conn, path)
+            assert found is not None, path
+            assert found[0] == kind, path
+            assert int(found[1]["id"]) == ids["binary"], path
 
     def test_an_outsider_may_write_a_public_object_and_not_a_scoped_one(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
