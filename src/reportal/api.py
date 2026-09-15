@@ -8942,10 +8942,14 @@ def _comment_text(body: dict[str, Any]) -> str:
     return value
 
 
-def _list_scope_comments(scope_kind: str, scope_id: int) -> Response:
+def _list_scope_comments(
+    scope_kind: str, scope_id: int, visible_to: dict[str, Any] | None = None
+) -> Response:
     with contextlib.closing(db()) as conn:
         try:
-            rows = comments.list_comments(conn, scope_kind=scope_kind, scope_id=scope_id)
+            rows = comments.list_comments(
+                conn, scope_kind=scope_kind, scope_id=scope_id, visible_to=visible_to
+            )
         except comments.CommentError as exc:
             return _comment_failure(exc)
     return json_response({"comments": rows})
@@ -8978,9 +8982,9 @@ def _add_scope_comment(scope_kind: str, scope_id: int, body: dict[str, Any]) -> 
 
 
 @router.get("/api/binaries/{binary_id}/comments")
-def list_binary_comments(binary_id: int) -> Response:
+def list_binary_comments(request: Request, binary_id: int) -> Response:
     """Analyst comments stored on one binary, oldest first."""
-    return _list_scope_comments(comments.SCOPE_BINARY, binary_id)
+    return _list_scope_comments(comments.SCOPE_BINARY, binary_id, visible_to=_caller(request))
 
 
 @router.post("/api/binaries/{binary_id}/comments")
@@ -8990,9 +8994,9 @@ def add_binary_comment(binary_id: int, body: dict[str, Any] = Depends(json_body)
 
 
 @router.get("/api/functions/{function_id}/comments")
-def list_function_comments(function_id: int) -> Response:
+def list_function_comments(request: Request, function_id: int) -> Response:
     """Analyst comments stored on one function, oldest first."""
-    return _list_scope_comments(comments.SCOPE_FUNCTION, function_id)
+    return _list_scope_comments(comments.SCOPE_FUNCTION, function_id, visible_to=_caller(request))
 
 
 @router.post("/api/functions/{function_id}/comments")

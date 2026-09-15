@@ -3048,9 +3048,19 @@ def add_comment(
 
 
 def list_comments(
-    conn: sqlite3.Connection, *, scope_kind: str | None = None, scope_id: int | None = None
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str | None = None,
+    scope_id: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Comments, oldest first, optionally filtered by scope."""
+    """Comments, oldest first, optionally filtered by scope.
+
+    ``visible_to`` drops comments on binaries (and on functions of binaries)
+    the caller may not see, like the other scoped reads.
+    """
+    from reportal import comments
+
     sql = "SELECT * FROM comments"
     clauses: list[str] = []
     params: list[Any] = []
@@ -3060,6 +3070,20 @@ def list_comments(
     if scope_id is not None:
         clauses.append("scope_id = ?")
         params.append(scope_id)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, scope_params = scope
+        clauses.append(
+            "((scope_kind = ? AND EXISTS (SELECT 1 FROM binaries b"
+            f" WHERE b.id = comments.scope_id AND {clause}))"
+            " OR (scope_kind = ? AND EXISTS (SELECT 1 FROM functions f"
+            " JOIN analyses a ON f.analysis_id = a.id"
+            " JOIN binaries b ON a.binary_id = b.id"
+            f" WHERE f.id = comments.scope_id AND {clause})))"
+        )
+        params.extend(
+            [comments.SCOPE_BINARY, *scope_params, comments.SCOPE_FUNCTION, *scope_params]
+        )
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id"

@@ -137,6 +137,45 @@ class TestCommentRoutes:
         assert member_status.startswith("200"), body
         assert json_body(body, headers)["body"] == "edited"
 
+    def test_a_non_member_lists_no_team_comments(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn)
+        _post(f"/api/binaries/{ids['binary']}/comments", {"body": "first look"})
+        _post(f"/api/functions/{ids['function']}/comments", {"body": "on the function"})
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, ids["binary"], visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        stranger_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/binaries/{ids['binary']}/comments",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "binary not found"
+        stranger_status, headers, body = wsgi_request(
+            "GET",
+            f"/api/functions/{ids['function']}/comments",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert stranger_status.startswith("404"), body
+        assert json_body(body, headers)["error"] == "function not found"
+
+        _status, headers, body = wsgi_request(
+            "GET",
+            f"/api/binaries/{ids['binary']}/comments",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert [row["body"] for row in json_body(body, headers)["comments"]] == ["first look"]
+
     def test_unknown_comment_delete_is_404(self, conn: sqlite3.Connection) -> None:
         status, headers, body = wsgi_request("DELETE", "/api/comments/999")
         assert status.startswith("404")

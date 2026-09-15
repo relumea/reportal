@@ -13,6 +13,7 @@ recorded when the caller names none.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from typing import Any
 
 from reportal import store
@@ -104,11 +105,17 @@ def add_comment(
 
 
 def list_comments(
-    conn: sqlite3.Connection, *, scope_kind: str, scope_id: int
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str,
+    scope_id: int,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Comments of one scope, oldest first; the scope must exist."""
     check_scope(conn, scope_kind=scope_kind, scope_id=scope_id)
-    return store.list_comments(conn, scope_kind=scope_kind, scope_id=scope_id)
+    return store.list_comments(
+        conn, scope_kind=scope_kind, scope_id=scope_id, visible_to=visible_to
+    )
 
 
 def get_comment(conn: sqlite3.Connection, comment_id: int) -> dict[str, Any]:
