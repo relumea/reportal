@@ -615,6 +615,7 @@ def retrieve(
     scope_kind: str | None = None,
     scope_id: int | None = None,
     limit: int = RETRIEVAL_LIMIT,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Rank the stored chunks of one scope against *query*, best first.
 
@@ -625,7 +626,12 @@ def retrieve(
     if not query.strip() or limit < 1:
         return []
     return search_knowledge(
-        conn, query=query, scope_kind=scope_kind, scope_id=scope_id, limit=limit
+        conn,
+        query=query,
+        scope_kind=scope_kind,
+        scope_id=scope_id,
+        limit=limit,
+        visible_to=visible_to,
     )
 
 

@@ -8053,10 +8053,17 @@ def _knowledge_query(
     return raw if isinstance(raw, str) else ""
 
 
-def _knowledge_hits(query: str, scope_kind: str | None, scope_id: int | None) -> Response:
+def _knowledge_hits(
+    query: str,
+    scope_kind: str | None,
+    scope_id: int | None,
+    visible_to: dict[str, Any] | None = None,
+) -> Response:
     """Retrieve bounded hits for one scope; returns the JSON response."""
     with contextlib.closing(_open()) as conn:
-        results = knowledge.retrieve(conn, query=query, scope_kind=scope_kind, scope_id=scope_id)
+        results = knowledge.retrieve(
+            conn, query=query, scope_kind=scope_kind, scope_id=scope_id, visible_to=visible_to
+        )
     return json_response({"query": query, "count": len(results), "results": results})
 
 
@@ -8079,7 +8086,9 @@ def function_knowledge(request: Request, function_id: int) -> Response:
             )
         binary_id = int(function["binary_id"])
     resolved = query.strip() or str(function["name"])
-    return _knowledge_hits(resolved, knowledge.SCOPE_KIND_BINARY, binary_id)
+    return _knowledge_hits(
+        resolved, knowledge.SCOPE_KIND_BINARY, binary_id, visible_to=_caller(request)
+    )
 
 
 @router.get("/api/binaries/{binary_id}/knowledge")
@@ -8096,7 +8105,9 @@ def binary_knowledge(request: Request, binary_id: int) -> Response:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
-    return _knowledge_hits(query, knowledge.SCOPE_KIND_BINARY, binary_id)
+    return _knowledge_hits(
+        query, knowledge.SCOPE_KIND_BINARY, binary_id, visible_to=_caller(request)
+    )
 
 
 # ── Knowledge graph ────────────────────────────────────────────────
