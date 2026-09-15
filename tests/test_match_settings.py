@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from reportal import engines, matching, store
+from reportal import auth, engines, matching, store
 
 # Deterministic pair scores for the scoped corpus; an absent pair scores 0.
 SCOPED_SCORES: dict[tuple[str, str], float] = {
@@ -50,7 +50,10 @@ def _scorer(left: str, right: str) -> float:
 
 
 def _run(
-    conn: sqlite3.Connection, binary_id: int, settings: matching.MatchSettings | None = None
+    conn: sqlite3.Connection,
+    binary_id: int,
+    settings: matching.MatchSettings | None = None,
+    visible_to: Any | None = None,
 ) -> dict[str, int]:
     return matching.match_binary(
         conn,
@@ -59,6 +62,7 @@ def _run(
         disassembler=_disassembler,
         scorer=_scorer,
         settings=settings,
+        visible_to=visible_to,
     )
 
 
@@ -165,6 +169,37 @@ class TestScopeFilters:
             matching.MatchSettings(collection_ids=(collection,), min_similarity=0.0),
         )
         assert _names(conn, ids["a1"]) == []
+
+    def test_a_non_member_matches_only_against_visible_binaries(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = _seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, ids["b"], visibility="team", owner_team_id=team_id)
+
+        _run(
+            conn,
+            ids["a"],
+            matching.MatchSettings(min_similarity=0.0),
+            visible_to=stranger,
+        )
+        assert _names(conn, ids["a1"]) == ["a2", "c1"]
+        _run(
+            conn,
+            ids["a"],
+            matching.MatchSettings(min_similarity=0.0),
+            visible_to=ana,
+        )
+        assert _names(conn, ids["a1"]) == ["a2", "b1", "b2", "c1"]
 
 
 class TestRefusals:

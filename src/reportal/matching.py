@@ -445,16 +445,36 @@ def _collection_binary_ids(conn: sqlite3.Connection, collection_ids: Sequence[in
     return {int(row["binary_id"]) for row in cursor.fetchall()}
 
 
-def resolve_scope(conn: sqlite3.Connection, settings: MatchSettings) -> frozenset[int]:
+def resolve_scope(
+    conn: sqlite3.Connection,
+    settings: MatchSettings,
+    visible_to: Mapping[str, Any] | None = None,
+) -> frozenset[int]:
     """The candidate binary ids a run may draw from, validating the named ids.
 
     An empty binary and collection scope means the whole register, reported as
     an empty set.  A named id no row carries raises
-    :class:`InvalidSettingsError`.
+    :class:`InvalidSettingsError`.  ``visible_to`` narrows both the default
+    register and any named scope to binaries the caller may see, like the
+    other scoped reads; a named id outside it is refused as unknown, so the
+    run never confirms that it exists.
     """
+    from reportal import auth
+
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    visible: set[int] | None = None
+    if scope is not None:
+        clause, params = scope
+        visible = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+        }
     allowed: set[int] = set()
+    named = bool(settings.binary_ids or settings.collection_ids)
     for binary_id in settings.binary_ids:
-        if store.get_binary(conn, binary_id) is None:
+        if store.get_binary(conn, binary_id) is None or (
+            visible is not None and binary_id not in visible
+        ):
             raise InvalidSettingsError("unknown binary", f"no binary with id {binary_id}")
         allowed.add(binary_id)
     if settings.collection_ids:
@@ -465,6 +485,12 @@ def resolve_scope(conn: sqlite3.Connection, settings: MatchSettings) -> frozense
                     "unknown collection", f"no collection with id {collection_id}"
                 )
         allowed |= _collection_binary_ids(conn, settings.collection_ids)
+        if visible is not None:
+            allowed &= visible
+    elif visible is not None and not named:
+        allowed = set(visible)
+    elif visible is not None:
+        allowed &= visible
     return frozenset(allowed)
 
 
@@ -548,6 +574,7 @@ def journaled_match(
     settings: MatchSettings,
     engine: engines.RebrewEngine,
     progress: Callable[[int, int], None] | None = None,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run one binary's match inside a journaled action; the one write path.
 
@@ -557,7 +584,7 @@ def journaled_match(
     and so does a queued job, which is what makes a background run as revertible
     as a direct one.
     """
-    resolve_scope(conn, settings)
+    resolve_scope(conn, settings, visible_to=visible_to)
     action = journal.new_action()
     with journal.journaled(conn, action) as log:
         before = journal.journaled_rows(
@@ -569,7 +596,12 @@ def journaled_match(
             description=f"replaced the matches of binary {binary_id}",
         )
         summary = match_binary(
-            conn, binary_id=binary_id, engine=engine, settings=settings, progress=progress
+            conn,
+            binary_id=binary_id,
+            engine=engine,
+            settings=settings,
+            progress=progress,
+            visible_to=visible_to,
         )
         journal.journaled_new_rows(
             conn,
@@ -600,6 +632,7 @@ def match_binary(
     scorer: Scorer | None = None,
     settings: MatchSettings | None = None,
     progress: Callable[[int, int], None] | None = None,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, int]:
     """Match every function of *binary_id* against the candidate corpus.
 
@@ -638,8 +671,8 @@ def match_binary(
     # without it.
     floor = similarity.jaccard_floor(resolved.min_similarity) if default_scorer else 0.0
 
-    scoped = bool(resolved.binary_ids or resolved.collection_ids)
-    allowed = resolve_scope(conn, resolved)
+    allowed = resolve_scope(conn, resolved, visible_to=visible_to)
+    scoped = bool(resolved.binary_ids or resolved.collection_ids or visible_to is not None)
     scope_cache: dict[int, tuple[str, str]] = {}
     functions = store.list_functions(conn)
     sources = [function for function in functions if int(function["binary_id"]) == binary_id]

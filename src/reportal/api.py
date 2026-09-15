@@ -1583,7 +1583,9 @@ def _match_view(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/api/binaries/{binary_id}/match")
-def match_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def match_binary(
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Rank a binary's functions against the local corpus under Match Settings.
 
     The body carries the documented settings, each with a default that
@@ -1614,7 +1616,7 @@ def match_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> R
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
         try:
-            matching.resolve_scope(conn, settings)
+            matching.resolve_scope(conn, settings, visible_to=_caller(request))
         except matching.InvalidSettingsError as exc:
             return json_error(400, error=exc.error, detail=exc.detail)
         engine = _engine()
@@ -1626,7 +1628,11 @@ def match_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> R
             )
         try:
             payload = matching.journaled_match(
-                conn, binary_id=binary_id, settings=settings, engine=engine
+                conn,
+                binary_id=binary_id,
+                settings=settings,
+                engine=engine,
+                visible_to=_caller(request),
             )
         except engines.EngineUnavailable:
             return json_error(
