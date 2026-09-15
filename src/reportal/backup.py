@@ -161,7 +161,8 @@ def create(
         with tempfile.TemporaryDirectory(prefix="reportal-backup-") as staging:
             snapshot = Path(staging) / DB_NAME
             _snapshot(db, snapshot)
-            with tarfile.open(target, "w:gz") as archive:
+            staged = Path(staging) / "archive.tar.gz"
+            with tarfile.open(staged, "w:gz") as archive:
                 for name, path in members:
                     source = snapshot if name == DB_NAME else path
                     archive.add(source, arcname=name, recursive=False)
@@ -170,6 +171,7 @@ def create(
                 info.size = len(payload)
                 info.mtime = 0
                 archive.addfile(info, io.BytesIO(payload))
+            shutil.move(str(staged), str(target))
     except OSError as exc:
         raise BackupError(ERROR_INVALID_ARCHIVE, f"cannot write {target}: {exc}") from exc
     return {"path": str(target), "manifest": manifest, "bytes": target.stat().st_size}
