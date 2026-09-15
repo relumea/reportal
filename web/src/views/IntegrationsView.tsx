@@ -17,6 +17,7 @@ import {
 } from "../components";
 import { KeyValue } from "../components";
 import type {
+  DoctorReport,
   InstanceConfig,
   IntegrationInventory,
   IntegrationPart,
@@ -134,6 +135,47 @@ function InstanceCard(): ReactNode {
   );
 }
 
+/** Readiness before a start, read from `GET /api/doctor`. */
+function ReadinessCard(): ReactNode {
+  const { data, error } = useAsync(() => api<DoctorReport>("/doctor"), []);
+  if (error) {
+    return (
+      <Card title="Readiness">
+        <Muted>{String(error)}</Muted>
+      </Card>
+    );
+  }
+  if (data === undefined) {
+    return (
+      <Card title="Readiness">
+        <Loading label="Reading the readiness report" rows={2} />
+      </Card>
+    );
+  }
+  return (
+    <Card title="Readiness">
+      <KeyValue
+        rows={[
+          ["status", data.status],
+          ["workspace", data.workspace || NA],
+          ["failures", data.failures.join(", ") || "none"],
+          ["warnings", data.warnings.join(", ") || "none"],
+        ]}
+      />
+      <DataTable
+        columns={[
+          { label: "Check", mono: true, render: (row) => row.name },
+          { label: "Status", render: (row) => row.status },
+          { label: "Detail", render: (row) => row.detail },
+          { label: "Hint", render: (row) => row.hint || NA },
+        ]}
+        rows={data.checks}
+        rowKey={(row) => row.name}
+      />
+    </Card>
+  );
+}
+
 /**
  * How to connect an MCP client to this workspace.
  *
@@ -226,6 +268,7 @@ export function IntegrationsView(): ReactNode {
             <SeamCard key={seam.name} seam={seam} />
           ))}
           <InstanceCard />
+          <ReadinessCard />
           <McpCard />
         </>
       )}

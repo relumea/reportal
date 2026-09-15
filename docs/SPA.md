@@ -192,7 +192,10 @@ The Integrations view (`views/IntegrationsView.tsx`, `#/components` and
 parts, and ends with an Instance card from `GET /api/config`: the version, the
 engine's availability and origin, its decompiler backends, the LLM bridge's
 state and model, the database's table count, the feature flags and the MCP tool
-counts, over the table of every cap the server enforces.
+counts, over the table of every cap the server enforces.  A Readiness card from
+`GET /api/doctor` sits beside it: the report status, workspace, failures and
+warnings over the per-check table (name, status, detail and hint), which is the
+same pre-flight report a unit file gates on.
 
 Hash routes: `#/` (dashboard), `#/binaries`, `#/binaries/<id>`,
 `#/binaries/<id>/functions` (the functions list filtered to that binary),

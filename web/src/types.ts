@@ -2771,6 +2771,25 @@ export interface InstanceConfig {
   mcp: { total: number; read_only: number; destructive: number };
 }
 
+/** One readiness check, the shape `GET /api/doctor` answers per check. */
+export interface DoctorCheck {
+  name: string;
+  status: string;
+  detail: string;
+  hint: string;
+}
+
+/** The pre-flight report, the shape `GET /api/doctor` answers. */
+export interface DoctorReport {
+  status: string;
+  version: string;
+  workspace: string;
+  port: number;
+  checks: DoctorCheck[];
+  failures: string[];
+  warnings: string[];
+}
+
 /** One indirect call or jump in a function's cached disassembly listing. */
 export interface IndirectCallSite {
   line: number;

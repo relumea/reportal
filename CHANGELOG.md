@@ -7,6 +7,13 @@ view renders it from here.
 
 ## Unreleased
 
+- Readiness is readable in the SPA.  The Integrations view sat an Instance card
+  (`GET /api/config`) beside the MCP onboarding without ever showing the
+  pre-flight report a unit file gates on.  A Readiness card reads
+  `GET /api/doctor` beside it: the report status, workspace, failures and
+  warnings over the per-check table, covered by the smoke's integrations
+  expectations.
+
 - Readiness is readable over HTTP.  `reportal doctor` was CLI-only, so a remote
   caller or a supervisor without shell access could not ask what the unit file
   gates on.  `GET /api/doctor` answers `doctor.report` with an optional

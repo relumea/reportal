@@ -897,6 +897,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("reportal.components",),
             ("pipeline components",),
             ("prepare",),
+            # The readiness card: the report status and one known check.
+            ("Readiness",),
+            ("workspace",),
             # The MCP onboarding card: the command and the client config.
             ("Connect an MCP client",),
             ("claude mcp add reportal",),
