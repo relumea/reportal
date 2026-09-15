@@ -37,7 +37,7 @@ functions; every summary count stays exact when the list is capped.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from reportal import lineage, matching, renames, store, unstrip
@@ -412,6 +412,7 @@ def compute_composition(
     binary_id: int,
     binary_ids: Sequence[int] = (),
     collection_ids: Sequence[int] = (),
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one binary's composition payload from the store, without storing it.
 
@@ -441,6 +442,7 @@ def compute_composition(
     scope = matching.resolve_scope(
         conn,
         matching.MatchSettings(binary_ids=tuple(binary_ids), collection_ids=tuple(collection_ids)),
+        visible_to=visible_to,
     )
     functions = store.list_functions(conn, binary_id=binary_id)
     total = len(functions)
@@ -505,6 +507,7 @@ def run_composition(
     binary_id: int,
     binary_ids: Sequence[int] = (),
     collection_ids: Sequence[int] = (),
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Compute one binary's composition and store it as the ``composition`` scan.
 
@@ -517,7 +520,11 @@ def run_composition(
     :class:`reportal.matching.InvalidSettingsError` for an unknown scope id.
     """
     payload = compute_composition(
-        conn, binary_id=binary_id, binary_ids=binary_ids, collection_ids=collection_ids
+        conn,
+        binary_id=binary_id,
+        binary_ids=binary_ids,
+        collection_ids=collection_ids,
+        visible_to=visible_to,
     )
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
     store.set_scan(conn, analysis_id, store.SCAN_KIND_COMPOSITION, payload)

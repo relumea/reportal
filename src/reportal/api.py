@@ -4556,7 +4556,7 @@ def get_binary_related(binary_id: int) -> Response:
 
 @router.post("/api/binaries/{binary_id}/composition")
 def store_binary_composition(
-    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Build the binary's composition analysis from the store and store it.
 
@@ -4576,6 +4576,7 @@ def store_binary_composition(
                 binary_id=binary_id,
                 binary_ids=binary_ids,
                 collection_ids=collection_ids,
+                visible_to=_caller(request),
             )
         except composition.NoCompositionError as exc:
             return json_error(404, error="binary not found", detail=str(exc.args[0]))

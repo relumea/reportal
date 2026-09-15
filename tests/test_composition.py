@@ -11,7 +11,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, composition, matching, store
+from reportal import auth, cli, composition, matching, store
 
 runner = CliRunner()
 
@@ -496,6 +496,27 @@ class TestCompositionScope:
         assert stored is not None
         assert stored["scope"]["binary_ids"] == [right]
         assert payload["scope"] == stored["scope"]
+
+    def test_a_non_member_composes_only_against_visible_binaries(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        left, right, _source = self._pair(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, right, visibility="team", owner_team_id=team_id)
+
+        hidden = composition.compute_composition(conn, binary_id=left, visible_to=stranger)
+        assert hidden["matched_functions"] == 0
+        member = composition.compute_composition(conn, binary_id=left, visible_to=ana)
+        assert member["matched_functions"] == 1
 
 
 class TestCompositionScopeSurfaces:
