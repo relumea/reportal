@@ -204,12 +204,6 @@ console = Console(stderr=True)
 # makes a re-import find and refresh its own analysis instead of adding one.
 IMPORT_ENGINE = "rebrew-import"
 
-# Scope of the rows a binary's match run replaces: the matches its functions own.
-_BINARY_MATCHES_WHERE = (
-    "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
-    " WHERE a.binary_id = ?)"
-)
-
 # Scope of the signature rows a binary's seed run replaces: one row per function
 # of the binary, reached through its analyses.
 _BINARY_SIGNATURES_WHERE = (
@@ -2999,14 +2993,33 @@ def job_submit_command(
     domain: str | None = typer.Option(
         None, "--domain", help="Domain a behavior or hardening job scans"
     ),
+    param: list[str] | None = typer.Option(
+        None,
+        "--param",
+        help="A job parameter as KEY=VALUE, repeatable; a JSON VALUE is parsed (90, true, [1, 2])",
+    ),
     run: bool = typer.Option(False, "--run", help="Run it now instead of leaving it queued"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Queue one operation; the server's pool picks it up, or --run does it now."""
+    """Queue one operation; the server's pool picks it up, or --run does it now.
+
+    ``--param`` carries the parameters a kind takes beside ``--domain``: a
+    ``match`` job's settings are the same names its route's body uses, so
+    ``--param min_similarity=90 --param platforms='["windows"]'`` queues the run
+    the route would take.
+    """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    params = {"domain": domain} if domain else {}
+    params: dict[str, Any] = {"domain": domain} if domain else {}
+    for item in param or []:
+        name, separator, raw = item.partition("=")
+        if not separator or not name.strip():
+            _fail(f"--param must be KEY=VALUE, got {item!r}", json_output)
+        try:
+            params[name.strip()] = json.loads(raw)
+        except json.JSONDecodeError:
+            params[name.strip()] = raw
     with contextlib.closing(store.connect(portal_db)) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -5460,60 +5473,30 @@ def match(
                 " (run 'reportal import-rebrew <project-dir>')",
                 json_output,
             )
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            before = journal.journaled_rows(
-                conn,
-                log,
-                table="matches",
-                where=_BINARY_MATCHES_WHERE,
-                params=(binary_id,),
-                description=f"replaced the matches of binary {binary_id}",
+        try:
+            payload = matching.journaled_match(
+                conn, binary_id=binary_id, settings=settings, engine=engine
             )
-            try:
-                summary = matching.match_binary(
-                    conn, binary_id=binary_id, engine=engine, settings=settings
-                )
-            except matching.InvalidSettingsError as exc:
-                _fail(exc.detail, json_output)
-            except similarity.SimilarityUnavailable:
-                _fail(
-                    "function matching requires the optional 'similarity' extra"
-                    " (uv sync --extra similarity)",
-                    json_output,
-                )
-            journal.journaled_new_rows(
-                conn,
-                log,
-                table="matches",
-                where=_BINARY_MATCHES_WHERE,
-                params=(binary_id,),
-                before=before,
-                key=("id",),
-                description=f"recorded a match of binary {binary_id}",
+        except matching.InvalidSettingsError as exc:
+            _fail(exc.detail, json_output)
+        except similarity.SimilarityUnavailable:
+            _fail(
+                "function matching requires the optional 'similarity' extra"
+                " (uv sync --extra similarity)",
+                json_output,
             )
-            rows = matching.binary_match_rows(conn, binary_id)[:MAX_REPORT_ROWS]
+        rows = matching.binary_match_rows(conn, binary_id)[:MAX_REPORT_ROWS]
 
     if json_output:
-        typer.echo(
-            json.dumps(
-                log.attach(
-                    {
-                        "binary_id": binary_id,
-                        **summary,
-                        "settings": settings.payload(),
-                        "notes": matching.scope_notes(settings),
-                        "matches": rows,
-                    }
-                )
-            )
-        )
+        typer.echo(json.dumps({**payload, "matches": rows}))
         return
-    _print_journal_action(log, json_output)
+    action = payload.get("journal_action") or ""
+    if action:
+        console.print(f"[dim]journal action {action}[/dim]")
     console.print(f"\n[bold cyan]binary {binary_id}[/bold cyan]")
     console.print(
-        f"matched {summary['matched']}/{summary['functions']} functions,"
-        f" {summary['pairs']} candidate pairs"
+        f"matched {payload['matched']}/{payload['functions']} functions,"
+        f" {payload['pairs']} candidate pairs"
     )
     for note in matching.scope_notes(settings):
         console.print(f"[yellow]{note}[/yellow]")

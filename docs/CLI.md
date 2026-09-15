@@ -572,9 +572,11 @@ reportal jobs [--status S] [--kind K] [--binary-id N] [--limit N] [--json]
                                            #   with the waiting count and the kinds; each
                                            #   option narrows the list
 reportal job <job-id> [--json]             # one job with its status, progress and result
-reportal job-submit <kind> <binary-id> [--domain D] [--run] [--json]
+reportal job-submit <kind> <binary-id> [--domain D] [--param K=V] [--run] [--json]
                                            # queue one operation; the server's pool runs it,
-                                           #   or --run does it in this process
+                                           #   or --run does it in this process; --param is
+                                           #   repeatable and parses a JSON value, so
+                                           #   --param min_similarity=90 reaches a match job
 reportal job-run [--limit N] [--json]      # run the oldest waiting jobs inline
 reportal job-cancel <job-id> [--json]      # cancel a job that has not started
 reportal notifications [--json] [--since ISO] [--limit N]

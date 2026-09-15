@@ -179,11 +179,6 @@ _QUERY_FALSE = frozenset({"0", "false", "no", ""})
 
 # Scope of the matches a binary's match run replaces: every function of the
 # binary owns the rows, and the run rewrites them.
-_BINARY_MATCHES_WHERE = (
-    "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
-    " WHERE a.binary_id = ?)"
-)
-
 # Scope of the signature rows a binary's seed run replaces: one row per function.
 _BINARY_SIGNATURES_WHERE = (
     "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
@@ -1610,54 +1605,25 @@ def match_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> R
                 error="similarity-unavailable",
                 detail="install the optional extra: uv sync --extra similarity",
             )
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            before = journal.journaled_rows(
-                conn,
-                log,
-                table="matches",
-                where=_BINARY_MATCHES_WHERE,
-                params=(binary_id,),
-                description=f"replaced the matches of binary {binary_id}",
+        try:
+            payload = matching.journaled_match(
+                conn, binary_id=binary_id, settings=settings, engine=engine
             )
-            try:
-                summary = matching.match_binary(
-                    conn, binary_id=binary_id, engine=engine, settings=settings
-                )
-            except engines.EngineUnavailable:
-                return json_error(
-                    503, error="engine-unavailable", detail=engines.ENGINE_UNAVAILABLE_HINT
-                )
-            except engines.EngineError as exc:
-                return json_error(500, error="engine-error", detail=str(exc))
-            except similarity.SimilarityUnavailable:
-                return json_error(
-                    503,
-                    error="similarity-unavailable",
-                    detail="install the optional extra: uv sync --extra similarity",
-                )
-            except matching.InvalidSettingsError as exc:
-                return json_error(400, error=exc.error, detail=exc.detail)
-            journal.journaled_new_rows(
-                conn,
-                log,
-                table="matches",
-                where=_BINARY_MATCHES_WHERE,
-                params=(binary_id,),
-                before=before,
-                key=("id",),
-                description=f"recorded a match of binary {binary_id}",
+        except engines.EngineUnavailable:
+            return json_error(
+                503, error="engine-unavailable", detail=engines.ENGINE_UNAVAILABLE_HINT
             )
-    return json_response(
-        log.attach(
-            {
-                **summary,
-                "binary_id": binary_id,
-                "settings": settings.payload(),
-                "notes": matching.scope_notes(settings),
-            }
-        )
-    )
+        except engines.EngineError as exc:
+            return json_error(500, error="engine-error", detail=str(exc))
+        except similarity.SimilarityUnavailable:
+            return json_error(
+                503,
+                error="similarity-unavailable",
+                detail="install the optional extra: uv sync --extra similarity",
+            )
+        except matching.InvalidSettingsError as exc:
+            return json_error(400, error=exc.error, detail=exc.detail)
+    return json_response(payload)
 
 
 @router.get("/api/binaries/{binary_id}/matches")

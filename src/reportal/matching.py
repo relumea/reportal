@@ -120,6 +120,14 @@ DEFAULT_TRANSFER_MODE = TRANSFER_MODE_NAME
 # Ids one bulk transfer request may carry, mirroring bulk_actions.MAX_BULK_IDS.
 MAX_TRANSFERS = 500
 
+# The `matches` rows one binary's run replaces: every match whose source is a
+# function of that binary.  The routes, the CLI, the MCP tool and a queued job
+# all snapshot through this one scope, so a revert puts the same set back.
+MATCHES_WHERE = (
+    "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
+    " WHERE a.binary_id = ?)"
+)
+
 # Per-row statuses the bulk report and the single route use.
 TRANSFER_STATUS_APPLIED = "applied"
 TRANSFER_STATUS_SKIPPED = "skipped"
@@ -531,6 +539,53 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
         return text
 
     return disassemble
+
+
+def journaled_match(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int,
+    settings: MatchSettings,
+    engine: engines.RebrewEngine,
+) -> dict[str, Any]:
+    """Run one binary's match inside a journaled action; the one write path.
+
+    The binary's previous matches are snapshotted before the run and the rows it
+    creates are journaled after, so reverting the returned ``journal_action``
+    puts the earlier set back.  The routes, the CLI and the MCP tool call this,
+    and so does a queued job, which is what makes a background run as revertible
+    as a direct one.
+    """
+    resolve_scope(conn, settings)
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        before = journal.journaled_rows(
+            conn,
+            log,
+            table="matches",
+            where=MATCHES_WHERE,
+            params=(binary_id,),
+            description=f"replaced the matches of binary {binary_id}",
+        )
+        summary = match_binary(conn, binary_id=binary_id, engine=engine, settings=settings)
+        journal.journaled_new_rows(
+            conn,
+            log,
+            table="matches",
+            where=MATCHES_WHERE,
+            params=(binary_id,),
+            before=before,
+            key=("id",),
+            description=f"recorded a match of binary {binary_id}",
+        )
+    return log.attach(
+        {
+            **summary,
+            "binary_id": binary_id,
+            "settings": settings.payload(),
+            "notes": scope_notes(settings),
+        }
+    )
 
 
 def match_binary(

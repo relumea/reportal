@@ -7,6 +7,19 @@ view renders it from here.
 
 ## Unreleased
 
+- A match run can be queued as a job.  Matching is the longest operation the
+  portal runs (every function against the whole corpus) and it was the one
+  operation with no queued form: `POST /api/binaries/<id>/match` blocks for the
+  whole run, and the job registry held the eight scans plus the engine report
+  and the PDF.  `match` is now a job kind whose params are the match settings,
+  validated at submit so a bad value is a 400 rather than a failed job later.
+  The three surfaces that ran the match each carried their own copy of the
+  snapshot-run-journal sequence; they now share
+  `matching.journaled_match`, which is what makes a queued run exactly as
+  revertible as a direct one.  `reportal job-submit` also gained the
+  `--param KEY=VALUE` its route and MCP tool already had, so a match job can be
+  queued with its settings from the terminal.
+
 - Function matching rarely computes a full pair score it can prove is wasted.
   A blended score is 40% MinHash Jaccard and 60% text ratio, and the ratio is
   capped, so a pair whose Jaccard is below `(min_similarity - 60) / 40` cannot

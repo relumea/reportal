@@ -9,10 +9,16 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, engines, jobs, journal, mcp_tools, store
+from reportal import cli, engines, jobs, journal, mcp_tools, similarity, store
+
+HAS_SIMILARITY = similarity.available()
+requires_similarity = pytest.mark.skipif(
+    not HAS_SIMILARITY, reason="similarity extra not installed"
+)
 
 runner = CliRunner()
 
@@ -47,6 +53,7 @@ class TestRegistry:
             "composition",
             "filetype",
             "hardening",
+            "match",
             "protocols",
             "report",
             "report-pdf",
@@ -206,6 +213,103 @@ class TestRun:
         rows, total = jobs.list_jobs(conn)
         assert total == 1
         assert rows[0]["live"] is False
+
+
+class TestMatchJob:
+    """The one kind whose write is not a scan row: it journals its own rows."""
+
+    def _seed(self, conn: sqlite3.Connection, tmp_path: Path) -> int:
+        binary_id = _binary(conn, tmp_path, "match.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        store.add_function(
+            conn,
+            analysis_id=analysis_id,
+            va=0x1000,
+            name="sub_1000",
+            size=16,
+        )
+        return binary_id
+
+    def test_the_settings_are_validated_at_submit(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = self._seed(conn, tmp_path)
+
+        try:
+            jobs.submit(conn, kind="match", binary_id=binary_id, params={"min_similarity": 500.0})
+        except ValueError as exc:
+            assert "min_similarity" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an out-of-range setting must be refused at submit")
+
+    def test_an_unknown_scope_id_is_refused_at_submit(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = self._seed(conn, tmp_path)
+
+        try:
+            jobs.submit(conn, kind="match", binary_id=binary_id, params={"binary_ids": [999]})
+        except ValueError as exc:
+            assert "999" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unknown scope id must be refused at submit")
+
+    def test_a_parameter_the_kind_does_not_take_is_refused(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = self._seed(conn, tmp_path)
+
+        try:
+            jobs.submit(conn, kind="match", binary_id=binary_id, params={"domain": "execution"})
+        except ValueError as exc:
+            assert "domain" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unexpected parameter must be refused")
+
+    @requires_similarity
+    def test_a_queued_run_records_its_settings(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = self._seed(conn, tmp_path)
+        jobs.submit(conn, kind="match", binary_id=binary_id, params={"min_similarity": 90.0})
+
+        finished = jobs.run_pending(conn, limit=1)
+
+        assert finished[0]["status"] == jobs.STATUS_DONE, finished[0]["error"]
+        assert finished[0]["result"]["settings"]["min_similarity"] == 90.0
+        assert finished[0]["result"]["functions"] == 1
+
+    @requires_similarity
+    def test_a_queued_run_is_revertible_through_its_journal_action(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = self._seed(conn, tmp_path)
+        function_id = int(store.list_functions(conn)[0]["id"])
+        other = _binary(conn, tmp_path, "other.exe")
+        other_analysis = store.create_analysis(conn, binary_id=other, engine="manual")
+        candidate = store.add_function(
+            conn, analysis_id=other_analysis, va=0x2000, name="sub_2000", size=16
+        )
+        store.record_match(
+            conn,
+            function_id=function_id,
+            candidate_function_id=candidate,
+            similarity=95.0,
+            confidence=1.0,
+            settings={},
+        )
+        jobs.submit(conn, kind="match", binary_id=binary_id, params={})
+
+        finished = jobs.run_pending(conn, limit=1)
+        action = finished[0]["result"]["journal_action"]
+
+        # The run replaced the binary's matches, and its action puts them back.
+        assert action
+        assert store.list_matches(conn, function_id) == []
+        journal.revert_action(conn, action)
+        assert [
+            int(row["candidate_function_id"]) for row in store.list_matches(conn, function_id)
+        ] == [candidate]
 
 
 class TestCancel:
@@ -480,6 +584,44 @@ class TestCli:
 
         assert result.exit_code == 0
         assert json.loads(result.stdout)["status"] == jobs.STATUS_DONE
+
+    def test_a_param_reaches_the_queued_job(self, tmp_path: Path, monkeypatch: Any) -> None:
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv("REPORTAL_DB", str(db))
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            binary_id = _binary(conn, tmp_path)
+
+        result = runner.invoke(
+            cli.app,
+            [
+                "job-submit",
+                "match",
+                str(binary_id),
+                "--param",
+                "min_similarity=90",
+                "--param",
+                'platforms=["windows"]',
+                "--json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        params = json.loads(result.stdout)["params"]
+        assert params["min_similarity"] == 90.0
+        assert params["platforms"] == ["windows"]
+
+    def test_a_param_without_a_value_exits_non_zero(self, tmp_path: Path, monkeypatch: Any) -> None:
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv("REPORTAL_DB", str(db))
+        store.init_db(db)
+
+        result = runner.invoke(
+            cli.app, ["job-submit", "composition", "1", "--param", "min_similarity"]
+        )
+
+        assert result.exit_code == 1
+        assert "KEY=VALUE" in result.output
 
     def test_an_unknown_kind_exits_non_zero(self, tmp_path: Path, monkeypatch: Any) -> None:
         db = tmp_path / "portal.db"

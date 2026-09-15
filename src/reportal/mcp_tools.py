@@ -135,13 +135,6 @@ CACHEABLE_DISASM_FORMAT = store.CACHEABLE_DISASM_FORMAT
 # Functions decompiled by a struct recovery run when the caller names no limit.
 DEFAULT_STRUCT_LIMIT = 50
 
-# Scope of the matches a binary's match run replaces: every function of the
-# binary, reached through its analyses.
-_BINARY_MATCHES_WHERE = (
-    "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
-    " WHERE a.binary_id = ?)"
-)
-
 # Scope of the signature rows a binary's seed run replaces: one row per function.
 _BINARY_SIGNATURES_WHERE = (
     "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
@@ -2138,46 +2131,18 @@ def _tool_run_match(arguments: dict[str, Any]) -> dict[str, Any]:
             matching.resolve_scope(conn, settings)
         except matching.InvalidSettingsError as exc:
             raise ToolError(exc.error, exc.detail) from exc
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            before = journal.journaled_rows(
-                conn,
-                log,
-                table="matches",
-                where=_BINARY_MATCHES_WHERE,
-                params=(binary_id,),
-                description=f"replaced the matches of binary {binary_id}",
+        try:
+            return matching.journaled_match(
+                conn, binary_id=binary_id, settings=settings, engine=_engine()
             )
-            try:
-                summary = matching.match_binary(
-                    conn, binary_id=binary_id, engine=_engine(), settings=settings
-                )
-            except engines.EngineUnavailable as exc:
-                raise ToolError("engine-unavailable", str(exc)) from exc
-            except engines.EngineError as exc:
-                raise ToolError("engine-error", str(exc)) from exc
-            except similarity.SimilarityUnavailable as exc:
-                raise ToolError("similarity-unavailable", str(exc)) from exc
-            except matching.InvalidSettingsError as exc:
-                raise ToolError(exc.error, exc.detail) from exc
-            journal.journaled_new_rows(
-                conn,
-                log,
-                table="matches",
-                where=_BINARY_MATCHES_WHERE,
-                params=(binary_id,),
-                before=before,
-                key=("id",),
-                description=f"recorded a match of binary {binary_id}",
-            )
-            return log.attach(
-                {
-                    **summary,
-                    "binary_id": binary_id,
-                    "settings": settings.payload(),
-                    "notes": matching.scope_notes(settings),
-                }
-            )
+        except engines.EngineUnavailable as exc:
+            raise ToolError("engine-unavailable", str(exc)) from exc
+        except engines.EngineError as exc:
+            raise ToolError("engine-error", str(exc)) from exc
+        except similarity.SimilarityUnavailable as exc:
+            raise ToolError("similarity-unavailable", str(exc)) from exc
+        except matching.InvalidSettingsError as exc:
+            raise ToolError(exc.error, exc.detail) from exc
 
 
 def _tool_run_triage(arguments: dict[str, Any]) -> dict[str, Any]:

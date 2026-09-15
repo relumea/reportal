@@ -47,6 +47,7 @@ from reportal import (
     filetypes,
     hardening,
     journal,
+    matching,
     pdf,
     protocols,
     secrets,
@@ -149,6 +150,21 @@ def _domain_of(params: Mapping[str, Any], domains: tuple[str, ...], what: str) -
     if domain not in domains:
         raise ValueError(f"unknown {what} domain: {domain}; expected one of {', '.join(domains)}")
     return domain
+
+
+def _perform_match(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run one binary's match, journaled the way its route runs it.
+
+    The settings come from the job's params, so a queued run records the same
+    rows a direct one would; ``matching.journaled_match`` snapshots and journals
+    them, which is why this kind declares ``perform`` rather than a scan kind.
+    """
+    settings = matching.MatchSettings.from_request(dict(params))
+    return matching.journaled_match(
+        conn, binary_id=binary_id, settings=settings, engine=engines.get_engine()
+    )
 
 
 def _engine_report(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
@@ -269,6 +285,26 @@ def builtin_kinds() -> tuple[JobKind, ...]:
                 domain=_domain_of(params, hardening.HARDENING_DOMAINS, "hardening"),
                 engine=engines.get_engine(),
             ),
+        ),
+        # Matching is the longest operation the portal runs (it scores every
+        # function against the whole corpus), so it is the one a caller is most
+        # likely to want in the background rather than inside a request.
+        JobKind(
+            name="match",
+            label="Function matching against the corpus",
+            scan_kinds=None,
+            params=(
+                "min_similarity",
+                "min_confidence",
+                "include_self",
+                "top",
+                "platforms",
+                "architectures",
+                "binary_ids",
+                "collection_ids",
+            ),
+            run=_perform_match,
+            perform=_perform_match,
         ),
     )
 
@@ -416,6 +452,15 @@ def submit(
                 behavior.BEHAVIOR_DOMAINS if kind == "behavior" else hardening.HARDENING_DOMAINS
             )
             _domain_of(params or {}, domains, what)
+    if kind == "match":
+        # The settings are the match routes' body shape, so a run queued here
+        # records what the same settings would record there; a bad value or an
+        # unknown scope id is refused now rather than when the job runs.
+        try:
+            settings = matching.MatchSettings.from_request(dict(params or {}))
+            matching.resolve_scope(conn, settings)
+        except matching.InvalidSettingsError as exc:
+            raise ValueError(f"{exc.error}: {exc.detail}") from exc
     ensure_schema(conn)
     queued = count_jobs(conn, status=STATUS_QUEUED)
     if queued >= MAX_QUEUED_JOBS:

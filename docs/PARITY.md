@@ -170,7 +170,10 @@ and `reportal jobs`/`job`/`job-submit`/`job-run`/`job-cancel`, the `list_jobs`,
 `get_job`, `submit_job`, `cancel_job` and `run_jobs` MCP tools and the SPA Jobs
 view expose the same.  The queued form of a scan is `POST /api/jobs` with its
 kind rather than a flag on each scan route, which is one route for every
-operation in the registry.
+operation in the registry: the eight scans, the engine report, the PDF and
+function matching, which is the longest operation the portal runs (it scores
+every function against the corpus) and takes the match settings as its
+`params`.
 
 Two ceilings are deliberate and stated rather than hidden.  A job is one step
 (`steps_total` is 1, so `progress` is 0 or 100): the engine calls a scan makes
