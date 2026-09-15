@@ -31,8 +31,13 @@ reportal/
 │   │                         #   registry; the one module that executes a sample
 │   ├── auth.py               # local identity: users, teams, roles, bearer tokens, the gate
 │   │                         #   and the object-visibility rule (visible_clause/may_write)
+│   ├── plans.py              # the subscription catalog and the cost model it is
+│   │                         #   derived from (Claude token rates -> allowances)
+│   ├── metering.py           # the append-only usage ledger and the quota checks
+│   ├── billing.py            # Stripe checkout, portal, webhooks and reconcile
+│   ├── landing.py            # the public /pricing page, rendered from plans.py
 │   ├── api.py                # every /api/* route (the JSON API)
-│   ├── ui.py                 # the built SPA, /static assets and /reports site
+│   ├── ui.py                 # the built SPA, /static assets, /pricing and /reports site
 │   ├── webapp.py             # composition root: includes the two routers
 │   ├── store.py              # SQLite schema + typed CRUD; typed search and the
 │   │                         #   upload/extract helpers
@@ -86,6 +91,8 @@ reportal/
 │   │                         #   snapshot, manifest-checked restore, path rewrite
 │   ├── library.py            # library identification and the bill of materials
 │   │                         #   (CycloneDX, SPDX, CSV) it feeds
+│   ├── decompiler_scripts.py # stored renames as runnable tool scripts (Ghidra,
+│   │                         #   IDA, Binja): pure render, no engine and no state dir
 │   ├── unpack.py             # packer detection and the rebuild: LZEXE in process
 │   │                         #   through the engine, UPX through the external tool
 │   ├── benchmark.py          # precision and recall of a match run against labelled
@@ -2391,9 +2398,12 @@ its team.
 
 An organisation is the hosted portal's level above teams and is *structure, not
 access control*: it groups teams, and `organisations` plus a team's
-`organisation_id` is all it is.  No read or write consults it, which is stated
-where a reader will look rather than left to be discovered.  Deleting an
-organisation leaves its teams in place.
+`organisation_id` is all it is.  No read or write consults it for authorization,
+which is stated where a reader will look rather than left to be discovered.
+Deleting an organisation leaves its teams in place.  It is, however, the unit a
+subscription and a usage ledger attach to (see "Plans, metering and billing"):
+that is a billing relationship rather than a permission, so an organisation
+still decides nothing about who may read an object.
 
 A user's `active_team_id` is a view preference, not a permission: every listing
 still shows everything the caller may see, and the switch exists so the SPA can
@@ -2405,6 +2415,81 @@ of these columns existed when identity first shipped, so all three are in
 (the only role such an install had), a team that predates the hierarchy belongs
 to no organisation, and a user that predates the switch has no active team,
 which reads as "see every team".
+
+## Plans, metering and billing
+
+Three modules, split by what each is allowed to know.  `plans.py` is the
+catalog, `metering.py` is the ledger and the quota, and `billing.py` is the
+provider integration.  Nothing above them knows a price and nothing below them
+knows a customer.
+
+**The catalog is code, and the prices are derived.**  reportal resells
+inference: every AI extra spends Claude tokens Anthropic bills for, so a plan's
+token allowance is a cost of goods sold rather than a marketing number.
+`plans.py` carries the published per-million rates (`MODEL_RATES`), blends them
+at `INPUT_SHARE` (reverse-engineering prompts are input-heavy: a decompiled
+function in, a summary out) and derives each tier's allowance from the share of
+its price that inference may consume (`MAX_COGS_SHARE`, 20%).  `tests/test_plans.py`
+asserts that property rather than the literal numbers, so raising an allowance
+is allowed and raising it past what the price supports fails the gate.  The free
+tier has no price to take a share of, so it is bounded outright by
+`MAX_FREE_COGS_USD`.  Two pressure valves keep the ceiling from being a wall: a
+paid tier past its allowance buys more at `OVERAGE_USD_PER_MTOK` instead of
+stopping, and a tenant pointing the bridge at its own endpoint is not metered at
+all, because reportal is not paying for it.
+
+**The ledger is append-only.**  `metering.py` writes one `usage_events` row per
+metered event and never updates or deletes one, because a disputed invoice has
+to be reconstructable.  A row carries the model that spent the tokens, so the
+ledger sums two ways: units, which the quota compares, and dollars
+(`period_cost_usd`), which is the margin read.  Starting a new period moves the
+window rather than clearing rows.
+
+**Metering is attached once, not per call site.**  `llm.py` gained a usage sink
+(`recording_usage`) that every completion reports its endpoint-reported token
+counts to, and `server._reportal_headers` installs one for the duration of a
+request that has a tenant.  So an AI route is metered by construction and no AI
+code knows billing exists.  Counts are never estimated: a response carrying no
+usage block records nothing, because a guessed number that bills a customer is
+worse than a missing one.
+
+**A workspace with no organisation is unmetered.**  `organisation_plan` reads a
+missing tenant as the `internal` plan, so a self-hosted or single-operator
+install behaves exactly as it did before billing existed.  That is the property
+that makes this safe to add to an existing install, and it is pinned by
+`tests/test_metering.py`.
+
+`billing.py` holds the four invariants a payment integration needs, each one a
+way to lose money or grant a plan nobody paid for:
+
+- **Completion is not payment.**  `checkout.session.completed` fires when the
+  form is submitted, not when the charge settles, so `BillingEvent.entitles()`
+  requires `payment_status == "paid"` or an entitling subscription status.
+- **Webhooks are idempotent.**  Stripe redelivers, so `_claim_event` inserts the
+  event id (the primary key) in the same transaction that applies it; a
+  redelivery loses the insert and answers `duplicate` without touching the
+  subscription or restarting the period.
+- **The price id is the source of truth.**  A subscription's plan comes from
+  `plans.plan_for_price_id`, not from checkout metadata, because metadata is
+  caller-supplied and a price id is what was actually charged.  A customer who
+  edits metadata to claim Enterprise still gets what they paid for.
+- **Signature verification is mandatory.**  `verify_webhook` refuses anything
+  whose HMAC does not match inside `WEBHOOK_TOLERANCE_S`, compared with
+  `hmac.compare_digest`; an install with no webhook secret refuses every
+  webhook rather than trusting the body.
+
+The provider is chosen by `REPORTAL_BILLING_PROVIDER`: `auto` (Stripe when a
+key is set, else disabled), `stripe`, `manual` (a development mode that grants a
+plan through an operator confirmation) or `disabled`.  The default install has
+no key, so billing is off and every checkout path answers 503 while usage is
+still metered and shown.  The reconcile path (`reconcile_account`) covers a lost
+webhook delivery; it only mirrors what the provider already says, so it cannot
+grant entitlement on its own, and it is rate limited because it calls out.
+
+`landing.py` renders the public `/pricing` page from the same catalog, so the
+marketing numbers and the billing numbers are the same numbers;
+`tests/test_landing.py` fails the gate if the page stops agreeing with
+`plans.py`.
 
 ## Backup and restore
 

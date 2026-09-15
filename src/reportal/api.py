@@ -51,6 +51,7 @@ from reportal import (
     auto_workers,
     behavior,
     benchmark,
+    billing,
     bulk_actions,
     capabilities,
     comments,
@@ -58,6 +59,7 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    decompiler_scripts,
     details,
     diffview,
     doctor,
@@ -81,6 +83,7 @@ from reportal import (
     lineage,
     llm,
     matching,
+    metering,
     models,
     notifications,
     pdf,
@@ -107,6 +110,9 @@ from reportal import (
 )
 from reportal import (
     docs as docs_mod,
+)
+from reportal import (
+    plans as plans_mod,
 )
 from reportal._paths import binaries_dir, db_path, reports_dir
 from reportal.server import db, json_body, json_error, json_response, optional_json_body
@@ -9803,6 +9809,34 @@ def export_symbols(binary_id: int, request: Request) -> Response:
     )
 
 
+@router.get("/api/binaries/{binary_id}/decompiler-script")
+def export_decompiler_script(binary_id: int, request: Request) -> Response:
+    """Render the stored renames as a runnable decompiler script.
+
+    ``?format=ghidra`` (the default) answers a Ghidra Python script,
+    ``?format=ida`` an IDA script and ``?format=binja`` a JSON rename
+    document.  Stored-only: placeholders are left out, so the script only
+    carries names a decompiler would not already show.
+    """
+    fmt = (_query_text(request, "format") or decompiler_scripts.FORMAT_GHIDRA).lower()
+    if fmt not in decompiler_scripts.SCRIPT_FORMATS:
+        return json_error(
+            400,
+            error="invalid format",
+            detail=f"format must be one of {', '.join(decompiler_scripts.SCRIPT_FORMATS)}",
+        )
+    with contextlib.closing(_open()) as conn:
+        try:
+            payload = decompiler_scripts.script(conn, binary_id, fmt=fmt)
+        except decompiler_scripts.ScriptError as exc:
+            return json_error(404, error=exc.code, detail=exc.detail)
+    return Response(
+        content=payload["text"],
+        media_type=decompiler_scripts.MEDIA_TYPES[fmt],
+        headers={"Content-Disposition": f'inline; filename="{decompiler_scripts.FILENAMES[fmt]}"'},
+    )
+
+
 # ── Documentation ──────────────────────────────────────────────────
 #
 # The portal ships its own manual: `docs/*.md` and `CHANGELOG.md` are read from
@@ -10762,6 +10796,224 @@ def set_team_organisation(team_id: int, body: dict[str, Any] = Depends(json_body
                 return _team_failure(exc)
             team = auth.get_team(conn, team_id)
     return json_response(log.attach(team or {}))
+
+
+# ── Plans, metering and billing ────────────────────────────────────
+
+
+def _billing_failure(exc: billing.BillingError) -> Response:
+    """One mapping from the billing vocabulary to the JSON error envelope."""
+    return json_error(exc.status, error="billing-error", detail=exc.detail)
+
+
+def _organisation_or_404(
+    conn: sqlite3.Connection, organisation_id: int
+) -> dict[str, Any] | Response:
+    """The organisation row, or the 404 every billing route answers with."""
+    organisation = auth.get_organisation(conn, organisation_id)
+    if organisation is None:
+        return json_error(
+            404,
+            error=auth.ERROR_ORGANISATION_NOT_FOUND,
+            detail=f"no organisation with id {organisation_id}",
+        )
+    return organisation
+
+
+@router.get("/api/plans")
+def list_plans() -> Response:
+    """Every public plan, cheapest first, with the purchasable subset named.
+
+    The catalog is code, so this read needs no database and never varies by
+    caller: it is what a pricing page renders.
+    """
+    return json_response(
+        {
+            "plans": [plan.describe() for plan in plans_mod.public_plans()],
+            "checkout_plans": [plan.id for plan in plans_mod.checkout_plans()],
+            "default_plan_id": plans_mod.DEFAULT_PLAN_ID,
+            "currency": "usd",
+            "overage_usd_per_mtok": plans_mod.OVERAGE_USD_PER_MTOK,
+            "billing": billing.public_billing_config(),
+        }
+    )
+
+
+@router.get("/api/organisations/{organisation_id}/usage")
+def get_organisation_usage(organisation_id: int) -> Response:
+    """Metered use in the organisation's open period, against its plan."""
+    with contextlib.closing(_open()) as conn:
+        found = _organisation_or_404(conn, organisation_id)
+        if isinstance(found, Response):
+            return found
+        return json_response(metering.usage_summary(conn, organisation_id))
+
+
+@router.get("/api/organisations/{organisation_id}/billing")
+def get_organisation_billing(organisation_id: int) -> Response:
+    """The organisation's plan, quota state and subscription, if any."""
+    with contextlib.closing(_open()) as conn:
+        found = _organisation_or_404(conn, organisation_id)
+        if isinstance(found, Response):
+            return found
+        summary = metering.usage_summary(conn, organisation_id)
+        subscription = billing.subscription_of(conn, organisation_id)
+    return json_response(
+        {
+            **summary,
+            "organisation": found,
+            "subscription": subscription,
+            "billing": billing.public_billing_config(),
+        }
+    )
+
+
+@router.put("/api/organisations/{organisation_id}/plan")
+def set_organisation_plan(
+    organisation_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Assign the organisation a plan, restarting its period; journaled.
+
+    This is the operator path (a grant, a migration, a support fix), not the
+    customer one: a self-serve upgrade goes through checkout so there is a
+    payment behind it.
+    """
+    plan_id = _require_str(body, "plan_id")
+    if not plans_mod.plan_exists(plan_id):
+        return json_error(400, error="invalid plan", detail=f"no plan named {plan_id}")
+    with contextlib.closing(_open()) as conn:
+        found = _organisation_or_404(conn, organisation_id)
+        if isinstance(found, Response):
+            return found
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.ORG_TABLE,
+                where="id = ?",
+                params=(organisation_id,),
+                description=f"set organisation {organisation_id} to plan {plan_id}",
+            )
+            conn.execute(
+                f"UPDATE {auth.ORG_TABLE} SET plan_id = ?, period_started_at = ? WHERE id = ?",
+                (plan_id, auth.now(), organisation_id),
+            )
+        summary = metering.usage_summary(conn, organisation_id)
+    return json_response(log.attach(summary))
+
+
+@router.post("/api/organisations/{organisation_id}/billing/checkout")
+def start_billing_checkout(
+    organisation_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Start a self-serve checkout for a paid plan."""
+    plan_id = _require_str(body, "plan_id")
+    with contextlib.closing(_open()) as conn:
+        found = _organisation_or_404(conn, organisation_id)
+        if isinstance(found, Response):
+            return found
+        try:
+            session = billing.start_checkout(conn, found, plan_id)
+        except billing.BillingError as exc:
+            return _billing_failure(exc)
+    return json_response(
+        {"provider": session.provider, "session_id": session.session_id, "url": session.url}
+    )
+
+
+@router.post("/api/organisations/{organisation_id}/billing/portal")
+def open_billing_portal(organisation_id: int) -> Response:
+    """Open the provider's self-service portal for the organisation."""
+    with contextlib.closing(_open()) as conn:
+        found = _organisation_or_404(conn, organisation_id)
+        if isinstance(found, Response):
+            return found
+        try:
+            session = billing.start_billing_portal(conn, organisation_id)
+        except billing.BillingError as exc:
+            return _billing_failure(exc)
+    return json_response({"provider": session.provider, "url": session.url})
+
+
+@router.post("/api/billing/manual/confirm")
+def confirm_manual_checkout(body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Confirm a manual (development) checkout; grants the plan once."""
+    token = _require_str(body, "token")
+    organisation_id = _require_int(body, "organisation_id")
+    with contextlib.closing(_open()) as conn:
+        try:
+            granted = billing.complete_manual_checkout(conn, token, organisation_id)
+        except billing.BillingError as exc:
+            return _billing_failure(exc)
+        conn.commit()
+    return json_response(granted)
+
+
+@router.post("/api/organisations/{organisation_id}/billing/cancel-manual")
+def cancel_manual_checkout(organisation_id: int) -> Response:
+    """Cancel a manual subscription, dropping the org to the fallback plan."""
+    with contextlib.closing(_open()) as conn:
+        found = _organisation_or_404(conn, organisation_id)
+        if isinstance(found, Response):
+            return found
+        cancelled = billing.cancel_manual_subscription(conn, organisation_id)
+        conn.commit()
+    return json_response(cancelled)
+
+
+@router.post("/api/billing/webhook")
+async def apply_billing_webhook(request: Request) -> Response:
+    """Apply a provider webhook: verify, claim, mirror, entitle.
+
+    The raw body is read before anything parses it, because the signature covers
+    the exact bytes the provider sent and a re-serialized body would not verify.
+    A redelivery answers ``duplicate`` without touching the subscription.
+    """
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature", "")
+    try:
+        event = billing.verify_webhook(payload, signature)
+    except billing.BillingError as exc:
+        return _billing_failure(exc)
+    normalized = billing.normalize_stripe_event(event)
+    with contextlib.closing(_open()) as conn:
+        try:
+            result = billing.apply_event(conn, normalized)
+        except billing.BillingError as exc:
+            return _billing_failure(exc)
+    return json_response(result)
+
+
+@router.post("/api/organisations/{organisation_id}/billing/sync")
+def sync_billing_subscription(organisation_id: int) -> Response:
+    """Re-read the organisation's subscription from the provider and mirror it.
+
+    Webhooks are the primary path; this covers a lost delivery.  It only
+    mirrors what the provider already says, so it cannot grant entitlement on
+    its own, and it is rate limited because it calls out.
+    """
+    if not billing.reconcile_allowed(organisation_id):
+        return json_error(
+            429, error="rate-limited", detail="too many reconcile attempts; try again shortly"
+        )
+    with contextlib.closing(_open()) as conn:
+        found = _organisation_or_404(conn, organisation_id)
+        if isinstance(found, Response):
+            return found
+        try:
+            result = billing.reconcile_account(conn, organisation_id)
+        except billing.BillingError as exc:
+            return _billing_failure(exc)
+    return json_response(
+        {
+            "organisation_id": result.organisation_id,
+            "provider": result.provider,
+            "status": result.status,
+            "plan_id": result.plan_id,
+            "changed": result.changed,
+        }
+    )
 
 
 @router.put("/api/iam/active-team")

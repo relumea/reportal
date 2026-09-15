@@ -604,6 +604,25 @@ name. List the registered backends and pick one of them.
 `503`. The optional `similarity` extra (the sibling `resembl`) is not installed,
 so no assembly similarity can be computed. Install `reportal[similarity]`.
 
+### billing-error
+
+`400`, `409`, `502` or `503` depending on what failed. The billing provider
+could not honor a checkout, a portal session, a webhook or a reconcile. `400` is
+a refused input (an unknown or non-purchasable plan, an invalid webhook
+signature, a spent or unknown manual token); `409` means there is no
+subscription to manage or reconcile; `502` means the provider was unreachable or
+rejected the call; `503` means billing is disabled on this install, the plan has
+no configured price, or no webhook signing secret is set. The `detail` names
+which. An install with no `REPORTAL_STRIPE_SECRET_KEY` answers `503` for every
+checkout path by design: usage is still metered and readable.
+
+### rate-limited
+
+`429`. Too many calls to a route that reaches the payment provider on your
+behalf (the per-organisation subscription sync). Webhooks are the primary path
+for subscription state and arrive on their own, so this endpoint is a fallback
+for a lost delivery rather than something to poll. Wait and try again.
+
 ### backend-unavailable
 
 `503`. A registered plugin backend is not installed or not usable in this

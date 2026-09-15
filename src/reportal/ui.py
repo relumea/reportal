@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from starlette.responses import FileResponse, Response
 
+from reportal import landing
 from reportal._paths import reports_dir
 from reportal.server import json_error
 
@@ -90,6 +91,20 @@ def index() -> Response:
     if not (root / APP_INDEX).is_file():
         raise json_error(503, error="ui-not-built", detail=UI_NOT_BUILT_DETAIL)
     return FileResponse(root / APP_INDEX, headers={"Cache-Control": SHELL_CACHE_CONTROL})
+
+
+@router.get("/pricing")
+def pricing() -> Response:
+    """The public marketing and pricing page, rendered from the plan catalog.
+
+    Served whether or not the SPA has been built: it is the page a visitor who
+    has never signed in reads, so it must not depend on a frontend build step.
+    """
+    return Response(
+        content=landing.render(),
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": landing.CACHE_CONTROL},
+    )
 
 
 @router.get("/static/{path:path}")

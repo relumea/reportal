@@ -287,6 +287,37 @@ socket is opened; without a key the answer is 503 `external-unavailable`.
 party registers a source through the `reportal.external_sources` entry-point
 group.  `docs/THREAT_MODEL.md` states what a pull discloses.
 
+### Billing configuration
+
+Billing is off by default: a self-hosted or single-operator install has no
+organisation, reads as the unmetered `internal` plan and is unchanged.  Turning
+it on needs a Stripe key; without one every checkout path answers 503 while
+usage is still metered and readable.
+
+| Setting | Env var | Default |
+|---------|---------|---------|
+| Provider | `REPORTAL_BILLING_PROVIDER` (`auto`, `stripe`, `manual`, `disabled`) | `auto`: Stripe when a secret key is set, else disabled |
+| Stripe secret key | `REPORTAL_STRIPE_SECRET_KEY` | none, so billing stays disabled |
+| Webhook signing secret | `REPORTAL_STRIPE_WEBHOOK_SECRET` | none, so every webhook is refused |
+| Stripe API version | `REPORTAL_STRIPE_API_VERSION` | `2026-08-26.dahlia` |
+| Public base URL | `REPORTAL_PUBLIC_BASE_URL` | `http://127.0.0.1:8002` |
+| Per-plan price id | `REPORTAL_STRIPE_PRICE_<PLAN>` (e.g. `..._ANALYST`) | none; a plan without one is 503 at checkout |
+
+`plans.py` is the catalog and the cost model: allowances are **derived** from
+the published Claude rates (`MODEL_RATES`, blended at `INPUT_SHARE`) and the
+share of a tier's price inference may consume (`MAX_COGS_SHARE`), never chosen
+by hand, and `tests/test_plans.py` fails the gate for a catalog that breaks the
+margin.  `metering.py` is the append-only `usage_events` ledger plus
+`quota_check`; `llm.py`'s `recording_usage` sink is how a completion's
+endpoint-reported token counts reach it, installed per request by
+`server._reportal_headers`, so an AI route is metered by construction.
+`billing.py` holds the Stripe integration and its four invariants (completion
+is not payment, webhooks are idempotent through `billing_events`, the price id
+decides the plan rather than caller-supplied metadata, and an unverified
+signature changes nothing).  `landing.py` renders the public `/pricing` page
+from the same catalog.  `docs/ARCHITECTURE.md` ("Plans, metering and billing")
+is the full account.
+
 ### Sandbox configuration
 
 Detonation is off by default, and the second guard is a runner that is actually
@@ -561,7 +592,7 @@ and is destructive.  `get_sandbox_report` and
 `run_sandbox_detonation` executes a sample under the sandbox runner and is
 destructive (and refused unless the install opted in).
 The registry
-declares 247 built-in tools, 116 read-only and 131 destructive.
+declares 248 built-in tools, 117 read-only and 131 destructive.
 
 ## SPA
 
@@ -673,8 +704,8 @@ signature transfer copies the candidate's return type, calling convention and
 parameters; a referenced local type the target's binary has no `data_types`
 row for is reported in `missing_types`, and a target carrying a different
 non-empty calling convention is refused `signature-conflict`.  `apply_match`
-and `run_match` expose the same over MCP, and the counts stay 247 built-in
-tools (116 read-only, 131 destructive).
+and `run_match` expose the same over MCP, and the counts stay 248 built-in
+tools (117 read-only, 131 destructive).
 
 ### Scaling
 

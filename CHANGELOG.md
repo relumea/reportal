@@ -7,6 +7,52 @@ view renders it from here.
 
 ## Unreleased
 
+- reportal can be run as a service, and the plans are priced on what inference
+  actually costs.  Three modules carry it: `plans.py` is the catalog,
+  `metering.py` the append-only usage ledger and the quota checks, and
+  `billing.py` the Stripe integration (checkout, the customer portal,
+  signature-verified webhooks and a reconcile path for a lost delivery).  The
+  token allowances are *derived* rather than chosen: reportal resells
+  inference, so each tier's allowance is the share of its price that Claude
+  tokens may consume (`MAX_COGS_SHARE`, 20%) at the published rates blended
+  80/20 input to output, which puts Analyst at $39 for 2M tokens, Team at $149
+  for 8M and Enterprise at $749 for 40M, every one of them 18-20% cost of
+  goods.  `tests/test_plans.py` asserts the margin property rather than the
+  literal numbers, so raising an allowance is allowed and raising it past what
+  the price supports fails the gate; the free tier is bounded outright at a
+  dollar of inference a month.  Past its allowance a paid plan buys more at $6
+  per million rather than stopping, and a tenant using its own model endpoint
+  is not metered at all.
+
+  Metering attaches once rather than per call site: `llm.py` gained a usage
+  sink every completion reports its endpoint-reported token counts to, and the
+  server installs one for the duration of a request that has a tenant, so
+  every AI route is metered by construction and no AI code knows billing
+  exists.  Counts are never estimated, because a guessed number that bills a
+  customer is worse than a missing one.  A workspace with no organisation reads
+  as the unmetered `internal` plan, so a self-hosted or single-operator install
+  is unchanged and unmetered, which `tests/test_metering.py` pins.
+
+  The billing module is built around the four invariants that keep a payment
+  integration from granting a plan nobody paid for: completion is not payment
+  (entitlement waits for `payment_status == "paid"`), webhooks are idempotent
+  (the event id is claimed in the transaction that applies it, so a redelivery
+  answers `duplicate` and does not restart the period), the subscription's
+  price id decides the plan rather than caller-supplied checkout metadata, and
+  an unverified signature changes nothing.  Writing the tests found a real bug
+  in the third: a fallback was reading an unvalidated `plan_id` straight off
+  customer-controlled metadata, so a customer could have claimed any tier.
+
+  The eleven routes `docs/API.md` already described now exist and answer
+  (`/api/plans`, the usage and billing reads, the operator plan assignment, the
+  checkout, portal, manual confirm and cancel writes, the webhook and the
+  sync), a `/pricing` marketing page is rendered server-side from the same
+  catalog so the marketing numbers and the billing numbers cannot drift, and
+  the SPA gained a Billing view with per-dimension quota meters, the period's
+  cost to serve and the plan cards.  Billing is off until a Stripe key is
+  configured: the default install meters usage, shows it, and offers no
+  checkout.
+
 - Readiness is readable in the SPA.  The Integrations view sat an Instance card
   (`GET /api/config`) beside the MCP onboarding without ever showing the
   pre-flight report a unit file gates on.  A Readiness card reads

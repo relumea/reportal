@@ -23,6 +23,7 @@ export type NavView =
   | "components"
   | "integrations"
   | "docs"
+  | "billing"
   | "users";
 
 export interface NavGroup {
@@ -39,7 +40,16 @@ export const NAV_GROUPS = [
   { label: "Agent", views: ["auto", "conversations"] },
   {
     label: "System",
-    views: ["jobs", "models", "journal", "components", "integrations", "users", "docs"],
+    views: [
+      "jobs",
+      "models",
+      "journal",
+      "components",
+      "integrations",
+      "users",
+      "billing",
+      "docs",
+    ],
   },
 ] as const satisfies readonly NavGroup[];
 
@@ -65,6 +75,7 @@ export const NAV_LABELS: Record<NavView, string> = {
   models: "Models",
   external: "External",
   docs: "Documentation",
+  billing: "Billing",
   search: "Search",
 };
 

@@ -5,7 +5,8 @@
 
 /* ── Tokens ───────────────────────────────────────────────────────── */
 
-:root {
+:root,
+:root[data-theme="dark"] {
   color-scheme: dark;
 
   --bg: #0e1219;
@@ -158,96 +159,263 @@
   --cockpit-rail: 340px;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color-scheme: light;
+:root[data-theme="light"] {
+  color-scheme: light;
 
-    --bg: #f5f7fb;
-    --surface: #ffffff;
-    --surface-2: #f2f5fa;
-    --surface-3: #e9eef6;
-    --surface-hover: #eef3fa;
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-2: #f2f5fa;
+  --surface-3: #e9eef6;
+  --surface-hover: #eef3fa;
 
-    --row-stripe: rgba(23, 32, 46, 0.035);
+  --row-stripe: rgba(23, 32, 46, 0.035);
 
-    --border: #d9e0ea;
-    --border-strong: #c0cbdb;
+  --border: #d9e0ea;
+  --border-strong: #c0cbdb;
 
-    --text: #17202e;
-    --text-muted: #55647c;
-    --text-faint: #5a6880;
+  --text: #17202e;
+  --text-muted: #55647c;
+  --text-faint: #5a6880;
 
-    --accent: #2255bb;
-    --accent-hover: #1d4aa5;
-    --accent-ink: #ffffff;
-    --accent-soft: rgba(34, 85, 187, 0.12);
+  --accent: #2255bb;
+  --accent-hover: #1d4aa5;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(34, 85, 187, 0.12);
 
-    --ok: #106430;
-    --ok-soft: rgba(16, 100, 48, 0.12);
-    --warn: #7d5106;
-    --warn-soft: rgba(125, 81, 6, 0.14);
-    --danger: #ae2929;
-    --danger-soft: rgba(174, 41, 41, 0.12);
-    --info: #0a6688;
-    --info-soft: rgba(10, 102, 136, 0.12);
+  --ok: #106430;
+  --ok-soft: rgba(16, 100, 48, 0.12);
+  --warn: #7d5106;
+  --warn-soft: rgba(125, 81, 6, 0.14);
+  --danger: #ae2929;
+  --danger-soft: rgba(174, 41, 41, 0.12);
+  --info: #0a6688;
+  --info-soft: rgba(10, 102, 136, 0.12);
 
-    --hue-match: #106430;
-    --hue-match-soft: rgba(16, 100, 48, 0.12);
-    --hue-match-line: rgba(16, 100, 48, 0.35);
-    --hue-near: #7d5106;
-    --hue-near-soft: rgba(125, 81, 6, 0.14);
-    --hue-near-line: rgba(125, 81, 6, 0.32);
-    --hue-stub: #4d5c74;
-    --hue-stub-soft: rgba(77, 92, 116, 0.14);
-    --hue-stub-line: rgba(77, 92, 116, 0.3);
-    --hue-thunk: #5b3fa8;
-    --hue-thunk-soft: rgba(91, 63, 168, 0.14);
-    --hue-thunk-line: rgba(91, 63, 168, 0.32);
-    --hue-fail: #ae2929;
-    --hue-fail-soft: rgba(174, 41, 41, 0.12);
-    --hue-fail-line: rgba(174, 41, 41, 0.32);
-    --hue-live: #0a6688;
-    --hue-live-soft: rgba(10, 102, 136, 0.12);
-    --hue-live-line: rgba(10, 102, 136, 0.34);
+  --hue-match: #106430;
+  --hue-match-soft: rgba(16, 100, 48, 0.12);
+  --hue-match-line: rgba(16, 100, 48, 0.35);
+  --hue-near: #7d5106;
+  --hue-near-soft: rgba(125, 81, 6, 0.14);
+  --hue-near-line: rgba(125, 81, 6, 0.32);
+  --hue-stub: #4d5c74;
+  --hue-stub-soft: rgba(77, 92, 116, 0.14);
+  --hue-stub-line: rgba(77, 92, 116, 0.3);
+  --hue-thunk: #5b3fa8;
+  --hue-thunk-soft: rgba(91, 63, 168, 0.14);
+  --hue-thunk-line: rgba(91, 63, 168, 0.32);
+  --hue-fail: #ae2929;
+  --hue-fail-soft: rgba(174, 41, 41, 0.12);
+  --hue-fail-line: rgba(174, 41, 41, 0.32);
+  --hue-live: #0a6688;
+  --hue-live-soft: rgba(10, 102, 136, 0.12);
+  --hue-live-line: rgba(10, 102, 136, 0.34);
 
-    --st-exact: #106430;
-    --st-reloc: #0f6b5c;
-    --st-proven: #15663a;
-    --st-thunk: #5b3fa8;
-    --st-near: #7d5106;
-    --st-stub: #4d5c74;
-    --st-idle: #4d5c74;
-    --st-live: #0a6688;
-    --st-fail: #ae2929;
+  --st-exact: #106430;
+  --st-reloc: #0f6b5c;
+  --st-proven: #15663a;
+  --st-thunk: #5b3fa8;
+  --st-near: #7d5106;
+  --st-stub: #4d5c74;
+  --st-idle: #4d5c74;
+  --st-live: #0a6688;
+  --st-fail: #ae2929;
 
-    --conf-high: #0e6b63;
-    --conf-medium: #116b64;
-    --conf-low: #3f6b68;
-    --conf-soft: rgba(15, 118, 110, 0.12);
+  --conf-high: #0e6b63;
+  --conf-medium: #116b64;
+  --conf-low: #3f6b68;
+  --conf-soft: rgba(15, 118, 110, 0.12);
 
-    --sev-high: #ae2929;
-    --sev-medium: #96372f;
-    --sev-low: #6f4a44;
-    --sev-soft: rgba(174, 41, 41, 0.12);
+  --sev-high: #ae2929;
+  --sev-medium: #96372f;
+  --sev-low: #6f4a44;
+  --sev-soft: rgba(174, 41, 41, 0.12);
 
-    --ramp-1: #b9c5d8;
-    --ramp-2: #7fa3d0;
-    --ramp-3: #5aa894;
-    --ramp-4: #2f8f57;
-    --ramp-5: #106430;
-    --ramp-track: #e9eef6;
+  --ramp-1: #b9c5d8;
+  --ramp-2: #7fa3d0;
+  --ramp-3: #5aa894;
+  --ramp-4: #2f8f57;
+  --ramp-5: #106430;
+  --ramp-track: #e9eef6;
 
-    --grid-line: rgba(23, 32, 46, 0.1);
-    --meter-unlit: rgba(23, 32, 46, 0.07);
-    --meter-band: rgba(125, 81, 6, 0.6);
+  --grid-line: rgba(23, 32, 46, 0.1);
+  --meter-unlit: rgba(23, 32, 46, 0.07);
+  --meter-band: rgba(125, 81, 6, 0.6);
 
-    --glow-live: 0 0 0 1px rgba(10, 102, 136, 0.3), 0 0 10px rgba(10, 102, 136, 0.18);
-    --flash-bg: rgba(34, 85, 187, 0.16);
+  --glow-live: 0 0 0 1px rgba(10, 102, 136, 0.3), 0 0 10px rgba(10, 102, 136, 0.18);
+  --flash-bg: rgba(34, 85, 187, 0.16);
 
-    --shadow-1: 0 1px 2px rgba(23, 32, 46, 0.08);
-    --shadow-2: 0 8px 24px rgba(23, 32, 46, 0.1);
-  }
+  --shadow-1: 0 1px 2px rgba(23, 32, 46, 0.08);
+  --shadow-2: 0 8px 24px rgba(23, 32, 46, 0.1);
 }
+
+/* Windows 2000 "Windows Standard" scheme, taken from the zine project's
+   src/gui/win2k.css: the registry defaults for HKCU\Control Panel\Colors and
+   its 96 DPI metrics.  The system colours are the raw values; the instrument
+   inks are darkened from the light palette because ButtonFace is a much darker
+   surface than the light theme's white and every ink still clears 4.5:1 on it.
+   The bevels below are win2k.css's own 3D model: a raised control is 1px
+   ButtonHilight/ButtonDkShadow outside and 1px ButtonLight/ButtonShadow
+   inside, a sunken one inverts both pairs. */
+:root[data-theme="zine"] {
+  color-scheme: light;
+
+  --sys-face: #d4d0c8;
+  --sys-hilight: #ffffff;
+  --sys-shadow: #808080;
+  --sys-dk-shadow: #404040;
+  --sys-window: #ffffff;
+  --sys-title: #0a246a;
+
+  --bg: #d4d0c8;
+  --surface: #d4d0c8;
+  --surface-2: #d4d0c8;
+  --surface-3: #c9c5bd;
+  --surface-hover: #e4e1da;
+
+  --row-stripe: rgba(0, 0, 0, 0.05);
+
+  --border: #808080;
+  --border-strong: #404040;
+
+  --text: #1a1a1a;
+  --text-muted: #3c3c3c;
+  --text-faint: #404040;
+
+  --accent: #0a246a;
+  --accent-hover: #000080;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(10, 36, 106, 0.12);
+
+  --ok: #054d1f;
+  --ok-soft: rgba(5, 77, 31, 0.12);
+  --warn: #563800;
+  --warn-soft: rgba(86, 56, 0, 0.14);
+  --danger: #8a1212;
+  --danger-soft: rgba(138, 18, 18, 0.12);
+  --info: #064a63;
+  --info-soft: rgba(6, 74, 99, 0.12);
+
+  --hue-match: #054d1f;
+  --hue-match-soft: rgba(5, 77, 31, 0.12);
+  --hue-match-line: rgba(5, 77, 31, 0.4);
+  --hue-near: #563800;
+  --hue-near-soft: rgba(86, 56, 0, 0.14);
+  --hue-near-line: rgba(86, 56, 0, 0.4);
+  --hue-stub: #2e2e2e;
+  --hue-stub-soft: rgba(46, 46, 46, 0.14);
+  --hue-stub-line: rgba(46, 46, 46, 0.36);
+  --hue-thunk: #3c2578;
+  --hue-thunk-soft: rgba(60, 37, 120, 0.14);
+  --hue-thunk-line: rgba(60, 37, 120, 0.4);
+  --hue-fail: #8a1212;
+  --hue-fail-soft: rgba(138, 18, 18, 0.12);
+  --hue-fail-line: rgba(138, 18, 18, 0.4);
+  --hue-live: #064a63;
+  --hue-live-soft: rgba(6, 74, 99, 0.12);
+  --hue-live-line: rgba(6, 74, 99, 0.4);
+
+  --st-exact: #054d1f;
+  --st-reloc: #05443f;
+  --st-proven: #0b5a2a;
+  --st-thunk: #3c2578;
+  --st-near: #563800;
+  --st-stub: #2e2e2e;
+  --st-idle: #2e2e2e;
+  --st-live: #064a63;
+  --st-fail: #8a1212;
+
+  --conf-high: #043f3b;
+  --conf-medium: #064a46;
+  --conf-low: #1f3a38;
+  --conf-soft: rgba(4, 63, 59, 0.12);
+
+  --sev-high: #8a1212;
+  --sev-medium: #6e2420;
+  --sev-low: #553330;
+  --sev-soft: rgba(138, 18, 18, 0.12);
+
+  --ramp-1: #9a968e;
+  --ramp-2: #3a6ea5;
+  --ramp-3: #05443f;
+  --ramp-4: #0b5a2a;
+  --ramp-5: #054d1f;
+  --ramp-track: #c9c5bd;
+
+  --grid-line: rgba(0, 0, 0, 0.14);
+  --meter-unlit: rgba(0, 0, 0, 0.1);
+  --meter-band: rgba(86, 56, 0, 0.6);
+
+  --glow-live: 0 0 0 1px rgba(6, 74, 99, 0.5);
+  --flash-bg: rgba(166, 202, 240, 0.55);
+
+  --shadow-1: none;
+  --shadow-2: 2px 2px 0 rgba(0, 0, 0, 0.35);
+
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-pill: 0;
+
+  --text-xs: 11px;
+  --text-sm: 11px;
+  --text-base: 11px;
+  --text-lg: 13px;
+  --text-xl: 15px;
+  --text-2xl: 20px;
+
+  --font-sans: "MS Sans Serif", "Microsoft Sans Serif", Tahoma, Verdana, sans-serif;
+  --font-mono: "Lucida Console", "Courier New", monospace;
+}
+
+:root[data-theme="zine"] .panel,
+:root[data-theme="zine"] .card,
+:root[data-theme="zine"] .btn,
+:root[data-theme="zine"] .sidebar-toggle {
+  border: 1px solid;
+  border-color: var(--sys-hilight) var(--sys-dk-shadow) var(--sys-dk-shadow) var(--sys-hilight);
+  box-shadow:
+    inset 1px 1px var(--sys-face),
+    inset -1px -1px var(--sys-shadow);
+}
+
+:root[data-theme="zine"] .btn:active:not(:disabled) {
+  border-color: var(--sys-dk-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-dk-shadow);
+  box-shadow: inset 1px 1px var(--sys-shadow);
+}
+
+:root[data-theme="zine"] input,
+:root[data-theme="zine"] select,
+:root[data-theme="zine"] textarea {
+  background: var(--sys-window);
+  border: 1px solid;
+  border-color: var(--sys-shadow) var(--sys-hilight) var(--sys-hilight) var(--sys-shadow);
+  box-shadow:
+    inset 1px 1px var(--sys-dk-shadow),
+    inset -1px -1px var(--sys-face);
+}
+
+/* The topbar is the window caption, so the shell reads as one Win2K window
+   rather than a flat header.  ActiveTitle is flat rather than the registry's
+   GradientActiveTitle blend: caption text has to clear 4.5:1 at the right edge
+   too, and #a6caf0 under white does not. */
+:root[data-theme="zine"] .topbar {
+  background: var(--sys-title);
+  border-bottom: none;
+  padding: var(--space-2) var(--space-3);
+}
+
+:root[data-theme="zine"] .topbar h1,
+:root[data-theme="zine"] .topbar .health,
+:root[data-theme="zine"] .topbar .theme-picker-label {
+  color: #ffffff;
+}
+
+:root[data-theme="zine"] .nav-link.active {
+  background: var(--sys-title);
+  color: #ffffff;
+  border-left-color: var(--sys-title);
+}
+
 
 /* ── Base ─────────────────────────────────────────────────────────── */
 
@@ -421,6 +589,25 @@ code {
   font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.01em;
+}
+
+.theme-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+}
+
+.theme-picker-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.theme-picker select {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
 }
 
 .health {
@@ -3058,4 +3245,70 @@ kbd.key {
 
 .sidebar-collapsed .sidebar-toggle {
   margin-left: 0;
+}
+
+/* ── Billing: the plan catalog as cards ────────────────────────────── */
+
+.plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+.plan-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.plan-card[data-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.plan-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.plan-card-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.plan-card-price {
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.plan-card-price small {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.plan-card-features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+}
+
+.plan-card-features li {
+  padding: var(--space-1) 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.plan-card-features li:first-child {
+  border-top: 0;
 }

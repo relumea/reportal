@@ -19,7 +19,7 @@ import json
 import logging
 import re
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextvars import ContextVar, Token
 from typing import Any
 from urllib.parse import urlsplit
@@ -29,7 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
-from reportal import __version__, auth, error_docs, journal, store
+from reportal import __version__, auth, error_docs, journal, llm, metering, store
 from reportal._paths import WorkspaceNotFound, db_path
 
 app = FastAPI(
@@ -215,6 +215,45 @@ def authenticate(request: Request) -> tuple[str, Response | None]:
     return str(user["name"]), None
 
 
+def caller_organisation(request: Request) -> int:
+    """The organisation the request's writes meter against, or 0 for no tenant.
+
+    The caller's active team names it.  Auth off, or a user with no active team,
+    is a single-operator install: organisation 0, which
+    :func:`reportal.metering.record_usage` records nothing for.
+    """
+    user = getattr(request.state, "user", None)
+    if not isinstance(user, Mapping):
+        return metering.NO_ORG
+    team_id = user.get("active_team_id")
+    if not isinstance(team_id, int):
+        return metering.NO_ORG
+    with contextlib.closing(db()) as conn:
+        row = conn.execute(
+            f"SELECT organisation_id FROM {auth.TEAM_TABLE} WHERE id = ?", (team_id,)
+        ).fetchone()
+    if row is None or row["organisation_id"] is None:
+        return metering.NO_ORG
+    return int(row["organisation_id"])
+
+
+def _meter_tokens(organisation_id: int, path: str) -> Callable[[int, int, str], None]:
+    """A usage sink that appends one token row per completion for a tenant."""
+
+    def sink(prompt_tokens: int, completion_tokens: int, model: str) -> None:
+        with contextlib.closing(db()) as conn:
+            metering.record_usage(
+                conn,
+                organisation_id,
+                metering.KIND_TOKENS,
+                prompt_tokens + completion_tokens,
+                model=model,
+                detail=path,
+            )
+
+    return sink
+
+
 def _accepts_gzip(accept_encoding: str) -> bool:
     """True when the client accepts gzip and has not refused it via q=0."""
     for token in accept_encoding.split(","):
@@ -335,8 +374,18 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
                 return refusal
         # The actor is set here, in the async middleware, so the worker thread
         # the route runs on inherits it; a value set inside a sync dependency
-        # would not reach the handler.
-        with journal.acting_as(actor):
+        # would not reach the handler.  The usage sink rides the same scope: a
+        # tenant request gets one, so every completion underneath it is metered
+        # without any AI route knowing about billing, and a request with no
+        # tenant gets none, so a self-hosted install records nothing.
+        organisation_id = metering.NO_ORG
+        if request.url.path.startswith("/api"):
+            organisation_id = caller_organisation(request)
+        with journal.acting_as(actor), contextlib.ExitStack() as stack:
+            if organisation_id != metering.NO_ORG:
+                stack.enter_context(
+                    llm.recording_usage(_meter_tokens(organisation_id, request.url.path))
+                )
             response: Response = await call_next(request)
     finally:
         _ACCEPT_ENCODING.reset(token)

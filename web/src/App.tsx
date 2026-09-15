@@ -25,6 +25,8 @@ import {
 import { toggleFunctionCodeView } from "./panels/FunctionPanels";
 import { NAV_GROUPS, NAV_LABELS, navPath } from "./router";
 import type { NavView } from "./router";
+import { THEMES, THEME_LABELS, setTheme, storedTheme } from "./theme";
+import type { Theme } from "./theme";
 import type { Health } from "./types";
 import { CheatsheetDialog } from "./views/CheatsheetDialog";
 import { DashboardView } from "./views/DashboardView";
@@ -96,6 +98,9 @@ const SearchView = lazy(() =>
   import("./views/SearchView").then((m) => ({ default: m.SearchView })),
 );
 const UsersView = lazy(() => import("./views/UsersView").then((m) => ({ default: m.UsersView })));
+const BillingView = lazy(() =>
+  import("./views/BillingView").then((m) => ({ default: m.BillingView })),
+);
 
 // The `g` prefix jumps to a sidebar view: its initial where that is unique,
 // otherwise a letter from the word (`g o` for Auto-mode, `g n` for
@@ -216,6 +221,29 @@ function storedCollapsed(): boolean {
     // Storage disabled: the sidebar starts open and forgets the toggle.
     return false;
   }
+}
+
+function ThemePicker(): ReactNode {
+  const [theme, setCurrent] = useState<Theme>(storedTheme);
+  return (
+    <label className="theme-picker">
+      <span className="theme-picker-label">Theme</span>
+      <select
+        value={theme}
+        onChange={(event) => {
+          const next = event.target.value as Theme;
+          setCurrent(next);
+          setTheme(next);
+        }}
+      >
+        {THEMES.map((name) => (
+          <option key={name} value={name}>
+            {THEME_LABELS[name]}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 function storedHistory(): { stack: string[]; index: number } {
@@ -482,6 +510,7 @@ export function App(): ReactNode {
     { path: "/jobs", element: <JobsRoute />, handle: { view: "jobs", title: "Jobs" } },
     { path: "/models", element: <ModelsView />, handle: { view: "models", title: "Models" } },
     { path: "/external", element: <ExternalView />, handle: { view: "external", title: "External" } },
+    { path: "/billing", element: <BillingView />, handle: { view: "billing", title: "Billing" } },
     { path: "/journal", element: <JournalRoute />, handle: { view: "journal", title: "Journal" } },
     {
       path: "/journal/:action",
@@ -582,6 +611,7 @@ export function App(): ReactNode {
       <main className="main">
         <header className="topbar">
           <h1 id="title">{title}</h1>
+          <ThemePicker />
           <NotificationsBell />
           <span className="health" id="health">
             {health ? (

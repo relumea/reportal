@@ -39,11 +39,13 @@ process-wide client the way ``engines.get_engine`` installs an engine.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import tomllib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
@@ -101,6 +103,53 @@ AI_CLI_COMMANDS: dict[str, str] = {
 UNAVAILABLE_DETAIL = (
     "configure REPORTAL_LLM_ENDPOINT (and REPORTAL_LLM_API_KEY) to enable AI features"
 )
+
+# Where a completion's token usage is reported, when anything is listening.
+# A sink rather than a direct `metering` call because this module is the bridge
+# and knows nothing about tenants: `server` installs the sink for the duration
+# of a request and every completion underneath it is attributed, so no AI call
+# site has to be edited to be metered.  Unset, the counting costs one attribute
+# read per completion and nothing is recorded, which is the self-hosted case.
+_USAGE_SINK: ContextVar[Callable[[int, int, str], None] | None] = ContextVar(
+    "reportal_llm_usage_sink", default=None
+)
+
+
+@contextlib.contextmanager
+def recording_usage(sink: Callable[[int, int, str], None]) -> Iterator[None]:
+    """Report every completion's ``(prompt, completion, model)`` counts to *sink*.
+
+    Scoped to the block, so a sink never outlives the request that installed it,
+    and re-entrant through the contextvar rather than module state, so two
+    threads serving two tenants never cross-attribute.
+    """
+    token = _USAGE_SINK.set(sink)
+    try:
+        yield
+    finally:
+        _USAGE_SINK.reset(token)
+
+
+def _report_usage(completion: Any, model: str) -> None:
+    """Send one completion's token counts to the installed sink, if any.
+
+    Usage is what the endpoint reported, never an estimate: a response that
+    carries no usage block records nothing rather than guessing, because a
+    guessed number that bills a customer is worse than a missing one.
+    """
+    sink = _USAGE_SINK.get()
+    if sink is None:
+        return
+    usage = getattr(completion, "usage", None)
+    if usage is None:
+        return
+    prompt = getattr(usage, "prompt_tokens", None)
+    output = getattr(usage, "completion_tokens", None)
+    if not isinstance(prompt, int) or not isinstance(output, int):
+        return
+    with contextlib.suppress(Exception):
+        sink(prompt, output, model)
+
 
 # Kind a type suggestion carries when the model omits it, and the confidence a
 # suggestion carries when the model omits or mangles it.
@@ -369,6 +418,7 @@ class LlmClient:
             )
         except (OpenAIError, ValueError) as exc:
             raise LlmError(f"LLM request failed: {exc}") from exc
+        _report_usage(completion, config.model)
         return _content_text(completion)
 
     def chat(
@@ -402,6 +452,7 @@ class LlmClient:
             completion = self._sdk().chat.completions.create(**request)
         except (OpenAIError, ValueError) as exc:
             raise LlmError(f"LLM request failed: {exc}") from exc
+        _report_usage(completion, config.model)
         try:
             content = _content_text(completion)
         except LlmError:

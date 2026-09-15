@@ -702,14 +702,19 @@ query kinds, the `?` cheatsheet, the analysis tag chips in the SPA.
 
 ## Deliberately not applicable locally
 
-Recorded so the list does not grow into a clone of a hosted service: billing,
-credits and subscription tiers, single sign-on against an external OIDC identity
-provider with DNS domain verification, the hosted VirusTotal feed,
-cross-architecture matching and hosted model availability.
+Recorded so the list does not grow into a clone of a hosted service: single
+sign-on against an external OIDC identity provider with DNS domain verification,
+the hosted VirusTotal feed, cross-architecture matching and hosted model
+availability.
 
-Two entries that used to be here are now shipped and recorded in PARITY.md
+Three entries that used to be here are now shipped and recorded in PARITY.md
 instead: the sandbox detonation (cluster C: off by default, a runner must be
-installed, capped, unnetworked and recorded) and firmware extraction (the carve
+installed, capped, unnetworked and recorded), firmware extraction (the carve
 and the region extraction; a squashfs or UBI inode reader is deliberately not
-written).  PCAP capture stays out of scope: reportal runs no network capture and
-its sandbox has no route at all.
+written), and billing with subscription tiers (`plans.py`, `metering.py`,
+`billing.py` and the `/pricing` page: off by default, so a self-hosted install
+is unmetered and unchanged).  Prepaid credits stay out: the model here is a
+monthly allowance with an overage, not a balance to draw down, and a credit
+ledger would be a second accounting system beside the one in `usage_events`.
+PCAP capture stays out of scope: reportal runs no network capture and its
+sandbox has no route at all.

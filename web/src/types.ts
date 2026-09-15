@@ -3282,3 +3282,98 @@ export interface DocPageBody {
   source: string;
   version: string;
 }
+
+// ── Plans, usage and billing ───────────────────────────────────────
+
+/** One subscription tier, as `GET /api/plans` describes it. */
+export interface Plan {
+  id: string;
+  name: string;
+  tagline: string;
+  price_cents: number;
+  price_usd: number;
+  currency: string;
+  interval: string;
+  trial_days: number;
+  /** -1 means the limit does not apply. */
+  monthly_tokens: number;
+  monthly_auto_runs: number;
+  max_binaries: number;
+  max_api_keys: number;
+  max_seats: number;
+  features: string[];
+  self_serve: boolean;
+  metered: boolean;
+  overage_usd_per_mtok: number;
+}
+
+/** What the SPA may know about billing; never a key. */
+export interface BillingConfig {
+  provider: string;
+  enabled: boolean;
+  configured: boolean;
+  webhook_verified: boolean;
+  plans: Plan[];
+  checkout_plans: string[];
+}
+
+/** `GET /api/plans`. */
+export interface PlansPayload {
+  plans: Plan[];
+  checkout_plans: string[];
+  default_plan_id: string;
+  currency: string;
+  overage_usd_per_mtok: number;
+  billing: BillingConfig;
+}
+
+/** One metered dimension's state against the plan's allowance. */
+export interface QuotaState {
+  allowed: boolean;
+  plan_id: string;
+  kind: string;
+  /** -1 when the dimension is unmetered on this plan. */
+  limit: number;
+  used: number;
+  remaining: number;
+  metered: boolean;
+  overage_units: number;
+  overage_usd: number;
+  reason: string;
+}
+
+/** `GET /api/organisations/<id>/usage`. */
+export interface UsagePayload {
+  organisation_id: number;
+  plan: Plan;
+  period_started_at: string;
+  /** Inference dollars the open period has cost to serve. */
+  cost_usd: number;
+  usage: Record<string, QuotaState>;
+}
+
+/** The mirrored provider subscription, or null when there is none. */
+export interface Subscription {
+  organisation_id: number;
+  provider: string;
+  customer_id: string;
+  subscription_id: string;
+  status: string;
+  current_period_end: string;
+  cancel_at_period_end: boolean;
+  updated_at: string;
+}
+
+/** `GET /api/organisations/<id>/billing`. */
+export interface BillingPayload extends UsagePayload {
+  organisation: { id: number; name: string; description?: string };
+  subscription: Subscription | null;
+  billing: BillingConfig;
+}
+
+/** `POST /api/organisations/<id>/billing/checkout`. */
+export interface CheckoutSession {
+  provider: string;
+  session_id: string;
+  url: string;
+}

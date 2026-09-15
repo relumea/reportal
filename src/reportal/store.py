@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from reportal import analysis_log, auth
+from reportal import analysis_log, auth, metering
 
 # Function statuses that count as a byte-equality match.  Mirrors rebrew's
 # MATCHED_STATUSES so `reportal stats` reports the same number recoverage does.
@@ -581,6 +581,9 @@ def init_db(db_path: Path) -> None:
         # before it runs.
         auth.ensure_schema(conn)
         analysis_log.ensure_schema(conn)
+        # Metering adds columns to the organisations table auth just created,
+        # so it follows identity and precedes the generic column upgrade.
+        metering.ensure_schema(conn)
         _upgrade_schema(conn)
 
 
