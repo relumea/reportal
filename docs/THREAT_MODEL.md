@@ -1,10 +1,25 @@
 # Threat model
 
+Last reviewed: 2026-09-17.
+
 This is a source-derived model of reportal's exposure, not a live probe.  It
 names the boundary, the control that exists, and the residual risk a reader
 should weigh.  Every control below is a symbol in the tree, so it can be
-checked.  Vulnerabilities and code fixes belong to review; this document records
-the system-level posture.
+checked.  Point vulnerabilities and code fixes belong elsewhere; this document
+records the system-level posture.  Owner and review cadence are organizational
+and are not named here.
+
+## Risk-ranked summary
+
+| Rank | Risk | Boundary | Why it ranks here | Control today | Gap |
+|------|------|----------|-------------------|---------------|-----|
+| 1 | Opt-in sample detonation shares the host kernel | 7 | Only path that executes attacker-supplied bytes; a kernel escape is host compromise | Off until `sandbox.require_enabled` + installed runner; `BwrapRunner` unshares namespaces and caps wall/CPU/AS (`sandbox.py`) | No seccomp, no VM, runner binary not attested |
+| 2 | Plaintext secrets and binaries at rest | 2, Secrets | Stolen `reportal.db` or `reportal backup` archive yields every stored credential and sample | FS permissions; reads never return secret values (`secret_store`); tokens stored as SHA-256 only (`auth.hash_token`) | No encryption at rest; journal retains prior secret values until pruned |
+| 3 | Auth-off loopback is full operator | 1 | Any local process that can open the bind is the operator | Default `127.0.0.1`; `cli._require_lan_auth` refuses a wider bind until auth is on and a user exists | No rate limit; XSS against the SPA origin steals `localStorage` token (`web/src/api.ts` `TOKEN_STORAGE_KEY`) |
+| 4 | Billing webhook vs bearer gate | 10 | Entitlement change is high impact; Stripe cannot present a portal bearer | HMAC + timestamp in `billing.verify_webhook`; no secret configured refuses every webhook | When `auth.required()` is true, `server._reportal_headers` demands a bearer on every `/api` path *before* signature check, so a LAN-auth install cannot receive Stripe deliveries as written |
+| 5 | Metering records but does not refuse | Abuse | A tenant (or auth-off operator) can burn inference / auto runs past published allowances | `metering.charge_task` / `record_usage` append the ledger; `quota_check` computes `allowed` for the usage panel | No request path branches on `quota_check(...)["allowed"]` to stop work |
+| 6 | SSRF-shaped URL ingest (opt-in) | 5 | Caller-chosen URL leaves the process | Off by default; `remote_ingest.validate_target` + peer check | Residual TOCTOU; handshake bytes may leave before block |
+| 7 | LLM / agent as untrusted actuator | 6 | Model sees workspace text; destructive tools run after one analyst confirm | Bridge off without endpoint; destructive tools pause for `POST .../confirm` (`agent.py`) | Read-only tools run unbound by analyst intent; results leave to the configured endpoint |
 
 ## Posture
 
@@ -15,12 +30,14 @@ the rebrew checkout it drives, and the default bind is `127.0.0.1`
 (`cli.serve`, `server.LOOPBACK_HOSTS`).  On that bind it is a single-user tool
 with no identity in play; a bind another machine can reach refuses to start
 until token auth is on and a user exists (`cli._require_lan_auth`).  It does not
-execute the binary it analyses by default: it reads bytes and parses engine JSON,
-and its own subprocesses are the rebrew CLI at `engines.RebrewEngine._run` and,
-only when the workspace opts in, a sandbox runner (`sandbox.py`) that isolates a
-sample it was asked to detonate.  That boundary is what the rest of this document
-qualifies, and the sandbox is the one place it moves, so it is written out in
-full below.
+execute the binary it analyses by default: it reads bytes and calls the sibling
+`rebrew` package in process (`engines.RebrewEngine`; every method imports
+rebrew entry points rather than spawning a CLI), and, only when the workspace
+opts in, a sandbox runner (`sandbox.py`) that isolates a sample it was asked to
+detonate.  External list-argv helpers still exist where a tool is not in-tree
+(for example `unpack._run_upx`).  That boundary is what the rest of this
+document qualifies, and the sandbox is the one place sample execution moves, so
+it is written out in full below.
 
 ## Trust boundaries
 
@@ -145,11 +162,26 @@ full below.
    or refuses.  Nothing is mounted, spawned or executed, so a firmware image is
    untrusted input to a byte scanner and to the stdlib archive readers, not to a
    loader.
-9. **Engine JSON to the store.**  `engines.RebrewEngine._run` spawns the rebrew
-   CLI with a fixed subcommand and decodes its stdout as JSON, raising
-   `EngineError` for invalid JSON or a non-object; the bounded stderr tail is
-   `engines.STDERR_TAIL_CHARS`.  The engine's output is trusted only as far as
-   it is stored as data.
+9. **Engine results to the store.**  `engines.RebrewEngine` calls rebrew in
+   process (see the module docstring: every method imports the engine's own
+   entry points).  Failures become `EngineError` with a message bounded by
+   `engines.ERROR_MESSAGE_CHARS`.  The engine's output is trusted only as far
+   as it is stored as data; reportal does not sandbox the engine process, so a
+   hostile project or toolchain bug runs with the portal's OS user.
+10. **Provider webhook to entitlement.**  `POST /api/billing/webhook`
+    (`api.apply_billing_webhook`) is the one HTTP path whose intended
+    authenticator is not a portal bearer: `billing.verify_webhook` requires a
+    configured `REPORTAL_STRIPE_WEBHOOK_SECRET`, verifies the Stripe HMAC and
+    timestamp window, refuses an install with no secret (503), and
+    `billing.apply_event` is idempotent through `billing_events`.  Plan
+    entitlement comes from the subscription's price id
+    (`billing._plan_from_subscription_object` / `plans.plan_for_price_id`), not
+    from caller-supplied checkout metadata.  Checkout and portal sessions still
+    need an authenticated tenant admin (`api.start_billing_checkout`).  Public
+    `/pricing` (`ui.py` / `landing.py`) and `GET /api/plans` advertise catalog
+    text only.  Residual: when `auth.required()` is true, the bearer middleware
+    (`server._reportal_headers` → `server.authenticate`) still gates every
+    `/api` path, including this webhook, before signature verification runs.
 
 ## Attack surface and entry points
 
@@ -157,6 +189,10 @@ full below.
 |-------------|--------------|------|
 | API routes | Network client; JSON bodies and query strings | `api.py`, `server.read_json_object` |
 | Static SPA assets | Network client | `ui.py`, `reportal/assets/dist` |
+| Public pricing page | Network client; no portal data | `ui.py` `/pricing`, `landing.py` |
+| Stripe billing webhook | External provider; signed body + `Stripe-Signature` | `api.apply_billing_webhook`, `billing.verify_webhook` |
+| Job queue submit / cancel / run | Network client; kind + binary id | `api.py` `/api/jobs*`, `jobs.submit`, `jobs.ensure_worker` |
+| Background job pool | In-process workers (off via `REPORTAL_JOBS_POOL`) | `jobs.JobWorker`, `jobs.MAX_WORKERS`, `jobs.MAX_QUEUED_JOBS` |
 | Binary upload | Network client; arbitrary bytes and filename | `api.upload_binary`, `api._stream_upload` |
 | Document upload and paste | Network client; untrusted text | `api.py` knowledge routes, `knowledge.ingest_document` |
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
@@ -169,9 +205,11 @@ full below.
 | Packer rebuild (`upx -d`) | Stored binary bytes, plus the external `upx` tool on `PATH` | `unpack.unpack_to`, `unpack._run_upx`, `binary_actions.unpack_binary` |
 | Registered sandbox runner | Third-party package on the host | `sandbox.refresh_runners`, `reportal.sandbox_runners` |
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm.LlmClient.chat`, `llm._parse_json` |
+| Metered AI / auto usage | Authenticated tenant request; organisation from active team | `server._charge_credits`, `metering.charge_task`, `metering.record_usage` |
 | Agent tool calls | LLM endpoint response, gated by an analyst's confirmation | `agent._drive`, `agent.confirm`, `mcp_server.call_tool` |
 | MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
+| Stripe secret / webhook secret / price ids | Environment (`REPORTAL_STRIPE_*`) | `billing._webhook_secret`, `settings.py` billing.* |
 | Background continuations (pipeline/auto workers, agent loop, conversation
   context) | The authorized request that started them; no second principal |
   `pipeline.function_knowledge`, `auto_llm_worker`, `agent._execute`,
@@ -237,14 +275,49 @@ full below.
   as is per-tenant isolation.
 - **A reverse-proxy deployment.**  reportal's own token gate is the only
   authentication it implements; an operator who fronts it with a proxy owns
-  that layer's configuration (TLS, client certificates, rate limits).
-- **Engine and toolchain isolation.**  The rebrew CLI and its docker images run
-  with the operator's privileges; reportal does not sandbox them.  The same holds
-  for the external unpacker: `reportal unpack` runs `upx -d` on a stored sample
-  when that tool is installed, as a list-argv subprocess with no shell, a
-  captured output and a bounded timeout, and it decodes a file rather than
-  running it, but a bug in UPX itself is UPX's problem.  The engine's own LZEXE
-  case is arithmetic over the bytes in this process and shells out to nothing.
+  that layer's configuration (TLS, client certificates, rate limits).  A proxy
+  that must admit Stripe to `/api/billing/webhook` while keeping bearer auth on
+  the rest of `/api` is outside reportal: the process itself has no path
+  exemption for that route (`server._reportal_headers`).
+- **Engine and toolchain isolation.**  The rebrew package runs in the portal
+  process with the operator's privileges; reportal does not sandbox it.  The
+  same holds for the external unpacker: `reportal unpack` runs `upx -d` on a
+  stored sample when that tool is installed, as a list-argv subprocess with no
+  shell, a captured output and a bounded timeout, and it decodes a file rather
+  than running it, but a bug in UPX itself is UPX's problem.  The engine's own
+  LZEXE case is arithmetic over the bytes in this process and shells out to
+  nothing.
+
+## Abuse cases
+
+Hostile-but-authenticated (or auth-off operator) scenarios with the enabling
+path named.  None of these are demonstrated here.
+
+- **Fill the job queue.**  `POST /api/jobs` accepts kinds from `jobs.JOB_KINDS`
+  until `jobs.MAX_QUEUED_JOBS` (100).  The pool is `jobs.MAX_WORKERS` (2)
+  threads.  There is no per-caller rate limit, so a write-capable caller can
+  keep the workers busy with expensive kinds (match, pipeline, PDF) and delay
+  other work.  Caps are size and queue depth, not request rate
+  (`jobs.submit`, `jobs.ensure_worker`).
+- **Burn inference past the published allowance.**  For an organisation with an
+  active team, `server._reportal_headers` installs `llm.charging` →
+  `metering.charge_task`, which only appends usage.  `metering.quota_check`
+  computes whether units would fit and is served on
+  `GET /api/organisations/<id>/usage`, but no AI or auto route refuses on
+  `allowed: false`.  Credits.py comments describe refusal; the live request
+  path does not implement it.
+- **Workspace-wide journal revert.**  Any authenticated caller with write may
+  revert journal entries (`revert_journal_entry`), including another actor's
+  writes.  Team scope does not narrow the journal half of activity feeds
+  (see out-of-scope above).
+- **SPA token theft via origin XSS.**  Enforcement of auth is server-side; the
+  client only stores and attaches the bearer (`web/src/api.ts`).  A script on
+  the portal origin reads `TOKEN_STORAGE_KEY` from `localStorage`.  There is no
+  HttpOnly cookie session to fall back on.
+- **Register a path instead of uploading bytes.**  `reportal add-binary` /
+  `register_binary` records a filesystem path the server later reads for engine
+  work.  A caller who can name paths the portal user can read enlarges the read
+  surface beyond `binaries/` (same residual as out-of-scope above).
 
 ## Secrets
 
@@ -387,9 +460,16 @@ full below.
   (its writes in the removed directory, its process tree) is contained by the
   sandbox rather than undone by the journal, which is the honest boundary of the
   effect model here.
-- **No rate limiting or quota.**  Each request is bounded (upload size, body
-  size, task counts, `auto_mode.MAX_CONCURRENCY`), but a client can repeat
-  requests or start many runs.
+- **No rate limiting or quota enforcement on the request path.**  Each request
+  is bounded (upload size, body size, task counts, `auto_mode.MAX_CONCURRENCY`,
+  `jobs.MAX_QUEUED_JOBS`), but a client can repeat requests or start many runs.
+  `metering.quota_check` is advisory for the usage panel only; see Abuse cases.
+- **Billing webhook signature is not reachable under LAN auth.**  The intended
+  control is `billing.verify_webhook`.  With `auth.required()`, Stripe's POST
+  lacks a portal bearer and is refused by `server.authenticate` first.  An
+  install that both binds non-loopback (which requires auth) and expects Stripe
+  webhooks therefore has no working in-process path for entitlement updates
+  unless something outside reportal supplies a bearer Stripe does not have.
 - **The database is unencrypted and single-host.**  Host compromise, a stolen
   backup, or filesystem access discloses all portal state; see
   [DR_RUNBOOK.md](DR_RUNBOOK.md).
@@ -397,3 +477,12 @@ full below.
   weight: no observational-equivalence guarantee for a revert, the file-write
   ownership gap above, and partial app-wide mediation (a writer that does not
   journal is not revertible).
+
+## Response readiness (note only)
+
+- Journal entries record an `actor` name for authenticated HTTP writes
+  (`journal.acting_as`); CLI/MCP writes may carry an empty actor.  There is no
+  source address, user agent or token id on the entry, so investigation of
+  "who from where" needs host or reverse-proxy logs, not the journal alone.
+- This repository's disclosure path is stated in [SECURITY.md](../SECURITY.md).
+  There is no in-tree runbook from "report received" to "fix shipped".
