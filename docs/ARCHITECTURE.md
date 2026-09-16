@@ -1242,7 +1242,8 @@ chunks rather than loading it whole, because an upload may be up to
 `MAX_UPLOAD_BYTES` (256 MiB) and a single `read()` would hold the binary in
 memory per concurrent download. The filename comes from the stored name
 through `download_filename` (one path component, every character outside
-`[A-Za-z0-9._-]` an underscore, the content-addressed file name as a
+`[A-Za-z0-9._-]` an underscore, Windows reserved device stems such as
+`AUX`/`NUL`/`COM1` prefixed with `_`, the content-addressed file name as a
 fallback), never from the request; `Content-Length` is the file's own byte
 count, the content type comes from its suffix through `BINARY_CONTENT_TYPES`
 (else `DEFAULT_BINARY_CONTENT_TYPE`), and `Cache-Control` is

@@ -531,6 +531,32 @@ def unpack_binary(
 # a path component.
 _UNSAFE_FILENAME_CHAR = re.compile(r"[^A-Za-z0-9._-]")
 
+# Windows device names (case-insensitive stem before the first dot).  A browser
+# or `reportal download` that saves to a Windows volume cannot create these as
+# ordinary files, so a Content-Disposition that keeps them breaks the client
+# even when the portal itself runs on Linux.
+_WINDOWS_RESERVED_STEMS = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        *(f"COM{index}" for index in range(1, 10)),
+        *(f"LPT{index}" for index in range(1, 10)),
+    }
+)
+
+
+def _safe_download_name(raw: str) -> str:
+    """One path component safe for a header and for a Windows save dialog."""
+    cleaned = _UNSAFE_FILENAME_CHAR.sub("_", raw).strip(" .")
+    if not cleaned:
+        return ""
+    stem = cleaned.split(".", 1)[0]
+    if stem.upper() in _WINDOWS_RESERVED_STEMS:
+        cleaned = f"_{cleaned}"
+    return cleaned
+
 
 def download_filename(binary: Mapping[str, Any]) -> str:
     """The filename a download of *binary* carries, safe for a header and a path.
@@ -538,14 +564,16 @@ def download_filename(binary: Mapping[str, Any]) -> str:
     The name is reduced to one path component (so a name carrying a slash
     cannot name a directory) and everything outside
     :data:`_UNSAFE_FILENAME_CHAR`'s set becomes an underscore, so a quote, a
-    backslash or a newline cannot break the ``Content-Disposition`` header.  A
-    name that reduces to nothing falls back to the content-addressed file name
-    reportal stored it under.
+    backslash or a newline cannot break the ``Content-Disposition`` header.
+    Windows reserved device stems (``AUX``, ``NUL``, ``COM1``, ...) get a
+    leading underscore so a client saving on a Windows volume does not fail.
+    A name that reduces to nothing falls back to the content-addressed file
+    name reportal stored it under.
     """
     candidate = Path(str(binary.get("name") or "")).name
-    cleaned = _UNSAFE_FILENAME_CHAR.sub("_", candidate).strip(" .")
+    cleaned = _safe_download_name(candidate)
     if cleaned:
         return cleaned
     stored = Path(str(binary.get("path") or "")).name
-    fallback = _UNSAFE_FILENAME_CHAR.sub("_", stored).strip(" .")
+    fallback = _safe_download_name(stored)
     return fallback or f"binary-{int(binary['id'])}"

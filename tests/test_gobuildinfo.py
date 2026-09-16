@@ -100,6 +100,14 @@ class TestParse:
         assert gobuildinfo.build_id_from_note(note) == "abc123"
         assert gobuildinfo.build_id_from_note(b"short") == ""
 
+    def test_build_id_from_note_reads_big_endian_headers(self) -> None:
+        import struct
+
+        name = b"Go\x00\x00"
+        desc = b"be-build\x00"
+        note = struct.pack(">3I", 3, len(desc), 4) + name + desc
+        assert gobuildinfo.build_id_from_note(note) == "be-build"
+
 
 class TestRecover:
     def test_recover_stores_the_scan(self, conn: sqlite3.Connection, tmp_path: Path) -> None:

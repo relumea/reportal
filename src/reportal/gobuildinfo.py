@@ -122,15 +122,28 @@ def build_id_from_note(data: bytes) -> str:
     """The build id from ``.note.go.buildid`` section *data*, or empty.
 
     Skips the ELF note header (namesz, descsz, type) and the owner name;
-    the descriptor is the build id.  Anything malformed answers empty
-    rather than guessing.
+    the descriptor is the build id.  The note header follows the ELF file's
+    endianness, so both little- and big-endian layouts are tried; a header
+    whose owner name is not ``Go`` is refused.  Anything malformed answers
+    empty rather than guessing.
     """
     if len(data) < 12:
         return ""
-    namesz, descsz, _ = struct.unpack_from("<3I", data, 0)
-    start = 12 + ((namesz + 3) & ~3)
-    blob = data[start : start + descsz]
-    return blob.decode("utf-8", errors="replace").strip("\x00").strip()
+    for endian in ("<", ">"):
+        namesz, descsz, _ = struct.unpack_from(f"{endian}3I", data, 0)
+        if namesz < 2 or descsz < 1:
+            continue
+        name_end = 12 + namesz
+        desc_start = 12 + ((namesz + 3) & ~3)
+        if name_end > len(data) or desc_start + descsz > len(data):
+            continue
+        if not data[12:name_end].startswith(b"Go"):
+            continue
+        blob = data[desc_start : desc_start + descsz]
+        text = blob.decode("utf-8", errors="replace").strip("\x00").strip()
+        if text:
+            return text
+    return ""
 
 
 def recover(

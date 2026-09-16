@@ -97,6 +97,12 @@ class TestDownloadRoute:
         assert "\n" not in headers["Content-Disposition"]
         assert "/" not in headers["Content-Disposition"]
 
+    def test_windows_reserved_device_names_are_prefixed(self) -> None:
+        assert api.download_filename({"name": "AUX", "path": "", "id": 1}) == "_AUX"
+        assert api.download_filename({"name": "nul.exe", "path": "", "id": 1}) == "_nul.exe"
+        assert api.download_filename({"name": "COM1.bin", "path": "", "id": 1}) == "_COM1.bin"
+        assert api.download_filename({"name": "notepad.exe", "path": "", "id": 1}) == "notepad.exe"
+
     def test_a_name_that_sanitizes_to_nothing_falls_back_to_the_stored_file(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:

@@ -12,9 +12,11 @@ Python 3.13 or newer is required, the same floor the `rebrew` engine sets; the
 `.python-version` in the repository is what resolves the interpreter for `uv`.
 `rebrew` is a path dependency on a sibling checkout at `../rebrew` (see
 `[tool.uv.sources]` in `pyproject.toml`); clone it beside this repo before
-setup. System tools used by the gate: `uv`, `bun` (see `web/package.json`
-`packageManager`), and for `make lint` also `shellcheck`, Java 17+, and
-`vnu-jar` (same pin as `.github/workflows/check.yml`).
+setup. The supported host OS is Linux (CI runs on `ubuntu-latest`); deployment
+uses systemd and the optional sandbox needs bubblewrap. System tools used by
+the gate: `uv`, `bun` (see `web/package.json` `packageManager`), and for
+`make lint` also `shellcheck`, Java 17+, and `vnu-jar` (same pin as
+`.github/workflows/check.yml`).
 
 ```bash
 # Sibling engine (required). CI pins a commit in .github/workflows/check.yml.
