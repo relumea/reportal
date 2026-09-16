@@ -98,6 +98,41 @@ class TestTeamStore:
         assert binary["owner_team_id"] is None
         assert binary["visibility"] == "public"
 
+    def test_deleting_a_team_clears_active_team_selections(self, conn: sqlite3.Connection) -> None:
+        team = auth.create_team(conn, name="Blue")
+        team_id = int(team["id"])
+        user, _ = auth.add_user(conn, name="ana")
+        auth.add_member(conn, team_id, int(user["id"]))
+        auth.set_active_team(conn, int(user["id"]), team_id)
+
+        auth.delete_team(conn, team_id)
+
+        refreshed = auth.get_user(conn, int(user["id"]))
+        assert refreshed is not None
+        assert refreshed["active_team_id"] is None
+
+    def test_removing_a_member_clears_their_active_team(self, conn: sqlite3.Connection) -> None:
+        team = auth.create_team(conn, name="Blue")
+        other = auth.create_team(conn, name="Cyan")
+        team_id = int(team["id"])
+        user, _ = auth.add_user(conn, name="ana")
+        auth.add_member(conn, team_id, int(user["id"]))
+        auth.add_member(conn, int(other["id"]), int(user["id"]))
+        auth.set_active_team(conn, int(user["id"]), team_id)
+
+        auth.remove_member(conn, team_id, int(user["id"]))
+
+        refreshed = auth.get_user(conn, int(user["id"]))
+        assert refreshed is not None
+        assert refreshed["active_team_id"] is None
+
+        auth.add_member(conn, team_id, int(user["id"]))
+        auth.set_active_team(conn, int(user["id"]), int(other["id"]))
+        auth.remove_member(conn, team_id, int(user["id"]))
+        still = auth.get_user(conn, int(user["id"]))
+        assert still is not None
+        assert still["active_team_id"] == int(other["id"])
+
     def test_scope_of_validates_the_request(self, conn: sqlite3.Connection) -> None:
         team = auth.create_team(conn, name="Blue")
 

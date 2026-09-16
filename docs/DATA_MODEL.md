@@ -445,7 +445,10 @@ roles.  `binaries` and `collections` each carry `owner_team_id` (nullable) and
 them by the `_ADDED_COLUMNS` migration: a pre-team row is public and ownerless,
 which is what it always meant.  Deleting a team resets the objects it owned to
 public and ownerless rather than leaving a dangling scope, because a stale
-`owner_team_id` would make them invisible to everyone.
+`owner_team_id` would make them invisible to everyone, and clears any user's
+`active_team_id` that still named it so metering and the SPA do not keep a
+dangling team id.  Removing a member clears that user's active selection when
+it was the team they left.
 
 `feedback` stores the local notes about reportal itself, the one identity-side
 thing that is stored rather than derived: a nullable `user_id` (the

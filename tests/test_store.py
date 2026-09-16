@@ -922,6 +922,30 @@ class TestScans:
             assert store.get_scan(conn, analysis_id, store.SCAN_KIND_TRIAGE) == {"a": 2}
             assert conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 1
 
+    def test_init_db_adds_lookup_indexes_used_by_queries(self, tmp_path: Path) -> None:
+        db = tmp_path / "indexed.db"
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            names = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index'"
+                ).fetchall()
+            }
+        assert "idx_analyses_binary" in names
+        assert "idx_matches_candidate" in names
+        assert "idx_collection_binaries_binary" in names
+        assert "idx_binaries_owner_team" in names
+        assert "idx_collections_owner_team" in names
+        assert "idx_feedback_user" in names
+        assert "idx_users_active_team" in names
+
+    def test_connect_sets_busy_timeout(self, tmp_path: Path) -> None:
+        db = tmp_path / "busy.db"
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            assert int(conn.execute("PRAGMA busy_timeout").fetchone()[0]) == store.BUSY_TIMEOUT_MS
+
 
 class TestSearchAndCounts:
     def test_search_spans_entities(self, conn: sqlite3.Connection) -> None:

@@ -76,7 +76,16 @@ def now() -> str:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the log table when the database predates it."""
+    """Create the log table when the database predates it.
+
+    A no-op when the table already exists: ``executescript`` commits the open
+    transaction, which would split a status write from the log row meant to
+    share its commit.
+    """
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (TABLE,)
+    ).fetchone():
+        return
     conn.executescript(_SCHEMA)
 
 
@@ -101,12 +110,14 @@ def append_entry(
     *,
     message: str,
     severity: str = SEVERITY_INFO,
+    commit: bool = True,
 ) -> int:
     """Append one log entry to *analysis_id*; returns its id.
 
     The severity must be one of :data:`SEVERITIES` (else
     :class:`UnknownSeverityError`), and the message must not be blank (else
-    :class:`ValueError`).
+    :class:`ValueError`).  Pass ``commit=False`` when the caller already holds
+    an open write and will commit the status change and this row together.
     """
     if severity not in SEVERITIES:
         raise UnknownSeverityError(f"unknown severity: {severity!r}")
@@ -115,7 +126,8 @@ def append_entry(
         f"INSERT INTO {TABLE} (analysis_id, severity, message, created_at) VALUES (?, ?, ?, ?)",
         (analysis_id, severity, _message_of(message), now()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(cur.lastrowid or 0)
 
 

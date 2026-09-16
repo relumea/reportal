@@ -464,10 +464,14 @@ CREATE TABLE IF NOT EXISTS signature_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_functions_analysis ON functions(analysis_id);
+CREATE INDEX IF NOT EXISTS idx_analyses_binary ON analyses(binary_id);
 CREATE INDEX IF NOT EXISTS idx_matches_function ON matches(function_id);
+CREATE INDEX IF NOT EXISTS idx_matches_candidate ON matches(candidate_function_id);
 CREATE INDEX IF NOT EXISTS idx_name_history_function ON name_history(function_id);
 CREATE INDEX IF NOT EXISTS idx_signature_history_function ON signature_history(function_id);
 CREATE INDEX IF NOT EXISTS idx_binary_tags_binary ON binary_tags(binary_id);
+CREATE INDEX IF NOT EXISTS idx_collection_binaries_binary ON collection_binaries(binary_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scans_analysis_kind ON scans(analysis_id, kind);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_comments_scope ON comments(scope_kind, scope_id);
@@ -501,11 +505,20 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+# How long a connection waits for a write lock before raising ``sqlite3.OperationalError``.
+# Concurrent writers (API requests, jobs, auto-mode workers) share one file; without
+# a timeout the default is fail-immediate, which surfaces as a 500 under load.
+# Auto mode raises the same value on its own connections; setting it here covers
+# every other open path.
+BUSY_TIMEOUT_MS = 30_000
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     """Open *db_path* read-write with row access by name and FKs enforced."""
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     return conn
 
 
@@ -565,6 +578,20 @@ _BACKFILLS: tuple[str, ...] = (
     "UPDATE collections SET updated_at = created_at WHERE updated_at = ''",
 )
 
+# Indexes that need a column `_ADDED_COLUMNS` (or auth) creates first.  The main
+# `_SCHEMA` script runs before those columns exist, so these land here after
+# the ALTER ADD COLUMN pass; `IF NOT EXISTS` keeps a fresh database and an
+# upgrade of an old one on the same path.  The table name is checked so a
+# partial fixture that never created `users` does not fail the upgrade.
+_ADDED_INDEXES: tuple[tuple[str, str], ...] = (
+    ("binaries", "CREATE INDEX IF NOT EXISTS idx_binaries_owner_team ON binaries(owner_team_id)"),
+    (
+        "collections",
+        "CREATE INDEX IF NOT EXISTS idx_collections_owner_team ON collections(owner_team_id)",
+    ),
+    ("users", "CREATE INDEX IF NOT EXISTS idx_users_active_team ON users(active_team_id)"),
+)
+
 
 def _upgrade_schema(conn: sqlite3.Connection) -> None:
     """Add the columns an existing database predates; a fresh one has them all."""
@@ -574,6 +601,11 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
     for statement in _BACKFILLS:
         conn.execute(statement)
+    for table, statement in _ADDED_INDEXES:
+        if conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone():
+            conn.execute(statement)
     conn.commit()
 
 
@@ -1485,7 +1517,9 @@ def update_analysis_status(
     *status* must be one of :data:`ANALYSIS_STATUSES`.  ``finished_at`` is
     stamped automatically when *status* is terminal and the caller supplied no
     explicit timestamp.  A status that differs from the stored one appends a
-    log entry, so the log carries every transition and not only the last.
+    log entry, so the log carries every transition and not only the last.  The
+    status write and that log row share one commit, so a crash cannot leave a
+    transition without its entry.
     """
     if status not in ANALYSIS_STATUSES:
         raise ValueError(f"unknown analysis status: {status}")
@@ -1504,8 +1538,11 @@ def update_analysis_status(
         assignments.append("finished_at = ?")
         params.append(finished_at)
     params.append(analysis_id)
+    # Ensure the log table exists before the status write: ``executescript``
+    # commits, and must not cut the status UPDATE off from its log INSERT.
+    if status != previous:
+        analysis_log.ensure_schema(conn)
     cur = conn.execute(f"UPDATE analyses SET {', '.join(assignments)} WHERE id = ?", params)
-    conn.commit()
     if status != previous:
         severity = analysis_log.SEVERITY_INFO
         if status == ANALYSIS_STATUS_FAILED:
@@ -1517,7 +1554,9 @@ def update_analysis_status(
             analysis_id,
             severity=severity,
             message=f"status changed to {status} (was {previous})",
+            commit=False,
         )
+    conn.commit()
     return cur.rowcount > 0
 
 

@@ -556,7 +556,9 @@ def delete_team(conn: sqlite3.Connection, team_id: int) -> bool:
 
     The objects the team owned return to the whole workspace rather than
     disappearing with it: a stale ``owner_team_id`` would make them invisible to
-    everyone, which is data loss by another name.
+    everyone, which is data loss by another name.  Users who had this team as
+    their active view lose that selection the same way, so metering and the SPA
+    do not keep a dangling team id.
     """
     if get_team(conn, team_id) is None:
         return False
@@ -565,6 +567,7 @@ def delete_team(conn: sqlite3.Connection, team_id: int) -> bool:
             f"UPDATE {table} SET owner_team_id = NULL, visibility = ? WHERE owner_team_id = ?",
             (VISIBILITY_PUBLIC, team_id),
         )
+    conn.execute(f"UPDATE {TABLE} SET active_team_id = NULL WHERE active_team_id = ?", (team_id,))
     conn.execute(f"DELETE FROM {MEMBER_TABLE} WHERE team_id = ?", (team_id,))
     conn.execute(f"DELETE FROM {TEAM_TABLE} WHERE id = ?", (team_id,))
     conn.commit()
@@ -587,10 +590,20 @@ def add_member(conn: sqlite3.Connection, team_id: int, user_id: int) -> bool:
 
 
 def remove_member(conn: sqlite3.Connection, team_id: int, user_id: int) -> bool:
-    """Remove a user from a team; False when the membership does not exist."""
+    """Remove a user from a team; False when the membership does not exist.
+
+    A user who had this team selected as their active view loses that selection,
+    because membership is required to keep it and a dangling id would read as a
+    team nobody can resolve.
+    """
     cursor = conn.execute(
         f"DELETE FROM {MEMBER_TABLE} WHERE team_id = ? AND user_id = ?", (team_id, user_id)
     )
+    if cursor.rowcount > 0:
+        conn.execute(
+            f"UPDATE {TABLE} SET active_team_id = NULL WHERE id = ? AND active_team_id = ?",
+            (user_id, team_id),
+        )
     conn.commit()
     return cursor.rowcount > 0
 

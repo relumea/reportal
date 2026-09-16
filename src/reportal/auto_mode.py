@@ -117,7 +117,7 @@ _sleep = time.sleep
 # concurrently and all of them write, so a writer waits for the lock rather
 # than failing the batch, and WAL lets a reader (the polling API) proceed while
 # a worker writes.
-DB_BUSY_TIMEOUT_MS = 30000
+DB_BUSY_TIMEOUT_MS = store.BUSY_TIMEOUT_MS
 DB_JOURNAL_MODE = "WAL"
 # WAL's durability knob: a commit does not fsync the WAL on every write, only
 # at a checkpoint.  A crash of this process still loses nothing; only a power
