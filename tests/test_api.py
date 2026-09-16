@@ -36,6 +36,7 @@ from reportal import (
     hardening,
     llm,
     matching,
+    observability,
     similarity,
     store,
     ui,
@@ -93,6 +94,7 @@ class TestHealth:
 
     def test_health_reports_every_dependency(self, portal_db: Path) -> None:
         engines.set_engine(engines.RebrewEngine(enabled=False))
+        observability.reset_job_stats()
         _, headers, body = wsgi_request("GET", "/api/health")
         payload = json_body(body, headers)
         assert payload["failures"] == []
@@ -102,6 +104,15 @@ class TestHealth:
         assert dependencies["engine"]["available"] is False
         assert dependencies["engine"]["origin"] is None
         assert dependencies["auto"]["last_run"] is None
+        assert dependencies["jobs"]["queued"] == 0
+        assert dependencies["jobs"]["running"] == 0
+        assert isinstance(dependencies["jobs"]["pool"], bool)
+        assert payload["jobs"] == {
+            "done": 0,
+            "failed": 0,
+            "duration_ms_sum": 0,
+            "duration_ms_max": 0,
+        }
 
     def test_health_reports_the_engine_when_resolvable(
         self, portal_db: Path, fake_engine: FakeEngine

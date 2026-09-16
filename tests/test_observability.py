@@ -1,10 +1,11 @@
-"""Request correlation and process-local HTTP counters on the serving path."""
+"""Request correlation and process-local HTTP/job counters on the serving path."""
 
 from __future__ import annotations
 
 import logging
 import sqlite3
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from conftest import json_body, wsgi_request
@@ -132,20 +133,95 @@ class TestHttpCounters:
         )
 
 
-class TestJobFailureLogging:
-    def test_a_failed_job_is_logged(
+class TestJobObservability:
+    def test_health_reports_job_counters_and_queue(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        observability.reset_job_stats()
+        binary_path = tmp_path / "demo.exe"
+        binary_path.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="aa" * 32, name="demo.exe", size=2, path=str(binary_path)
+        )
+        jobs.submit(conn, kind="secrets", binary_id=binary_id, params={})
+        status, headers, body = wsgi_request("GET", "/api/health")
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert payload["jobs"] == {
+            "done": 0,
+            "failed": 0,
+            "duration_ms_sum": 0,
+            "duration_ms_max": 0,
+        }
+        assert payload["dependencies"]["jobs"]["queued"] >= 1
+        assert payload["dependencies"]["jobs"]["running"] == 0
+        assert isinstance(payload["dependencies"]["jobs"]["pool"], bool)
+
+    def test_a_failed_job_is_logged_and_counted(
         self, conn: sqlite3.Connection, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
+        observability.reset_job_stats()
         binary_path = tmp_path / "demo.exe"
         binary_path.write_bytes(b"MZ")
         binary_id = store.add_binary(
             conn, sha256="aa" * 32, name="demo.exe", size=2, path=str(binary_path)
         )
         job = jobs.submit(conn, kind="secrets", binary_id=binary_id, params={})
-        with caplog.at_level(logging.WARNING, logger="reportal.jobs"):
+        with caplog.at_level(logging.ERROR, logger="reportal.jobs"):
             finished = jobs.run_pending(conn, limit=1)
         assert finished[0]["status"] == jobs.STATUS_FAILED
         assert any(
-            "job failed" in record.getMessage() and f"id={job['id']}" in record.getMessage()
+            "job failed" in record.getMessage()
+            and f"id={job['id']}" in record.getMessage()
+            and "duration_ms=" in record.getMessage()
+            for record in caplog.records
+        )
+        snapshot = observability.job_snapshot()
+        assert snapshot["failed"] >= 1
+        assert snapshot["done"] == 0
+        assert snapshot["duration_ms_sum"] >= 0
+
+    def test_a_job_failure_under_a_request_carries_request_id(
+        self, conn: sqlite3.Connection, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        observability.reset_job_stats()
+        binary_path = tmp_path / "demo.exe"
+        binary_path.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="bb" * 32, name="demo.exe", size=2, path=str(binary_path)
+        )
+        job = jobs.submit(conn, kind="secrets", binary_id=binary_id, params={})
+        token = observability.set_request_id("inline-job-trace")
+        try:
+            with caplog.at_level(logging.ERROR, logger="reportal.jobs"):
+                jobs.run_pending(conn, limit=1)
+        finally:
+            observability.reset_request_id(token)
+        assert any(
+            "job failed" in record.getMessage()
+            and f"id={job['id']}" in record.getMessage()
+            and "request_id=inline-job-trace" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_a_wedged_worker_tick_is_logged(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        worker = jobs.JobWorker(workers=1)
+
+        def stop_after_wait(_timeout: float | None = None) -> bool:
+            worker._stop.set()
+            return True
+
+        monkeypatch.setattr(
+            jobs.store,
+            "connect",
+            mock.Mock(side_effect=OSError("database is locked")),
+        )
+        monkeypatch.setattr(worker._stop, "wait", stop_after_wait)
+        with caplog.at_level(logging.WARNING, logger="reportal.jobs"):
+            worker._loop()
+        assert any(
+            "job worker tick failed" in record.getMessage() and "OSError" in record.getMessage()
             for record in caplog.records
         )

@@ -49,6 +49,7 @@ from reportal import (
     hardening,
     journal,
     matching,
+    observability,
     pdf,
     pipeline,
     protocols,
@@ -89,6 +90,9 @@ MAX_KEPT_JOBS = 500
 # looks for one.
 MAX_WORKERS = 2
 POLL_SECONDS = 0.25
+# Cap how often a wedged worker re-logs the same class of tick failure, so a
+# missing database cannot flood journalctl every POLL_SECONDS.
+WORKER_ERROR_LOG_SECONDS = 30.0
 
 # The event stream's poll interval and its cap, so a stream always ends.
 STREAM_INTERVAL_SECONDS = 0.5
@@ -730,6 +734,7 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     binary_id = int(job["binary_id"])
     params = dict(job.get("params") or {})
     job_id = int(job["id"])
+    started = time.perf_counter()
     try:
         scan_kind = spec.scan_kind_for(params)
         if spec.perform_progress is not None:
@@ -752,18 +757,30 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
                 )
             payload = log.attach(payload)
         failure = ""
+        failure_exc: BaseException | None = None
     except Exception as exc:
         payload = None
         failure = f"{type(exc).__name__}: {exc}"
-        _log.warning(
-            "job failed id=%s kind=%s binary_id=%s error=%s",
-            job_id,
-            job["kind"],
-            binary_id,
-            failure[:200],
-            exc_info=exc,
-        )
+        failure_exc = exc
+    duration_ms = int((time.perf_counter() - started) * 1000)
     status = STATUS_FAILED if failure else STATUS_DONE
+    observability.record_job(failed=bool(failure), duration_ms=duration_ms)
+    if failure_exc is not None:
+        _log_job_failure(
+            job_id=job_id,
+            kind=str(job["kind"]),
+            binary_id=binary_id,
+            duration_ms=duration_ms,
+            error=failure[:200],
+            exc=failure_exc,
+        )
+    elif duration_ms >= observability.SLOW_JOB_MS:
+        _log_job_slow(
+            job_id=job_id,
+            kind=str(job["kind"]),
+            binary_id=binary_id,
+            duration_ms=duration_ms,
+        )
     conn.execute(
         f"UPDATE {TABLE} SET status = ?, progress = ?, message = ?, result_json = ?,"
         " error = ?, finished_at = ? WHERE id = ?",
@@ -781,6 +798,52 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     stored = get_job(conn, int(job["id"]))
     assert stored is not None, "the row was just updated"
     return stored
+
+
+def _request_id_suffix() -> str:
+    """Append `` request_id=...`` when the caller is an HTTP request thread."""
+    request_id = observability.current_request_id()
+    return f" request_id={request_id}" if request_id else ""
+
+
+def _log_job_failure(
+    *,
+    job_id: int,
+    kind: str,
+    binary_id: int,
+    duration_ms: int,
+    error: str,
+    exc: BaseException,
+) -> None:
+    """One structured error line an operator can grep by job id or request id."""
+    _log.error(
+        "job failed id=%s kind=%s binary_id=%s duration_ms=%s error=%s%s",
+        job_id,
+        kind,
+        binary_id,
+        duration_ms,
+        error,
+        _request_id_suffix(),
+        exc_info=exc,
+    )
+
+
+def _log_job_slow(
+    *,
+    job_id: int,
+    kind: str,
+    binary_id: int,
+    duration_ms: int,
+) -> None:
+    """A successful job that took long enough to be worth noticing."""
+    _log.warning(
+        "job slow id=%s kind=%s binary_id=%s duration_ms=%s%s",
+        job_id,
+        kind,
+        binary_id,
+        duration_ms,
+        _request_id_suffix(),
+    )
 
 
 def run_pending(conn: sqlite3.Connection, *, limit: int = 1) -> list[dict[str, Any]]:
@@ -831,6 +894,7 @@ class JobWorker:
             threading.Thread(target=self._loop, name=f"reportal-jobs-{index}", daemon=True)
             for index in range(max(1, workers))
         ]
+        self._last_error_log = 0.0
 
     def start(self) -> None:
         for thread in self._threads:
@@ -847,9 +911,19 @@ class JobWorker:
                 with contextlib.closing(store.connect(_paths.db_path())) as conn:
                     if not run_pending(conn, limit=1):
                         self._stop.wait(POLL_SECONDS)
-            except (sqlite3.Error, WorkspaceNotFound, OSError):
+            except (sqlite3.Error, WorkspaceNotFound, OSError) as exc:
                 # A database that is not there yet, or a locked one, is not a
-                # reason to kill the worker: the next tick tries again.
+                # reason to kill the worker: the next tick tries again.  Log
+                # occasionally so an operator can see why the queue is stuck.
+                now = time.monotonic()
+                if now - self._last_error_log >= WORKER_ERROR_LOG_SECONDS:
+                    self._last_error_log = now
+                    _log.warning(
+                        "job worker tick failed: %s: %s",
+                        type(exc).__name__,
+                        exc,
+                        exc_info=exc,
+                    )
                 self._stop.wait(POLL_SECONDS)
 
 

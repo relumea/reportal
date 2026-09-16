@@ -8281,6 +8281,19 @@ def _last_auto_run(conn: Any) -> dict[str, Any] | None:
     }
 
 
+def _jobs_health(conn: Any) -> dict[str, Any]:
+    """Queue depth and whether this process will drain it.
+
+    Two COUNT queries over ``jobs``; the process-local done/failed totals live
+    under the top-level ``jobs`` key beside ``http``, not here.
+    """
+    return {
+        "queued": jobs.count_jobs(conn, status=jobs.STATUS_QUEUED),
+        "running": jobs.count_jobs(conn, status=jobs.STATUS_RUNNING),
+        "pool": not jobs.pool_disabled(),
+    }
+
+
 @router.get("/api/doctor")
 def doctor_report(request: Request) -> Response:
     """The pre-flight half of ``GET /api/health``, over HTTP.
@@ -8313,8 +8326,11 @@ def health() -> Response:
     reported under ``dependencies`` and named in ``failures`` rather than
     turned into an error, because the process is still serving.  ``http`` is
     the process-local request counters since start (rate, 4xx/5xx, latency
-    sum and max), so an operator can read RED without a separate metrics
-    scrape.
+    sum and max), and ``jobs`` is the matching done/failed/latency snapshot
+    for background work, so an operator can read RED for both the request
+    path and the queue without a separate metrics scrape.
+    ``dependencies.jobs`` is the live queue depth (queued/running) and whether
+    this process's pool is draining it.
 
     Every probe is cheap and side-effect free.  The database check is a
     permission test (no query, no write, no SQLite lock); the engine is read
@@ -8325,10 +8341,16 @@ def health() -> Response:
     path = db_path()
     # Open without init_db: health must not upgrade schema, and a read-only
     # database must still answer rather than 500 on ALTER TABLE.
+    jobs_dep: dict[str, Any] = {
+        "queued": 0,
+        "running": 0,
+        "pool": not jobs.pool_disabled(),
+    }
     try:
         with contextlib.closing(store.connect(path)) as conn:
             counts = store.counts(conn)
             last_run = _last_auto_run(conn)
+            jobs_dep = _jobs_health(conn)
     except (sqlite3.Error, OSError):
         counts = {
             "binaries": 0,
@@ -8348,6 +8370,7 @@ def health() -> Response:
         "database": database,
         "engine": _engine_health(),
         "auto": {"last_run": last_run},
+        "jobs": jobs_dep,
     }
     failures = [] if database["writable"] else ["database"]
     return json_response(
@@ -8359,6 +8382,7 @@ def health() -> Response:
             "dependencies": dependencies,
             "failures": failures,
             "http": observability.http_snapshot(),
+            "jobs": observability.job_snapshot(),
         }
     )
 

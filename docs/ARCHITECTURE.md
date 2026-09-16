@@ -306,7 +306,12 @@ middleware mints or echoes `X-Request-Id`, records process-local HTTP counters
 emits a structured completion line for every interesting `/api` call
 (method, path, status, duration_ms, request_id, actor), so journalctl can
 answer whether a request succeeded and how long it took without uvicorn's
-access log.  The middleware resolves the bearer token to a user
+access log.  Finished background jobs feed matching process counters
+(`observability.record_job`, surfaced as `jobs` on the same health payload)
+and `dependencies.jobs` reports the live queue depth plus whether this
+process's pool is draining it; a failed or slow job also emits a structured
+line (`job failed` / `job slow`) carrying `duration_ms` and, when the run was
+inline under an HTTP request, `request_id`.  The middleware resolves the bearer token to a user
 (`auth.authenticate`, constant-time digest comparison), refuses a disabled user,
 computes the permission the method and path need (`auth.required_permission`:
 `read`, `write`, or `admin` for `/api/users*`) and compares it with the role's
