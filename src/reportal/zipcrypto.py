@@ -43,6 +43,29 @@ DEFAULT_PASSWORD = "infected"
 # one; it lives here because the scheme is what it describes.
 MAX_PASSWORD_CHARS = 128
 
+# Detail :func:`validate_password` raises when the password is empty or too long.
+PASSWORD_LENGTH_DETAIL = f"password must be 1 to {MAX_PASSWORD_CHARS} characters"
+
+# Detail when the password carries a control character: the download route echoes
+# the value in ``X-Reportal-Zip-Password``, so CR/LF/NUL would split or corrupt
+# the response headers.
+PASSWORD_CONTROL_DETAIL = "password must not contain control characters"
+
+
+def validate_password(password: str) -> str:
+    """Return *password* when it is safe to put in a zip and a response header.
+
+    Empty or overlong values, and any ASCII control character (including CR,
+    LF and NUL), are refused.  Callers map the :class:`ValueError` message onto
+    their own error vocabulary.
+    """
+    if not password or len(password) > MAX_PASSWORD_CHARS:
+        raise ValueError(PASSWORD_LENGTH_DETAIL)
+    if any(ord(ch) < 32 for ch in password):
+        raise ValueError(PASSWORD_CONTROL_DETAIL)
+    return password
+
+
 # Bytes one read of the source takes while it is deflated.
 READ_CHUNK_BYTES = 1024 * 1024
 

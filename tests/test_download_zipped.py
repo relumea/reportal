@@ -16,7 +16,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import api, cli, journal, mcp_tools, store, zipcrypto
+from reportal import cli, journal, mcp_tools, store, zipcrypto
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -186,9 +186,19 @@ class TestRoute:
         status, headers, _body = self._zip(ids["binary"], password="x" * 200)
 
         assert status.startswith("400")
-        assert json_body(_body, headers)["detail"] == (
-            f"password must be 1 to {api.ZIP_PASSWORD_MAX_CHARS} characters"
-        )
+        assert json_body(_body, headers)["detail"] == zipcrypto.PASSWORD_LENGTH_DETAIL
+
+    def test_a_password_with_a_control_character_is_400(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+
+        status, headers, body = self._zip(ids["binary"], password="secret\r\nX-Evil: 1")
+
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid password"
+        assert json_body(body, headers)["detail"] == zipcrypto.PASSWORD_CONTROL_DETAIL
+        assert "x-evil" not in {key.lower() for key in headers}
 
     def test_an_unknown_binary_is_404(self, tmp_path: Path, monkeypatch: Any) -> None:
         _seed(tmp_path, monkeypatch)
@@ -336,6 +346,26 @@ class TestMcp:
             assert exc.detail.startswith("password must be 1 to")
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("an empty password must be a tool error")
+
+    def test_a_password_with_a_control_character_is_a_tool_error(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        tool = mcp_tools.get_tool("export_zipped_binary")
+        assert tool is not None
+
+        try:
+            tool.handler(
+                {
+                    "binary_id": ids["binary"],
+                    "path": str(tmp_path / "x.zip"),
+                    "password": "pw\r\nX-Evil: 1",
+                }
+            )
+        except mcp_tools.ToolError as exc:
+            assert exc.detail == zipcrypto.PASSWORD_CONTROL_DETAIL
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("a control-character password must be a tool error")
 
     def test_the_write_is_revertible(self, tmp_path: Path, monkeypatch: Any) -> None:
         ids = _seed(tmp_path, monkeypatch)

@@ -90,6 +90,8 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("X-Content-Type-Options", "nosniff"),
     ("X-Frame-Options", "DENY"),
     ("Referrer-Policy", "no-referrer"),
+    ("Cross-Origin-Opener-Policy", "same-origin"),
+    ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
 )
 
 # The current request's ``Accept-Encoding``, so ``json_response`` can decide on
@@ -531,6 +533,11 @@ def _actor_for_log(actor: str) -> str:
     return "authenticated"
 
 
+def _safe_log_token(value: str) -> str:
+    """Collapse ASCII controls in a log field so one request cannot split a line."""
+    return "".join(ch if ord(ch) >= 32 else "?" for ch in value)
+
+
 def _log_api_completion(
     *,
     method: str,
@@ -542,7 +549,14 @@ def _log_api_completion(
 ) -> None:
     """One structured line an operator can grep by request id or status."""
     message = "request method=%s path=%s status=%s duration_ms=%s request_id=%s actor=%s"
-    args = (method, path, status, duration_ms, request_id, _actor_for_log(actor))
+    args = (
+        _safe_log_token(method),
+        _safe_log_token(path),
+        status,
+        duration_ms,
+        request_id,
+        _actor_for_log(actor),
+    )
     if status >= 500:
         _log.error(message, *args)
     elif status >= 400 or duration_ms >= observability.SLOW_REQUEST_MS:

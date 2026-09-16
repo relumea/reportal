@@ -5358,11 +5358,11 @@ def download(
         ).expanduser()
         if target.exists() and not force:
             _fail(f"refusing to overwrite {target} without --force", json_output)
-        if as_zip and (not password or len(password) > zipcrypto.MAX_PASSWORD_CHARS):
-            _fail(
-                f"the password must be 1 to {zipcrypto.MAX_PASSWORD_CHARS} characters",
-                json_output,
-            )
+        if as_zip:
+            try:
+                password = zipcrypto.validate_password(password)
+            except ValueError as exc:
+                _fail(f"the {exc}", json_output)
         target.parent.mkdir(parents=True, exist_ok=True)
         if as_zip:
             written = _write_protected_zip(source, target, f"{stored_name}.zip", password)

@@ -7077,12 +7077,10 @@ def download_binary_zipped(binary_id: int, password: str = ZIP_PASSWORD_DEFAULT)
     survive a mail gateway or an upload form that refuses a raw sample.  The
     answer is not cacheable: the encryption header is drawn per request.
     """
-    if not password or len(password) > ZIP_PASSWORD_MAX_CHARS:
-        return json_error(
-            400,
-            error="invalid password",
-            detail=f"password must be 1 to {ZIP_PASSWORD_MAX_CHARS} characters",
-        )
+    try:
+        password = zipcrypto.validate_password(password)
+    except ValueError as exc:
+        return json_error(400, error="invalid password", detail=str(exc))
     with contextlib.closing(db()) as conn:
         binary = store.get_binary(conn, binary_id)
     if binary is None:

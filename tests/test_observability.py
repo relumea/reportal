@@ -49,6 +49,13 @@ class TestRequestCorrelation:
         assert headers[REQUEST_ID_HEADER] != forged
         assert "\n" not in headers[REQUEST_ID_HEADER]
 
+    def test_completion_log_fields_collapse_control_characters(self) -> None:
+        from reportal.server import _safe_log_token
+
+        assert _safe_log_token("GET") == "GET"
+        assert _safe_log_token("/api/binaries\nERROR") == "/api/binaries?ERROR"
+        assert _safe_log_token("a\rb\x00c") == "a?b?c"
+
 
 class TestHttpCounters:
     def test_health_reports_http_counters(self, portal_db: Path) -> None:

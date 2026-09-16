@@ -314,6 +314,11 @@ def required_permission(method: str, path: str) -> str:
     return PERMISSION_READ if method.upper() in _READ_METHODS else PERMISSION_WRITE
 
 
+def _has_control_characters(cleaned: str) -> bool:
+    """True when *cleaned* carries an ASCII control character (CR/LF/NUL, ...)."""
+    return any(ord(ch) < 32 for ch in cleaned)
+
+
 def _validated_name(name: str) -> str:
     cleaned = (name or "").strip()
     if not cleaned:
@@ -322,6 +327,8 @@ def _validated_name(name: str) -> str:
         raise InvalidUserError(
             ERROR_INVALID_USER, f"name must be at most {MAX_USER_NAME} characters"
         )
+    if _has_control_characters(cleaned):
+        raise InvalidUserError(ERROR_INVALID_USER, "name must not contain control characters")
     return cleaned
 
 
@@ -453,6 +460,8 @@ def _validated_team_name(name: str) -> str:
         raise InvalidTeamError(
             ERROR_INVALID_TEAM, f"name must be at most {MAX_TEAM_NAME} characters"
         )
+    if _has_control_characters(cleaned):
+        raise InvalidTeamError(ERROR_INVALID_TEAM, "name must not contain control characters")
     return cleaned
 
 
@@ -710,6 +719,10 @@ def _validated_organisation_name(name: str) -> str:
         raise InvalidUserError(
             ERROR_INVALID_ORGANISATION,
             f"an organisation name is at most {MAX_ORGANISATION_NAME} characters",
+        )
+    if _has_control_characters(cleaned):
+        raise InvalidUserError(
+            ERROR_INVALID_ORGANISATION, "an organisation name must not contain control characters"
         )
     return cleaned
 

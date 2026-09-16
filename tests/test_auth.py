@@ -86,6 +86,14 @@ class TestStore:
         with pytest.raises(auth.InvalidUserError):
             auth.add_user(conn, name="ana", role="root")
 
+    def test_a_name_with_a_control_character_is_refused(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(auth.InvalidUserError, match="control characters"):
+            auth.add_user(conn, name="ana\nadmin", role=auth.ROLE_ANALYST)
+        with pytest.raises(auth.InvalidTeamError, match="control characters"):
+            auth.create_team(conn, name="ops\rroot")
+        with pytest.raises(auth.InvalidUserError, match="control characters"):
+            auth.create_organisation(conn, name="corp\x00inc")
+
     def test_unknown_ids_change_nothing(self, conn: sqlite3.Connection) -> None:
         assert auth.update_user(conn, 4242, role=auth.ROLE_ADMIN) is None
         assert auth.rotate_token(conn, 4242) is None

@@ -4024,11 +4024,10 @@ def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     path = _arg_str(arguments, "path")
     password = _arg_optional_str(arguments, "password", zipcrypto.DEFAULT_PASSWORD)
-    if not password or len(password) > zipcrypto.MAX_PASSWORD_CHARS:
-        raise ToolError(
-            "invalid params",
-            f"password must be 1 to {zipcrypto.MAX_PASSWORD_CHARS} characters",
-        )
+    try:
+        password = zipcrypto.validate_password(password)
+    except ValueError as exc:
+        raise ToolError("invalid params", str(exc)) from None
     with contextlib.closing(_open()) as conn:
         binary = _require_binary(conn, binary_id)
         source = Path(str(binary["path"]))

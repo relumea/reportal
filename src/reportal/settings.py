@@ -343,6 +343,7 @@ SETTINGS: tuple[Setting, ...] = (
     ),
 )
 
+
 def _stripe_price_id(plan_id: str) -> Callable[[], str]:
     """A zero-argument reader for one plan's Stripe price id setting."""
 
