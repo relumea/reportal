@@ -102,8 +102,8 @@ HANDLER_SCOPED = {
 def main() -> int:
     src = API.read_text()
     server = SERVER.read_text()
-    kinds = re.findall(r'"([a-z-]+)":\s*"[^"]*not found"', server)
-    sys.stdout.write(f"gate kinds ({len(set(kinds))}): {', '.join(sorted(set(kinds)))}\n")
+    paths = re.findall(r'\(re\.compile\(r"\^/api/[^"]+"\),\s*"([a-z-]+)"\)', server)
+    sys.stdout.write(f"gate kinds ({len(set(paths))}): {', '.join(sorted(set(paths)))}\n")
 
     lines = src.split("\n")
     cur: tuple[str, str] | None = None
