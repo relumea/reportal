@@ -7,11 +7,13 @@ HTML="web/index.html"
 CSS="web/src/styles.css"
 
 if ! command -v vnu >/dev/null 2>&1; then
-  echo "VNU: vnu is required (install with: bun install -g vnu)" >&2
+  # Match CI (.github/workflows/check.yml): the `vnu` npm meta-package has no
+  # bin; `vnu-jar` is what ships the wrapper.  Pin stays in that workflow.
+  echo "VNU: vnu is required (install with: npm install -g vnu-jar@26.8.21; needs Java 17+)" >&2
   exit 1
 fi
 if ! command -v java >/dev/null 2>&1; then
-  echo "VNU: Java 17+ is required (vnu.jar runs on the JVM)" >&2
+  echo "VNU: Java 17+ is required (vnu.jar runs on the JVM; apt: openjdk-17-jre-headless)" >&2
   exit 1
 fi
 

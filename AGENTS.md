@@ -113,18 +113,16 @@ wheel that is actually built rather than a committed artifact.
 
 ```bash
 # Install (`rebrew` is a base dependency, a path source on the sibling
-# ../rebrew checkout, so this installs the engine too)
-uv venv .venv
-uv pip install -e ".[dev]" --python .venv/bin/python
+# ../rebrew checkout). Clone it beside this repo, then:
+make setup          # uv sync --extra dev + cd web && bun install
 # Optional: enable `reportal match` scoring (resembl sibling + rapidfuzz)
-uv pip install -e ".[similarity]" --python .venv/bin/python
+#   make setup SYNC_EXTRAS='--extra dev --extra similarity'
 # Optional: enable the Cognee graph backend (`reportal graph-sync --backend cognee`);
 # without it the backend is registered but unavailable and every path is 503
-uv pip install -e ".[cognee]" --python .venv/bin/python
+uv sync --extra cognee
 
 # Frontend (Vite + React + TypeScript, bun).  Build before `reportal serve`:
 # the server serves src/reportal/assets/dist, which is generated, not committed.
-cd web && bun install
 cd web && bun run build     # tsc --noEmit + vite build into src/reportal/assets/dist
 cd web && bun run dev       # Vite dev server
 cd web && bun run lint      # oxlint --import-plugin src tests playwright.config.ts
@@ -142,7 +140,9 @@ reportal doctor     # readiness before a start: exits 1 on a failure (docs/DEPLO
 
 # Gate (see "Gate"): lint + types + tests under the coverage floor + SPA + wheel
 make check          # the whole gate, in order
+make check-ci       # what CI runs (no headless Chrome / local fixture)
 make check-fast     # drops the coverage trace, the browsers and the wheel
+make test-one ARGS='tests/test_foo.py'   # one file or node, no coverage
 
 # The same steps individually
 .venv/bin/python -m pytest -q                         # tests without coverage

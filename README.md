@@ -10,18 +10,25 @@ The RevEng.AI portal is a hosted service. Reverse-engineering projects that alre
 
 Python 3.13 or newer is required, the same floor the `rebrew` engine sets; the
 `.python-version` in the repository is what resolves the interpreter for `uv`.
+`rebrew` is a path dependency on a sibling checkout at `../rebrew` (see
+`[tool.uv.sources]` in `pyproject.toml`); clone it beside this repo before
+setup. System tools used by the gate: `uv`, `bun` (see `web/package.json`
+`packageManager`), and for `make lint` also `shellcheck`, Java 17+, and
+`vnu-jar` (same pin as `.github/workflows/check.yml`).
 
 ```bash
-uv venv .venv
-uv pip install -e ".[dev]" --python .venv/bin/python
-# The rebrew engine (`reportal enrich`, the engine routes) is a base dependency,
-# installed editable from the sibling ../rebrew checkout by the line above.
-# Optional: enable `reportal match` scoring (installs the sibling resembl + rapidfuzz)
-uv pip install -e ".[similarity]" --python .venv/bin/python
+# Sibling engine (required). CI pins a commit in .github/workflows/check.yml.
+git clone https://github.com/maci0/rebrew ../rebrew
+
+make setup          # uv sync --extra dev + cd web && bun install
+# Optional: enable `reportal match` scoring (needs sibling ../resembl too)
+#   git clone https://github.com/maci0/resembl ../resembl
+#   make setup SYNC_EXTRAS='--extra dev --extra similarity'
 
 # Build the web UI (Vite + React + TypeScript, bun). `reportal serve` answers
 # 503 ui-not-built until this has produced src/reportal/assets/dist.
-cd web && bun install && bun run build
+cd web && bun run build
+# or: make run   # builds, then serves
 ```
 
 ## First command
@@ -310,7 +317,7 @@ On the HTTP API, `GET /api/graph/backends` lists the registry, `POST /api/binari
 The optional Cognee backend pushes the translated graph into a Cognee dataset. It is off unless the extra is installed:
 
 ```bash
-uv pip install -e ".[cognee]" --python .venv/bin/python
+uv sync --extra cognee
 reportal graph-sync 1 --backend cognee
 ```
 
@@ -469,30 +476,34 @@ what the sandbox does and does not promise.
 
 ## Development
 
-`make check` is the whole gate: ruff and ruff format, oxlint, shellcheck, W3C
-VNU over the HTML and CSS, mypy (the flag set in `pyproject.toml`), `tsc
---noEmit`, pytest under the coverage floor, the built SPA smoke and audit in
-headless Chrome, and the wheel packaging check. `make check-fast` drops the
-slow parts (the coverage trace, and the browser and wheel targets) for
-iteration.
+See [CONTRIBUTING.md](CONTRIBUTING.md). `make help` lists every contributor
+target. `make check` is the whole gate: ruff and ruff format, oxlint,
+shellcheck, W3C VNU over the HTML and CSS, mypy (the flag set in
+`pyproject.toml`), `tsc --noEmit`, pytest under the coverage floor, the built
+SPA smoke and audit in headless Chrome, and the wheel packaging check.
+`make check-ci` is what GitHub Actions runs (same as `make check` without
+`ui`, which needs a local rebrew project fixture). `make check-fast` drops the
+slow parts (coverage, browsers, wheel) for iteration.
 
 ```bash
-uv venv .venv
-uv pip install -e ".[dev]" --python .venv/bin/python
-cd web && bun install
+make setup          # once: uv sync --extra dev + web packages
 make run            # build the SPA and serve the portal (PORT=8002)
-make check          # the whole gate
 make check-fast     # no coverage, no browsers, no wheel
+make check-ci       # what CI runs on every PR
+make check          # the whole gate (includes headless Chrome)
+make test-one ARGS='tests/test_disclosure.py'   # one file or node
 ```
 
 Individual targets: `make run` (build the SPA, then serve) and `make serve`
 (serve the current build, no rebuild), `make lint`, `make typecheck`, `make
 test` (with coverage), `make test-fast`, `make ui` (build the SPA, then the
 smoke and audit), `make package-check`. `shellcheck` and `vnu` are the two
-external tools the lint step requires, and `vnu` needs Java 17+.
+external tools the lint step requires; install `vnu` with
+`npm install -g vnu-jar@26.8.21` (Java 17+).
 
 ## Docs
 
+- `CONTRIBUTING.md`: bootstrap, edit loop, and what to run before a PR.
 - `docs/ARCHITECTURE.md`: module map, store schema, engine contract, HTTP surface, SPA modules, matching, auto mode, verification.
 - `docs/COMPONENTS.md`: the component model, revertible effects, reactive activation, and the shared effect dispatcher.
 - `docs/PARITY.md`: portal.reveng.ai capability map, status, and the local engine behind each.

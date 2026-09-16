@@ -99,14 +99,15 @@ jobs:
           cd web && bun run build
           uv run python scripts/precompress_spa.py
 
-      # `make check` without its `ui` target.  The headless-Chrome smoke and
-      # audit seed a workspace from `../rebrew-projects/notepad-rebrew`, a
-      # per-binary decompilation project (the target executable plus its
-      # reversed sources and its database) that lives in a local data
-      # directory rather than in any repository, so those two run on a
-      # developer machine; everything else the gate does runs here.
-      - name: make lint, typecheck, test and package-check
+      # `make check-ci` is the local name for this step (lint + typecheck + test
+      # + package-check).  The headless-Chrome smoke and audit seed a workspace
+      # from `../rebrew-projects/notepad-rebrew`, a per-binary decompilation
+      # project (the target executable plus its reversed sources and its
+      # database) that lives in a local data directory rather than in any
+      # repository, so those two run on a developer machine; everything else
+      # the gate does runs here.
+      - name: make check-ci
         run: |
           export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
           export LC_ALL=C TZ=UTC
-          make lint typecheck test package-check
+          make check-ci

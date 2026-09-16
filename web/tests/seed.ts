@@ -56,7 +56,7 @@ export interface StaleRun {
 
 const SEED_SCRIPT_RELATIVE = join("tools", "seed_e2e.py");
 const MAX_SEED_OUTPUT_BYTES = 8 * 1024 * 1024;
-const INSTALL_HINT = 'uv venv .venv && uv pip install -e ".[dev]" --python .venv/bin/python';
+const INSTALL_HINT = "make setup";
 
 export function seedWorkspace(): SeedResult {
   const python = pythonPath();
