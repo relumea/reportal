@@ -31,6 +31,7 @@ what the API, the CLI and the MCP tools call.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import sqlite3
@@ -1083,6 +1084,8 @@ def export_prototypes(
             stream.write(header)
         os.replace(temp, target)
     except Exception:
+        with contextlib.suppress(OSError):
+            os.close(handle)
         temp.unlink(missing_ok=True)
         raise
     return {"path": str(target), "bytes": len(header), "signatures": len(signatures)}

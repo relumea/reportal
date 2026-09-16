@@ -17,6 +17,7 @@ import contextlib
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -147,6 +148,7 @@ _project_context = partial(surface.project_context, fail=_fail)
 _require_binary = partial(surface.require_binary, fail=_fail)
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 # The disassembly format `disasm_cache` holds.  The cache key is the function
 # id alone, so only this format is cached; a `hex` request runs the engine and
@@ -469,6 +471,9 @@ def _stream_upload(upload: Any, directory: Path) -> tuple[Path, str, int]:
                 digest.update(chunk)
                 handle.write(chunk)
     except BaseException:
+        # fdopen takes ownership only on success; a failed open leaves the fd.
+        with contextlib.suppress(OSError):
+            os.close(fd)
         temp.unlink(missing_ok=True)
         raise
     return temp, digest.hexdigest(), size
@@ -6395,14 +6400,31 @@ def _execute_auto_run(run_id: int, params: auto_mode.AutoParams) -> None:
             with contextlib.closing(_open()) as conn:
                 auto_mode.execute_auto_run(conn, run_id=run_id, params=params)
         except Exception as exc:  # a crashed background run is a failed run, not a lost one
-            with contextlib.closing(_open()) as conn:
-                auto_mode.persist_undo_plan(conn, run_id)
-                auto_store.finish_auto_run(
-                    conn,
+            failure = f"{type(exc).__name__}: {exc}"
+            _log.warning(
+                "auto run failed run_id=%s error=%s",
+                run_id,
+                failure[:200],
+                exc_info=exc,
+            )
+            try:
+                with contextlib.closing(_open()) as conn:
+                    auto_mode.persist_undo_plan(conn, run_id)
+                    auto_store.finish_auto_run(
+                        conn,
+                        run_id,
+                        status=auto_store.AUTO_RUN_FAILED,
+                        stats={"error": failure},
+                    )
+            except Exception:
+                # A second failure must not die unobserved on a daemon thread:
+                # the run would stay `running` with no log line to blame.
+                _log.exception(
+                    "could not mark auto run %s failed after %s",
                     run_id,
-                    status=auto_store.AUTO_RUN_FAILED,
-                    stats={"error": f"{type(exc).__name__}: {exc}"},
+                    failure[:200],
                 )
+                raise
     finally:
         _auto_run_slots.release()
 

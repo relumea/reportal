@@ -3497,6 +3497,10 @@ def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
                 stream.write(text)
             os.replace(temp_name, target)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.close(handle)
+            raise
         finally:
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(temp_name)

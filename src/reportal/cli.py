@@ -389,6 +389,10 @@ def _write_text_atomic(path: Path, text: str) -> Path:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
         os.replace(temp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(handle)
+        raise
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_name)
@@ -5193,6 +5197,8 @@ def _copy_stream(source: Path, target: Path) -> int:
                 written += len(chunk)
         os.replace(temp, target)
     except Exception:
+        with contextlib.suppress(OSError):
+            os.close(handle)
         temp.unlink(missing_ok=True)
         raise
     return written

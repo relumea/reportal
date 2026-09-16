@@ -393,11 +393,33 @@ JOB_KINDS: dict[str, JobKind] = {kind.name: kind for kind in builtin_kinds()}
 # ── Rows ───────────────────────────────────────────────────────────
 
 
+def _loads_column(raw: str, *, job_id: int, column: str) -> Any | None:
+    """Parse one JSON column, or None when it is corrupt.
+
+    A corrupt ``params_json`` or ``result_json`` must not take down every job
+    listing: the row still exists, so the reader gets a safe empty value and a
+    warning names the job and column an operator can repair.
+    """
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        _log.warning("job %s has corrupt %s: %s", job_id, column, exc)
+        return None
+
+
 def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     """One stored job as a plain dict, with its payload decoded."""
+    job_id = int(row["id"])
     raw_result = str(row["result_json"] or "")
+    raw_params = str(row["params_json"] or "{}")
+    params = _loads_column(raw_params, job_id=job_id, column="params_json")
+    if not isinstance(params, dict):
+        if params is not None:
+            _log.warning("job %s params_json is not a JSON object", job_id)
+        params = {}
+    result = _loads_column(raw_result, job_id=job_id, column="result_json") if raw_result else None
     return {
-        "id": int(row["id"]),
+        "id": job_id,
         "kind": str(row["kind"]),
         "label": JOB_KINDS[str(row["kind"])].label if str(row["kind"]) in JOB_KINDS else "",
         "binary_id": int(row["binary_id"]) if row["binary_id"] is not None else None,
@@ -405,9 +427,9 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "progress": int(row["progress"]),
         "steps_total": int(row["steps_total"]),
         "message": str(row["message"]),
-        "params": json.loads(str(row["params_json"] or "{}")),
+        "params": params,
         "error": str(row["error"]),
-        "result": json.loads(raw_result) if raw_result else None,
+        "result": result,
         "created_at": str(row["created_at"]),
         "started_at": str(row["started_at"]),
         "finished_at": str(row["finished_at"]),

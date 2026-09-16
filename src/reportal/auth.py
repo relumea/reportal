@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import sqlite3
@@ -35,6 +36,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
+
+_log = logging.getLogger(__name__)
 
 # Roles a user may carry, and their permission sets.
 ROLE_VIEWER = "viewer"
@@ -248,7 +251,15 @@ def _workspace_required() -> bool:
     try:
         with marker.open("rb") as handle:
             document = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Readers fall back to defaults on a bad file (see settings.problems);
+        # without a log that fallback silently disables workspace auth.
+        _log.warning(
+            "cannot read %s for [%s]; auth.required falls back to off: %s",
+            marker,
+            CONFIG_TABLE,
+            exc,
+        )
         return False
     table = document.get(CONFIG_TABLE)
     if not isinstance(table, dict):

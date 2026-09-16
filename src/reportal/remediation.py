@@ -646,6 +646,10 @@ def validate_rule(rule: str) -> dict[str, Any]:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"validated": False, "validator": YARAC_BIN, "error": str(exc)}
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(handle)
+        raise
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_name)

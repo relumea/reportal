@@ -911,6 +911,10 @@ def write_report(
         with os.fdopen(handle, "wb") as stream:
             stream.write(report.data)
         os.replace(temp_name, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(handle)
+        raise
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_name)

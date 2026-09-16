@@ -59,6 +59,7 @@ call.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import sqlite3
@@ -2273,6 +2274,8 @@ def export_header(
             stream.write(header)
         os.replace(temp, target)
     except Exception:
+        with contextlib.suppress(OSError):
+            os.close(handle)
         temp.unlink(missing_ok=True)
         raise
     return {"path": str(target), "bytes": len(header), "types": len(types)}

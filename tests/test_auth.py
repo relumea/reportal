@@ -119,6 +119,18 @@ class TestStore:
 
         assert auth.required() is True
 
+    def test_an_unreadable_workspace_config_logs_before_falling_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv(auth.REQUIRED_ENV, raising=False)
+        (tmp_path / "reportal.toml").write_text("this is not [toml\n")
+        monkeypatch.chdir(tmp_path)
+
+        with caplog.at_level("WARNING", logger="reportal.auth"):
+            assert auth.required() is False
+
+        assert any("auth.required falls back to off" in record.message for record in caplog.records)
+
 
 class TestApiGate:
     def test_auth_off_leaves_the_api_open_and_says_so(self, conn: sqlite3.Connection) -> None:

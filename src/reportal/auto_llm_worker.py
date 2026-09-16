@@ -331,6 +331,10 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(source)
         os.replace(temp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(handle)
+        raise
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_name)

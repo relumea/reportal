@@ -515,6 +515,29 @@ class TestListing:
         assert kind_total == 1
         assert by_kind[0]["status"] == jobs.STATUS_DONE
 
+    def test_a_corrupt_json_column_does_not_take_down_the_listing(
+        self, conn: sqlite3.Connection, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        job = _submit(conn, tmp_path)
+        conn.execute(
+            f"UPDATE {jobs.TABLE} SET params_json = ?, result_json = ? WHERE id = ?",
+            ("{not-json", "{also-broken", job["id"]),
+        )
+        conn.commit()
+
+        with caplog.at_level("WARNING", logger="reportal.jobs"):
+            rows, total = jobs.list_jobs(conn)
+            stored = jobs.get_job(conn, int(job["id"]))
+
+        assert total == 1
+        assert rows[0]["params"] == {}
+        assert rows[0]["result"] is None
+        assert stored is not None
+        assert stored["params"] == {}
+        assert stored["result"] is None
+        assert any("corrupt params_json" in record.message for record in caplog.records)
+        assert any("corrupt result_json" in record.message for record in caplog.records)
+
     def test_an_unknown_status_or_kind_is_refused(self, conn: sqlite3.Connection) -> None:
         for kwargs in ({"status": "nope"}, {"kind": "nope"}):
             try:
