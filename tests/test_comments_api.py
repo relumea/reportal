@@ -204,7 +204,13 @@ class TestCommentRoutes:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         ids = _seed(conn)
-        stamps = iter(["2020-01-01T00:00:00+00:00", "2020-01-02T00:00:00+00:00"])
+        stamps = iter(
+            [
+                "2020-01-01T00:00:00+00:00",
+                "2020-01-02T00:00:00+00:00",
+                "2020-01-02T00:00:01+00:00",
+            ]
+        )
         monkeypatch.setattr(store, "now", lambda: next(stamps))
         created = store.add_comment(
             conn, scope_kind="binary", scope_id=ids["binary"], author="a", body="before"

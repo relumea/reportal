@@ -3176,8 +3176,6 @@ def list_conversations(
     the caller may not see, like the other scoped reads; conversations of
     other scopes (docs, project) have no owning binary and stay.
     """
-    from reportal import conversations
-
     sql = (
         "SELECT c.*, ("
         "  SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id"
@@ -3205,11 +3203,11 @@ def list_conversations(
         )
         params.extend(
             [
-                conversations.SCOPE_KIND_BINARY,
-                conversations.SCOPE_KIND_FUNCTION,
-                conversations.SCOPE_KIND_BINARY,
+                "binary",
+                "function",
+                "binary",
                 *scope_params,
-                conversations.SCOPE_KIND_FUNCTION,
+                "function",
                 *scope_params,
             ]
         )
@@ -3316,8 +3314,6 @@ def list_comments(
     ``visible_to`` drops comments on binaries (and on functions of binaries)
     the caller may not see, like the other scoped reads.
     """
-    from reportal import comments
-
     sql = "SELECT * FROM comments"
     clauses: list[str] = []
     params: list[Any] = []
@@ -3338,9 +3334,7 @@ def list_comments(
             " JOIN binaries b ON a.binary_id = b.id"
             f" WHERE f.id = comments.scope_id AND {clause})))"
         )
-        params.extend(
-            [comments.SCOPE_BINARY, *scope_params, comments.SCOPE_FUNCTION, *scope_params]
-        )
+        params.extend(["binary", *scope_params, "function", *scope_params])
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id"
@@ -3511,8 +3505,6 @@ def list_documents(
     not see, like the other scoped reads; documents of other scopes (project,
     docs) have no owning binary and stay.
     """
-    from reportal import knowledge
-
     sql = (
         "SELECT d.id, d.scope_kind, d.scope_id, d.title, d.source, d.mime, d.sha256,"
         " d.size, d.created_at, ("
@@ -3534,7 +3526,7 @@ def list_documents(
             f"(d.scope_kind != ? OR EXISTS (SELECT 1 FROM binaries b"
             f" WHERE b.id = d.scope_id AND {clause}))"
         )
-        params.extend([knowledge.SCOPE_KIND_BINARY, *scope_params])
+        params.extend(["binary", *scope_params])
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY d.id"

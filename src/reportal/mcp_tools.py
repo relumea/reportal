@@ -2520,9 +2520,7 @@ def _tool_get_unpack(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_run_unpack(arguments: dict[str, Any]) -> dict[str, Any]:
-    # Imported lazily: `reportal.api` imports `reportal.integrations`, which
-    # imports this module, so a top-level import would be circular.
-    from reportal.api import ExtractError, unpack_binary
+    from reportal.binary_actions import ExtractError, unpack_binary
 
     binary_id = _arg_int(arguments, "binary_id")
     packer = _arg_optional_str(arguments, "packer").strip().lower()
@@ -4021,7 +4019,7 @@ def _tool_delete_tag(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
     """Write a stored binary as a password-protected zip at the caller's path."""
-    from reportal import api  # the filename sanitizer the routes use
+    from reportal.binary_actions import download_filename
 
     binary_id = _arg_int(arguments, "binary_id")
     path = _arg_str(arguments, "path")
@@ -4039,7 +4037,7 @@ def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
                 "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
             )
         target = Path(path).expanduser()
-        member = f"{api.download_filename(binary)}.zip"
+        member = f"{download_filename(binary)}.zip"
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             previous = journal.read_bounded(target) if target.is_file() else None
@@ -4745,13 +4743,13 @@ def _tool_set_collection_scope(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_run_firmware_scan(arguments: dict[str, Any]) -> dict[str, Any]:
-    from reportal import api
+    from reportal.binary_actions import ExtractError, firmware_carve_binary
 
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
         try:
-            return api.firmware_carve_binary(conn, binary_id)
-        except api.ExtractError as exc:
+            return firmware_carve_binary(conn, binary_id)
+        except ExtractError as exc:
             raise ToolError(exc.code, exc.detail) from exc
 
 
@@ -4769,20 +4767,20 @@ def _tool_get_firmware_scan(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_extract_firmware_regions(arguments: dict[str, Any]) -> dict[str, Any]:
-    from reportal import api
+    from reportal.binary_actions import ExtractError, firmware_extract_binary
 
     binary_id = _arg_int(arguments, "binary_id")
     regions = _arg_optional_int_list(arguments, "regions")
     collection_id = _arg_optional_int(arguments, "collection_id", 0)
     with contextlib.closing(_open()) as conn:
         try:
-            return api.firmware_extract_binary(
+            return firmware_extract_binary(
                 conn,
                 binary_id,
                 region_indexes=regions,
                 collection_id=collection_id,
             )
-        except api.ExtractError as exc:
+        except ExtractError as exc:
             raise ToolError(exc.code, exc.detail) from exc
 
 
@@ -4879,16 +4877,14 @@ def _tool_add_feedback(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_run_sandbox_detonation(arguments: dict[str, Any]) -> dict[str, Any]:
-    from reportal import api, sandbox
+    from reportal import sandbox
 
     binary_id = _arg_int(arguments, "binary_id")
     timeout = _arg_optional_int(arguments, "timeout", 0) or None
     memory_mb = _arg_optional_int(arguments, "memory_mb", 0) or None
     with contextlib.closing(_open()) as conn:
         try:
-            return api.sandbox_detonate_binary(
-                conn, binary_id, timeout=timeout, memory_mb=memory_mb
-            )
+            return sandbox.detonate_binary(conn, binary_id, timeout=timeout, memory_mb=memory_mb)
         except sandbox.SandboxError as exc:
             raise ToolError(exc.code, exc.detail) from exc
 
@@ -5044,9 +5040,7 @@ def _tool_search(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_extract_archive(arguments: dict[str, Any]) -> dict[str, Any]:
-    # Imported lazily: `reportal.api` imports `reportal.integrations`, which
-    # imports this module, so a top-level import would be circular.
-    from reportal.api import ExtractError, extract_archive_binary
+    from reportal.binary_actions import ExtractError, extract_archive_binary
 
     binary_id = _arg_int(arguments, "binary_id")
     password = _arg_optional_str(arguments, "password")

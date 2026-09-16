@@ -289,7 +289,7 @@ panel expose it.  Nothing is executed, mounted or spawned, and no external tool
 is called: this is byte work over bytes reportal already stored.
 
 The sandbox half is shipped too, and it is the one path in reportal that
-executes anything: `src/reportal/sandbox.py` plus `api.sandbox_detonate_binary`
+executes anything: `src/reportal/sandbox.py` plus `sandbox.detonate_binary`
 run a stored sample under `bwrap` with `--unshare-all` (network, PID, mount, IPC
 and UTS namespaces), a read-only root, one writable directory, `ulimit` caps and
 a wall-clock timeout, and record the report in `sandbox_runs` as one journaled

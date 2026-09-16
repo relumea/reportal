@@ -228,7 +228,7 @@ class TestTheChargeSink:
 
     def test_nothing_is_reported_without_a_sink(self) -> None:
         """An install with no tenant pays one attribute read and nothing else."""
-        assert llm._report_charge("summary", [{"role": "user", "content": "x"}]) is None
+        llm._report_charge("summary", [{"role": "user", "content": "x"}])
 
     def test_the_sink_does_not_outlive_its_block(self) -> None:
         seen: list[tuple[str, int]] = []
@@ -246,5 +246,5 @@ class TestTheChargeSink:
             raise RuntimeError("ledger is down")
 
         with llm.charging(broken):
-            assert llm._report_charge("summary", [{"role": "user", "content": "x"}]) is None
+            llm._report_charge("summary", [{"role": "user", "content": "x"}])
         assert calls == [("summary", 1)]

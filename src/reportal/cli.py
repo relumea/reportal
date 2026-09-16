@@ -698,7 +698,7 @@ def sandbox_command(
     capped, given no network and a read-only root.  `--report` prints the last
     stored report and `--status` says whether a run is possible here.
     """
-    from reportal import api, sandbox
+    from reportal import sandbox
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
@@ -715,7 +715,7 @@ def sandbox_command(
             payload = stored
         else:
             try:
-                payload = api.sandbox_detonate_binary(
+                payload = sandbox.detonate_binary(
                     conn, binary_id, timeout=timeout, memory_mb=memory_mb
                 )
             except sandbox.SandboxError as exc:
@@ -5235,7 +5235,7 @@ def download(
     an analysis id first, which is the local form of the hosted
     ``analyses/<id>/bytes`` read.
     """
-    from reportal import api
+    from reportal.binary_actions import download_filename
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
@@ -5253,14 +5253,17 @@ def download(
         source = Path(str(binary["path"]))
         if not source.is_file():
             _fail(f"binary {binary_id} has no file at {binary['path']!r}", json_output)
-        stored_name = api.download_filename(binary)
+        stored_name = download_filename(binary)
         target = (
             output if output is not None else Path(f"{stored_name}.zip" if as_zip else stored_name)
         ).expanduser()
         if target.exists() and not force:
             _fail(f"refusing to overwrite {target} without --force", json_output)
-        if as_zip and (not password or len(password) > api.ZIP_PASSWORD_MAX_CHARS):
-            _fail(f"the password must be 1 to {api.ZIP_PASSWORD_MAX_CHARS} characters", json_output)
+        if as_zip and (not password or len(password) > zipcrypto.MAX_PASSWORD_CHARS):
+            _fail(
+                f"the password must be 1 to {zipcrypto.MAX_PASSWORD_CHARS} characters",
+                json_output,
+            )
         target.parent.mkdir(parents=True, exist_ok=True)
         if as_zip:
             written = _write_protected_zip(source, target, f"{stored_name}.zip", password)
@@ -5305,15 +5308,15 @@ def firmware(
     Pure byte work: reportal reads no filesystem inode table, runs nothing and
     stores the pass as the binary's `firmware` scan.
     """
-    from reportal import api
+    from reportal.binary_actions import ExtractError, firmware_carve_binary
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
-            payload = api.firmware_carve_binary(conn, binary_id)
-        except api.ExtractError as exc:
+            payload = firmware_carve_binary(conn, binary_id)
+        except ExtractError as exc:
             _fail(f"{exc.code}: {exc.detail}", json_output)
     if json_output:
         typer.echo(json.dumps(payload))
@@ -5356,20 +5359,20 @@ def firmware_extract(
     region is stored as a binary of its own.  The whole request is one journal
     action.
     """
-    from reportal import api
+    from reportal.binary_actions import ExtractError, firmware_extract_binary
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
-            payload = api.firmware_extract_binary(
+            payload = firmware_extract_binary(
                 conn,
                 binary_id,
                 region_indexes=list(region) if region else None,
                 collection_id=collection_id,
             )
-        except api.ExtractError as exc:
+        except ExtractError as exc:
             _fail(f"{exc.code}: {exc.detail}", json_output)
     if json_output:
         typer.echo(json.dumps(payload))
@@ -5403,17 +5406,17 @@ def extract(
     missing password, or a member that escapes the extraction root is refused
     with the same reason.  The whole command is one journal action.
     """
-    from reportal import api
+    from reportal.binary_actions import ExtractError, extract_archive_binary
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
-            payload = api.extract_archive_binary(
+            payload = extract_archive_binary(
                 conn, binary_id, password=password, collection_id=collection_id
             )
-        except api.ExtractError as exc:
+        except ExtractError as exc:
             _fail(exc.detail, json_output)
     if json_output:
         typer.echo(json.dumps(payload))
@@ -11634,12 +11637,12 @@ def unpack_command(
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    from reportal import api
+    from reportal.binary_actions import ExtractError, unpack_binary
 
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
-            payload = api.unpack_binary(conn, binary_id, packer=packer, name=name)
-        except api.ExtractError as exc:
+            payload = unpack_binary(conn, binary_id, packer=packer, name=name)
+        except ExtractError as exc:
             _fail(f"{exc.code}: {exc.detail}", json_output)
     if json_output:
         typer.echo(json.dumps(payload))

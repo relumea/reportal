@@ -59,7 +59,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from reportal import llm, plans
+from reportal import llm
 
 # Characters of decompiled C per token, shared with the module that sizes the
 # real prompts.  Used only to size a caller's text when it has no count of its
@@ -96,6 +96,10 @@ class TaskProfile:
 
     def cogs_usd(self) -> float:
         """What one call of this task costs in inference, at the current rates."""
+        # Imported lazily: plans reads this module for credit cogs, so a
+        # top-level import would close a cycle.
+        from reportal import plans
+
         input_rate, output_rate = plans.MODEL_RATES.get(
             plans.COST_MODEL, max(plans.MODEL_RATES.values(), key=lambda pair: pair[1])
         )

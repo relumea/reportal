@@ -14,7 +14,7 @@ does not carry, the same ceiling :mod:`reportal.filetypes` states.  Nothing
 here executes the sample: ``upx -d`` decodes a file rather than running it, and
 the LZEXE case is arithmetic over the bytes.
 
-The action itself lives in :func:`reportal.api.unpack_binary`, which writes the
+The action itself lives in :func:`reportal.binary_actions.unpack_binary`, which writes the
 rebuilt image into the workspace as a new binary and stores its provenance as
 that binary's ``unpack`` scan.
 """

@@ -29,7 +29,6 @@ from reportal import (
     effects,
     external,
     graph_backends,
-    mcp_tools,
     models,
     sandbox,
 )
@@ -66,7 +65,7 @@ SEAMS: tuple[dict[str, str], ...] = (
     },
     {
         "name": "MCP tools",
-        "group": mcp_tools.TOOL_ENTRY_POINT_GROUP,
+        "group": "reportal.mcp_tools",
         "module": "reportal.mcp_tools",
         "contributes": "tools an MCP client can call, annotated read-only or destructive",
     },
@@ -196,6 +195,10 @@ def _runner_parts() -> list[dict[str, Any]]:
 
 def _tool_parts() -> list[dict[str, Any]]:
     """One row per MCP tool, with its destructive annotation."""
+    # Imported here rather than at module scope: mcp_tools imports integrations
+    # for the list_integrations tool, so a top-level import would be circular.
+    from reportal import mcp_tools
+
     return [
         {
             "name": tool.name,
@@ -236,6 +239,8 @@ def inventory() -> dict[str, Any]:
 
 def tool_totals() -> dict[str, int]:
     """MCP tool counts by annotation, the numbers the README states."""
+    from reportal import mcp_tools
+
     tools = mcp_tools.builtin_tools()
     destructive = sum(1 for tool in tools if tool.annotations.destructive_hint)
     return {"total": len(tools), "read_only": len(tools) - destructive, "destructive": destructive}

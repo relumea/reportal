@@ -165,8 +165,8 @@ full below.
 | External-source pull (opt-in) | External service (only when enabled and keyed); the binary's hash | `api.py` external routes, `external.virustotal_source`, `external.fetch_virustotal` |
 | External-source plugin | Third-party package on the host | `external.refresh_sources`, `reportal.external_sources` |
 | Secret read and write | Network client; a credential name, scope and value | `api.py` secret routes, `secret_store.normalize_*`, `secret_store.journaled_set` / `journaled_delete` |
-| Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `api.sandbox_detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
-| Packer rebuild (`upx -d`) | Stored binary bytes, plus the external `upx` tool on `PATH` | `unpack.unpack_to`, `unpack._run_upx`, `api.unpack_binary` |
+| Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `sandbox.detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
+| Packer rebuild (`upx -d`) | Stored binary bytes, plus the external `upx` tool on `PATH` | `unpack.unpack_to`, `unpack._run_upx`, `binary_actions.unpack_binary` |
 | Registered sandbox runner | Third-party package on the host | `sandbox.refresh_runners`, `reportal.sandbox_runners` |
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm.LlmClient.chat`, `llm._parse_json` |
 | Agent tool calls | LLM endpoint response, gated by an analyst's confirmation | `agent._drive`, `agent.confirm`, `mcp_server.call_tool` |

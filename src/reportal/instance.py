@@ -32,8 +32,20 @@ from reportal import (
     remote_ingest,
     sandbox,
     similarity,
+    store,
+    zipcrypto,
 )
 from reportal._paths import db_path
+
+# Largest binary `POST /api/binaries` accepts.  Owned here so the instance
+# description can report the cap without importing the JSON route module.
+MAX_UPLOAD_BYTES = 256 * 1024 * 1024
+
+# Most files one batch upload may carry.
+MAX_UPLOAD_FILES = 64
+
+# Largest function size a `?max_size=` bound accepts, in bytes.
+MAX_FUNCTION_SIZE = 1 << 30
 
 
 def _engine_status() -> dict[str, Any]:
@@ -85,19 +97,12 @@ def _tool_counts() -> dict[str, int]:
 
 
 def limits() -> dict[str, int]:
-    """Every cap that bounds a request, a scan or a stored payload.
-
-    ``api`` is imported here rather than at module level: it imports every
-    writer module and serves the route that reads this payload, so a top-level
-    import would close a cycle.
-    """
-    from reportal import api, store
-
+    """Every cap that bounds a request, a scan or a stored payload."""
     return {
-        "max_upload_bytes": api.MAX_UPLOAD_BYTES,
-        "max_upload_files": api.MAX_UPLOAD_FILES,
-        "max_zip_password_chars": api.ZIP_PASSWORD_MAX_CHARS,
-        "max_function_size": api.MAX_FUNCTION_SIZE,
+        "max_upload_bytes": MAX_UPLOAD_BYTES,
+        "max_upload_files": MAX_UPLOAD_FILES,
+        "max_zip_password_chars": zipcrypto.MAX_PASSWORD_CHARS,
+        "max_function_size": MAX_FUNCTION_SIZE,
         "max_analysis_limit": store.MAX_ANALYSIS_LIMIT,
         "max_search_limit": store.MAX_SEARCH_LIMIT,
         "max_bulk_ids": bulk_actions.MAX_BULK_IDS,

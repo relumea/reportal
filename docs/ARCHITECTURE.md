@@ -48,6 +48,8 @@ reportal/
 │   ├── archive.py            # stdlib-only archive extraction: zip/apk, tar/tar.gz/tgz/
 │   │                         #   tar.bz2/tar.xz, single-member gz; per-member safety
 │   │                         #   refusals and named caps; `.rar`/`.7z` refused by name
+│   ├── binary_actions.py     # journaled extract/carve/unpack writes and download
+│   │                         #   filename sanitizer; shared by the API, CLI and MCP
 │   ├── engines.py            # rebrew adapter: in-process calls, JSON + text
 │   ├── firmware.py           # firmware carving: magic-based region detection, the
 │   │                         #   sampled entropy map and the region extents the
@@ -355,7 +357,7 @@ whose `ulimit` line applies the CPU, address-space, file-size and process caps
 before `exec`.  `sandbox.execute` writes the run row first, starts the process in
 its own session, kills the group on a wall-clock timeout, and records the exit
 status, the duration, bounded output tails and the files the sample left in the
-directory reportal then removes.  `api.sandbox_detonate_binary` is the shared
+directory reportal then removes.  `sandbox.detonate_binary` is the shared
 orchestration the route, the CLI and the MCP tool call, so the four guards are
 checked once; `docs/THREAT_MODEL.md` records what the boundary does and does not
 promise.
@@ -1594,7 +1596,7 @@ Members are extracted into a temporary directory under `<workspace>/binaries/`
 and removed either way, so nothing is written outside it; each is validated
 first and a refusal is reported per member rather than failing the request. The
 route, `reportal extract` and the MCP `extract_archive` tool all call
-`api.extract_archive_binary`, whose `ExtractError` maps to the route's JSON
+`binary_actions.extract_archive_binary`, whose `ExtractError` maps to the route's JSON
 body (404 unknown binary or collection, 400 `binary not on disk`, and the
 archive module's own codes: `unsupported-format`, `external-tool-required` for
 `.rar`/`.7z`, `password-required`/`bad-password`, `too-many-members`,
@@ -2785,7 +2787,7 @@ rather than a silent failure, and UPX's own exit code and last output line are
 what `unpack-failed` reports.  Nothing executes the sample: `upx -d` decodes a
 file, and the LZEXE case is arithmetic over the bytes.
 
-`api.unpack_binary` is the one write path (the route, the CLI and the MCP tool
+`binary_actions.unpack_binary` is the one write path (the route, the CLI and the MCP tool
 share it).  The rebuilt image is written into a temporary directory under the
 workspace's `binaries/` and registered by content hash exactly like an upload,
 so unpacking the same sample twice resolves to the binary already stored rather

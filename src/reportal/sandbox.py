@@ -46,6 +46,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from reportal import journal, store
 from reportal._paths import MARKER, WorkspaceNotFound, binaries_dir, project_root
 from reportal.store import now
 
@@ -728,3 +729,62 @@ def refresh_runners() -> list[str]:
     for _name, _value, plugin in plugins.load(RUNNER_ENTRY_POINT_GROUP, Runner, "Runner"):
         register_runner(plugin)
     return [runner.name for runner in RUNNERS]
+
+
+def detonate_binary(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    *,
+    timeout: int | None = None,
+    memory_mb: int | None = None,
+) -> dict[str, Any]:
+    """Run one stored binary under the sandbox and store the report.
+
+    Shared by the HTTP route, the CLI and the MCP tool, so the four guards are
+    checked once: the workspace opt-in, an installed runner, a file on disk, and
+    bounds inside the caps.  The run row is written before the sample starts and
+    updated with the report after, so a reader sees a run in progress and a
+    process that dies mid-run leaves the `running` row behind.  Raises
+    :class:`SandboxError` for every refusal.
+    """
+    require_enabled()
+    runner = require_runner()
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise SandboxError("binary not found", f"no binary with id {binary_id}")
+    stored = Path(str(binary["path"]))
+    if not stored.is_file():
+        raise SandboxError(
+            "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+        )
+    caps = requested_caps(timeout=timeout, memory_mb=memory_mb)
+    analysis_before = store.latest_analysis_for_binary(conn, binary_id)
+    analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="sandbox")
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        if analysis_before is None:
+            journal.journaled_create(
+                log,
+                table="analyses",
+                key=analysis_id,
+                description=f"created analysis {analysis_id} for binary {binary_id}",
+            )
+        run_id = start_run(
+            conn,
+            analysis_id=analysis_id,
+            binary_id=binary_id,
+            sha256=str(binary["sha256"] or ""),
+            runner=runner.name,
+            argv=runner.argv(stored, Path("/dev/null"), caps),
+            caps=caps,
+        )
+        journal.journaled_create(
+            log,
+            table=TABLE,
+            key=run_id,
+            description=f"ran binary {binary_id} in the {runner.name} sandbox",
+        )
+        report = execute(stored, caps=caps, runner=runner)
+        finish_run(conn, run_id, report)
+        finished = get_run(conn, run_id)
+    return log.attach(finished or {"id": run_id, **report})
