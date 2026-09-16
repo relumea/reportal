@@ -148,8 +148,9 @@ class TestBulkCli:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         db = _seed_portal(tmp_path, monkeypatch)
-        result = runner.invoke(cli.app, ["bulk-delete", "2", "--json"], input="n\n")
+        result = runner.invoke(cli.app, ["bulk-delete", "2", "--json"])
         assert result.exit_code == 1
+        assert json.loads(result.stdout)["error"] == "confirmation required; pass --yes"
         with contextlib.closing(store.connect(db)) as conn:
             assert store.get_binary(conn, 2) is not None
 

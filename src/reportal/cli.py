@@ -199,9 +199,11 @@ from reportal.surface import bulk_data_type_definitions as _bulk_data_types
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
 from reportal.surface import journaled_signature_write as _journal_signature_write
 
-# Exit status a declined confirmation reports, separate from the generic
-# failure `_fail` raises so a caller can tell "no" from "it did not work".
-EXIT_DECLINED = 1
+# Exit status for a declined confirmation, a failed readiness check, or any
+# other command failure.  Click already uses 2 for usage errors; reportal keeps
+# every application failure on 1 so scripts do not need a third case.
+EXIT_ERROR = 1
+EXIT_DECLINED = EXIT_ERROR
 
 console = Console(stderr=True)
 
@@ -349,12 +351,51 @@ def _fail(message: str, json_output: bool) -> NoReturn:
 
     The human form escapes *message*: it can carry a path or a config table
     name, and Rich would otherwise read a bracket as markup and drop it.
+    JSON errors go to stdout so ``--json`` pipes stay a single parseable stream;
+    human errors go to stderr with the rest of the human output.
     """
     if json_output:
         typer.echo(json.dumps({"error": message}))
     else:
         console.print(f"[red]{escape(message)}[/red]")
-    raise typer.Exit(1)
+    raise typer.Exit(EXIT_ERROR)
+
+
+def _require_confirmation(
+    prompt: str,
+    *,
+    yes: bool,
+    json_output: bool,
+    preamble: str | None = None,
+) -> None:
+    """Abort unless the operator confirmed, or *yes* skips the prompt.
+
+    ``--json`` never prompts: a script must pass ``--yes``, otherwise the
+    confirm question would land on stdout and break the JSON pipe.  A declined
+    human answer exits through :data:`EXIT_DECLINED` with ``aborted`` on stderr.
+    """
+    if yes:
+        return
+    if json_output:
+        _fail("confirmation required; pass --yes", json_output)
+    if preamble is not None:
+        console.print(preamble)
+    if not typer.confirm(prompt, default=False):
+        console.print("[red]aborted[/red]")
+        raise typer.Exit(EXIT_DECLINED)
+
+
+def _emit_export_body(text: str, *, kind: str, json_output: bool) -> None:
+    """Print an export body to stdout, or a JSON envelope when ``--json`` is set.
+
+    Without ``--json`` the body alone goes to stdout so it pipes into other
+    tools.  With ``--json`` the envelope carries format, size and the text so a
+    script never has to guess whether stdout is C, a script, or an SBOM.
+    """
+    if json_output:
+        typer.echo(json.dumps({"format": kind, "bytes": len(text), "text": text}))
+        return
+    typer.echo(text, nl=False)
 
 
 def _cli_fail(status: int, error: str, detail: str, json_output: bool) -> NoReturn:
@@ -507,9 +548,10 @@ def restore_command(
     The archive is staged in a temporary directory and checked against its own
     manifest before anything moves, so a refused archive leaves the workspace
     untouched.  A workspace that already holds a database needs --overwrite, and
-    without --yes it asks first.  A stored binary whose file lived outside the
-    archived workspace is left where it points and reported: reportal never
-    owned it.
+    without --yes it asks first (under --json a script must pass --yes; the
+    confirm prompt would otherwise break the JSON pipe).  A stored binary whose
+    file lived outside the archived workspace is left where it points and
+    reported: reportal never owned it.
     """
     path = Path(archive).expanduser()
     try:
@@ -522,17 +564,19 @@ def restore_command(
             f"{db} already exists; pass --overwrite to replace the workspace's state",
             json_output,
         )
-    if not json_output:
-        console.print(
+    _require_confirmation(
+        "Continue?",
+        yes=force,
+        json_output=json_output,
+        preamble=(
             f"Restoring {path}\n"
             f"  made by reportal {manifest.get('version') or 'unknown'}"
             f" at {manifest.get('created_at') or 'an unknown time'}"
             f" from {manifest.get('root')}\n"
             f"  {len(manifest.get('members') or [])} file(s),"
             f" {db} will be replaced"
-        )
-        if not force and not typer.confirm("Continue?", default=False):
-            raise typer.Exit(code=EXIT_DECLINED)
+        ),
+    )
     try:
         result = backup.restore(path, overwrite=overwrite)
     except backup.BackupError as exc:
@@ -624,7 +668,7 @@ def doctor_command(
     else:
         _print_doctor(payload)
     if payload["failures"]:
-        raise typer.Exit(code=EXIT_DECLINED)
+        raise typer.Exit(code=EXIT_ERROR)
 
 
 def _print_doctor(payload: dict[str, Any]) -> None:
@@ -967,8 +1011,11 @@ def team_rm(
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if not yes and not typer.confirm(f"Delete team {team_id}?"):
-        _fail("aborted", json_output)
+    _require_confirmation(
+        f"Delete team {team_id}?",
+        yes=yes,
+        json_output=json_output,
+    )
     with contextlib.closing(store.connect(portal_db)) as conn:
         if auth.get_team(conn, team_id) is None:
             _fail(f"no team with id {team_id}", json_output)
@@ -1548,8 +1595,11 @@ def user_rm(
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if not yes and not typer.confirm(f"Delete user {user_id}?"):
-        _fail("aborted", json_output)
+    _require_confirmation(
+        f"Delete user {user_id}?",
+        yes=yes,
+        json_output=json_output,
+    )
     with contextlib.closing(store.connect(portal_db)) as conn:
         if auth.get_user(conn, user_id) is None:
             _fail(f"no user with id {user_id}", json_output)
@@ -3131,7 +3181,7 @@ def job_command(
     if job["error"]:
         console.print(f"  error:    {job['error']}")
     if job["result"] is not None:
-        typer.echo(json.dumps(job["result"], indent=2))
+        console.print(json.dumps(job["result"], indent=2), markup=False)
 
 
 @app.command("job-submit")
@@ -3634,7 +3684,7 @@ def config(
         console.print(table)
         _print_settings(configuration)
     if settings.failing():
-        raise typer.Exit(code=EXIT_DECLINED)
+        raise typer.Exit(code=EXIT_ERROR)
 
 
 def _print_settings(payload: dict[str, Any]) -> None:
@@ -4226,10 +4276,12 @@ def bulk_delete(
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if not yes:
-        listed = ", ".join(str(binary_id) for binary_id in binary_ids)
-        if not typer.confirm(f"Delete binaries {listed} and everything scoped to them?"):
-            _fail("aborted", json_output)
+    listed = ", ".join(str(binary_id) for binary_id in binary_ids)
+    _require_confirmation(
+        f"Delete binaries {listed} and everything scoped to them?",
+        yes=yes,
+        json_output=json_output,
+    )
     result = _run_bulk(
         portal_db,
         lambda conn, log: bulk_actions.apply_binary_action(
@@ -4283,10 +4335,12 @@ def analysis_bulk_delete(
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if not yes:
-        listed = ", ".join(str(analysis_id) for analysis_id in analysis_ids)
-        if not typer.confirm(f"Delete analyses {listed} and the rows scoped to them?"):
-            _fail("aborted", json_output)
+    listed = ", ".join(str(analysis_id) for analysis_id in analysis_ids)
+    _require_confirmation(
+        f"Delete analyses {listed} and the rows scoped to them?",
+        yes=yes,
+        json_output=json_output,
+    )
     result = _run_bulk(
         portal_db,
         lambda conn, log: bulk_actions.apply_analysis_action(
@@ -7304,7 +7358,7 @@ def symbols_export(
             return
         console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
         return
-    typer.echo(text, nl=False)
+    _emit_export_body(text, kind=kind, json_output=json_output)
 
 
 @app.command("decompiler-script")
@@ -7341,7 +7395,7 @@ def decompiler_script(
             return
         console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
         return
-    typer.echo(text, nl=False)
+    _emit_export_body(text, kind=kind, json_output=json_output)
 
 
 # ── documentation ──────────────────────────────────────────────────
@@ -11659,7 +11713,7 @@ def sbom_command(
             return
         console.print(f"[green]Wrote[/green] {output} ({len(text)} bytes)")
         return
-    typer.echo(text, nl=False)
+    _emit_export_body(text, kind=kind, json_output=json_output)
 
 
 # ── unpacking a packed executable ──────────────────────────────────

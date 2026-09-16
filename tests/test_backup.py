@@ -288,9 +288,25 @@ class TestCli:
         runner.invoke(cli.app, ["backup", "--output", str(archive)])
         target = tmp_path / "two"
         target.mkdir()
+        (target / "reportal.toml").write_text("", encoding="utf-8")
         monkeypatch.chdir(target)
         declined = runner.invoke(cli.app, ["restore", str(archive)], input="n\n")
         assert declined.exit_code == 1
+        assert "aborted" in declined.output
+        assert not (target / "reportal.db").exists()
+
+    def test_restore_json_still_needs_yes(self, tmp_path: Path, monkeypatch: Any) -> None:
+        source = _workspace(tmp_path / "one")
+        monkeypatch.chdir(source)
+        archive = tmp_path / "snapshot.tar.gz"
+        runner.invoke(cli.app, ["backup", "--output", str(archive)])
+        target = tmp_path / "two"
+        target.mkdir()
+        (target / "reportal.toml").write_text("", encoding="utf-8")
+        monkeypatch.chdir(target)
+        declined = runner.invoke(cli.app, ["restore", str(archive), "--json"])
+        assert declined.exit_code == 1
+        assert json.loads(declined.stdout)["error"] == "confirmation required; pass --yes"
         assert not (target / "reportal.db").exists()
 
     def test_backup_without_a_workspace_fails_loud(self, tmp_path: Path, monkeypatch: Any) -> None:

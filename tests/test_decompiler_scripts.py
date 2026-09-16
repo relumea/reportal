@@ -146,6 +146,14 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert "memcpy" in result.output
 
+    def test_command_json_wraps_stdout_body(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        binary_id = _seed(conn, tmp_path)
+        result = runner.invoke(cli.app, ["decompiler-script", str(binary_id), "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["format"] == "ghidra"
+        assert "memcpy" in payload["text"]
+
     def test_command_refuses_an_unknown_format(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:

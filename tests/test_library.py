@@ -382,6 +382,18 @@ class TestCli:
         assert result.exit_code == 0, result.output
         assert result.stdout.startswith("module,")
 
+    def test_the_sbom_command_json_wraps_stdout_body(
+        self, portal_db: Path, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _seed(conn, tmp_path)
+        _run(conn, binary_id)
+        conn.commit()
+        result = runner.invoke(cli.app, ["sbom", str(binary_id), "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["format"] == library.FORMAT_CYCLONEDX
+        assert json.loads(payload["text"])["bomFormat"] == "CycloneDX"
+
     def test_an_unknown_format_fails_loud(
         self, portal_db: Path, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:

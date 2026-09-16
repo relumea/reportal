@@ -72,7 +72,9 @@ reportal restore ARCHIVE [--overwrite] [--yes] [--json]
                                            # read an archive back into this
                                            #   workspace; it is staged and checked
                                            #   against its manifest first, so a
-                                           #   refused archive changes nothing
+                                           #   refused archive changes nothing;
+                                           #   --json refuses without --yes
+                                           #   (same as other deletes)
 reportal backup-info ARCHIVE [--json]      # one archive's manifest, without
                                            #   restoring it
 reportal symbols <binary-id> <path> [--no-apply] [--json]
@@ -85,11 +87,13 @@ reportal symbols-status <binary-id> [--file-id N] [--json]
                                            #   full with its notes and its symbols
 reportal symbols-export <binary-id> [--format c|json] [--output PATH] [--file-id N] [--json]
                                            # render one parse as a C header (through
-                                           #   the type model's renderer) or as JSON
+                                           #   the type model's renderer) or as JSON;
+                                           #   --json without --output wraps the body
 reportal decompiler-script <binary-id> [--format ghidra|ida|binja] [--output PATH] [--json]
                                            # render the stored renames as a runnable
                                            #   decompiler script; stored-only,
-                                           #   placeholders are left out
+                                           #   placeholders are left out; --json
+                                           #   without --output wraps the body
 reportal enrich <binary-id> [--json]       # compute and store a rebrew fingerprint
 reportal fingerprint <binary-id> [--json]  # print the stored fingerprint, else compute
                                            #   one live without storing it
@@ -109,6 +113,7 @@ reportal bulk-tag <tag> <binary-id>... [--remove] [--json]
 reportal bulk-delete <binary-id>... [--yes] [--json]
                                            # delete many binaries and everything scoped to them;
                                            #   asks for confirmation unless --yes is passed
+                                           #   (--json refuses without --yes so the pipe stays clean)
 reportal bulk-prefix <prefix> <function-id>... [--replace] [--json]
                                            # prefix many function names through the normal
                                            #   rename path, recording each in history; --replace
@@ -481,7 +486,8 @@ reportal sbom <binary-id> [--format cyclonedx|spdx|csv] [--output PATH] [--json]
                                            # export the stored library reading plus
                                            #   the Go dependency pins as a bill of
                                            #   materials; stored-only, it never
-                                           #   re-runs the engine
+                                           #   re-runs the engine; --json without
+                                           #   --output wraps the body
 reportal benchmark <left-id> <right-id> [--labels FILE] [--top N]
                    [--min-similarity F] [--min-confidence F] [--json]
                                            # score a match run against
@@ -748,7 +754,8 @@ reportal analysis-bulk-tag TAG <analysis-id>... [--remove] [--json]
 reportal analysis-bulk-delete <analysis-id>... [--yes] [--json]
                                            # delete many analyses with the rows scoped to
                                            #   them; a binary's only analysis while it holds
-                                           #   functions is skipped with a reason
+                                           #   functions is skipped with a reason; --json
+                                           #   refuses without --yes so the pipe stays clean
 reportal serve [--port 8002] [--host 127.0.0.1] [--no-open]
                                            # a non-loopback --host refuses to start
                                            #   unless token auth is on and a user exists

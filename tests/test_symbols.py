@@ -929,6 +929,14 @@ class TestSymbolCli:
         assert console_export.exit_code == 0, console_export.output
         assert json.loads(console_export.output)["kind"] == symbols.SOURCE_ELF
 
+        wrapped = runner.invoke(
+            cli.app, ["symbols-export", str(ids["binary"]), "--format", "c", "--json"]
+        )
+        assert wrapped.exit_code == 0, wrapped.output
+        envelope = json.loads(wrapped.stdout)
+        assert envelope["format"] == "c"
+        assert "typedef struct point_s" in envelope["text"]
+
     def test_the_commands_refuse_bad_input(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

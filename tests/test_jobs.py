@@ -821,6 +821,12 @@ class TestCli:
         assert shown.exit_code == 0
         assert json.loads(shown.stdout)["status"] == jobs.STATUS_DONE
 
+        human = runner.invoke(cli.app, ["job", "1"])
+        assert human.exit_code == 0
+        assert human.stdout == ""
+        assert "composition" in human.stderr
+        assert '"binary_id"' in human.stderr
+
     def test_job_submit_runs_it_when_asked(self, tmp_path: Path, monkeypatch: Any) -> None:
         db = tmp_path / "portal.db"
         monkeypatch.setenv("REPORTAL_DB", str(db))
