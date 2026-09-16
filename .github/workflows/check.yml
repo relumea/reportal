@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -86,28 +86,16 @@ jobs:
           uv sync --frozen --extra dev --extra similarity
           cd web && bun install --frozen-lockfile
 
-      # `package-check` asserts the built SPA is inside the wheel, so the Vite
-      # build has to exist first.  `make ui` builds it locally, and CI runs the
-      # build on its own because the rest of that target needs the local
-      # engine fixture.  Precompress matches `make run` / `make ui` so the
-      # wheel carries the sibling `.gz` assets.  SOURCE_DATE_EPOCH keeps
-      # gzip/zip timestamps stable across rebuilds of the same commit.
-      - name: Build the SPA
-        run: |
-          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
-          export LC_ALL=C TZ=UTC
-          cd web && bun run build
-          uv run python scripts/precompress_spa.py
-
       # `make check-ci` is the local name for this step (lint + typecheck + test
-      # + package-check).  The headless-Chrome smoke and audit seed a workspace
-      # from `../rebrew-projects/notepad-rebrew`, a per-binary decompilation
-      # project (the target executable plus its reversed sources and its
-      # database) that lives in a local data directory rather than in any
-      # repository, so those two run on a developer machine; everything else
-      # the gate does runs here.
+      # + package-check).  `package-check` rebuilds the SPA so the wheel cannot
+      # ship a stale `assets/dist/`.  The headless-Chrome smoke and audit seed a
+      # workspace from `../rebrew-projects/notepad-rebrew`, a per-binary
+      # decompilation project that lives in a local data directory rather than
+      # in any repository, so those two run on a developer machine; everything
+      # else the gate does runs here.  SOURCE_DATE_EPOCH keeps gzip/zip
+      # timestamps stable across rebuilds of the same commit.
       - name: make check-ci
         run: |
           export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
-          export LC_ALL=C TZ=UTC
+          export LC_ALL=C TZ=UTC PYTHONHASHSEED=0
           make check-ci

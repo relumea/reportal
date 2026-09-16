@@ -6,13 +6,15 @@
 # Every target uses the project venv's python (`PY`, default .venv/bin/python).
 # A missing tool fails loud with its install hint; nothing is silently skipped.
 
-.PHONY: help setup run serve check check-ci check-fast lint typecheck test test-fast test-one ui package-check clean venv-check bun-check uv-check rebrew-check
+.PHONY: help setup run serve spa check check-ci check-fast lint typecheck test test-fast test-one ui package-check package-wheel clean venv-check bun-check uv-check rebrew-check
 
 .DEFAULT_GOAL := help
 
 UV   ?= uv
 PY   ?= .venv/bin/python
 BUN  ?= bun
+# Keep in sync with web/package.json `packageManager` and CI setup-bun.
+BUN_VERSION ?= 1.4.0
 PORT ?= 8002
 # Extras for `make setup`.  CI also syncs `--extra similarity` when the sibling
 # resembl checkout is present; add it locally with:
@@ -24,7 +26,7 @@ COVERAGE_MIN ?= 92
 # Reproducible SPA/wheel timestamps: honour an explicit SOURCE_DATE_EPOCH,
 # else the tree's HEAD commit time, else a fixed zero (gzip/zip mtimes).
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || printf '0')
-REPRO_ENV = SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) LC_ALL=C TZ=UTC
+REPRO_ENV = SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) LC_ALL=C TZ=UTC PYTHONHASHSEED=0
 
 help: ## Show this help
 	@awk 'BEGIN {FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2} END {printf "\n"}' $(MAKEFILE_LIST)
@@ -34,6 +36,11 @@ venv-check:
 
 bun-check:
 	@command -v "$(BUN)" >/dev/null 2>&1 || { echo "$(BUN) is required; install with: curl -fsSL https://bun.sh/install | bash" >&2; exit 1; }
+	@got=$$($(BUN) --version 2>/dev/null | tr -d '\r'); \
+	if [ "$$got" != "$(BUN_VERSION)" ]; then \
+	  echo "$(BUN) $$got does not match required $(BUN_VERSION) (web/package.json packageManager)" >&2; \
+	  exit 1; \
+	fi
 
 uv-check:
 	@command -v "$(UV)" >/dev/null 2>&1 || { echo "$(UV) is required; install with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; }
@@ -48,22 +55,28 @@ rebrew-check:
 	}
 
 # ── bootstrap ────────────────────────────────────────────────────────
-setup: uv-check bun-check rebrew-check ## Create .venv (uv sync) and install web packages
-	$(UV) sync $(SYNC_EXTRAS)
-	cd web && $(BUN) install
+setup: uv-check bun-check rebrew-check ## Create .venv (uv sync --frozen) and install web packages
+	$(UV) sync --frozen $(SYNC_EXTRAS)
+	cd web && $(BUN) install --frozen-lockfile
 	@echo "setup ok. Next: make run  |  make check-fast  |  make check-ci" >&2
 
 # ── run ──────────────────────────────────────────────────────────────
-run: venv-check bun-check ## Build the SPA, then serve the portal on PORT (default 8002)
+spa: venv-check bun-check ## Build the SPA and write .gz siblings
 	cd web && $(REPRO_ENV) $(BUN) run build
 	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
+
+run: spa ## Build the SPA, then serve the portal on PORT (default 8002)
 	$(PY) -m reportal serve --port $(PORT)
 
 serve: venv-check ## Serve the portal from the current SPA build, without rebuilding
 	$(PY) -m reportal serve --port $(PORT)
 
 # ── quality gates ────────────────────────────────────────────────────
-check: lint typecheck test ui package-check ## The whole gate
+# spa once, then browsers and the wheel, so Vite is not paid twice.
+check: lint typecheck test spa ## The whole gate
+	$(PY) tools/smoke_spa.py
+	$(PY) tools/audit_ui.py
+	@$(MAKE) --no-print-directory package-wheel
 
 # What CI runs on every PR (see .github/workflows/check.yml).  Skips the
 # headless-Chrome `ui` target, which needs the local notepad-rebrew fixture.
@@ -102,17 +115,17 @@ test-one: venv-check ## One pytest node or file: make test-one ARGS='tests/foo.p
 	@test -n "$(ARGS)" || { echo "usage: make test-one ARGS='tests/test_foo.py[::name]'" >&2; exit 1; }
 	$(PY) -m pytest --no-cov -q $(ARGS)
 
-ui: venv-check bun-check ## Build the SPA, then run the headless-Chrome smoke and audit
-	cd web && $(REPRO_ENV) $(BUN) run build
-	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
+ui: spa ## Build the SPA, then run the headless-Chrome smoke and audit
 	$(PY) tools/smoke_spa.py
 	$(PY) tools/audit_ui.py
 
 # `build/` is removed too: setuptools reuses its `build/lib` tree without
 # pruning it, so a module deleted from `src/reportal` would still be packaged
-# into the wheel from the stale copy.  Precompress and the docs sync run before
-# the wheel so the packaged SPA and in-app manual match `make run` / a checkout.
-package-check: venv-check uv-check ## Build a wheel and assert the built SPA is packaged
+# into the wheel from the stale copy.  The SPA is rebuilt first so the wheel
+# cannot ship a stale `assets/dist/` from a previous checkout.
+package-check: spa package-wheel ## Build SPA, wheel, and assert packaged assets
+
+package-wheel: venv-check uv-check ## Wheel + checks; assumes a current SPA dist
 	rm -rf dist build
 	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
 	$(PY) scripts/sync_packaged_docs.py
@@ -122,5 +135,5 @@ package-check: venv-check uv-check ## Build a wheel and assert the built SPA is 
 # ── housekeeping ─────────────────────────────────────────────────────
 clean: ## Remove build artifacts and caches
 	rm -rf dist build .mypy_cache .pytest_cache .ruff_cache
-	rm -rf src/reportal/manual
+	rm -rf src/reportal/manual src/reportal/assets/dist
 	find . -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null; true
