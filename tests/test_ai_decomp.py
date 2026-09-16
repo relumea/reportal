@@ -270,7 +270,13 @@ class TestRoutes:
         status, headers, body = wsgi_request(
             "POST", f"/api/functions/{function_id}/ai-decompilation"
         )
-        assert status.startswith(("200", "502"))
+        assert status.startswith("502")
+        payload = json_body(body, headers)
+        assert payload["error"] == "llm-error"
+        assert "not valid JSON" in payload["detail"]
+        db = Path(os.environ[DB_ENV])
+        with contextlib.closing(store.connect(db)) as conn:
+            assert store.get_ai_artifact(conn, function_id, ai_decomp.KIND) is None
 
     def test_get_without_an_artifact_is_404(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

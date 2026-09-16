@@ -6,7 +6,7 @@ import contextlib
 import hashlib
 import json
 import sqlite3
-import time
+import threading
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -127,11 +127,39 @@ class TestServe:
             raise OSError(98, "Address already in use")
 
         monkeypatch.setattr(_server, "run", refuse)
-        result = runner.invoke(cli.app, ["serve", "--port", "8099"])
 
-        assert result.exit_code == 1
-        time.sleep(0.6)
-        assert opened == []
+        # Long interval so the callback cannot fire before cancel; assert that
+        # cancel ran rather than sleeping past the production 0.5s window.
+        timers: list[Any] = []
+
+        class TrackingTimer(threading.Timer):
+            def __init__(
+                self,
+                interval: float,
+                function: Any,
+                args: tuple[Any, ...] | None = None,
+                kwargs: dict[str, Any] | None = None,
+            ) -> None:
+                super().__init__(3600.0, function, args=args or (), kwargs=kwargs or {})
+                self.cancel_called = False
+                timers.append(self)
+
+            def cancel(self) -> None:
+                self.cancel_called = True
+                super().cancel()
+
+        monkeypatch.setattr(cli.threading, "Timer", TrackingTimer)
+        try:
+            result = runner.invoke(cli.app, ["serve", "--port", "8099"])
+            assert result.exit_code == 1
+            assert opened == []
+            assert len(timers) == 1
+            assert timers[0].cancel_called
+            timers[0].join(timeout=1.0)
+            assert not timers[0].is_alive()
+        finally:
+            for timer in timers:
+                timer.cancel()
 
 
 class TestInit:

@@ -440,7 +440,8 @@ class TestRoutes:
             token=token,
             body={"value": API_KEY, "scope": "team", "team_id": int(target["id"])},
         )
-        assert status.startswith(("403", "404"))
+        assert status.startswith("403")
+        assert payload["error"] == secret_store.ERROR_FORBIDDEN
 
     def test_a_team_secret_is_hidden_from_an_outsider(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch

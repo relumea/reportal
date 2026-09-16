@@ -187,7 +187,7 @@ class TestRoutes:
         unknown_kind, headers, body = wsgi_request(
             "PUT", f"{url}/not-a-kind", body=json.dumps({"rating": "up"})
         )
-        assert unknown_kind.startswith(("400", "404"))
+        assert unknown_kind.startswith("400")
         assert json_body(body, headers)["error"] == ratings.ERROR_INVALID
 
         no_artifact, headers, body = wsgi_request("GET", f"{url}/capabilities")
