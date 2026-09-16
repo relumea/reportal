@@ -17,13 +17,16 @@ enabled user exists.
 
 A binary or a collection also carries a **scope**: `public` (every
 authenticated caller) or `team` (only the members of the team that owns it).
-`server._enforce_scope` reads the object a path names (`/api/binaries/<id>`,
-`/api/collections/<id>`, and a function or analysis through the binary it
-belongs to) and refuses a read of a scoped object the caller cannot see with the
+`server._enforce_scope` reads the object a path names (eleven kinds through
+their owning binary: binaries, collections, functions, analyses, data types,
+comments, documents, conversations, pipeline runs, auto runs and graph nodes)
+and refuses a read of a scoped object the caller cannot see with the
 object's own 404, and a write with 403 `scope-forbidden`.  Because the check
-lives in the router dependency, a route added later is covered without repeating
-it.  The listings (`/api/binaries`, `/api/collections`, `/api/search`) filter
-their pages by the same rule.
+lives in the middleware, a route added later is covered without repeating
+it.  The listings, batch reads, scoped listings, searches, feeds and series
+filter their pages by the same rule (`auth.visible_clause`), the corpus
+operations score only visible binaries, and the creates refuse a hidden
+scope as its own 404; `docs/THREAT_MODEL.md` carries the residuals.
 
 | Path | Method | Description |
 |------|--------|-------------|
