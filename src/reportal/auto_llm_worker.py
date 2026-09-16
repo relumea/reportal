@@ -283,7 +283,8 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
                 disassembly=disassembly,
                 decompilation=decompilation,
                 previous=ctx.previous,
-            )
+            ),
+            max_tokens=llm.MAX_REWRITE_TOKENS,
         )
     except llm.LlmUnavailable as exc:
         return WorkerResult(

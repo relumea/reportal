@@ -166,6 +166,7 @@ class TestComplete:
         body = json.loads(request.content)
         assert body["model"] == "m"
         assert body["temperature"] == 0.25
+        assert body["max_tokens"] == llm.MAX_COMPLETION_TOKENS
         assert body["messages"] == [{"role": "user", "content": "hi"}]
         assert "response_format" not in body, "plain complete() sends no format hint"
 
@@ -285,6 +286,19 @@ class TestPromptBuilders:
         assert self.CODE in content
         assert "parameter" in content
         assert "confidence" in content
+
+    def test_oversized_code_is_truncated_in_the_prompt(self) -> None:
+        huge = "x" * (llm.MAX_CODE_CHARS + 500)
+        content = self._user_content(llm.summary_messages(huge))
+        assert llm.PROMPT_TRUNCATION_MARKER in content
+        assert "x" * (llm.MAX_CODE_CHARS + 1) not in content
+        assert len(content) < len(huge) + 200
+
+    def test_oversized_context_is_truncated_in_the_prompt(self) -> None:
+        context = "doc " * (llm.MAX_PROMPT_CONTEXT_CHARS)
+        content = self._user_content(llm.summary_messages(self.CODE, context))
+        assert llm.PROMPT_TRUNCATION_MARKER in content
+        assert "untrusted context" in content
 
     def test_every_kind_has_a_runner_and_cli_command(self) -> None:
         assert set(llm.AI_RUNNERS) == set(llm.AI_KINDS)
@@ -450,6 +464,34 @@ class TestStrictSchema:
         fake_llm.response = '[{"from": "n"}]'
         with pytest.raises(LlmError, match="to"):
             llm.rename_suggestions(self.CODE)
+
+    def test_renames_drop_non_identifier_names(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = (
+            '[{"from": "v1", "to": "not a name"},'
+            ' {"from": "v2", "to": "length", "kind": "variable",'
+            ' "reason": "holds a length", "confidence": 0.7}]'
+        )
+        assert llm.rename_suggestions(self.CODE) == {
+            "suggestions": [
+                {
+                    "from": "v2",
+                    "to": "length",
+                    "kind": "variable",
+                    "reason": "holds a length",
+                    "confidence": 0.7,
+                }
+            ]
+        }
+
+    def test_renames_all_non_identifiers_raise(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = '[{"from": "v1", "to": "1bad"}, {"from": "a-b", "to": "ok"}]'
+        with pytest.raises(LlmError, match="identifier"):
+            llm.rename_suggestions(self.CODE)
+
+    def test_rewrite_rejects_an_oversized_answer(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = json.dumps({"code": "x" * (llm.MAX_CODE_CHARS + 1)})
+        with pytest.raises(LlmError, match="exceeded"):
+            llm.rewrite_decompilation(self.CODE)
 
     def test_a_named_list_missing_its_key_raises(self, fake_llm: FakeLlmClient) -> None:
         fake_llm.response = '{"note": "nothing here"}'

@@ -711,12 +711,15 @@ class _EmptyRenameClient(ScriptedLlmClient):
         *,
         temperature: float = llm.DEFAULT_TEMPERATURE,
         json_object: bool = False,
+        max_tokens: int = llm.MAX_COMPLETION_TOKENS,
     ) -> str:
         prompt = messages[-1]["content"] if messages else ""
         if "unclear identifiers" in prompt:
             self.calls.append(messages)
             return '{"suggestions": []}'
-        return super().complete(messages, temperature=temperature, json_object=json_object)
+        return super().complete(
+            messages, temperature=temperature, json_object=json_object, max_tokens=max_tokens
+        )
 
 
 class TestEnrichChain:

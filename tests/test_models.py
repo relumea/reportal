@@ -382,6 +382,7 @@ class TestUpgrade:
                 *,
                 temperature: float = llm.DEFAULT_TEMPERATURE,
                 json_object: bool = False,
+                max_tokens: int = llm.MAX_COMPLETION_TOKENS,
             ) -> str:
                 self.calls.append(messages)
                 prompt = messages[-1]["content"]
