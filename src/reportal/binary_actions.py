@@ -310,7 +310,8 @@ def firmware_extract_binary(
             try:
                 entry = firmware.region(source, index=index, regions_payload=stored)
             except firmware.FirmwareError as exc:
-                raise ExtractError(400, exc.code, exc.detail) from None
+                status = 404 if exc.code.endswith("not found") else 400
+                raise ExtractError(status, exc.code, exc.detail) from None
             target = temp_root / entry["name"]
             firmware.write_region(source, target, offset=entry["offset"], size=entry["size"])
             resolved_regions.append(entry)

@@ -64,7 +64,7 @@ class TestExtraction:
         binary_id = _register(conn, archive, "bundle.zip")
 
         status, headers, raw = _extract(binary_id)
-        assert status.startswith("200")
+        assert status.startswith("201")
         payload = json_body(raw, headers)
         assert payload["binary_id"] == binary_id
         assert payload["collection_name"] == "bundle.zip extraction"
@@ -246,7 +246,7 @@ class TestPassword:
         _write_encrypted_zip(archive, "secret.bin", ENTRY_ONE, PASSWORD.encode())
         binary_id = _register(conn, archive, "secret.zip")
         status, headers, raw = _extract(binary_id, password=PASSWORD)
-        assert status.startswith("200")
+        assert status.startswith("201")
         payload = json_body(raw, headers)
         assert payload["kept"] == 1
         assert payload["members"][0]["name"] == "secret.bin"

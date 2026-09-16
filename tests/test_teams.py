@@ -920,6 +920,16 @@ class TestTeamAdminAndOrganisationEdgeCases:
         assert cleared[0].startswith("200"), cleared[2]
         assert json_body(cleared[2], cleared[1])["active_team_id"] is None
 
+        bad_type = wsgi_request(
+            "PUT",
+            "/api/iam/active-team",
+            body=json.dumps({"team_id": "red"}),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+        )
+        assert bad_type[0].startswith("400"), bad_type[2]
+        assert json_body(bad_type[2], bad_type[1])["error"] == auth.ERROR_INVALID_TEAM
+        assert json_body(bad_type[2], bad_type[1])["detail"] == "team_id must be an integer"
+
 
 class TestTeamStructureCli:
     """The CLI commands entry 2 added: roles, organisations and grouping."""

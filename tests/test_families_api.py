@@ -144,7 +144,7 @@ class TestFamiliesCrud:
         assert status.startswith("400")
         assert json_body(body, headers)["error"] == "name must be a non-empty string"
 
-    def test_duplicate_name_400_case_insensitively(
+    def test_duplicate_name_409_case_insensitively(
         self, conn: sqlite3.Connection, tmp_path: Path, fake_engine: FakeEngine
     ) -> None:
         binary_id = _file_binary(conn, tmp_path)
@@ -153,7 +153,7 @@ class TestFamiliesCrud:
         status, headers, body = _post(
             "/api/families", {"name": NAME.lower(), "reference_binary_id": binary_id}
         )
-        assert status.startswith("400")
+        assert status.startswith("409")
         assert json_body(body, headers)["error"] == "duplicate family"
         assert fake_engine.calls == []
 

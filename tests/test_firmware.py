@@ -300,7 +300,7 @@ class TestFirmwareApi:
             f"/api/binaries/{ids['binary']}/firmware/extract", {"regions": [99]}
         )
 
-        assert status.startswith("400")
+        assert status.startswith("404")
         assert payload["error"] == "region not found"
 
     def test_a_malformed_regions_list_is_400(
@@ -325,6 +325,20 @@ class TestFirmwareApi:
 
         assert status.startswith("404")
         assert payload["error"] == "collection not found"
+
+    def test_a_non_integer_collection_id_is_400(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        ids = _seed(conn, tmp_path)
+        self._post(f"/api/binaries/{ids['binary']}/firmware")
+
+        status, payload = self._post(
+            f"/api/binaries/{ids['binary']}/firmware/extract",
+            {"collection_id": "main"},
+        )
+
+        assert status.startswith("400")
+        assert payload["error"] == "collection_id must be an integer"
 
 
 class TestFirmwareCli:

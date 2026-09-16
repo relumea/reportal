@@ -143,9 +143,10 @@ def _fail(status: int, error: str, detail: str) -> Exception:
 
 
 def _family_error(exc: families.FamilyError) -> Response:
-    """Map a family validation failure to its 400 response."""
+    """Map a family validation failure to its HTTP response."""
     error, detail = surface.family_detail(exc)
-    return json_error(400, error=error, detail=detail)
+    status = 409 if isinstance(exc, families.DuplicateFamilyError) else 400
+    return json_error(status, error=error, detail=detail)
 
 
 # The shared checks, bound to this surface's error channel.
@@ -811,18 +812,14 @@ def firmware_extract(
         or any(isinstance(item, bool) or not isinstance(item, int) for item in raw)
     ):
         return json_error(400, error="invalid-region", detail="regions must be a list of indexes")
-    collection_id = body.get("collection_id", 0)
-    if isinstance(collection_id, bool) or not isinstance(collection_id, int):
-        return json_error(
-            400, error="invalid collection", detail="collection_id must be an integer"
-        )
+    collection_id = _optional_int(body, "collection_id", 0)
     with contextlib.closing(_open()) as conn:
         try:
             payload = firmware_extract_binary(
                 conn,
                 binary_id,
                 region_indexes=None if raw is None else [int(item) for item in raw],
-                collection_id=int(collection_id),
+                collection_id=collection_id,
             )
         except ExtractError as exc:
             return json_error(exc.status, error=exc.code, detail=exc.detail)
@@ -850,7 +847,7 @@ def extract_binary(binary_id: int, body: dict[str, Any] = Depends(optional_json_
             )
         except ExtractError as exc:
             return json_error(exc.status, error=exc.code, detail=exc.detail)
-    return json_response(payload)
+    return json_response(payload, status=201)
 
 
 def _function_capabilities(function: dict[str, Any]) -> frozenset[str]:
@@ -3523,7 +3520,7 @@ def unpack_binary_route(
             payload = unpack_binary(conn, binary_id, packer=packer, name=name)
         except ExtractError as exc:
             return json_error(exc.status, error=exc.code, detail=exc.detail)
-    return json_response(payload)
+    return json_response(payload, status=201)
 
 
 @router.get("/api/binaries/{binary_id}/unpack")
@@ -10844,7 +10841,7 @@ def set_active_team(request: Request, body: dict[str, Any] = Depends(json_body))
     """
     raw = body.get("team_id")
     if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
-        return json_error(400, error="team_id must be an integer")
+        return json_error(400, error=auth.ERROR_INVALID_TEAM, detail="team_id must be an integer")
     with contextlib.closing(_open()) as conn:
         caller = _caller(request)
         if caller is None:

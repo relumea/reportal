@@ -836,10 +836,11 @@ does not exist, so there is nothing to remove.
 
 ### invalid-region
 
-`400`. A firmware carve named a region index that does not exist, an empty
-`regions` list, or a region list that is not a list of indexes. Run `reportal
-firmware <binary-id>` (or `GET /api/binaries/<id>/firmware`) to see the indexes
-the stored pass reports.
+`400`. A firmware carve named an empty `regions` list, or a region list that is
+not a list of indexes. An index the stored pass does not carry is
+[region-not-found](#region-not-found) instead. Run `reportal firmware
+<binary-id>` (or `GET /api/binaries/<id>/firmware`) to see the indexes the
+stored pass reports.
 
 ### region-not-found
 

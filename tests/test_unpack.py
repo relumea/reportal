@@ -191,7 +191,7 @@ class TestRoutes:
         fake_engine.lzexe_versions[str(source)] = 90
         binary_id = _seed(conn, tmp_path)
         status, payload = _post(f"/api/binaries/{binary_id}/unpack")
-        assert status.startswith("200"), payload
+        assert status.startswith("201"), payload
         assert payload.pop("journal_action")
         new_id = payload["unpacked"]["binary_id"]
         assert new_id != binary_id
@@ -247,7 +247,7 @@ class TestRoutes:
         status, payload = _post(
             f"/api/binaries/{binary_id}/unpack", '{"packer": "upx", "name": "renamed.exe"}'
         )
-        assert status.startswith("200"), payload
+        assert status.startswith("201"), payload
         assert payload["packer"] == "upx"
         assert payload["unpacked"]["name"] == "renamed.exe"
         assert payload["unpacked"]["path"].endswith(".exe")
@@ -425,7 +425,7 @@ class TestRealEngine:
         engines.set_engine(None)
         binary_id = _seed(conn, tmp_path, name="tc16_hello_lzexe.exe", body=PACKED.read_bytes())
         status, payload = _post(f"/api/binaries/{binary_id}/unpack")
-        assert status.startswith("200"), payload
+        assert status.startswith("201"), payload
         expected = unpack_lzexe(PACKED).to_bytes()
         assert payload["packer"] == "lzexe"
         assert payload["provenance"]["version"] == 91
