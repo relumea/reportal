@@ -389,8 +389,9 @@ the activity and feedback surfaces.
   `POST /api/users` (201 with the token once), `PATCH /api/users/<id>`,
   `POST /api/users/<id>/token` and `DELETE /api/users/<id>`, every write
   journaled and revertible, and never a digest in a response.
-- the gate itself: `server.require_auth` is a router dependency, so every
-  `/api` route is behind it and a route added later cannot opt out.  Auth is
+- the gate itself: the `server._reportal_headers` middleware calls
+  `server.authenticate`, so every `/api` route is behind it and a route added
+  later cannot opt out.  Auth is
   armed only by `REPORTAL_AUTH=required` or `[auth] required = true`, so a
   loopback install keeps working unchanged, and `reportal serve --host` refuses
   a non-loopback bind unless the gate is armed and an enabled user exists
@@ -404,14 +405,16 @@ the activity and feedback surfaces.
   `team`) and `owner_team_id`, set through `PATCH /api/binaries/<id>/scope` and
   `PATCH /api/collections/<id>/scope`.
 - the per-object enforcement that scope needs: `server._scoped_object` resolves
-  the object a path names (a function or an analysis resolves through its
-  binary, the object a team actually owns), a non-member's read is the object's
-  own 404 rather than a disclosure, a non-member's write is 403
-  `scope-forbidden`, and because the check lives in the router dependency a
-  route added later is covered without repeating it.  The listings
-  (`/api/binaries`, `/api/collections`, `/api/search`) filter their pages by
-  `auth.visible_clause` and a bulk action skips the ids outside the caller's
-  reach with the reason `not permitted`.
+  the object a path names (eleven kinds through their owning binary, the object
+  a team actually owns), a non-member's read is the object's own 404 rather
+  than a disclosure, a non-member's write is 403 `scope-forbidden`, and because
+  the check lives in the middleware a route added later is covered without
+  repeating it (`tools/audit_scope.py`, run by `make lint`, fails a new
+  object-id route without coverage).  The listings, batch reads, scoped
+  listings, searches, feeds and series filter their pages by
+  `auth.visible_clause`, the corpus operations score only visible binaries, and
+  a bulk action skips the ids outside the caller's reach with the reason `not
+  permitted`.
 - `reportal users`/`user-add`/`user-token`/`user-edit`/`user-rm`,
   `reportal teams`/`team-add`/`team-rm`/`team-member`/`binary-scope`/
   `collection-scope`, the `list_users`, `add_user`, `rotate_user_token`,

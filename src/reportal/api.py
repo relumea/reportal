@@ -10580,7 +10580,7 @@ def set_analysis_tags(analysis_id: int, body: dict[str, Any] = Depends(json_body
 #
 # Token auth is off unless the environment or the workspace config turns it on,
 # so a single-user loopback install keeps working unchanged.  When it is on,
-# `server.require_auth` has already resolved the caller and every request below
+# the middleware has already resolved the caller and every request below
 # is authenticated; the user table itself needs the `admin` permission.  A user
 # row's token digest never reaches a response: only the token a create or a
 # rotation hands back once does.

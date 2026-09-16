@@ -7,7 +7,7 @@
 Token auth is off unless `REPORTAL_AUTH=required` (or the workspace
 `[auth] required = true`) turns it on, so a loopback install is unchanged and
 every route answers as it always did.  With it on, every `/api` request needs
-`Authorization: Bearer <token>` (`server.require_auth`, a router dependency, so
+`Authorization: Bearer <token>` (the `server._reportal_headers` middleware, so
 no route can be added outside it): a missing, wrong or disabled user's token is
 401 `unauthorized`, and a role that does not carry the permission the method and
 path imply is 403 `forbidden`.  Roles are `viewer` (read), `analyst` (read and

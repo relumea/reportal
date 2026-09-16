@@ -25,7 +25,7 @@ reportal/
 │   ├── __main__.py           # python -m reportal
 │   ├── cli.py                # Typer CLI (init, import-rebrew, add-binary, serve, ...)
 │   ├── server.py             # shared FastAPI app, JSON helpers, Host guard, db(),
-│   │                         #   the require_auth dependency (off unless configured)
+│   │                         #   the auth middleware (off unless configured)
 │   ├── sandbox.py            # guarded sample detonation: the opt-in and runner guards,
 │   │                         #   the bounded bwrap argv, the run ledger and the runner
 │   │                         #   registry; the one module that executes a sample
@@ -289,10 +289,9 @@ binary and returns the same streamed response
 Token auth is off unless `REPORTAL_AUTH=required` or the workspace
 `[auth] required = true` turns it on (`auth.required`, a pure configuration
 read), so a loopback install behaves exactly as before and no request pays for
-a check it does not need.  With it on, `api.router` is built with
-`dependencies=[Depends(server.require_auth)]`, which is the one place the gate
-lives: a route added later is behind it without being told, and a route cannot
-opt out by omission.  The dependency resolves the bearer token to a user
+a check it does not need.  With it on, the `server._reportal_headers`
+middleware is the one place the gate lives: a route added later is behind it
+without being told, and a route cannot opt out by omission.  The middleware resolves the bearer token to a user
 (`auth.authenticate`, constant-time digest comparison), refuses a disabled user,
 computes the permission the method and path need (`auth.required_permission`:
 `read`, `write`, or `admin` for `/api/users*`) and compares it with the role's
