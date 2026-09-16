@@ -58,14 +58,20 @@ def _stale_run(
     return run_id, root_id, batch_ids
 
 
-def _run_one_batch(conn: sqlite3.Connection, ids: dict[str, Any], written: Path) -> tuple[int, int]:
-    """Execute one real writer batch and return ``(run_id, task_id)``.
+def _run_one_batch(
+    conn: sqlite3.Connection,
+    ids: dict[str, Any],
+    written: Path,
+    *,
+    execute: bool = True,
+) -> tuple[int, int]:
+    """Drive one writer batch and return ``(run_id, task_id)``.
 
     The run stays `running`: this drives the batch itself, so the test can see
     the plan a completed task persisted before anything closes the run.
     """
     auto_workers.register_worker(writer_worker(written), origin="test")
-    params = auto_mode.build_params(worker="writer", execute=True)
+    params = auto_mode.build_params(worker="writer", execute=execute)
     functions = auto_mode.select_functions(conn, ids["binary"])
     run_id = auto_mode.create_auto_run(
         conn, binary_id=ids["binary"], params=params, functions=functions
@@ -134,28 +140,7 @@ class TestIncrementalPersistence:
     ) -> None:
         ids = seed_rows(conn, rows=ROWS)
         written = tmp_path / "Work.c"
-        auto_workers.register_worker(writer_worker(written), origin="test")
-        params = auto_mode.build_params(worker="writer", execute=False)
-        functions = auto_mode.select_functions(conn, ids["binary"])
-        run_id = auto_mode.create_auto_run(
-            conn, binary_id=ids["binary"], params=params, functions=functions
-        )
-        task_id, planned = auto_mode.planned_batches(conn, run_id)[0]
-        binary = store.get_binary(conn, ids["binary"])
-        assert binary is not None
-        db_path = auto_mode._database_path(conn)
-        assert db_path is not None
-        auto_mode._run_batch(
-            conn,
-            run_id=run_id,
-            task_id=task_id,
-            planned=planned,
-            binary=binary,
-            params=params,
-            engine=None,
-            llm_client=None,
-            db_path=db_path,
-        )
+        run_id, _task_id = _run_one_batch(conn, ids, written, execute=False)
         assert auto_store.auto_run_effects(conn, run_id) == []
         assert not written.exists()
 

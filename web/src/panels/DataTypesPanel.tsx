@@ -50,6 +50,24 @@ import type {
 // mirrors DEFAULT_STRUCT_LIMIT on the API side.
 const DEFAULT_STRUCT_LIMIT = 50;
 
+/** Run *action* under a busy label; *onDone* refreshes after a success. */
+function runMutation(
+  setError: (error: unknown) => void,
+  setBusy: (label: string) => void,
+  label: string,
+  action: () => Promise<unknown>,
+  onDone: () => void,
+): void {
+  setError(null);
+  setBusy(label);
+  action()
+    .then(() => onDone())
+    .catch((failure: unknown) => {
+      setError(failure);
+    })
+    .finally(() => setBusy(""));
+}
+
 // A type's source when the recovered structs scan created it; mirrors
 // data_types.SOURCE_SCAN, the only other value being a manual edit.
 const SOURCE_SCAN = "scan";
@@ -735,14 +753,7 @@ function DataTypeCard({
   const [showHistory, setShowHistory] = useState(false);
 
   const mutate = (label: string, action: () => Promise<unknown>): void => {
-    setError(null);
-    setBusy(label);
-    action()
-      .then(() => onChange())
-      .catch((failure: unknown) => {
-        setError(failure);
-      })
-      .finally(() => setBusy(""));
+    runMutation(setError, setBusy, label, action, onChange);
   };
 
   const rename = (): void => {
@@ -1160,14 +1171,7 @@ function EnumValueRow({
   const [busy, setBusy] = useState("");
 
   const mutate = (label: string, action: () => Promise<unknown>): void => {
-    setError(null);
-    setBusy(label);
-    action()
-      .then(() => onChange())
-      .catch((failure: unknown) => {
-        setError(failure);
-      })
-      .finally(() => setBusy(""));
+    runMutation(setError, setBusy, label, action, onChange);
   };
 
   const save = (): void => {
@@ -1322,14 +1326,7 @@ function MemberRow({
   const [busy, setBusy] = useState("");
 
   const mutate = (label: string, action: () => Promise<unknown>): void => {
-    setError(null);
-    setBusy(label);
-    action()
-      .then(() => onChange())
-      .catch((failure: unknown) => {
-        setError(failure);
-      })
-      .finally(() => setBusy(""));
+    runMutation(setError, setBusy, label, action, onChange);
   };
 
   const save = (): void => {

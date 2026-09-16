@@ -455,6 +455,17 @@ def _comment_body(body: Any) -> str:
         raise InvalidLineCommentError(str(exc)) from exc
 
 
+def _line_comment_state(
+    conn: sqlite3.Connection, function_id: int, line: Any
+) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
+    """Artifact payload, mutable line-comment rows, and the validated line number."""
+    artifact = require(conn, function_id)
+    payload = dict(artifact["payload"])
+    rows = [dict(entry) for entry in payload.get("line_comments", [])]
+    number = normalize_line(line, len(str(payload["rewritten_code"]).splitlines()))
+    return payload, rows, number
+
+
 def add_line_comment(
     conn: sqlite3.Connection,
     function_id: int,
@@ -464,11 +475,7 @@ def add_line_comment(
     author: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Store one comment at *line*, replacing any comment already there."""
-    artifact = require(conn, function_id)
-    payload = dict(artifact["payload"])
-    rows = [dict(entry) for entry in payload.get("line_comments", [])]
-    text = str(payload["rewritten_code"])
-    number = normalize_line(line, len(text.splitlines()))
+    payload, rows, number = _line_comment_state(conn, function_id, line)
     now = store.now()
     entry = {
         "line": number,
@@ -492,11 +499,7 @@ def update_line_comment(
     conn: sqlite3.Connection, function_id: int, *, line: Any, body: Any
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Replace the body of the comment stored at *line*."""
-    artifact = require(conn, function_id)
-    payload = dict(artifact["payload"])
-    rows = [dict(entry) for entry in payload.get("line_comments", [])]
-    text = str(payload["rewritten_code"])
-    number = normalize_line(line, len(text.splitlines()))
+    payload, rows, number = _line_comment_state(conn, function_id, line)
     found = next((row for row in rows if row["line"] == number), None)
     if found is None:
         raise UnknownLineCommentError(f"no line comment at line {number}")
@@ -510,11 +513,7 @@ def delete_line_comment(
     conn: sqlite3.Connection, function_id: int, *, line: Any
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Remove the comment stored at *line*."""
-    artifact = require(conn, function_id)
-    payload = dict(artifact["payload"])
-    rows = [dict(entry) for entry in payload.get("line_comments", [])]
-    text = str(payload["rewritten_code"])
-    number = normalize_line(line, len(text.splitlines()))
+    payload, rows, number = _line_comment_state(conn, function_id, line)
     found = next((row for row in rows if row["line"] == number), None)
     if found is None:
         raise UnknownLineCommentError(f"no line comment at line {number}")

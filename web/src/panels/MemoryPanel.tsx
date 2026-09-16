@@ -281,6 +281,21 @@ interface Selection {
   end: number;
 }
 
+/** Shift-extend from *anchor*, or start a new one-byte selection at *address*. */
+function extendSelection(
+  anchor: number | null,
+  address: number,
+  extend: boolean,
+): { anchor: number; selection: Selection } {
+  if (anchor === null || !extend) {
+    return { anchor: address, selection: { start: address, end: address } };
+  }
+  return {
+    anchor,
+    selection: { start: Math.min(anchor, address), end: Math.max(anchor, address) },
+  };
+}
+
 function FileMode({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "memory-page");
   const [entry, load] = useLazyPanel<MemoryPage>(key);
@@ -310,12 +325,9 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
   };
 
   const selectByte = (address: number, extend: boolean): void => {
-    if (anchor === null || !extend) {
-      setAnchor(address);
-      setSelection({ start: address, end: address });
-      return;
-    }
-    setSelection({ start: Math.min(anchor, address), end: Math.max(anchor, address) });
+    const next = extendSelection(anchor, address, extend);
+    setAnchor(next.anchor);
+    setSelection(next.selection);
   };
 
   const selectedBytes = (): number[] => {
@@ -745,12 +757,9 @@ export function ContinuousMode({
   };
 
   const select = (address: number, extend: boolean): void => {
-    if (anchor === null || !extend) {
-      setAnchor(address);
-      setSelection({ start: address, end: address });
-      return;
-    }
-    setSelection({ start: Math.min(anchor, address), end: Math.max(anchor, address) });
+    const next = extendSelection(anchor, address, extend);
+    setAnchor(next.anchor);
+    setSelection(next.selection);
   };
 
   const selectedBytes = (): number[] => {

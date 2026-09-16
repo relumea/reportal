@@ -32,6 +32,28 @@ def _analysis(conn: sqlite3.Connection, binary_id: int) -> int:
     return store.create_analysis(conn, binary_id=binary_id, engine="rebrew-import", status="done")
 
 
+def _matched_pair(conn: sqlite3.Connection) -> tuple[int, int, int]:
+    """Left binary with one function matched to right's; returns (left, right, source)."""
+    left = store.add_binary(conn, sha256="aa" * 32, name="left.exe")
+    right = store.add_binary(conn, sha256="bb" * 32, name="right.exe")
+    analysis = store.create_analysis(conn, binary_id=left, engine="manual")
+    source = store.add_function(
+        conn, analysis_id=analysis, va=0x1000, name="sub_1000", size=16, status="STUB"
+    )
+    other = store.create_analysis(conn, binary_id=right, engine="manual")
+    candidate = store.add_function(
+        conn, analysis_id=other, va=0x1000, name="sub_1000", size=16, status="STUB"
+    )
+    store.record_match(
+        conn,
+        function_id=source,
+        candidate_function_id=candidate,
+        similarity=99.0,
+        confidence=0.9,
+    )
+    return left, right, source
+
+
 def _function(
     conn: sqlite3.Connection,
     analysis_id: int,
@@ -412,23 +434,7 @@ class TestCategories:
         assert composition.category_of("user", matched=True) == composition.CATEGORY_MALWARE
 
     def test_the_top_binaries_are_the_categorys_own_matches(self, conn: sqlite3.Connection) -> None:
-        left = store.add_binary(conn, sha256="aa" * 32, name="left.exe")
-        right = store.add_binary(conn, sha256="bb" * 32, name="right.exe")
-        analysis = store.create_analysis(conn, binary_id=left, engine="manual")
-        source = store.add_function(
-            conn, analysis_id=analysis, va=0x1000, name="sub_1000", size=16, status="STUB"
-        )
-        other = store.create_analysis(conn, binary_id=right, engine="manual")
-        candidate = store.add_function(
-            conn, analysis_id=other, va=0x1000, name="sub_1000", size=16, status="STUB"
-        )
-        store.record_match(
-            conn,
-            function_id=source,
-            candidate_function_id=candidate,
-            similarity=99.0,
-            confidence=0.9,
-        )
+        left, right, _source = _matched_pair(conn)
         payload = composition.compute_composition(conn, binary_id=left)
         categories = {entry["category"]: entry for entry in payload["categories"]}
         assert categories[composition.CATEGORY_MALWARE]["count"] == 1
@@ -440,29 +446,8 @@ class TestCategories:
 class TestCompositionScope:
     """The candidate scope the hosted settings sheet offers (entry 15)."""
 
-    def _pair(self, conn: sqlite3.Connection) -> tuple[int, int, int]:
-        """Left with one function matched to right's, returning (left, right, source)."""
-        left = store.add_binary(conn, sha256="aa" * 32, name="left.exe")
-        right = store.add_binary(conn, sha256="bb" * 32, name="right.exe")
-        analysis = store.create_analysis(conn, binary_id=left, engine="manual")
-        source = store.add_function(
-            conn, analysis_id=analysis, va=0x1000, name="sub_1000", size=16, status="STUB"
-        )
-        other = store.create_analysis(conn, binary_id=right, engine="manual")
-        candidate = store.add_function(
-            conn, analysis_id=other, va=0x1000, name="sub_1000", size=16, status="STUB"
-        )
-        store.record_match(
-            conn,
-            function_id=source,
-            candidate_function_id=candidate,
-            similarity=99.0,
-            confidence=0.9,
-        )
-        return left, right, source
-
     def test_a_scoped_run_keeps_only_the_named_candidates(self, conn: sqlite3.Connection) -> None:
-        left, right, _source = self._pair(conn)
+        left, right, _source = _matched_pair(conn)
         scoped = composition.compute_composition(conn, binary_id=left, binary_ids=[right])
         assert scoped["matched_functions"] == 1
         assert scoped["scope"] == {"binary_ids": [right], "collection_ids": [], "binaries": 1}
@@ -473,7 +458,7 @@ class TestCompositionScope:
         assert empty["matched_functions"] == 0
 
     def test_a_collection_scope_resolves_to_its_members(self, conn: sqlite3.Connection) -> None:
-        left, right, _source = self._pair(conn)
+        left, right, _source = _matched_pair(conn)
         collection_id = store.create_collection(conn, name="corpus")
         store.add_collection_binary(conn, collection_id, right)
         scoped = composition.compute_composition(
@@ -483,14 +468,14 @@ class TestCompositionScope:
         assert scoped["scope"]["binaries"] == 1
 
     def test_an_unknown_scope_id_is_refused(self, conn: sqlite3.Connection) -> None:
-        left, _right, _source = self._pair(conn)
+        left, _right, _source = _matched_pair(conn)
         with pytest.raises(matching.InvalidSettingsError):
             composition.compute_composition(conn, binary_id=left, binary_ids=[999])
         with pytest.raises(matching.InvalidSettingsError):
             composition.compute_composition(conn, binary_id=left, collection_ids=[999])
 
     def test_the_scan_stores_the_scope_it_ran_under(self, conn: sqlite3.Connection) -> None:
-        left, right, _source = self._pair(conn)
+        left, right, _source = _matched_pair(conn)
         payload = composition.run_composition(conn, binary_id=left, binary_ids=[right])
         stored = composition.stored_composition(conn, left)
         assert stored is not None
@@ -500,7 +485,7 @@ class TestCompositionScope:
     def test_a_non_member_composes_only_against_visible_binaries(
         self, conn: sqlite3.Connection
     ) -> None:
-        left, right, _source = self._pair(conn)
+        left, right, _source = _matched_pair(conn)
         owner, _token = auth.add_user(conn, name="owner", role="admin")
         team_id = int(auth.create_team(conn, name="blue")["id"])
         auth.add_member(conn, team_id, int(owner["id"]))
@@ -522,28 +507,8 @@ class TestCompositionScope:
 class TestCompositionScopeSurfaces:
     """The scope reaches the route, the CLI and the tool."""
 
-    def _pair(self, conn: sqlite3.Connection) -> tuple[int, int]:
-        left = store.add_binary(conn, sha256="aa" * 32, name="left.exe")
-        right = store.add_binary(conn, sha256="bb" * 32, name="right.exe")
-        analysis = store.create_analysis(conn, binary_id=left, engine="manual")
-        source = store.add_function(
-            conn, analysis_id=analysis, va=0x1000, name="sub_1000", size=16, status="STUB"
-        )
-        other = store.create_analysis(conn, binary_id=right, engine="manual")
-        candidate = store.add_function(
-            conn, analysis_id=other, va=0x1000, name="sub_1000", size=16, status="STUB"
-        )
-        store.record_match(
-            conn,
-            function_id=source,
-            candidate_function_id=candidate,
-            similarity=99.0,
-            confidence=0.9,
-        )
-        return left, right
-
     def test_the_route_takes_the_scope(self, conn: sqlite3.Connection) -> None:
-        left, right = self._pair(conn)
+        left, right, _source = _matched_pair(conn)
         status, headers, body = wsgi_request(
             "POST",
             f"/api/binaries/{left}/composition",
@@ -556,7 +521,7 @@ class TestCompositionScopeSurfaces:
         assert payload["categories"]
 
     def test_the_route_refuses_an_unknown_scope_id(self, conn: sqlite3.Connection) -> None:
-        left, _right = self._pair(conn)
+        left, _right, _source = _matched_pair(conn)
         status, headers, body = wsgi_request(
             "POST",
             f"/api/binaries/{left}/composition",
@@ -567,7 +532,7 @@ class TestCompositionScopeSurfaces:
         assert json_body(body, headers)["error"] == "unknown binary"
 
     def test_the_route_rejects_a_bad_id_list(self, conn: sqlite3.Connection) -> None:
-        left, _right = self._pair(conn)
+        left, _right, _source = _matched_pair(conn)
         status, _headers, body = wsgi_request(
             "POST",
             f"/api/binaries/{left}/composition",
@@ -577,7 +542,7 @@ class TestCompositionScopeSurfaces:
         assert status.startswith("400"), body
 
     def test_the_cli_takes_the_scope(self, portal_db: Path, conn: sqlite3.Connection) -> None:
-        left, right = self._pair(conn)
+        left, right, _source = _matched_pair(conn)
         conn.commit()
         result = runner.invoke(
             cli.app, ["composition", str(left), "--binary-id", str(right), "--json"]
@@ -589,7 +554,7 @@ class TestCompositionScopeSurfaces:
     def test_an_unknown_scope_id_fails_the_command(
         self, portal_db: Path, conn: sqlite3.Connection
     ) -> None:
-        left, _right = self._pair(conn)
+        left, _right, _source = _matched_pair(conn)
         conn.commit()
         result = runner.invoke(cli.app, ["composition", str(left), "--binary-id", "999", "--json"])
         assert result.exit_code == 1, result.output
