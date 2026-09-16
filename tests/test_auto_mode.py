@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -307,6 +308,32 @@ class TestRunAuto:
         assert run["failed"] == 1
         batch = run["tree"][0]["children"][0]
         assert batch["attempt_log"][0]["detail"]["reason"] == auto_mode.REASON_TIMEOUT
+
+    def test_abandoned_attempts_are_bounded(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_rows(
+            conn,
+            rows=((0x1000, "First", 8, "STUB"), (0x1100, "Second", 8, "STUB")),
+        )
+        probe = WorkerProbe(sleep=5.0)
+        auto_workers.register_worker(probe.make(), origin="test")
+        monkeypatch.setattr(auto_mode, "_attempt_slots", threading.BoundedSemaphore(1))
+        run = auto_mode.run_auto(
+            conn,
+            binary_id=ids["binary"],
+            worker="probe",
+            max_attempts=1,
+            task_timeout=1.0,
+            concurrency=1,
+        )
+        reasons = [
+            attempt["detail"]["reason"]
+            for batch in run["tree"][0]["children"]
+            for attempt in batch["attempt_log"]
+        ]
+        assert auto_mode.REASON_TIMEOUT in reasons
+        assert auto_mode.REASON_BUSY in reasons
 
     def test_unknown_binary_raises_key_error(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(KeyError):

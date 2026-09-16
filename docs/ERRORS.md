@@ -44,7 +44,7 @@ under the hyphenated heading.
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
 - Sandbox: [sandbox-disabled](#sandbox-disabled), [sandbox-unavailable](#sandbox-unavailable), [invalid-sandbox](#invalid-sandbox)
 - Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
-- Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation)
+- Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation), [auto-busy](#auto-busy)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 - Documentation: [no-docs](#no-docs), [no-doc](#no-doc)
 
@@ -177,6 +177,12 @@ work is over cannot be un-run.
 `409`. The run is not waiting on a tool call, so there is nothing to approve or
 reject. A run pauses only when the model asks for a tool that changes the
 workspace, and only while it is waiting is a confirmation meaningful.
+
+### auto-busy
+
+`503`. The process is already running as many background auto runs as it
+allows. Wait for one to finish, or poll an existing run; the request did not
+create a new one.
 
 ### no-artifact
 

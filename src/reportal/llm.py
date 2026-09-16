@@ -593,8 +593,12 @@ class LlmClient:
             http = self._http if self._http is not None else httpx2.Client()
             # The placeholder is only ever sent by this client, and only when no
             # key is configured; the hook makes an unkeyed endpoint receive no
-            # Authorization header at all.
-            http.event_hooks.setdefault("request", []).append(_drop_anonymous_key)
+            # Authorization header at all.  Install it once per HTTP client:
+            # ``with_model`` shares the transport, and appending on every
+            # ``_sdk`` build would stack the same hook without bound.
+            hooks = http.event_hooks.setdefault("request", [])
+            if _drop_anonymous_key not in hooks:
+                hooks.append(_drop_anonymous_key)
             self._http = http
             self._client = OpenAI(
                 base_url=_base_url(config.endpoint),

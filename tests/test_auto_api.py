@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ import pytest
 from auto_helpers import seed_rows, writer_worker
 from conftest import json_body, wsgi_request
 
-from reportal import auth, auto_store, auto_workers, mcp_tools, store
+from reportal import api, auth, auto_store, auto_workers, mcp_tools, store
 
 # How long a background auto run may take in a test before the test gives up.
 RUN_WAIT_SECONDS = 15.0
@@ -167,6 +168,36 @@ class TestStart:
         assert run["config"]["max_attempts"] == 1
         assert run["config"]["functions_per_task"] == 2
         assert run["config"]["max_tasks"] == 5
+
+    def test_start_refuses_when_the_background_cap_is_full(
+        self, conn: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),))
+        held = threading.Event()
+        release = threading.Event()
+        slots = threading.BoundedSemaphore(1)
+
+        def hang(_conn: Any, **_kwargs: Any) -> None:
+            held.set()
+            release.wait(timeout=10)
+
+        monkeypatch.setattr(api, "_auto_run_slots", slots)
+        monkeypatch.setattr("reportal.auto_mode.execute_auto_run", hang)
+        status, _payload = _start(ids["binary"])
+        assert status == 202
+        assert held.wait(timeout=2)
+        busy_status, busy_payload = _start(ids["binary"])
+        assert busy_status == 503
+        assert busy_payload["error"] == "auto-busy"
+        release.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if slots.acquire(blocking=False):
+                slots.release()
+                break
+            time.sleep(0.02)
+        else:
+            raise AssertionError("the background auto-run slot was never released")
 
 
 class TestGet:

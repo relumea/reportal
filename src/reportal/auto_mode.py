@@ -133,9 +133,17 @@ KEEP_FAILED_SOURCES = False
 # inside the worker records.
 REASON_TIMEOUT = "timeout"
 REASON_INTERNAL_ERROR = "internal-error"
+REASON_BUSY = "busy"
 
 # Reason a task that a recovery found unfinished records.
 REASON_INTERRUPTED = "interrupted"
+
+# Live attempt threads, including ones abandoned after a timeout.  Without a
+# ceiling a wedged worker would leave a daemon behind on every attempt and the
+# process would grow one thread per call; the semaphore is released only when
+# the attempt thread actually finishes, so a hung worker holds its slot.
+MAX_LIVE_ATTEMPT_THREADS = MAX_CONCURRENCY * 2
+_attempt_slots = threading.BoundedSemaphore(MAX_LIVE_ATTEMPT_THREADS)
 
 # Result key a planned batch stores its function snapshots under.
 PLANNED_FUNCTIONS = "functions"
@@ -415,12 +423,20 @@ def _call_with_timeout(
     The call runs in its own daemon thread, so a worker that never returns
     cannot pin the run: its thread is abandoned and the attempt records a
     timeout.  An exception the worker raises is a failed attempt with its
-    message, never a crashed run.
+    message, never a crashed run.  Live attempt threads (including abandoned
+    ones) are capped by :data:`MAX_LIVE_ATTEMPT_THREADS`; past the cap the
+    attempt fails busy rather than spawning another thread.
 
     The attempt thread opens its own connection: a SQLite connection belongs to
     the thread that made it, so handing the worker the batch thread's one would
     fail the moment it touched the store.
     """
+    if not _attempt_slots.acquire(blocking=False):
+        return _failed_attempt(
+            ctx,
+            REASON_BUSY,
+            f"at most {MAX_LIVE_ATTEMPT_THREADS} worker attempts may run at once",
+        )
     box: dict[str, Any] = {}
     finished = threading.Event()
 
@@ -433,9 +449,16 @@ def _call_with_timeout(
             box["error"] = f"{type(exc).__name__}: {exc}"
         finally:
             finished.set()
+            _attempt_slots.release()
 
-    thread = threading.Thread(target=target, name=f"auto-attempt-{ctx.function['id']}", daemon=True)
-    thread.start()
+    try:
+        thread = threading.Thread(
+            target=target, name=f"auto-attempt-{ctx.function['id']}", daemon=True
+        )
+        thread.start()
+    except BaseException:
+        _attempt_slots.release()
+        raise
     if not finished.wait(timeout):
         return _failed_attempt(ctx, REASON_TIMEOUT)
     if "error" in box:

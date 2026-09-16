@@ -499,8 +499,15 @@ def execute(
                     status = STATUS_TIMED_OUT
                     with contextlib.suppress(ProcessLookupError, PermissionError):
                         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                    with contextlib.suppress(subprocess.TimeoutExpired):
+                    try:
                         exit_code = process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        # The group kill did not reap the child; a second signal
+                        # and wait keep it from lingering as a zombie under load.
+                        with contextlib.suppress(ProcessLookupError, PermissionError):
+                            process.kill()
+                        with contextlib.suppress(subprocess.TimeoutExpired):
+                            exit_code = process.wait(timeout=5)
                     notes.append(
                         f"the sample outlived the {resolved_caps.timeout_seconds}s"
                         " wall-clock timeout and was killed by process group"

@@ -6356,24 +6356,37 @@ def _no_auto_run(binary_id: int) -> Response:
     )
 
 
+# Concurrent background auto runs started by the HTTP route.  Each POST
+# otherwise starts an unbounded daemon thread; the semaphore is released when
+# that thread finishes, so a hung run holds its slot and further starts answer
+# 503 rather than growing the process.
+MAX_BACKGROUND_AUTO_RUNS = 4
+_auto_run_slots = threading.BoundedSemaphore(MAX_BACKGROUND_AUTO_RUNS)
+
+
 def _execute_auto_run(run_id: int, params: auto_mode.AutoParams) -> None:
     """Run a planned auto run on its own connection in a background thread.
 
     A failure must not leave the run `running` forever: it is closed as failed
     so the polling client sees a terminal state instead of an eternal spinner.
+    The background slot is released in ``finally`` so a crashed or finished run
+    always frees capacity for the next start.
     """
     try:
-        with contextlib.closing(_open()) as conn:
-            auto_mode.execute_auto_run(conn, run_id=run_id, params=params)
-    except Exception as exc:  # a crashed background run is a failed run, not a lost one
-        with contextlib.closing(_open()) as conn:
-            auto_mode.persist_undo_plan(conn, run_id)
-            auto_store.finish_auto_run(
-                conn,
-                run_id,
-                status=auto_store.AUTO_RUN_FAILED,
-                stats={"error": f"{type(exc).__name__}: {exc}"},
-            )
+        try:
+            with contextlib.closing(_open()) as conn:
+                auto_mode.execute_auto_run(conn, run_id=run_id, params=params)
+        except Exception as exc:  # a crashed background run is a failed run, not a lost one
+            with contextlib.closing(_open()) as conn:
+                auto_mode.persist_undo_plan(conn, run_id)
+                auto_store.finish_auto_run(
+                    conn,
+                    run_id,
+                    status=auto_store.AUTO_RUN_FAILED,
+                    stats={"error": f"{type(exc).__name__}: {exc}"},
+                )
+    finally:
+        _auto_run_slots.release()
 
 
 @router.post("/api/binaries/{binary_id}/auto")
@@ -6385,22 +6398,37 @@ def start_auto_run(binary_id: int, body: dict[str, Any] = Depends(optional_json_
     ``GET /api/binaries/<id>/auto`` for live progress instead of blocking for
     minutes.  Body fields are all optional: ``worker`` (default the offline
     worker), ``execute`` (default false), ``concurrency``,
-    ``functions_per_task``, ``max_attempts`` and ``max_tasks``.
+    ``functions_per_task``, ``max_attempts`` and ``max_tasks``.  At most
+    :data:`MAX_BACKGROUND_AUTO_RUNS` runs execute at once; past that the route
+    answers 503 without creating a run.
     """
     params = _auto_params(body)
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        functions = auto_mode.select_functions(conn, binary_id)
-        run_id = auto_mode.create_auto_run(
-            conn, binary_id=binary_id, params=params, functions=functions
+    if not _auto_run_slots.acquire(blocking=False):
+        return json_error(
+            503,
+            error="auto-busy",
+            detail=(
+                f"at most {MAX_BACKGROUND_AUTO_RUNS} auto runs may execute at once;"
+                " wait for one to finish or poll an existing run"
+            ),
         )
-    thread = threading.Thread(
-        target=_execute_auto_run,
-        args=(run_id, params),
-        name=f"reportal-auto-{run_id}",
-        daemon=True,
-    )
-    thread.start()
+    try:
+        with contextlib.closing(_open()) as conn:
+            _require_binary(conn, binary_id)
+            functions = auto_mode.select_functions(conn, binary_id)
+            run_id = auto_mode.create_auto_run(
+                conn, binary_id=binary_id, params=params, functions=functions
+            )
+        thread = threading.Thread(
+            target=_execute_auto_run,
+            args=(run_id, params),
+            name=f"reportal-auto-{run_id}",
+            daemon=True,
+        )
+        thread.start()
+    except BaseException:
+        _auto_run_slots.release()
+        raise
     return json_response(
         {"run_id": run_id, "binary_id": binary_id, "status": auto_store.AUTO_RUN_RUNNING},
         status=202,

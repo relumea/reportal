@@ -215,6 +215,16 @@ class TestComplete:
         assert capture[0].headers["Authorization"] == "Bearer k"
         assert "Authorization" not in capture[1].headers
 
+    def test_with_model_does_not_stack_the_anonymous_key_hook(self) -> None:
+        capture: list[httpx.Request] = []
+        http = _mock_http(httpx.Response(200, json=_chat_response("ok")), capture)
+        client = LlmClient(LlmConfig(endpoint="http://llm.local/v1", model="a"), http=http)
+        client.complete([{"role": "user", "content": "hi"}], temperature=0.0)
+        llm.with_model(client, "b").complete([{"role": "user", "content": "hi"}], temperature=0.0)
+        llm.with_model(client, "c").complete([{"role": "user", "content": "hi"}], temperature=0.0)
+        hooks = http.event_hooks.get("request", [])
+        assert hooks.count(llm._drop_anonymous_key) == 1
+
     def test_http_error_becomes_llm_error(self) -> None:
         capture: list[httpx.Request] = []
         http = _mock_http(httpx.Response(500, text="boom"), capture)

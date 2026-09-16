@@ -214,22 +214,20 @@ def _stripe_request(path: str, form: dict[str, str]) -> dict[str, Any]:
         "Idempotency-Key": secrets.token_urlsafe(24),
     }
     try:
-        response = httpx.post(
-            f"{STRIPE_API_BASE}{path}",
-            data=form,
-            headers=headers,
-            timeout=_REQUEST_TIMEOUT_S,
-        )
+        with httpx.Client(timeout=_REQUEST_TIMEOUT_S) as client:
+            response = client.post(f"{STRIPE_API_BASE}{path}", data=form, headers=headers)
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise BillingError(502, "billing provider returned a non-JSON body") from exc
+            if response.status_code >= 400:
+                message = (
+                    str(payload.get("error", {}).get("message", "")) or "provider rejected the call"
+                )
+                raise BillingError(502, f"billing provider error: {message}")
+            return dict(payload)
     except httpx.HTTPError as exc:
         raise BillingError(502, f"billing provider unreachable: {exc}") from exc
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise BillingError(502, "billing provider returned a non-JSON body") from exc
-    if response.status_code >= 400:
-        message = str(payload.get("error", {}).get("message", "")) or "provider rejected the call"
-        raise BillingError(502, f"billing provider error: {message}")
-    return dict(payload)
 
 
 def _stripe_checkout(organisation: dict[str, Any], plan: plans.Plan) -> CheckoutSession:
@@ -773,16 +771,19 @@ def reconcile_account(conn: sqlite3.Connection, organisation_id: int) -> Reconci
         raise BillingError(409, "no subscription to reconcile")
     key = _secret_key()
     try:
-        response = httpx.get(
-            f"{STRIPE_API_BASE}/subscriptions/{subscription_id}",
-            headers={"Authorization": f"Bearer {key}", "Stripe-Version": api_version()},
-            timeout=_REQUEST_TIMEOUT_S,
-        )
-        payload = dict(response.json())
-    except (httpx.HTTPError, ValueError) as exc:
+        with httpx.Client(timeout=_REQUEST_TIMEOUT_S) as client:
+            response = client.get(
+                f"{STRIPE_API_BASE}/subscriptions/{subscription_id}",
+                headers={"Authorization": f"Bearer {key}", "Stripe-Version": api_version()},
+            )
+            try:
+                payload = dict(response.json())
+            except ValueError as exc:
+                raise BillingError(502, f"billing provider unreachable: {exc}") from exc
+            if response.status_code >= 400:
+                raise BillingError(502, "provider rejected the subscription read")
+    except httpx.HTTPError as exc:
         raise BillingError(502, f"billing provider unreachable: {exc}") from exc
-    if response.status_code >= 400:
-        raise BillingError(502, "provider rejected the subscription read")
     status = str(payload.get("status") or "")
     plan_id = _plan_from_subscription_object(payload)
     changed = status != str(row["status"] if row is not None else "")

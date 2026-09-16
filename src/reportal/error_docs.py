@@ -38,6 +38,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "ambiguous-hash": "ambiguous-hash",
     "analysis not found": "analysis-not-found",
     "archive-too-large": "archive-too-large",
+    "auto-busy": "auto-busy",
     "backend not found": "backend-not-found",
     "backend-unavailable": "backend-unavailable",
     "bad-password": "bad-password",
