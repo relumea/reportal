@@ -22,26 +22,33 @@ the reason this matters: its panels, the memory dump and the data type editor
 are a third of the SPA's source, and they are one chunk (113 kB) that no other
 route pays for.  React and the router are one `vendor` chunk
 (`vite.config.ts`, `build.rollupOptions.output.manualChunks`), which a browser
-keeps across a deploy while the per-view chunks change.  Two imports stay
-static on purpose: the dashboard, because it is the landing route, and
-`FunctionPanels`, because the shell's `Space` binding is its module state (a
-lazy import there would move the binding out of the registry the cheatsheet
-reads).  A `<Suspense>` boundary around the route content shows the shell's
-`Loading` line while a view's chunk arrives.
+keeps across a deploy while the per-view chunks change.  The dashboard stays
+eager because it is the landing route.  The shell's `Space` binding imports only
+`panels/codeViewSwitch.ts` (a few lines of module state); `FunctionPanels`
+loads with the function-detail route.  A `<Suspense>` boundary around the route
+content shows the shell's `Loading` line while a view's chunk arrives, and a
+`ViewLoadBoundary` reports a failed chunk instead of leaving the pane blank.
 
 `GET /` answers the entry page `no-cache` (so a deploy is picked up on the
 next load) and the hashed bundles under `/static/assets/` `immutable` with a
 one-year `max-age`: their names carry their content hash, so a repeat load makes
 no request for them at all.  A file without a hash (the favicon) is answered
-`no-cache` like the shell.
+`no-cache` like the shell.  Compressible assets (JS, CSS, HTML, SVG, …) are
+gzip-encoded when the client sends `Accept-Encoding: gzip`: a sibling `.gz`
+written by `scripts/precompress_spa.py` at build time (zlib level 9) is
+preferred, otherwise `ui.py` compresses at the request-time level and caches
+the result in process.  Responses carry `Vary: Accept-Encoding` so a cache
+never serves a gzip body to a client that cannot decode it.
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-77 kB (22 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with 25 view
-chunks behind them.  `tools/smoke_spa.py` asserts the split rather than trusting
-it: the entry chunk must not carry a marker only the binary detail view renders,
-and some other chunk must, so a view import that goes back to being static
-fails the gate.
+56 kB (18 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with the view
+chunks behind them.  On the wire that is what `ui.py` actually sends when gzip
+is accepted; without it the browser downloads the raw sizes.  `make run` and
+`make ui` run the precompress step after `vite build`.  `tools/smoke_spa.py`
+asserts the split rather than trusting it: the entry chunk must not carry a
+marker only the binary detail view renders, and some other chunk must, so a
+view import that goes back to being static fails the gate.
 
 ### Long tables
 

@@ -823,14 +823,17 @@ the floor proves nothing.
   `src/reportal/assets/dist/` (generated, gitignored).  Routing is
   react-router and every fetch is `@tanstack/react-query`; no CDN.  Every view
   but the dashboard is a `React.lazy` import (the dashboard is the landing
-  route and `FunctionPanels` stays eager because the shell's `Space` binding is
-  its module state), React and the router are one `vendor` chunk, and the smoke
-  fails when a view's marker ends up in the entry bundle.  A table whose list is
-  the stored rows themselves (Functions, Matches) carries `DataTable`'s
-  `windowed` prop, which renders the rows around the viewport over a spacer row
-  sized from the first row's measured height; it is opt-in because a table whose
-  rows differ in height would drift.  `docs/SPA.md` ("Long tables") carries the
-  measurements.
+  route; the shell's `Space` binding imports only `panels/codeViewSwitch.ts`,
+  so `FunctionPanels` loads with the function-detail route), React and the
+  router are one `vendor` chunk, and the smoke fails when a view's marker ends
+  up in the entry bundle.  Hashed assets under `/static/assets/` are answered
+  `immutable` and gzip-encoded when the client accepts gzip (a build-time
+  `.gz` sibling from `scripts/precompress_spa.py`, else on-the-fly).  A table
+  whose list is the stored rows themselves (Functions, Matches) carries
+  `DataTable`'s `windowed` prop, which renders the rows around the viewport
+  over a spacer row sized from the first row's measured height; it is opt-in
+  because a table whose rows differ in height would drift.  `docs/SPA.md`
+  ("Long tables") carries the measurements.
 - Components: the AI decompilation pipeline is a composition of components
   (`src/reportal/components.py`).  A component declares `requires`/`provides`
   plus an `effect`.  `Context` carries the values and the reversible journal:

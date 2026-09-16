@@ -8,6 +8,7 @@ can only move together.
 
 from __future__ import annotations
 
+import gzip
 import re
 from html import unescape
 from pathlib import Path
@@ -102,6 +103,14 @@ class TestRoute:
     def test_it_is_cacheable(self, portal_db: Path) -> None:
         _, headers, _ = on_request("GET", "/pricing")
         assert headers["Cache-Control"] == landing.CACHE_CONTROL
+
+    def test_it_is_gzipped_when_accepted(self, portal_db: Path) -> None:
+        status, headers, chunks = on_request("GET", "/pricing", headers={"Accept-Encoding": "gzip"})
+        body = b"".join(chunks)
+        assert status.startswith("200")
+        assert headers.get("Content-Encoding") == "gzip"
+        assert headers.get("Vary") == "Accept-Encoding"
+        assert b"reportal" in gzip.decompress(body)
 
     def test_it_shows_the_prices(self, portal_db: Path) -> None:
         _, _, chunks = on_request("GET", "/pricing")

@@ -5,6 +5,37 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>reportal</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <!-- Apply the stored theme before the stylesheet so the first paint is not a
+         light flash on a dark preference (or the reverse).  Mirrors theme.ts. -->
+    <script>
+      (() => {
+        try {
+          const allowed = new Set(["system", "dark", "light", "zine"]);
+          const fromUrl = new URLSearchParams(location.search).get("theme");
+          let theme = fromUrl && allowed.has(fromUrl) ? fromUrl : null;
+          if (theme === null) {
+            const stored = localStorage.getItem("reportal.theme");
+            theme = stored && allowed.has(stored) ? stored : "system";
+          }
+          const resolved =
+            theme === "system"
+              ? matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light"
+              : theme;
+          document.documentElement.setAttribute("data-theme", resolved);
+        } catch (_) {
+          /* storage or matchMedia unavailable: stylesheet defaults apply */
+        }
+      })();
+    </script>
+    <style>
+      html[data-theme="dark"] { background: #0e1219; color: #e6ecf5; }
+      html[data-theme="light"] { background: #f5f7fb; color: #1a2332; }
+      html[data-theme="zine"] { background: #d4d0c8; color: #000; }
+      body { margin: 0; }
+      #root { min-height: 100vh; }
+    </style>
   </head>
   <body>
     <div id="root"></div>

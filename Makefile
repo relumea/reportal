@@ -33,6 +33,7 @@ uv-check:
 # ── run ──────────────────────────────────────────────────────────────
 run: venv-check bun-check ## Build the SPA, then serve the portal on PORT (default 8002)
 	cd web && $(BUN) run build
+	$(PY) scripts/precompress_spa.py
 	$(PY) -m reportal serve --port $(PORT)
 
 serve: venv-check ## Serve the portal from the current SPA build, without rebuilding
@@ -71,6 +72,7 @@ test-fast: venv-check ## pytest without coverage (quicker)
 
 ui: venv-check bun-check ## Build the SPA, then run the headless-Chrome smoke and audit
 	cd web && $(BUN) run build
+	$(PY) scripts/precompress_spa.py
 	$(PY) tools/smoke_spa.py
 	$(PY) tools/audit_ui.py
 

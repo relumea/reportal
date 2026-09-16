@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { Component, Suspense, lazy, useEffect, useRef, useState } from "react";
+import type { ErrorInfo, ReactNode } from "react";
 
 import {
   Link,
@@ -14,7 +14,7 @@ import {
 import type { Params, RouteObject } from "react-router";
 
 import { api } from "./api";
-import { Loading } from "./components";
+import { ErrorNote, Loading } from "./components";
 import {
   cycleViewSection,
   focusViewFilter,
@@ -22,7 +22,7 @@ import {
   moveTableRow,
   registerShortcut,
 } from "./keys";
-import { toggleFunctionCodeView } from "./panels/FunctionPanels";
+import { toggleFunctionCodeView } from "./panels/codeViewSwitch";
 import { NAV_GROUPS, NAV_LABELS, navPath } from "./router";
 import type { NavView } from "./router";
 import { THEMES, THEME_LABELS, setTheme, storedTheme } from "./theme";
@@ -37,8 +37,9 @@ import { SearchModal } from "./views/SearchModal";
 // the initial bundle carries the shell, the dashboard and the shortcut layer
 // rather than the whole workbench: the binary detail view alone (its panels,
 // the memory dump and the data type editor) is a third of the source.  The
-// dashboard stays eager because it is the landing route, and FunctionPanels
-// stays eager because the shell's `Space` binding is its module state.
+// dashboard stays eager because it is the landing route.  The shell's `Space`
+// binding only imports `codeViewSwitch`, so FunctionPanels stays out of the
+// entry chunk and loads with the function detail route.
 const AutoView = lazy(() => import("./views/AutoView").then((m) => ({ default: m.AutoView })));
 const AnalysesView = lazy(() =>
   import("./views/AnalysesView").then((m) => ({ default: m.AnalysesView })),
@@ -101,6 +102,36 @@ const UsersView = lazy(() => import("./views/UsersView").then((m) => ({ default:
 const BillingView = lazy(() =>
   import("./views/BillingView").then((m) => ({ default: m.BillingView })),
 );
+
+/** Catch a failed lazy chunk so a missing or broken view says so instead of
+ * leaving the content pane blank. */
+class ViewLoadBoundary extends Component<
+  { children: ReactNode },
+  { message: string | null }
+> {
+  override state: { message: string | null } = { message: null };
+
+  static getDerivedStateFromError(error: unknown): { message: string } {
+    const text = error instanceof Error ? error.message : "Failed to load this view";
+    return { message: text };
+  }
+
+  override componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error("view chunk failed", error, info.componentStack);
+  }
+
+  override render(): ReactNode {
+    if (this.state.message !== null) {
+      return (
+        <ErrorNote
+          error={`Could not load this view (${this.state.message}). Reload the page, or rebuild the SPA if the build is stale.`}
+          onRetry={() => window.location.reload()}
+        />
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // The `g` prefix jumps to a sidebar view: its initial where that is unique,
 // otherwise a letter from the word (`g o` for Auto-mode, `g n` for
@@ -623,7 +654,9 @@ export function App(): ReactNode {
           </span>
         </header>
         <div className="content" id="content">
-          <Suspense fallback={<Loading label="Loading the view" />}>{content}</Suspense>
+          <ViewLoadBoundary>
+            <Suspense fallback={<Loading label="Loading the view" />}>{content}</Suspense>
+          </ViewLoadBoundary>
         </div>
       </main>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />

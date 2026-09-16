@@ -8,10 +8,18 @@ is generated, not committed, so a checkout without a build answers 503
 workspace's ``reports/<id>`` tree, so the site a report run generated is
 browsable without leaving the portal.  Every request is resolved under its own
 root and refused when it escapes it, so a traversal cannot read elsewhere.
+
+Hashed JS/CSS are answered gzip when the client asks for it: a sibling ``.gz``
+written at build time (``scripts/precompress_spa.py``) is preferred, otherwise
+the response is compressed at the request-time level.  Already-compressed
+formats and tiny bodies are left alone.
 """
 
 from __future__ import annotations
 
+import gzip
+import mimetypes
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import APIRouter
@@ -19,7 +27,12 @@ from starlette.responses import FileResponse, Response
 
 from reportal import landing
 from reportal._paths import reports_dir
-from reportal.server import json_error
+from reportal.server import (
+    _ACCEPT_ENCODING,
+    GZIP_LEVEL,
+    _accepts_gzip,
+    json_error,
+)
 
 router = APIRouter()
 
@@ -41,6 +54,19 @@ ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
 # under its own name, so a browser revalidates it and a deploy is picked up on
 # the next load rather than a year later.
 SHELL_CACHE_CONTROL = "no-cache"
+
+# Textual assets worth gzipping.  Images, fonts and archives are already
+# compressed; gzipping them again wastes CPU and can grow the body.
+COMPRESSIBLE_SUFFIXES = frozenset(
+    {".css", ".html", ".js", ".json", ".map", ".mjs", ".svg", ".txt", ".xml"}
+)
+
+# Below this, the gzip framing usually costs more than it saves.
+MIN_COMPRESS_BYTES = 256
+
+# Cap the in-process gzip cache so a long-lived server does not retain every
+# historical hashed bundle after many deploys without a restart.
+_GZIP_CACHE_SIZE = 64
 
 
 def dist_dir() -> Path:
@@ -65,8 +91,23 @@ def _report_root(binary_id: int) -> Path:
     return root
 
 
-def _file_under(root: Path, relative: str) -> Response:
-    """Serve *relative* under *root*, or a JSON 404.
+def _media_type(path: Path) -> str:
+    """MIME type for *path*, with sensible defaults Vite's suffixes need."""
+    guessed, _ = mimetypes.guess_type(path.name)
+    if guessed is not None:
+        return guessed
+    suffix = path.suffix.lower()
+    if suffix == ".js" or suffix == ".mjs":
+        return "text/javascript"
+    if suffix == ".css":
+        return "text/css"
+    if suffix == ".svg":
+        return "image/svg+xml"
+    return "application/octet-stream"
+
+
+def _resolve_under(root: Path, relative: str) -> Path:
+    """Return the file at *relative* under *root*, or raise a JSON 404.
 
     The candidate is resolved before it is checked, so a ``..`` segment, an
     absolute path or a symlink that leaves the tree is a not-found rather than
@@ -76,7 +117,70 @@ def _file_under(root: Path, relative: str) -> Response:
     candidate = (root / relative).resolve()
     if candidate == root or root not in candidate.parents or not candidate.is_file():
         raise json_error(404, error="not found", detail=f"no such file: {relative}")
-    return FileResponse(candidate)
+    return candidate
+
+
+@lru_cache(maxsize=_GZIP_CACHE_SIZE)
+def _gzip_cached(path_str: str, mtime_ns: int, size: int) -> bytes:
+    """Gzip *path_str* at the request-time level; keyed so a rebuild invalidates."""
+    del mtime_ns, size  # part of the cache key only
+    return gzip.compress(Path(path_str).read_bytes(), GZIP_LEVEL)
+
+
+def _gzip_response(path: Path, *, cache_control: str) -> Response | None:
+    """A gzip-encoded response for *path*, or None when the client or body cannot use it.
+
+    Prefers a sibling ``.gz`` written by ``scripts/precompress_spa.py`` (build-time
+    effort 9).  Without one, compresses in process at :data:`GZIP_LEVEL` and
+    caches the result keyed by path identity and mtime.  A precompressed sibling
+    is served even when the source is small: the build step already decided it
+    was worth keeping.
+    """
+    if not _accepts_gzip(_ACCEPT_ENCODING.get()):
+        return None
+    if path.suffix.lower() not in COMPRESSIBLE_SUFFIXES:
+        return None
+    headers = {
+        "Cache-Control": cache_control,
+        "Content-Encoding": "gzip",
+        "Vary": "Accept-Encoding",
+    }
+    media_type = _media_type(path)
+    gz_path = Path(f"{path}.gz")
+    try:
+        if (
+            gz_path.is_file()
+            and gz_path.stat().st_mtime_ns >= path.stat().st_mtime_ns
+            and gz_path.stat().st_size > 0
+        ):
+            return FileResponse(gz_path, media_type=media_type, headers=headers)
+    except OSError:
+        pass
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return None
+    if size < MIN_COMPRESS_BYTES:
+        return None
+    try:
+        body = _gzip_cached(str(path), path.stat().st_mtime_ns, size)
+    except OSError:
+        return None
+    return Response(content=body, media_type=media_type, headers=headers)
+
+
+def _file_under(root: Path, relative: str, *, cache_control: str | None = None) -> Response:
+    """Serve *relative* under *root*, gzip-encoded when that pays off."""
+    candidate = _resolve_under(root, relative)
+    control = cache_control if cache_control is not None else SHELL_CACHE_CONTROL
+    compressed = _gzip_response(candidate, cache_control=control)
+    if compressed is not None:
+        return compressed
+    response = FileResponse(candidate)
+    response.headers["Cache-Control"] = control
+    if candidate.suffix.lower() in COMPRESSIBLE_SUFFIXES:
+        response.headers["Vary"] = "Accept-Encoding"
+    return response
 
 
 @router.get("/")
@@ -90,7 +194,7 @@ def index() -> Response:
     root = dist_dir()
     if not (root / APP_INDEX).is_file():
         raise json_error(503, error="ui-not-built", detail=UI_NOT_BUILT_DETAIL)
-    return FileResponse(root / APP_INDEX, headers={"Cache-Control": SHELL_CACHE_CONTROL})
+    return _file_under(root, APP_INDEX, cache_control=SHELL_CACHE_CONTROL)
 
 
 @router.get("/pricing")
@@ -100,10 +204,15 @@ def pricing() -> Response:
     Served whether or not the SPA has been built: it is the page a visitor who
     has never signed in reads, so it must not depend on a frontend build step.
     """
+    body = landing.render().encode("utf-8")
+    headers = {"Cache-Control": landing.CACHE_CONTROL, "Vary": "Accept-Encoding"}
+    if len(body) >= MIN_COMPRESS_BYTES and _accepts_gzip(_ACCEPT_ENCODING.get()):
+        body = gzip.compress(body, GZIP_LEVEL)
+        headers["Content-Encoding"] = "gzip"
     return Response(
-        content=landing.render(),
+        content=body,
         media_type="text/html; charset=utf-8",
-        headers={"Cache-Control": landing.CACHE_CONTROL},
+        headers=headers,
     )
 
 
@@ -115,10 +224,9 @@ def asset(path: str) -> Response:
     bundles are answered `immutable` and a repeat load makes no request for
     them; a file without a hash (the favicon) is answered `no-cache` instead.
     """
-    response = _file_under(dist_dir(), path)
     hashed = Path(path).parent.as_posix() == ASSET_DIRECTORY
-    response.headers["Cache-Control"] = ASSET_CACHE_CONTROL if hashed else SHELL_CACHE_CONTROL
-    return response
+    control = ASSET_CACHE_CONTROL if hashed else SHELL_CACHE_CONTROL
+    return _file_under(dist_dir(), path, cache_control=control)
 
 
 @router.get("/reports/{binary_id}/")

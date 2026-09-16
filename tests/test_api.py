@@ -1962,6 +1962,48 @@ class TestUi:
         # repeat load is served from the browser's cache with no request.
         assert headers["Cache-Control"] == ui.ASSET_CACHE_CONTROL
 
+    def test_static_asset_gzip_when_accepted(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Large enough that gzip framing pays off; a one-liner would stay plain.
+        payload = "console.log(" + ("x" * 400) + ");"
+        self._dist(
+            tmp_path,
+            monkeypatch,
+            {"index.html": "reportal", "assets/index-abc.js": payload},
+        )
+        status, headers, body = wsgi_request(
+            "GET",
+            "/static/assets/index-abc.js",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        assert status.startswith("200")
+        assert headers.get("Content-Encoding") == "gzip"
+        assert headers.get("Vary") == "Accept-Encoding"
+        assert headers["Cache-Control"] == ui.ASSET_CACHE_CONTROL
+        assert decode(body, headers) == payload.encode("utf-8")
+
+    def test_static_asset_prefers_precompressed_sibling(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gzip as gzip_mod
+
+        dist = self._dist(
+            tmp_path,
+            monkeypatch,
+            {"index.html": "reportal", "assets/index-abc.js": "console.log('source');"},
+        )
+        gz_body = gzip_mod.compress(b"console.log('precompressed');", 9)
+        (dist / "assets" / "index-abc.js.gz").write_bytes(gz_body)
+        status, headers, body = wsgi_request(
+            "GET",
+            "/static/assets/index-abc.js",
+            headers={"Accept-Encoding": "gzip"},
+        )
+        assert status.startswith("200")
+        assert headers.get("Content-Encoding") == "gzip"
+        assert decode(body, headers) == b"console.log('precompressed');"
+
     def test_static_favicon_served_from_public(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
