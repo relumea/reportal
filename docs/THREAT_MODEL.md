@@ -195,6 +195,13 @@ full below.
   inside a visible binary.  The comment `author` remains free text kept in
   the browser (`comments.DEFAULT_AUTHOR`, `comments.normalize_author`), an
   attribution convenience, not a security principal.
+- **Embedded rows follow their container.**  A collection's member list, a
+  conversation's messages, a document's chunks, an analysis's scans and a
+  run's artifacts/tasks are served with the container's own visibility, not
+  filtered per row: the container route is gated, and filtering members
+  would make a shared container lie about what it holds.  Cross-scope
+  embedding is stopped at the writes (membership `may_write`, scoped
+  creates), not at the reads.
 - **A registered binary points at its path.**  `reportal add-binary`, its
   `register_binary` MCP twin and `import-rebrew` record a file's path rather than
   copying its bytes, so a binary the operator registered is read from where it
