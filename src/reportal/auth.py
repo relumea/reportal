@@ -663,6 +663,34 @@ def may_manage_team(conn: sqlite3.Connection, user: Mapping[str, Any] | None, te
     return member_role(conn, team_id, int(user["id"])) == TEAM_ROLE_OWNER
 
 
+def may_access_organisation(
+    conn: sqlite3.Connection, user: Mapping[str, Any] | None, organisation_id: int
+) -> bool:
+    """Whether *user* may read this organisation's billing and usage.
+
+    Auth off is the local operator. An admin may reach any organisation.
+    Otherwise the caller must belong to a team filed under it, so one tenant
+    cannot read another's ledger by guessing the id.
+    """
+    if user is None or str(user.get("role") or "") == ROLE_ADMIN:
+        return True
+    row = conn.execute(
+        f"SELECT 1 FROM {TEAM_TABLE} t JOIN {MEMBER_TABLE} m ON m.team_id = t.id"
+        " WHERE t.organisation_id = ? AND m.user_id = ? LIMIT 1",
+        (organisation_id, int(user["id"])),
+    ).fetchone()
+    return row is not None
+
+
+def may_administer_tenants(user: Mapping[str, Any] | None) -> bool:
+    """Whether *user* may create or delete organisations and grant plans.
+
+    Auth off is the local operator; otherwise only an admin reshapes the tenant
+    catalog, matching the threat model's tenant-administration layer.
+    """
+    return user is None or str(user.get("role") or "") == ROLE_ADMIN
+
+
 def _organisation_row(row: Any) -> dict[str, Any]:
     """One organisation row as the API returns it."""
     return {

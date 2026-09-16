@@ -10400,6 +10400,43 @@ def _caller_team_ids(conn: sqlite3.Connection, request: Request) -> list[int]:
     return [int(team["id"]) for team in auth.teams_of_user(conn, int(user["id"]))]
 
 
+def _refuse_unless_team_manager(
+    conn: sqlite3.Connection, request: Request, team_id: int
+) -> Response | None:
+    """403 when the caller may not manage *team_id*; None when the write may proceed."""
+    if auth.may_manage_team(conn, _caller(request), team_id):
+        return None
+    return json_error(
+        403,
+        error=auth.ERROR_NOT_A_TEAM_OWNER,
+        detail=f"the caller does not own team {team_id}",
+    )
+
+
+def _refuse_unless_organisation_access(
+    conn: sqlite3.Connection, request: Request, organisation_id: int
+) -> Response | None:
+    """403 when the caller may not reach this organisation's billing surface."""
+    if auth.may_access_organisation(conn, _caller(request), organisation_id):
+        return None
+    return json_error(
+        403,
+        error=auth.ERROR_SCOPE_FORBIDDEN,
+        detail=f"organisation {organisation_id} is outside the caller's teams",
+    )
+
+
+def _refuse_unless_tenant_admin(request: Request) -> Response | None:
+    """403 when the caller may not reshape organisations or grant plans."""
+    if auth.may_administer_tenants(_caller(request)):
+        return None
+    return json_error(
+        403,
+        error=auth.ERROR_FORBIDDEN,
+        detail=auth.FORBIDDEN_DETAIL,
+    )
+
+
 @router.get("/api/organisations")
 def list_organisations() -> Response:
     """Every organisation with the teams it holds; a structural read.
@@ -10413,8 +10450,11 @@ def list_organisations() -> Response:
 
 
 @router.post("/api/organisations")
-def create_organisation(body: dict[str, Any] = Depends(json_body)) -> Response:
+def create_organisation(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
     """Create an organisation; journaled and revertible."""
+    refused = _refuse_unless_tenant_admin(request)
+    if refused is not None:
+        return refused
     name = _require_str(body, "name")
     description = _optional_str(body, "description")
     with contextlib.closing(_open()) as conn:
@@ -10448,8 +10488,11 @@ def get_organisation(organisation_id: int) -> Response:
 
 
 @router.delete("/api/organisations/{organisation_id}")
-def delete_organisation(organisation_id: int) -> Response:
+def delete_organisation(organisation_id: int, request: Request) -> Response:
     """Delete an organisation; its teams stay and simply stop being grouped."""
+    refused = _refuse_unless_tenant_admin(request)
+    if refused is not None:
+        return refused
     with contextlib.closing(_open()) as conn:
         if auth.get_organisation(conn, organisation_id) is None:
             return json_error(
@@ -10472,12 +10515,13 @@ def delete_organisation(organisation_id: int) -> Response:
 
 
 @router.put("/api/teams/{team_id}/organisation")
-def set_team_organisation(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def set_team_organisation(
+    team_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Move a team into an organisation, or out of every one; journaled.
 
-    The body is ``{"organisation_id": <id>|null}``.  Only an organisation owner
-    or an admin may move a team, so a team cannot be filed away by anyone who
-    happens to be in it.
+    The body is ``{"organisation_id": <id>|null}``.  Only a team owner or an
+    admin may move a team, so a plain member cannot file it away.
     """
     raw = body.get("organisation_id")
     if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
@@ -10489,6 +10533,9 @@ def set_team_organisation(team_id: int, body: dict[str, Any] = Depends(json_body
             return json_error(
                 404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
             )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             journal.journaled_rows(
@@ -10550,22 +10597,28 @@ def list_plans() -> Response:
 
 
 @router.get("/api/organisations/{organisation_id}/usage")
-def get_organisation_usage(organisation_id: int) -> Response:
+def get_organisation_usage(organisation_id: int, request: Request) -> Response:
     """Metered use in the organisation's open period, against its plan."""
     with contextlib.closing(_open()) as conn:
         found = _organisation_or_404(conn, organisation_id)
         if isinstance(found, Response):
             return found
+        refused = _refuse_unless_organisation_access(conn, request, organisation_id)
+        if refused is not None:
+            return refused
         return json_response(metering.usage_summary(conn, organisation_id))
 
 
 @router.get("/api/organisations/{organisation_id}/billing")
-def get_organisation_billing(organisation_id: int) -> Response:
+def get_organisation_billing(organisation_id: int, request: Request) -> Response:
     """The organisation's plan, quota state and subscription, if any."""
     with contextlib.closing(_open()) as conn:
         found = _organisation_or_404(conn, organisation_id)
         if isinstance(found, Response):
             return found
+        refused = _refuse_unless_organisation_access(conn, request, organisation_id)
+        if refused is not None:
+            return refused
         summary = metering.usage_summary(conn, organisation_id)
         subscription = billing.subscription_of(conn, organisation_id)
     return json_response(
@@ -10580,7 +10633,7 @@ def get_organisation_billing(organisation_id: int) -> Response:
 
 @router.put("/api/organisations/{organisation_id}/plan")
 def set_organisation_plan(
-    organisation_id: int, body: dict[str, Any] = Depends(json_body)
+    organisation_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
 ) -> Response:
     """Assign the organisation a plan, restarting its period; journaled.
 
@@ -10588,6 +10641,9 @@ def set_organisation_plan(
     customer one: a self-serve upgrade goes through checkout so there is a
     payment behind it.
     """
+    refused = _refuse_unless_tenant_admin(request)
+    if refused is not None:
+        return refused
     plan_id = _require_str(body, "plan_id")
     if not plans_mod.plan_exists(plan_id):
         return json_error(400, error="invalid plan", detail=f"no plan named {plan_id}")
@@ -10615,7 +10671,7 @@ def set_organisation_plan(
 
 @router.post("/api/organisations/{organisation_id}/billing/checkout")
 def start_billing_checkout(
-    organisation_id: int, body: dict[str, Any] = Depends(json_body)
+    organisation_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
 ) -> Response:
     """Start a self-serve checkout for a paid plan."""
     plan_id = _require_str(body, "plan_id")
@@ -10623,6 +10679,9 @@ def start_billing_checkout(
         found = _organisation_or_404(conn, organisation_id)
         if isinstance(found, Response):
             return found
+        refused = _refuse_unless_organisation_access(conn, request, organisation_id)
+        if refused is not None:
+            return refused
         try:
             session = billing.start_checkout(conn, found, plan_id)
         except billing.BillingError as exc:
@@ -10633,12 +10692,15 @@ def start_billing_checkout(
 
 
 @router.post("/api/organisations/{organisation_id}/billing/portal")
-def open_billing_portal(organisation_id: int) -> Response:
+def open_billing_portal(organisation_id: int, request: Request) -> Response:
     """Open the provider's self-service portal for the organisation."""
     with contextlib.closing(_open()) as conn:
         found = _organisation_or_404(conn, organisation_id)
         if isinstance(found, Response):
             return found
+        refused = _refuse_unless_organisation_access(conn, request, organisation_id)
+        if refused is not None:
+            return refused
         try:
             session = billing.start_billing_portal(conn, organisation_id)
         except billing.BillingError as exc:
@@ -10647,8 +10709,13 @@ def open_billing_portal(organisation_id: int) -> Response:
 
 
 @router.post("/api/billing/manual/confirm")
-def confirm_manual_checkout(body: dict[str, Any] = Depends(json_body)) -> Response:
+def confirm_manual_checkout(
+    request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Confirm a manual (development) checkout; grants the plan once."""
+    refused = _refuse_unless_tenant_admin(request)
+    if refused is not None:
+        return refused
     token = _require_str(body, "token")
     organisation_id = _require_int(body, "organisation_id")
     with contextlib.closing(_open()) as conn:
@@ -10661,12 +10728,15 @@ def confirm_manual_checkout(body: dict[str, Any] = Depends(json_body)) -> Respon
 
 
 @router.post("/api/organisations/{organisation_id}/billing/cancel-manual")
-def cancel_manual_checkout(organisation_id: int) -> Response:
+def cancel_manual_checkout(organisation_id: int, request: Request) -> Response:
     """Cancel a manual subscription, dropping the org to the fallback plan."""
     with contextlib.closing(_open()) as conn:
         found = _organisation_or_404(conn, organisation_id)
         if isinstance(found, Response):
             return found
+        refused = _refuse_unless_organisation_access(conn, request, organisation_id)
+        if refused is not None:
+            return refused
         cancelled = billing.cancel_manual_subscription(conn, organisation_id)
         conn.commit()
     return json_response(cancelled)
@@ -10696,7 +10766,7 @@ async def apply_billing_webhook(request: Request) -> Response:
 
 
 @router.post("/api/organisations/{organisation_id}/billing/sync")
-def sync_billing_subscription(organisation_id: int) -> Response:
+def sync_billing_subscription(organisation_id: int, request: Request) -> Response:
     """Re-read the organisation's subscription from the provider and mirror it.
 
     Webhooks are the primary path; this covers a lost delivery.  It only
@@ -10711,6 +10781,9 @@ def sync_billing_subscription(organisation_id: int) -> Response:
         found = _organisation_or_404(conn, organisation_id)
         if isinstance(found, Response):
             return found
+        refused = _refuse_unless_organisation_access(conn, request, organisation_id)
+        if refused is not None:
+            return refused
         try:
             result = billing.reconcile_account(conn, organisation_id)
         except billing.BillingError as exc:
@@ -10763,8 +10836,13 @@ def list_teams() -> Response:
 
 
 @router.post("/api/teams")
-def create_team(body: dict[str, Any] = Depends(json_body)) -> Response:
-    """Create a team; journaled and revertible."""
+def create_team(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Create a team; journaled and revertible.
+
+    When auth is on the creator becomes the team's owner, so the team is
+    manageable without a separate admin promotion; while auth is off the local
+    operator creates an empty team the way the CLI always has.
+    """
     name = _require_str(body, "name")
     description = _optional_str(body, "description")
     with contextlib.closing(_open()) as conn:
@@ -10780,6 +10858,19 @@ def create_team(body: dict[str, Any] = Depends(json_body)) -> Response:
                 key=int(team["id"]),
                 description=f"created team {team['name']}",
             )
+            caller = _caller(request)
+            if caller is not None:
+                user_id = int(caller["id"])
+                team_id = int(team["id"])
+                auth.add_member(conn, team_id, user_id)
+                auth.set_member_role(conn, team_id, user_id, auth.TEAM_ROLE_OWNER)
+                journal.journaled_create(
+                    log,
+                    table=auth.MEMBER_TABLE,
+                    key={"team_id": team_id, "user_id": user_id},
+                    description=f"added user {user_id} as owner of team {team_id}",
+                )
+                team = auth.get_team(conn, team_id) or team
     return json_response(log.attach(team), status=201)
 
 
@@ -10799,13 +10890,9 @@ def set_team_member_role(
             return json_error(
                 404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
             )
-        caller = _caller(request)
-        if not auth.may_manage_team(conn, caller, team_id):
-            return json_error(
-                403,
-                error=auth.ERROR_NOT_A_TEAM_OWNER,
-                detail=f"the caller does not own team {team_id}",
-            )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             snapshot = journal.journaled_rows(
@@ -10841,7 +10928,9 @@ def get_team(team_id: int) -> Response:
 
 
 @router.patch("/api/teams/{team_id}")
-def update_team(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def update_team(
+    team_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Set a team's name or description; journaled and revertible."""
     if "name" not in body and "description" not in body:
         return json_error(400, error=auth.ERROR_INVALID_TEAM, detail="provide name or description")
@@ -10852,6 +10941,9 @@ def update_team(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Resp
             return json_error(
                 404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
             )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             journal.journaled_rows(
@@ -10870,7 +10962,7 @@ def update_team(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Resp
 
 
 @router.delete("/api/teams/{team_id}")
-def delete_team(team_id: int) -> Response:
+def delete_team(team_id: int, request: Request) -> Response:
     """Delete a team; journaled, including the objects that lose their scope.
 
     The binaries and collections the team owned return to the whole workspace,
@@ -10881,6 +10973,9 @@ def delete_team(team_id: int) -> Response:
             return json_error(
                 404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
             )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             for table, where in (
@@ -10902,7 +10997,9 @@ def delete_team(team_id: int) -> Response:
 
 
 @router.post("/api/teams/{team_id}/members")
-def add_team_member(team_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def add_team_member(
+    team_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Add a user to a team; journaled and revertible."""
     user_id = _require_int(body, "user_id")
     with contextlib.closing(_open()) as conn:
@@ -10910,6 +11007,9 @@ def add_team_member(team_id: int, body: dict[str, Any] = Depends(json_body)) -> 
             return json_error(
                 404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
             )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             added = auth.add_member(conn, team_id, user_id)
@@ -10931,9 +11031,16 @@ def add_team_member(team_id: int, body: dict[str, Any] = Depends(json_body)) -> 
 
 
 @router.delete("/api/teams/{team_id}/members/{user_id}")
-def remove_team_member(team_id: int, user_id: int) -> Response:
+def remove_team_member(team_id: int, user_id: int, request: Request) -> Response:
     """Remove a user from a team; journaled, so a revert puts the row back."""
     with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             snapshot = journal.journaled_rows(
@@ -10986,6 +11093,18 @@ def _set_scope(
             owner, resolved = auth.scope_of(conn, team_id=raw_team, visibility=visibility)
         except auth.AuthError as exc:
             return _team_failure(exc)
+        caller = _caller(request)
+        if (
+            owner is not None
+            and caller is not None
+            and str(caller.get("role")) != auth.ROLE_ADMIN
+            and owner not in set(_caller_team_ids(conn, request))
+        ):
+            return json_error(
+                403,
+                error=auth.ERROR_NOT_A_MEMBER,
+                detail=f"you are not a member of team {owner}",
+            )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             journal.journaled_rows(

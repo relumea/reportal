@@ -1069,3 +1069,163 @@ class TestTeamStructureTools:
             mcp_server.call_tool("delete_organisation", {"organisation_id": organisation_id})[1]
             is True
         )
+
+
+class TestTeamManageGate:
+    """Deny side: a plain member cannot reshape a team or join another one."""
+
+    def test_a_member_cannot_add_itself_to_another_team(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        owner, owner_token = auth.add_user(conn, name="owner", role=auth.ROLE_ANALYST)
+        outsider, outsider_token = auth.add_user(conn, name="outsider", role=auth.ROLE_ANALYST)
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(owner["id"]))
+        auth.set_member_role(conn, team, int(owner["id"]), auth.TEAM_ROLE_OWNER)
+        conn.commit()
+
+        denied = _send(
+            "POST",
+            f"/api/teams/{team}/members",
+            token=outsider_token,
+            body={"user_id": int(outsider["id"])},
+        )
+        assert denied[0].startswith("403")
+        assert denied[1]["error"] == auth.ERROR_NOT_A_TEAM_OWNER
+        assert auth.member_role(conn, team, int(outsider["id"])) is None
+
+        allowed = _send(
+            "POST",
+            f"/api/teams/{team}/members",
+            token=owner_token,
+            body={"user_id": int(outsider["id"])},
+        )
+        assert allowed[0].startswith("201"), allowed[1]
+        assert auth.member_role(conn, team, int(outsider["id"])) == auth.TEAM_ROLE_MEMBER
+
+    def test_a_member_cannot_rename_or_delete_the_team(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        owner, _owner_token = auth.add_user(conn, name="owner", role=auth.ROLE_ANALYST)
+        member, member_token = auth.add_user(conn, name="member", role=auth.ROLE_ANALYST)
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(owner["id"]))
+        auth.set_member_role(conn, team, int(owner["id"]), auth.TEAM_ROLE_OWNER)
+        auth.add_member(conn, team, int(member["id"]))
+        conn.commit()
+
+        renamed = _send(
+            "PATCH", f"/api/teams/{team}", token=member_token, body={"description": "nope"}
+        )
+        assert renamed[0].startswith("403")
+        assert renamed[1]["error"] == auth.ERROR_NOT_A_TEAM_OWNER
+
+        deleted = _send("DELETE", f"/api/teams/{team}", token=member_token)
+        assert deleted[0].startswith("403")
+        assert auth.get_team(conn, team) is not None
+
+    def test_creating_a_team_makes_the_caller_its_owner(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _user, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        conn.commit()
+
+        status, created = _send("POST", "/api/teams", token=token, body={"name": "Blue"})
+        assert status.startswith("201"), created
+        assert auth.member_role(conn, int(created["id"]), int(created["members"][0]["id"])) == (
+            auth.TEAM_ROLE_OWNER
+        )
+
+    def test_scoping_a_public_binary_to_a_foreign_team_is_refused(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _owner, _owner_token = auth.add_user(conn, name="owner", role=auth.ROLE_ANALYST)
+        outsider, outsider_token = auth.add_user(conn, name="outsider", role=auth.ROLE_ANALYST)
+        team = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team, int(_owner["id"]))
+        binary_id = store.add_binary(conn, sha256="a" * 64, name="public.exe")
+        conn.commit()
+
+        status, payload = _send(
+            "PATCH",
+            f"/api/binaries/{binary_id}/scope",
+            token=outsider_token,
+            body={"visibility": "team", "team_id": team},
+        )
+        assert status.startswith("403")
+        assert payload["error"] == auth.ERROR_NOT_A_MEMBER
+        restored = store.get_binary(conn, binary_id)
+        assert restored is not None and restored["visibility"] == "public"
+
+
+class TestOrganisationAccessGate:
+    """Deny side: one tenant cannot read or reshape another's organisation."""
+
+    def test_may_access_organisation_follows_team_membership(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        organisation = auth.create_organisation(conn, name="ACME")
+        team = auth.create_team(conn, name="red")
+        auth.set_team_organisation(conn, int(team["id"]), int(organisation["id"]))
+        member, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        outsider, _ = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        auth.add_member(conn, int(team["id"]), int(member["id"]))
+
+        assert auth.may_access_organisation(conn, None, int(organisation["id"])) is True
+        assert auth.may_access_organisation(conn, member, int(organisation["id"])) is True
+        assert auth.may_access_organisation(conn, outsider, int(organisation["id"])) is False
+        assert auth.may_administer_tenants(None) is True
+        assert auth.may_administer_tenants(member) is False
+        assert auth.may_administer_tenants({"role": auth.ROLE_ADMIN}) is True
+
+    def test_an_outsider_cannot_read_another_organisations_usage(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        organisation = auth.create_organisation(conn, name="ACME")
+        team = auth.create_team(conn, name="red")
+        auth.set_team_organisation(conn, int(team["id"]), int(organisation["id"]))
+        member, member_token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        _outsider, outsider_token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        auth.add_member(conn, int(team["id"]), int(member["id"]))
+        conn.commit()
+
+        denied = _send(
+            "GET",
+            f"/api/organisations/{organisation['id']}/usage",
+            token=outsider_token,
+        )
+        assert denied[0].startswith("403")
+        assert denied[1]["error"] == auth.ERROR_SCOPE_FORBIDDEN
+
+        allowed = _send(
+            "GET",
+            f"/api/organisations/{organisation['id']}/usage",
+            token=member_token,
+        )
+        assert allowed[0].startswith("200"), allowed[1]
+
+    def test_an_analyst_cannot_grant_a_plan_or_create_an_organisation(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        organisation = auth.create_organisation(conn, name="ACME")
+        _analyst, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        conn.commit()
+
+        created = _send("POST", "/api/organisations", token=token, body={"name": "Other"})
+        assert created[0].startswith("403")
+        assert created[1]["error"] == auth.ERROR_FORBIDDEN
+
+        planned = _send(
+            "PUT",
+            f"/api/organisations/{organisation['id']}/plan",
+            token=token,
+            body={"plan_id": "analyst"},
+        )
+        assert planned[0].startswith("403")
+        assert planned[1]["error"] == auth.ERROR_FORBIDDEN
