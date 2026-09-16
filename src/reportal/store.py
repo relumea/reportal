@@ -737,16 +737,25 @@ def list_binaries(
     """
     if order not in BINARY_ORDERS:
         raise ValueError(f"unknown binary order: {order}")
+    # Aggregate counts once per table rather than with a correlated subquery
+    # per binary: a register of hundreds of samples otherwise rescans
+    # functions/comments once per row.
     sql = """
-        SELECT b.*, (
-            SELECT COUNT(*) FROM functions f
-            JOIN analyses a ON f.analysis_id = a.id
-            WHERE a.binary_id = b.id
-        ) AS function_count, (
-            SELECT COUNT(*) FROM comments c
-            WHERE c.scope_kind = 'binary' AND c.scope_id = b.id
-        ) AS comment_count
+        SELECT b.*, COALESCE(fc.function_count, 0) AS function_count,
+               COALESCE(cc.comment_count, 0) AS comment_count
         FROM binaries b
+        LEFT JOIN (
+            SELECT a.binary_id AS binary_id, COUNT(*) AS function_count
+            FROM functions f
+            JOIN analyses a ON f.analysis_id = a.id
+            GROUP BY a.binary_id
+        ) fc ON fc.binary_id = b.id
+        LEFT JOIN (
+            SELECT c.scope_id AS binary_id, COUNT(*) AS comment_count
+            FROM comments c
+            WHERE c.scope_kind = 'binary'
+            GROUP BY c.scope_id
+        ) cc ON cc.binary_id = b.id
     """
     where, params = _binary_where(conn, search=search, tag=tag, fmt=fmt, visible_to=visible_to)
     sql += where
@@ -2085,6 +2094,26 @@ def get_function(conn: sqlite3.Connection, function_id: int) -> dict[str, Any] |
     return dict(row) if row else None
 
 
+def functions_by_ids(
+    conn: sqlite3.Connection, function_ids: Sequence[int]
+) -> dict[int, dict[str, Any]]:
+    """The functions named by *function_ids*, keyed by id.
+
+    One round trip for a batch read; an unknown id is simply absent from the
+    map, which is what the batch surfaces report as not found.
+    """
+    if not function_ids:
+        return {}
+    ids = [int(function_id) for function_id in function_ids]
+    placeholders = ", ".join("?" for _ in ids)
+    cur = conn.execute(
+        "SELECT f.*, a.binary_id AS binary_id FROM functions f"
+        f" JOIN analyses a ON f.analysis_id = a.id WHERE f.id IN ({placeholders})",
+        ids,
+    )
+    return {int(row["id"]): dict(row) for row in cur.fetchall()}
+
+
 # ── Matches ────────────────────────────────────────────────────────
 
 
@@ -2149,18 +2178,81 @@ def list_matches(conn: sqlite3.Connection, function_id: int) -> list[dict[str, A
     Each row carries the run settings it was recorded under as ``settings``,
     or None for an edge written outside a match run.
     """
+    return list_matches_for_functions(conn, [function_id]).get(int(function_id), [])
+
+
+def list_matches_for_functions(
+    conn: sqlite3.Connection, function_ids: Sequence[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Matches for many source functions in one query, best similarity first.
+
+    Returns a map from source function id to its match rows (the same shape
+    :func:`list_matches` returns).  An id with no matches is absent; callers
+    that need an empty list for every requested id fill that themselves.
+    """
+    if not function_ids:
+        return {}
+    ids = [int(function_id) for function_id in function_ids]
+    placeholders = ", ".join("?" for _ in ids)
     cur = conn.execute(
-        """
+        f"""
         SELECT m.*, cf.va AS candidate_va, cf.name AS candidate_name,
                cf.status AS candidate_status
         FROM matches m
         JOIN functions cf ON m.candidate_function_id = cf.id
-        WHERE m.function_id = ?
+        WHERE m.function_id IN ({placeholders})
+        ORDER BY m.function_id ASC, m.similarity DESC, m.id
+        """,
+        ids,
+    )
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for row in cur.fetchall():
+        grouped.setdefault(int(row["function_id"]), []).append(_match_row(row))
+    return grouped
+
+
+def list_matches_for_binary(conn: sqlite3.Connection, binary_id: int) -> list[dict[str, Any]]:
+    """Every match whose source is a function of *binary_id*, best similarity first.
+
+    Each row carries the source function's id, name and VA beside the candidate
+    columns :func:`list_matches` already reports, so a binary-wide reader does
+    not walk the functions table and query matches once per row.
+    """
+    cur = conn.execute(
+        """
+        SELECT m.*, cf.va AS candidate_va, cf.name AS candidate_name,
+               cf.status AS candidate_status,
+               sf.id AS source_function_id, sf.name AS source_name, sf.va AS source_va
+        FROM matches m
+        JOIN functions sf ON m.function_id = sf.id
+        JOIN analyses a ON a.id = sf.analysis_id
+        JOIN functions cf ON m.candidate_function_id = cf.id
+        WHERE a.binary_id = ?
         ORDER BY m.similarity DESC, m.id
         """,
-        (function_id,),
+        (binary_id,),
     )
     return [_match_row(row) for row in cur.fetchall()]
+
+
+def match_counts_for_binary(conn: sqlite3.Connection, binary_id: int) -> dict[int, int]:
+    """How many recorded matches each function of *binary_id* has, keyed by id.
+
+    A function with no matches is absent, so a caller that only needs the count
+    never materializes the match rows themselves.
+    """
+    cur = conn.execute(
+        """
+        SELECT m.function_id AS function_id, COUNT(*) AS n
+        FROM matches m
+        JOIN functions f ON m.function_id = f.id
+        JOIN analyses a ON a.id = f.analysis_id
+        WHERE a.binary_id = ?
+        GROUP BY m.function_id
+        """,
+        (binary_id,),
+    )
+    return {int(row["function_id"]): int(row["n"]) for row in cur.fetchall()}
 
 
 def has_match(conn: sqlite3.Connection, function_id: int, candidate_function_id: int) -> bool:
@@ -2252,11 +2344,77 @@ def get_decompilation(conn: sqlite3.Connection, function_id: int) -> dict[str, A
     The row is ``{"code", "backend", "created_at"}``; the backend that
     produced the source is kept so a caller can report it.
     """
-    row = conn.execute(
-        "SELECT code, backend, created_at FROM decompilations WHERE function_id = ?",
-        (function_id,),
-    ).fetchone()
-    return dict(row) if row else None
+    return decompilations_for_functions(conn, [function_id]).get(int(function_id))
+
+
+def decompilations_for_functions(
+    conn: sqlite3.Connection, function_ids: Sequence[int]
+) -> dict[int, dict[str, Any]]:
+    """Stored decompilations for many functions in one query, keyed by id.
+
+    An id with no stored decompilation is absent from the map.
+    """
+    if not function_ids:
+        return {}
+    ids = [int(function_id) for function_id in function_ids]
+    placeholders = ", ".join("?" for _ in ids)
+    cur = conn.execute(
+        "SELECT function_id, code, backend, created_at FROM decompilations"
+        f" WHERE function_id IN ({placeholders})",
+        ids,
+    )
+    return {
+        int(row["function_id"]): {
+            "code": row["code"],
+            "backend": row["backend"],
+            "created_at": row["created_at"],
+        }
+        for row in cur.fetchall()
+    }
+
+
+def decompilations_for_binary(
+    conn: sqlite3.Connection, binary_id: int
+) -> dict[int, dict[str, Any]]:
+    """Every stored decompilation belonging to *binary_id*, keyed by function id."""
+    cur = conn.execute(
+        """
+        SELECT d.function_id AS function_id, d.code AS code, d.backend AS backend,
+               d.created_at AS created_at
+        FROM decompilations d
+        JOIN functions f ON d.function_id = f.id
+        JOIN analyses a ON a.id = f.analysis_id
+        WHERE a.binary_id = ?
+        """,
+        (binary_id,),
+    )
+    return {
+        int(row["function_id"]): {
+            "code": row["code"],
+            "backend": row["backend"],
+            "created_at": row["created_at"],
+        }
+        for row in cur.fetchall()
+    }
+
+
+def decompilation_ids_for_binary(conn: sqlite3.Connection, binary_id: int) -> set[int]:
+    """The function ids of *binary_id* that carry a stored decompilation.
+
+    Existence only: a rollup that only needs the boolean never pulls the
+    source text.
+    """
+    cur = conn.execute(
+        """
+        SELECT d.function_id AS function_id
+        FROM decompilations d
+        JOIN functions f ON d.function_id = f.id
+        JOIN analyses a ON a.id = f.analysis_id
+        WHERE a.binary_id = ?
+        """,
+        (binary_id,),
+    )
+    return {int(row["function_id"]) for row in cur.fetchall()}
 
 
 def clear_decompilation(conn: sqlite3.Connection, function_id: int) -> bool:

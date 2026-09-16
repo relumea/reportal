@@ -194,8 +194,11 @@ def _score_function(row: dict[str, Any]) -> dict[str, Any]:
 
 def candidate_rows(conn: sqlite3.Connection, *, binary_id: int) -> list[dict[str, Any]]:
     """Return a binary's functions with the cheap signals the heuristic reads."""
+    functions = store.list_functions(conn, binary_id=binary_id)
+    match_counts = store.match_counts_for_binary(conn, binary_id)
+    decompiled = store.decompilation_ids_for_binary(conn, binary_id)
     rows: list[dict[str, Any]] = []
-    for function in store.list_functions(conn, binary_id=binary_id):
+    for function in functions:
         function_id = int(function["id"])
         rows.append(
             {
@@ -204,8 +207,8 @@ def candidate_rows(conn: sqlite3.Connection, *, binary_id: int) -> list[dict[str
                 "va": int(function.get("va") or 0),
                 "size": int(function.get("size") or 0),
                 "status": str(function.get("status") or ""),
-                "has_decompilation": store.get_decompilation(conn, function_id) is not None,
-                "match_count": len(store.list_matches(conn, function_id)),
+                "has_decompilation": function_id in decompiled,
+                "match_count": match_counts.get(function_id, 0),
             }
         )
     return rows

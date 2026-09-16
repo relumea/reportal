@@ -758,22 +758,20 @@ def binary_match_rows(conn: sqlite3.Connection, binary_id: int) -> list[dict[str
     recorded under.  Rows are ordered best similarity first.
     """
     rows: list[dict[str, Any]] = []
-    for function in store.list_functions(conn, binary_id=binary_id):
-        for match in store.list_matches(conn, int(function["id"])):
-            rows.append(
-                {
-                    "source_function_id": int(function["id"]),
-                    "source_name": str(function["name"]),
-                    "source_va": int(function["va"]),
-                    "candidate_function_id": int(match["candidate_function_id"]),
-                    "candidate_name": str(match["candidate_name"]),
-                    "candidate_va": int(match["candidate_va"]),
-                    "similarity": float(match["similarity"]),
-                    "confidence": float(match["confidence"]),
-                    "settings": match.get("settings"),
-                }
-            )
-    rows.sort(key=lambda row: row["similarity"], reverse=True)
+    for match in store.list_matches_for_binary(conn, binary_id):
+        rows.append(
+            {
+                "source_function_id": int(match["source_function_id"]),
+                "source_name": str(match["source_name"]),
+                "source_va": int(match["source_va"]),
+                "candidate_function_id": int(match["candidate_function_id"]),
+                "candidate_name": str(match["candidate_name"]),
+                "candidate_va": int(match["candidate_va"]),
+                "similarity": float(match["similarity"]),
+                "confidence": float(match["confidence"]),
+                "settings": match.get("settings"),
+            }
+        )
     return rows
 
 

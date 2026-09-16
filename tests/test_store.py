@@ -487,6 +487,43 @@ class TestMatches:
         assert store.has_match(conn, first, second) is True
         assert store.has_match(conn, second, first) is False
 
+    def test_list_matches_for_functions_batches(self, conn: sqlite3.Connection) -> None:
+        binary_id, analysis_id = _seed_analysis(conn)
+        first = store.add_function(conn, analysis_id=analysis_id, va=0x1000, name="a", size=16)
+        second = store.add_function(conn, analysis_id=analysis_id, va=0x2000, name="b", size=16)
+        third = store.add_function(conn, analysis_id=analysis_id, va=0x3000, name="c", size=16)
+        store.record_match(
+            conn, function_id=first, candidate_function_id=second, similarity=0.9, confidence=0.8
+        )
+        store.record_match(
+            conn, function_id=first, candidate_function_id=third, similarity=0.7, confidence=0.6
+        )
+        store.record_match(
+            conn, function_id=second, candidate_function_id=third, similarity=0.5, confidence=0.4
+        )
+        grouped = store.list_matches_for_functions(conn, [first, second, 999])
+        assert [row["candidate_name"] for row in grouped[first]] == ["b", "c"]
+        assert [row["candidate_name"] for row in grouped[second]] == ["c"]
+        assert 999 not in grouped
+        assert store.list_matches(conn, first) == grouped[first]
+        binary_rows = store.list_matches_for_binary(conn, binary_id)
+        assert [row["source_name"] for row in binary_rows] == ["a", "a", "b"]
+        assert store.match_counts_for_binary(conn, binary_id) == {first: 2, second: 1}
+
+    def test_functions_by_ids_and_decompilations(self, conn: sqlite3.Connection) -> None:
+        binary_id, analysis_id = _seed_analysis(conn)
+        first = store.add_function(conn, analysis_id=analysis_id, va=0x1000, name="a", size=16)
+        second = store.add_function(conn, analysis_id=analysis_id, va=0x2000, name="b", size=16)
+        store.set_decompilation(conn, first, "int a(void) { return 1; }", "r2ghidra")
+        by_id = store.functions_by_ids(conn, [first, second, 999])
+        assert set(by_id) == {first, second}
+        assert by_id[first]["name"] == "a"
+        assert store.decompilation_ids_for_binary(conn, binary_id) == {first}
+        codes = store.decompilations_for_binary(conn, binary_id)
+        assert set(codes) == {first}
+        assert codes[first]["backend"] == "r2ghidra"
+        assert store.get_decompilation(conn, first) == codes[first]
+
 
 class TestDisasmCache:
     def test_only_nasm_is_the_cacheable_format(self) -> None:

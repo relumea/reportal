@@ -284,6 +284,9 @@ def build_graph(conn: sqlite3.Connection, *, binary_id: int) -> dict[str, Any]:
     functions = sorted(
         store.list_functions(conn, binary_id=binary_id), key=lambda row: int(row["va"])
     )
+    matches_by_function = store.list_matches_for_functions(
+        conn, [int(function["id"]) for function in functions]
+    )
     function_names: dict[str, list[str]] = {}
     function_by_va: dict[int, list[str]] = {}
     for function in functions:
@@ -406,7 +409,7 @@ def build_graph(conn: sqlite3.Connection, *, binary_id: int) -> dict[str, Any]:
         source = node_id(NODE_FUNCTION, str(function["id"]))
         if source not in nodes:
             continue
-        for match in store.list_matches(conn, int(function["id"])):
+        for match in matches_by_function.get(int(function["id"]), ()):
             target = node_id(NODE_FUNCTION, str(match["candidate_function_id"]))
             if target not in nodes:
                 continue

@@ -399,21 +399,23 @@ def canonical_names(
         }
     applied: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
-    for function_id in function_ids:
-        function = store.get_function(conn, int(function_id))
+    ids = [int(function_id) for function_id in function_ids]
+    functions = store.functions_by_ids(conn, ids)
+    for function_id in ids:
+        function = functions.get(function_id)
         if function is None or (visible is not None and int(function["binary_id"]) not in visible):
-            skipped.append({"function_id": int(function_id), "reason": "not found"})
+            skipped.append({"function_id": function_id, "reason": "not found"})
             continue
-        candidate = canonical_candidate(conn, int(function_id))
+        candidate = canonical_candidate(conn, function_id)
         if candidate is None:
             skipped.append(
-                {"function_id": int(function_id), "reason": "no canonical candidate recorded"}
+                {"function_id": function_id, "reason": "no canonical candidate recorded"}
             )
             continue
         current = str(function["name"] or "")
         applied.append(
             {
-                "function_id": int(function_id),
+                "function_id": function_id,
                 "from": current,
                 "to": candidate["name"],
                 "source": candidate["source"],
@@ -460,14 +462,17 @@ def match_rows(
     from reportal import composition, matching
 
     visible = _visible_binary_ids(conn, visible_to)
+    ids = [int(function_id) for function_id in function_ids]
+    functions = store.functions_by_ids(conn, ids)
+    matches_by_function = store.list_matches_for_functions(conn, list(functions))
     rows: list[dict[str, Any]] = []
-    for function_id in function_ids:
-        function = store.get_function(conn, int(function_id))
+    for function_id in ids:
+        function = functions.get(function_id)
         if function is None or (visible is not None and int(function["binary_id"]) not in visible):
-            rows.append({"function_id": int(function_id), "found": False, "matches": []})
+            rows.append({"function_id": function_id, "found": False, "matches": []})
             continue
         matches = []
-        for row in store.list_matches(conn, int(function_id)):
+        for row in matches_by_function.get(function_id, ()):
             similarity_score = float(row.get("similarity") or 0.0)
             matches.append(
                 {
@@ -478,7 +483,7 @@ def match_rows(
             )
         rows.append(
             {
-                "function_id": int(function_id),
+                "function_id": function_id,
                 "found": True,
                 "name": str(function["name"] or ""),
                 "matches": matches,
@@ -600,10 +605,31 @@ def list_edges(conn: sqlite3.Connection, function_id: int) -> list[dict[str, Any
     ensure_schema(conn)
     if store.get_function(conn, function_id) is None:
         raise UnknownEdgeError(f"no function with id {function_id}")
+    return list_edges_for_functions(conn, [function_id]).get(int(function_id), [])
+
+
+def list_edges_for_functions(
+    conn: sqlite3.Connection, function_ids: Sequence[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Analyst-declared edges for many functions in one query, oldest first.
+
+    Does not validate that the function ids exist; an unknown id is simply
+    absent, which is what a batch reader that already resolved the functions
+    wants.
+    """
+    ensure_schema(conn)
+    if not function_ids:
+        return {}
+    ids = [int(function_id) for function_id in function_ids]
+    placeholders = ", ".join("?" for _ in ids)
     rows = conn.execute(
-        f"SELECT * FROM {EDGE_TABLE} WHERE function_id = ? ORDER BY id", (function_id,)
+        f"SELECT * FROM {EDGE_TABLE} WHERE function_id IN ({placeholders}) ORDER BY id",
+        ids,
     ).fetchall()
-    return [_edge_row(row) for row in rows]
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        grouped.setdefault(int(row["function_id"]), []).append(_edge_row(row))
+    return grouped
 
 
 def delete_edge(conn: sqlite3.Connection, function_id: int, *, edge_id: int) -> dict[str, Any]:
@@ -688,13 +714,39 @@ def callers_and_callees(
     reads as missing, like the per-object gate.
     """
     visible = _visible_binary_ids(conn, visible_to)
+    ids = [int(function_id) for function_id in function_ids]
+    functions = store.functions_by_ids(conn, ids)
+    edges_by_function = list_edges_for_functions(conn, list(functions))
+
+    # Per-binary caches so a batch over many functions of the same binary does
+    # not re-list its functions or re-read every decompilation per request id.
+    known_by_binary: dict[int, dict[str, int]] = {}
+    peers_by_binary: dict[int, list[dict[str, Any]]] = {}
+    decompilations_by_binary: dict[int, dict[int, dict[str, Any]]] = {}
+
+    def _binary_context(
+        binary_id: int,
+    ) -> tuple[dict[str, int], list[dict[str, Any]], dict[int, dict[str, Any]]]:
+        known = known_by_binary.get(binary_id)
+        if known is None:
+            peers = store.list_functions(conn, binary_id=binary_id)
+            known = {}
+            for peer in peers:
+                peer_name = str(peer["name"] or "")
+                if peer_name and peer_name not in known:
+                    known[peer_name] = int(peer["id"])
+            known_by_binary[binary_id] = known
+            peers_by_binary[binary_id] = peers
+            decompilations_by_binary[binary_id] = store.decompilations_for_binary(conn, binary_id)
+        return known, peers_by_binary[binary_id], decompilations_by_binary[binary_id]
+
     rows: list[dict[str, Any]] = []
-    for function_id in function_ids:
-        function = store.get_function(conn, int(function_id))
+    for function_id in ids:
+        function = functions.get(function_id)
         if function is None or (visible is not None and int(function["binary_id"]) not in visible):
             rows.append(
                 {
-                    "function_id": int(function_id),
+                    "function_id": function_id,
                     "found": False,
                     "callers": [],
                     "callees": [],
@@ -702,8 +754,8 @@ def callers_and_callees(
             )
             continue
         binary_id = int(function["binary_id"])
-        known = _known_names(conn, binary_id)
-        stored = store.get_decompilation(conn, int(function_id))
+        known, peers, decompilations = _binary_context(binary_id)
+        stored = decompilations.get(function_id)
         code = str(stored["code"]) if stored is not None else ""
         callees = callees_from_text(code, known=known, exclude=str(function["name"] or ""))
         declared = [
@@ -713,16 +765,16 @@ def callers_and_callees(
                 "source": entry["source"],
                 "edge_id": entry["id"],
             }
-            for entry in list_edges(conn, int(function_id))
+            for entry in edges_by_function.get(function_id, ())
         ]
         name = str(function["name"] or "")
         callers: list[dict[str, Any]] = []
         if name:
-            for other in store.list_functions(conn, binary_id=binary_id):
+            for other in peers:
                 other_id = int(other["id"])
-                if other_id == int(function_id):
+                if other_id == function_id:
                     continue
-                other_stored = store.get_decompilation(conn, other_id)
+                other_stored = decompilations.get(other_id)
                 if other_stored is None:
                     continue
                 if name == str(other["name"] or ""):
@@ -740,7 +792,7 @@ def callers_and_callees(
                     )
         rows.append(
             {
-                "function_id": int(function_id),
+                "function_id": function_id,
                 "found": True,
                 "name": name,
                 "callers": callers,
