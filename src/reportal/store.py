@@ -27,6 +27,7 @@ import contextlib
 import json
 import re
 import sqlite3
+import threading
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -3692,6 +3693,7 @@ def _binary_match(row: Mapping[str, Any], needle: _Match) -> str:
 MAX_REGEX_CHARS = 200
 REGEX_CACHE_SIZE = 64
 _REGEX_CACHE: dict[str, re.Pattern[str]] = {}
+_REGEX_CACHE_LOCK = threading.Lock()
 
 
 class _Match:
@@ -3738,18 +3740,23 @@ def compile_regex(pattern: str) -> re.Pattern[str]:
         raise SearchError(
             "invalid regex", f"a regular expression is at most {MAX_REGEX_CHARS} characters"
         )
-    cached = _REGEX_CACHE.get(pattern)
-    if cached is not None:
-        return cached
+    with _REGEX_CACHE_LOCK:
+        cached = _REGEX_CACHE.get(pattern)
+        if cached is not None:
+            return cached
     try:
         compiled = re.compile(pattern)
     except re.error as exc:
         raise SearchError(
             "invalid regex", f"{pattern!r} is not a regular expression: {exc}"
         ) from None
-    if len(_REGEX_CACHE) >= REGEX_CACHE_SIZE:
-        _REGEX_CACHE.pop(next(iter(_REGEX_CACHE)))
-    _REGEX_CACHE[pattern] = compiled
+    with _REGEX_CACHE_LOCK:
+        existing = _REGEX_CACHE.get(pattern)
+        if existing is not None:
+            return existing
+        if len(_REGEX_CACHE) >= REGEX_CACHE_SIZE:
+            _REGEX_CACHE.pop(next(iter(_REGEX_CACHE)))
+        _REGEX_CACHE[pattern] = compiled
     return compiled
 
 

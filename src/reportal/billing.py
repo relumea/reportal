@@ -54,6 +54,7 @@ import logging
 import os
 import secrets
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -314,7 +315,11 @@ def _stripe_checkout(organisation: dict[str, Any], plan: plans.Plan) -> Checkout
 # an operator confirmation and nothing is persisted, so a restart clears them.
 # Cap the map so a caller that opens many checkouts within the TTL cannot grow
 # it without bound; past the cap the oldest token is dropped (spent as expired).
+# The map is shared across the ASGI thread pool, so every read-modify-write goes
+# under ``_manual_intents_lock``; spending a token is a single pop under that
+# lock so two concurrent confirms cannot both grant.
 _manual_intents: dict[str, tuple[int, str, float]] = {}
+_manual_intents_lock = threading.Lock()
 _MANUAL_INTENT_TTL_S = 900.0
 MAX_MANUAL_INTENTS = 256
 
@@ -327,51 +332,90 @@ def _store_manual_intent(organisation_id: int, plan_id: str) -> str:
     the operator can confirm after the first already entitled the tenant.
     """
     now = time.monotonic()
-    for token, (org, plan, expires) in list(_manual_intents.items()):
-        if expires <= now:
-            _manual_intents.pop(token, None)
-            continue
-        if org == organisation_id and plan == plan_id:
-            return token
-    token = _token_urlsafe(24)
-    _manual_intents[token] = (organisation_id, plan_id, now + _MANUAL_INTENT_TTL_S)
-    while len(_manual_intents) > MAX_MANUAL_INTENTS:
-        _manual_intents.pop(next(iter(_manual_intents)))
-    return token
+    with _manual_intents_lock:
+        for token, (org, plan, expires) in list(_manual_intents.items()):
+            if expires <= now:
+                _manual_intents.pop(token, None)
+                continue
+            if org == organisation_id and plan == plan_id:
+                return token
+        token = _token_urlsafe(24)
+        _manual_intents[token] = (organisation_id, plan_id, now + _MANUAL_INTENT_TTL_S)
+        while len(_manual_intents) > MAX_MANUAL_INTENTS:
+            _manual_intents.pop(next(iter(_manual_intents)))
+        return token
 
 
 def manual_intent(token: str) -> tuple[int, str] | None:
     """The organisation and plan a manual token names, or None when it is spent."""
-    entry = _manual_intents.get(token)
-    if entry is None:
-        return None
-    organisation_id, plan_id, expires = entry
-    if expires <= time.monotonic():
+    with _manual_intents_lock:
+        entry = _manual_intents.get(token)
+        if entry is None:
+            return None
+        organisation_id, plan_id, expires = entry
+        if expires <= time.monotonic():
+            _manual_intents.pop(token, None)
+            return None
+        return organisation_id, plan_id
+
+
+def _take_manual_intent(token: str, organisation_id: int) -> str | None:
+    """Consume a live manual token for *organisation_id*; None when it cannot grant.
+
+    The check and the pop share ``_manual_intents_lock``, so at most one
+    concurrent confirm wins.  A token that names another organisation is left
+    in place so the rightful tenant can still confirm it.
+    """
+    with _manual_intents_lock:
+        entry = _manual_intents.get(token)
+        if entry is None:
+            return None
+        intent_org, plan_id, expires = entry
+        if expires <= time.monotonic():
+            _manual_intents.pop(token, None)
+            return None
+        if intent_org != organisation_id:
+            return None
         _manual_intents.pop(token, None)
-        return None
-    return organisation_id, plan_id
+        return plan_id
+
+
+def _restore_manual_intent(token: str, organisation_id: int, plan_id: str) -> None:
+    """Put a spent token back after a failed durable write."""
+    with _manual_intents_lock:
+        _manual_intents[token] = (
+            organisation_id,
+            plan_id,
+            time.monotonic() + _MANUAL_INTENT_TTL_S,
+        )
 
 
 def complete_manual_checkout(
     conn: sqlite3.Connection, token: str, organisation_id: int
 ) -> dict[str, Any]:
     """Grant the plan a manual token names; the token is spent either way."""
-    intent = manual_intent(token)
-    if intent is None or intent[0] != organisation_id:
+    plan_id = _take_manual_intent(token, organisation_id)
+    if plan_id is None:
         raise BillingError(400, "unknown or expired checkout token")
-    _manual_intents.pop(token, None)
-    plan = plans.get_plan(intent[1])
-    _upsert_subscription(
-        conn,
-        organisation_id=organisation_id,
-        provider=PROVIDER_MANUAL,
-        customer_id="",
-        subscription_id=f"manual_{token[:12]}",
-        status=metering.STATUS_ACTIVE,
-        current_period_end="",
-        cancel_at_period_end=False,
-        plan_id=plan.id,
-    )
+    plan = plans.get_plan(plan_id)
+    try:
+        _upsert_subscription(
+            conn,
+            organisation_id=organisation_id,
+            provider=PROVIDER_MANUAL,
+            customer_id="",
+            subscription_id=f"manual_{token[:12]}",
+            status=metering.STATUS_ACTIVE,
+            current_period_end="",
+            cancel_at_period_end=False,
+            plan_id=plan.id,
+        )
+        # The in-memory token is already spent; the entitlement must land before
+        # this connection closes or a crash leaves a spent token and no plan.
+        conn.commit()
+    except Exception:
+        _restore_manual_intent(token, organisation_id, plan_id)
+        raise
     return {"organisation_id": organisation_id, "plan_id": plan.id, "provider": PROVIDER_MANUAL}
 
 
@@ -388,6 +432,7 @@ def cancel_manual_subscription(conn: sqlite3.Connection, organisation_id: int) -
         cancel_at_period_end=False,
         plan_id=plans.FALLBACK_PLAN_ID,
     )
+    conn.commit()
     return {"organisation_id": organisation_id, "plan_id": plans.FALLBACK_PLAN_ID}
 
 
@@ -785,7 +830,9 @@ class ReconcileResult:
 
 # Per-organisation rate limit on the reconcile path: it calls the provider, so
 # an unbounded caller could be used to hammer Stripe through reportal.
+# Shared across the ASGI thread pool; compound check-and-append under the lock.
 _rate_states: dict[int, list[float]] = {}
+_rate_states_lock = threading.Lock()
 _RECONCILE_WINDOW_S = 60.0
 _RECONCILE_MAX_HITS = 3
 
@@ -798,16 +845,19 @@ def reconcile_allowed(organisation_id: int) -> bool:
     reconciling *now* instead of by every organisation this process ever saw.
     """
     now = time.monotonic()
-    for other, hits in list(_rate_states.items()):
-        if all(now - hit >= _RECONCILE_WINDOW_S for hit in hits):
-            del _rate_states[other]
-    hits = [hit for hit in _rate_states.get(organisation_id, []) if now - hit < _RECONCILE_WINDOW_S]
-    if len(hits) >= _RECONCILE_MAX_HITS:
+    with _rate_states_lock:
+        for other, hits in list(_rate_states.items()):
+            if all(now - hit >= _RECONCILE_WINDOW_S for hit in hits):
+                del _rate_states[other]
+        hits = [
+            hit for hit in _rate_states.get(organisation_id, []) if now - hit < _RECONCILE_WINDOW_S
+        ]
+        if len(hits) >= _RECONCILE_MAX_HITS:
+            _rate_states[organisation_id] = hits
+            return False
+        hits.append(now)
         _rate_states[organisation_id] = hits
-        return False
-    hits.append(now)
-    _rate_states[organisation_id] = hits
-    return True
+        return True
 
 
 def reconcile_account(conn: sqlite3.Connection, organisation_id: int) -> ReconcileResult:

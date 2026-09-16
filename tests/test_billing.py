@@ -10,16 +10,19 @@ with bodies signed by the same HMAC Stripe uses.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
 import sqlite3
+import threading
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from reportal import auth, billing, metering, plans
+from reportal import auth, billing, metering, plans, store
 
 WEBHOOK_SECRET = "whsec_test_secret_value"
 
@@ -415,6 +418,41 @@ class TestManualMode:
         with pytest.raises(billing.BillingError):
             billing.complete_manual_checkout(conn, session.session_id, organisation_id)
 
+    def test_concurrent_confirms_spend_the_token_once(
+        self, portal_db: Path, conn: sqlite3.Connection, manual_env: None
+    ) -> None:
+        """Two ASGI workers confirming the same token must not both grant."""
+        organisation_id = _organisation(conn)
+        session = billing.start_checkout(conn, {"id": organisation_id}, "analyst")
+        outcomes: list[str] = []
+        barrier = threading.Barrier(8)
+        gate = threading.Lock()
+
+        def confirm() -> None:
+            with contextlib.closing(store.connect(portal_db)) as worker_conn:
+                barrier.wait()
+                try:
+                    billing.complete_manual_checkout(
+                        worker_conn, session.session_id, organisation_id
+                    )
+                    with gate:
+                        outcomes.append("ok")
+                except billing.BillingError:
+                    with gate:
+                        outcomes.append("err")
+
+        threads = [threading.Thread(target=confirm) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert outcomes.count("ok") == 1
+        assert outcomes.count("err") == 7
+        # The fixture connection may hold a snapshot; read the grant on a
+        # fresh connection so a concurrent commit is visible.
+        with contextlib.closing(store.connect(portal_db)) as check:
+            assert metering.organisation_plan(check, organisation_id).id == "analyst"
+
     def test_a_token_cannot_be_redeemed_by_another_organisation(
         self, conn: sqlite3.Connection, manual_env: None
     ) -> None:
@@ -490,6 +528,28 @@ class TestReconcileRateLimit:
         clock[0] += billing._RECONCILE_WINDOW_S + 1
         assert billing.reconcile_allowed(222222) is True
         assert 111111 not in billing._rate_states, "the stale window is dropped"
+
+    def test_concurrent_reconciles_respect_the_cap(self) -> None:
+        """The check-and-append is atomic across ASGI workers."""
+        organisation_id = 555666
+        billing._rate_states.pop(organisation_id, None)
+        barrier = threading.Barrier(16)
+        allowed = 0
+        lock = threading.Lock()
+
+        def attempt() -> None:
+            nonlocal allowed
+            barrier.wait()
+            if billing.reconcile_allowed(organisation_id):
+                with lock:
+                    allowed += 1
+
+        threads = [threading.Thread(target=attempt) for _ in range(16)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert allowed == billing._RECONCILE_MAX_HITS
 
     def test_reconcile_needs_the_stripe_provider(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch

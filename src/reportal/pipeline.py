@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 import time
 import tomllib
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -218,8 +219,10 @@ KNOWN_SYMBOL_LIMIT = 20
 MAX_SYMBOL_INDEXES = 4
 
 # A symbol file's name-by-VA index, keyed by the file's content hash, so a new
-# ingest is a new key and no stale index is ever reused.
+# ingest is a new key and no stale index is ever reused.  Shared across the
+# ASGI thread pool, so lookup and eviction run under ``_live_state_lock``.
 _symbol_indexes: dict[str, dict[int, str]] = {}
+_live_state_lock = threading.Lock()
 
 
 class StepFailure(RuntimeError):  # noqa: N818  # name fixed by the step contract
@@ -865,7 +868,8 @@ def symbol_names(ctx: Context) -> list[dict[str, Any]]:
     sha256 = symbols.newest_sha256(conn, binary_id)
     if sha256 is None:
         return []
-    index = _symbol_indexes.get(sha256)
+    with _live_state_lock:
+        index = _symbol_indexes.get(sha256)
     if index is None:
         index = _symbol_index(sha256, symbols.get_file(conn, binary_id=binary_id).get("parsed"))
     if not index:
@@ -907,10 +911,14 @@ def _symbol_index(sha256: str, parsed: Any) -> dict[int, str]:
         name = str(entry.get("name") or "").strip()
         if isinstance(va, int) and not isinstance(va, bool) and name:
             index.setdefault(va, name)
-    _symbol_indexes[sha256] = index
-    while len(_symbol_indexes) > MAX_SYMBOL_INDEXES:
-        _symbol_indexes.pop(next(iter(_symbol_indexes)))
-    return index
+    with _live_state_lock:
+        existing = _symbol_indexes.get(sha256)
+        if existing is not None:
+            return existing
+        _symbol_indexes[sha256] = index
+        while len(_symbol_indexes) > MAX_SYMBOL_INDEXES:
+            _symbol_indexes.pop(next(iter(_symbol_indexes)))
+        return index
 
 
 def names_context(ctx: Context) -> str:
@@ -1540,9 +1548,10 @@ _run_contexts: dict[int, Context] = {}
 def live_host() -> ComponentHost:
     """The process-wide live composition a withdrawal acts on, built on first use."""
     global _live_host
-    if _live_host is None:
-        _live_host = ComponentHost({})
-    return _live_host
+    with _live_state_lock:
+        if _live_host is None:
+            _live_host = ComponentHost({})
+        return _live_host
 
 
 def reset_live_state() -> None:
@@ -1552,8 +1561,9 @@ def reset_live_state() -> None:
     and no resolvable run bindings, which is what this gives them.
     """
     global _live_host
-    _live_host = None
-    _run_contexts.clear()
+    with _live_state_lock:
+        _live_host = None
+        _run_contexts.clear()
 
 
 def withdraw_component(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
@@ -1625,9 +1635,10 @@ def _store_run_context(run_id: int, ctx: Context) -> None:
     the context that made it is still here; the oldest entry is dropped once the
     cap is reached, which degrades to the later-process answer.
     """
-    while len(_run_contexts) >= RUN_CONTEXT_LIMIT:
-        _run_contexts.pop(next(iter(_run_contexts)))
-    _run_contexts[run_id] = ctx
+    with _live_state_lock:
+        while len(_run_contexts) >= RUN_CONTEXT_LIMIT:
+            _run_contexts.pop(next(iter(_run_contexts)))
+        _run_contexts[run_id] = ctx
 
 
 def run_pipeline(
@@ -1929,7 +1940,9 @@ def revert_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
     changes = [item for item in run["effects"] if item.get("kind") == EFFECT_CONTEXT_CHANGE]
     ctx = effects.plan_context(conn, durable)
     undone = ctx.revert()
-    context_changes = _revert_context_changes(_run_contexts.pop(run_id, None), changes)
+    with _live_state_lock:
+        live = _run_contexts.pop(run_id, None)
+    context_changes = _revert_context_changes(live, changes)
     store.set_pipeline_effects(conn, run_id, [])
     return {
         "run_id": run_id,
