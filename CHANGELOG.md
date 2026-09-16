@@ -291,8 +291,8 @@ view renders it from here.
   else had already registered.  `register_binary` takes the path the server
   reads, a display name and optionally the team whose scope the binary joins,
   calls the same store and journal path the command does, and is destructive
-  like every other writer.  That is 245 built-in tools, 115 read-only and 130
-  destructive.
+  like every other writer.  That was 245 built-in tools, 115 read-only and 130
+  destructive (now 252/120/132).
 
 - An upload can register its files into a team's scope.  The batch upload's
   per-file options carried a name, tags, collections and a format/arch hint and
