@@ -35,6 +35,7 @@ from typing import Any
 from reportal import (
     __version__,
     auth,
+    billing,
     engines,
     external,
     graph_backends,
@@ -169,10 +170,27 @@ def _optional_check() -> dict[str, str]:
         broken.append("remote sources are opted in but no VirusTotal key resolves")
     if backend_entry is not None and not backend_entry.available():
         broken.append(f"the {backend} graph backend is configured but not installed")
+    if backend_entry is None:
+        broken.append(f"the graph backend {backend!r} is not registered")
+    if (
+        billing.provider_name() == billing.PROVIDER_STRIPE
+        and billing.billing_configured()
+        and _loopback_public_base_url(billing.public_base_url())
+    ):
+        broken.append(
+            "Stripe billing is configured but REPORTAL_PUBLIC_BASE_URL still"
+            f" points at loopback ({billing.public_base_url()})"
+        )
     detail = ", ".join(states)
     if broken:
         return _check("optional", STATUS_WARN, detail, "; ".join(broken))
     return _check("optional", STATUS_OK, detail)
+
+
+def _loopback_public_base_url(url: str) -> bool:
+    """True when *url* would send a paying customer back to this host only."""
+    lowered = url.strip().lower()
+    return "127.0.0.1" in lowered or "localhost" in lowered or "[::1]" in lowered
 
 
 def _config_check() -> dict[str, str]:

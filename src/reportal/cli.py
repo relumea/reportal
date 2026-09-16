@@ -285,9 +285,36 @@ _MARKER_TEMPLATE = """\
 # root, and the database named here holds all portal state: a relative name is
 # taken from this directory, an absolute one as written.  REPORTAL_DB overrides
 # it, which is what tests and multi-workspace setups use.  Every other setting
-# reportal reads is listed by `reportal config`.
+# reportal reads is listed by `reportal config`.  Uncomment a table to change
+# it; a misspelled key is reported (never silently applied).
 [portal]
 db = "reportal.db"
+
+# [auth]
+# required = true
+
+# [llm]
+# endpoint = "http://127.0.0.1:11434/v1"
+# model = "gpt-4o-mini"
+# Prefer REPORTAL_LLM_API_KEY or `reportal secrets-set llm.api_key --stdin`
+# over putting api_key here.
+
+# [external]
+# allow_remote = false
+# Prefer REPORTAL_VIRUSTOTAL_KEY or `reportal secrets-set virustotal.api_key --stdin`
+# over putting virustotal_api_key here.
+
+# [sandbox]
+# enabled = false
+# runner = "bwrap"
+
+# [knowledge]
+# allow_remote = false
+# graph_backend = "sqlite"
+# cognee_dataset = "reportal"
+
+# [pipeline]
+# disabled = []
 """
 
 app = typer.Typer(
@@ -644,6 +671,24 @@ def serve(
     import reportal.webapp  # noqa: F401
     from reportal import server as _server
     from reportal.server import LOOPBACK_HOSTS
+
+    # A file reportal cannot parse leaves every reader on its default.  Serving
+    # that way is the silent-misconfiguration incident ``reportal doctor`` and
+    # ``reportal config`` already refuse; refuse it here too so a bare
+    # ``reportal serve`` cannot skip the gate.
+    failing = settings.failing()
+    if failing:
+        for problem in failing:
+            console.print(
+                f"[red]fail[/red] {escape(problem['where'])}: {escape(problem['problem'])}"
+            )
+            if problem.get("hint"):
+                console.print(f"  {escape(problem['hint'])}")
+        _fail(
+            "reportal.toml cannot be read; refusing to serve on defaults"
+            " (fix the file, then 'reportal config')",
+            json_output=False,
+        )
 
     path = _db_path(json_output=False)
     store.init_db(path)

@@ -71,7 +71,28 @@ class TestSurface:
         found: set[str] = set()
         for path in source.glob("*.py"):
             found.update(re.findall(r'"(REPORTAL_[A-Z_]+)"', path.read_text(encoding="utf-8")))
+        # Stripe price ids are built as REPORTAL_STRIPE_PRICE_<PLAN>; the
+        # constructed prefix is not a setting env string, but every plan's
+        # concrete name is registered above.
+        found.discard("REPORTAL_STRIPE_PRICE_")
         assert found - declared == set(), f"not in the registry: {sorted(found - declared)}"
+
+    def test_flag_truthy_spellings_agree_across_readers(self) -> None:
+        """Origin reporting and the readers must accept the same env spellings."""
+        from reportal import remote_ingest, sandbox
+
+        assert auth._TRUTHY == settings.FLAG_TRUTHY
+        assert sandbox._TRUTHY == settings.FLAG_TRUTHY
+        assert external._TRUTHY == settings.FLAG_TRUTHY
+        assert remote_ingest._TRUTHY == settings.FLAG_TRUTHY
+
+    def test_checkout_plan_price_envs_are_registered(self) -> None:
+        from reportal import plans
+
+        for plan in plans.checkout_plans():
+            name = f"billing.stripe_price_{plan.id}"
+            assert name in settings.BY_NAME
+            assert settings.BY_NAME[name].env == plans.price_env_name(plan.id)
 
 
 class TestAgreement:
@@ -79,8 +100,8 @@ class TestAgreement:
 
     def test_the_flags_agree(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _workspace(tmp_path, monkeypatch)
-        monkeypatch.setenv("REPORTAL_AUTH", "required")
-        monkeypatch.setenv("REPORTAL_SANDBOX", "enabled")
+        monkeypatch.setenv("REPORTAL_AUTH", "enabled")
+        monkeypatch.setenv("REPORTAL_SANDBOX", "required")
         monkeypatch.setenv("REPORTAL_ALLOW_EXTERNAL", "1")
         monkeypatch.setenv("REPORTAL_ALLOW_REMOTE_INGEST", "on")
 
@@ -88,6 +109,7 @@ class TestAgreement:
         assert _row("sandbox.enabled")["value"] is sandbox_enabled()
         assert _row("external.allow_remote")["value"] is external.remote_enabled() is True
         assert _row("knowledge.allow_remote")["value"] is True
+        assert _row("auth.required")["origin"] == settings.ORIGIN_ENVIRONMENT
 
     def test_a_falsey_flag_falls_through_to_the_file_but_the_report_says_so(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -251,6 +273,39 @@ class TestProblems:
         # And the value really is ignored: the reader tests for a boolean.
         assert auth.required() is False
 
+    def test_a_quoted_external_flag_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, '[external]\nallow_remote = "true"\n')
+        assert external.remote_enabled() is False
+        assert "must be true or false" in settings.problems()[0]["problem"]
+
+    def test_a_secret_in_the_workspace_file_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(
+            tmp_path,
+            monkeypatch,
+            '[llm]\nendpoint = "http://127.0.0.1:1/v1"\napi_key = "sk-in-the-file"\n',
+        )
+        problems = settings.problems()
+        assert any(
+            problem["where"] == "[llm] api_key" and "secret" in problem["problem"]
+            for problem in problems
+        )
+
+    def test_the_public_base_url_report_matches_runtime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import billing
+
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.delenv(billing.PUBLIC_BASE_URL_ENV, raising=False)
+        row = _row("billing.public_base_url")
+        assert row["value"] == billing.public_base_url() == billing.DEFAULT_PUBLIC_BASE_URL
+        assert row["origin"] == settings.ORIGIN_DEFAULT
+        assert row["display"] == billing.DEFAULT_PUBLIC_BASE_URL
+
     def test_a_wrong_type_on_a_text_key_is_reported(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -321,6 +376,14 @@ class TestCli:
         result = runner.invoke(cli.app, ["config"])
         assert result.exit_code == 1
         assert "fail" in result.output
+
+    def test_serve_refuses_an_unparsable_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, "[llm\nmodel = 'm'\n")
+        result = runner.invoke(cli.app, ["serve", "--port", "0", "--no-open"])
+        assert result.exit_code == 1
+        assert "refusing to serve on defaults" in result.output
 
 
 class TestDoctor:

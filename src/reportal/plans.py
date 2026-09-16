@@ -346,7 +346,7 @@ def checkout_plans() -> list[Plan]:
     return [plan for plan in PLANS if plan.self_serve]
 
 
-def _price_env_name(plan_id: str) -> str:
+def price_env_name(plan_id: str) -> str:
     """The environment variable holding *plan_id*'s Stripe price id."""
     suffix = re.sub(r"[^A-Z0-9]+", "_", plan_id.upper())
     return f"REPORTAL_STRIPE_PRICE_{suffix}"
@@ -354,7 +354,7 @@ def _price_env_name(plan_id: str) -> str:
 
 def stripe_price_id(plan_id: str) -> str:
     """The configured Stripe price id for *plan_id*, or the empty string."""
-    return os.environ.get(_price_env_name(plan_id), "").strip()
+    return os.environ.get(price_env_name(plan_id), "").strip()
 
 
 def plan_for_price_id(price_id: str) -> Plan | None:

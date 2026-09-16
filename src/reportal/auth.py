@@ -72,7 +72,8 @@ _SELF_PATHS: tuple[str, ...] = ("/api/users/activity", "/api/users/feedback")
 REQUIRED_ENV = "REPORTAL_AUTH"
 CONFIG_TABLE = "auth"
 CONFIG_REQUIRED = "required"
-_TRUTHY = frozenset({"1", "true", "yes", "on", "required"})
+# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+_TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
 
 # Token shape: a greppable prefix plus 32 bytes of randomness.  A token is shown
 # to the caller once and only its digest is kept.

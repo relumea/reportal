@@ -60,13 +60,12 @@ from reportal._paths import MARKER, WorkspaceNotFound, project_root
 
 # Environment variable that enables remote ingestion; any truthy spelling works.
 ALLOW_REMOTE_ENV = "REPORTAL_ALLOW_REMOTE_INGEST"
+# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+_TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
 
 # Workspace reportal.toml table and key that also enable it.
 CONFIG_TABLE = "knowledge"
 CONFIG_ALLOW_REMOTE = "allow_remote"
-
-# Env spellings accepted as true.  Anything else leaves the environment silent.
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 # Schemes a remote target may use.
 ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})

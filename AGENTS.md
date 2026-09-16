@@ -200,7 +200,7 @@ workspace table enables it (`remote_ingest.remote_enabled()`).
 
 | Setting | Env var | `reportal.toml` key | Default |
 |---------|---------|---------------------|---------|
-| Enable URL ingestion | `REPORTAL_ALLOW_REMOTE_INGEST` (truthy: `1`, `true`, `yes`, `on`) | `[knowledge] allow_remote = true` | off |
+| Enable URL ingestion | `REPORTAL_ALLOW_REMOTE_INGEST` (truthy: `1`, `true`, `yes`, `on`, `enabled`, `required`) | `[knowledge] allow_remote = true` | off |
 
 While it is off every remote path answers 403 `remote-ingest-disabled` and
 makes no network call.  `src/reportal/remote_ingest.py` holds the guards
@@ -235,7 +235,7 @@ bind unless it is on and an enabled user exists.
 
 | Setting | Env var | `reportal.toml` key | Default |
 |---------|---------|---------------------|---------|
-| Require token auth | `REPORTAL_AUTH` (truthy: `1`, `true`, `yes`, `on`, `required`) | `[auth] required = true` | off |
+| Require token auth | `REPORTAL_AUTH` (truthy: `1`, `true`, `yes`, `on`, `enabled`, `required`) | `[auth] required = true` | off |
 
 User management is `reportal user-add <name> [--role viewer|analyst|admin]`
 (which prints the token once), `user-token`, `user-edit`, `user-rm` and `users`;
@@ -278,7 +278,7 @@ and stores a normalized subset of the answer.
 
 | Setting | Env var | `reportal.toml` key | Default |
 |---------|---------|---------------------|---------|
-| Enable remote sources | `REPORTAL_ALLOW_EXTERNAL` (truthy: `1`, `true`, `yes`, `on`) | `[external] allow_remote = true` | off |
+| Enable remote sources | `REPORTAL_ALLOW_EXTERNAL` (truthy: `1`, `true`, `yes`, `on`, `enabled`, `required`) | `[external] allow_remote = true` | off |
 | VirusTotal key | `REPORTAL_VIRUSTOTAL_KEY` | `[external] virustotal_api_key` | the secret store's `virustotal.api_key` |
 
 While the gate is off every remote call answers 403 `external-disabled` and no
@@ -376,7 +376,7 @@ installed.  `reportal sandbox --status` reports both.
 
 | Setting | Env var | `reportal.toml` key | Default |
 |---------|---------|---------------------|---------|
-| Allow detonation | `REPORTAL_SANDBOX` (truthy: `1`, `true`, `yes`, `on`, `enabled`) | `[sandbox] enabled = true` | off |
+| Allow detonation | `REPORTAL_SANDBOX` (truthy: `1`, `true`, `yes`, `on`, `enabled`, `required`) | `[sandbox] enabled = true` | off |
 | Runner to use | `REPORTAL_SANDBOX_RUNNER` | `[sandbox] runner` | the first installed runner (`bwrap`) |
 
 A third party registers a runner through the `reportal.sandbox_runners`

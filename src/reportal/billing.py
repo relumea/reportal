@@ -93,10 +93,15 @@ STRIPE_SECRET_ENV = "REPORTAL_STRIPE_SECRET_KEY"
 STRIPE_WEBHOOK_ENV = "REPORTAL_STRIPE_WEBHOOK_SECRET"
 STRIPE_API_VERSION_ENV = "REPORTAL_STRIPE_API_VERSION"
 PUBLIC_BASE_URL_ENV = "REPORTAL_PUBLIC_BASE_URL"
+DEFAULT_PUBLIC_BASE_URL = "http://127.0.0.1:8002"
 
 PROVIDER_STRIPE = "stripe"
 PROVIDER_MANUAL = "manual"
 PROVIDER_DISABLED = "disabled"
+PROVIDER_AUTO = "auto"
+PROVIDERS: frozenset[str] = frozenset(
+    {PROVIDER_AUTO, PROVIDER_STRIPE, PROVIDER_MANUAL, PROVIDER_DISABLED}
+)
 
 
 class BillingError(RuntimeError):
@@ -169,13 +174,18 @@ def api_version() -> str:
 
 def provider_name() -> str:
     """The active billing provider, resolving ``auto`` against the environment."""
-    configured = os.environ.get(PROVIDER_ENV, "").strip().lower() or "auto"
-    if configured == "auto":
+    configured = os.environ.get(PROVIDER_ENV, "").strip().lower() or PROVIDER_AUTO
+    if configured == PROVIDER_AUTO:
         return PROVIDER_STRIPE if _secret_key() else PROVIDER_DISABLED
     if configured in {PROVIDER_STRIPE, PROVIDER_MANUAL, PROVIDER_DISABLED}:
         return configured
     _log.warning("unknown %s %r; billing disabled", PROVIDER_ENV, configured)
     return PROVIDER_DISABLED
+
+
+def configured_provider() -> str:
+    """The raw provider spelling before ``auto`` resolves, or ``auto`` when unset."""
+    return os.environ.get(PROVIDER_ENV, "").strip().lower() or PROVIDER_AUTO
 
 
 def billing_enabled() -> bool:
@@ -204,8 +214,14 @@ def public_billing_config() -> dict[str, Any]:
     }
 
 
+def public_base_url() -> str:
+    """The externally reachable base URL checkout returns the customer to."""
+    return os.environ.get(PUBLIC_BASE_URL_ENV, "").strip().rstrip("/") or DEFAULT_PUBLIC_BASE_URL
+
+
 def _public_base_url() -> str:
-    return os.environ.get(PUBLIC_BASE_URL_ENV, "").strip().rstrip("/") or "http://127.0.0.1:8002"
+    """Compatibility alias for callers that still use the private name."""
+    return public_base_url()
 
 
 def _checkout_urls(organisation_id: int) -> tuple[str, str]:

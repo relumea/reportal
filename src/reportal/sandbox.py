@@ -72,7 +72,8 @@ RUNNER_ENV = "REPORTAL_SANDBOX_RUNNER"
 
 # Entry-point group third-party sandbox runners register in.
 RUNNER_ENTRY_POINT_GROUP = "reportal.sandbox_runners"
-_TRUTHY = frozenset({"1", "true", "yes", "on", "enabled"})
+# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+_TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
 
 # The fixed detail every disabled or unavailable path reports.
 DISABLED_DETAIL = "set REPORTAL_SANDBOX=enabled or [sandbox] enabled = true to allow detonation"

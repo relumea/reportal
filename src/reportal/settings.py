@@ -38,6 +38,7 @@ from reportal import (
     jobs,
     llm,
     pipeline,
+    plans,
     remote_ingest,
     sandbox,
 )
@@ -69,10 +70,24 @@ NOT_SET = "not set"
 # ``required = "true"`` is off.
 BOOLEAN_HINT = "must be true or false, without quotes"
 
+# Env spellings every flag reader accepts as on.  Kept identical across auth,
+# sandbox, external and remote_ingest so ``reportal config``'s origin cannot
+# claim the environment when a module actually ignored the value.
+FLAG_TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
+
+# Secret keys that belong in the environment or the secret store, not the
+# committed workspace file.  A non-empty workspace value still resolves (env
+# wins, then the file), but ``problems`` warns so an operator does not leave a
+# key in ``reportal.toml`` by accident.
+SECRET_STORE_NAMES: dict[str, str] = {
+    "llm.api_key": "llm.api_key",
+    "external.virustotal_api_key": "virustotal.api_key",
+}
+
 
 def _truthy(value: Any) -> bool:
     """Whether *value* is one of the spellings the flags accept as on."""
-    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled", "required"}
+    return str(value).strip().lower() in FLAG_TRUTHY
 
 
 @dataclass(frozen=True)
@@ -322,10 +337,34 @@ SETTINGS: tuple[Setting, ...] = (
         name="billing.public_base_url",
         describe="the externally reachable base URL a checkout returns the customer to",
         kind=KIND_TEXT,
-        read=lambda: os.environ.get(billing.PUBLIC_BASE_URL_ENV, "").strip(),
+        read=billing.public_base_url,
         env=billing.PUBLIC_BASE_URL_ENV,
-        default="http://127.0.0.1:8002",
+        default=billing.DEFAULT_PUBLIC_BASE_URL,
     ),
+)
+
+def _stripe_price_id(plan_id: str) -> Callable[[], str]:
+    """A zero-argument reader for one plan's Stripe price id setting."""
+
+    def read() -> str:
+        return plans.stripe_price_id(plan_id)
+
+    return read
+
+
+# Per-plan Stripe price ids are env-only and named from the catalog, so they
+# are appended rather than hand-listed: a new self-serve plan gets a setting
+# the moment it lands in ``plans.checkout_plans``.
+SETTINGS = SETTINGS + tuple(
+    Setting(
+        name=f"billing.stripe_price_{plan.id}",
+        describe=f"the Stripe price id checkout uses for the {plan.name} plan",
+        kind=KIND_TEXT,
+        read=_stripe_price_id(plan.id),
+        env=plans.price_env_name(plan.id),
+        default="none; checkout for this plan answers 503",
+    )
+    for plan in plans.checkout_plans()
 )
 
 BY_NAME: dict[str, Setting] = {setting.name: setting for setting in SETTINGS}
@@ -466,7 +505,8 @@ def problems() -> list[dict[str, str]]:
                 "where": MARKER,
                 "problem": str(exc),
                 "hint": "run 'reportal init' in the directory that should hold the workspace",
-            }
+            },
+            *_environment_problems(),
         ]
     except (OSError, tomllib.TOMLDecodeError) as exc:
         return [
@@ -475,7 +515,8 @@ def problems() -> list[dict[str, str]]:
                 "where": MARKER,
                 "problem": f"cannot be read, so every setting falls back to its default: {exc}",
                 "hint": "fix the file, then run 'reportal config' again",
-            }
+            },
+            *_environment_problems(),
         ]
     found: list[dict[str, str]] = []
     for name, table in document.items():
@@ -524,6 +565,59 @@ def problems() -> list[dict[str, str]]:
                         "hint": "the setting falls back to its default until this is fixed",
                     }
                 )
+                continue
+            secret_problem = _secret_in_workspace(setting, carried)
+            if secret_problem:
+                found.append(secret_problem)
+    found.extend(_environment_problems())
+    return found
+
+
+def _secret_in_workspace(setting: Setting, carried: Any) -> dict[str, str] | None:
+    """Warn when a secret sits in the workspace file instead of the store or env."""
+    if not setting.secret:
+        return None
+    if not isinstance(carried, str) or not carried.strip():
+        return None
+    store_name = SECRET_STORE_NAMES.get(setting.name, setting.name)
+    env_hint = setting.env or "the matching environment variable"
+    return {
+        "level": LEVEL_WARN,
+        "where": f"[{setting.table}] {setting.key}",
+        "problem": "holds a secret in the workspace file",
+        "hint": (
+            f"prefer {env_hint} or `reportal secrets-set {store_name} --stdin`"
+            "; the file value still resolves until removed"
+        ),
+    }
+
+
+def _environment_problems() -> list[dict[str, str]]:
+    """Env spellings that look set but the reader will not honour."""
+    found: list[dict[str, str]] = []
+    provider = billing.configured_provider()
+    if provider not in billing.PROVIDERS:
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": billing.PROVIDER_ENV,
+                "problem": f"is not a provider reportal knows ({provider!r})",
+                "hint": f"use one of {', '.join(sorted(billing.PROVIDERS))}",
+            }
+        )
+    backend = graph_backends.configured_backend_name()
+    known = {entry.name for entry in graph_backends.graph_backends()}
+    if backend not in known:
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": graph_backends.BACKEND_ENV
+                if os.environ.get(graph_backends.BACKEND_ENV, "").strip()
+                else f"[{graph_backends.CONFIG_TABLE}] {graph_backends.CONFIG_BACKEND}",
+                "problem": f"names a graph backend reportal does not have ({backend!r})",
+                "hint": f"use one of {', '.join(sorted(known))} or install the matching extra",
+            }
+        )
     return found
 
 

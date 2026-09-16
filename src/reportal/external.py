@@ -82,7 +82,8 @@ VIRUSTOTAL_KEY_ENV = "REPORTAL_VIRUSTOTAL_KEY"
 # environment nor the workspace table carries one.
 VIRUSTOTAL_KEY_SECRET = "virustotal.api_key"
 
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
+# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+_TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
 
 # The one host a remote source calls, and the path its file report lives at.
 VIRUSTOTAL_HOST = "www.virustotal.com"
@@ -218,11 +219,14 @@ def _workspace_table() -> dict[str, Any]:
 
 
 def remote_enabled() -> bool:
-    """Whether the remote sources are enabled: the environment, then the config."""
+    """Whether the remote sources are enabled: the environment, then the config.
+
+    The workspace table must carry a real boolean ``true``: a quoted string is
+    ignored (the same rule ``settings.problems`` reports for every flag).
+    """
     if _truthy(os.environ.get(ALLOW_REMOTE_ENV, "")):
         return True
-    value = _workspace_table().get(CONFIG_ALLOW_REMOTE)
-    return value is True or (isinstance(value, str) and _truthy(value))
+    return _workspace_table().get(CONFIG_ALLOW_REMOTE) is True
 
 
 def require_enabled() -> None:

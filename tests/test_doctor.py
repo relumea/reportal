@@ -174,6 +174,20 @@ class TestOptional:
         assert "external=on" in row["detail"]
         assert "no VirusTotal key" in row["hint"]
 
+    def test_stripe_with_loopback_public_url_warns(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import billing
+
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(billing.STRIPE_SECRET_ENV, "sk_test_doctor")
+        monkeypatch.setenv(billing.PROVIDER_ENV, "stripe")
+        monkeypatch.delenv(billing.PUBLIC_BASE_URL_ENV, raising=False)
+        row = _check(doctor.report(), "optional")
+        assert row["status"] == "warn"
+        assert "PUBLIC_BASE_URL" in row["hint"]
+        assert "loopback" in row["hint"]
+
     def test_an_uninstalled_graph_backend_warns(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
