@@ -89,6 +89,7 @@ from reportal import (
     metering,
     models,
     notifications,
+    observability,
     pdf,
     pipeline,
     protocols,
@@ -8768,7 +8769,10 @@ def health() -> Response:
     The pre-existing keys (``status``, ``version``, ``db``, ``counts``) are
     unchanged, and a live server always answers 200: a degraded dependency is
     reported under ``dependencies`` and named in ``failures`` rather than
-    turned into an error, because the process is still serving.
+    turned into an error, because the process is still serving.  ``http`` is
+    the process-local request counters since start (rate, 4xx/5xx, latency
+    sum and max), so an operator can read RED without a separate metrics
+    scrape.
 
     Every probe is cheap and side-effect free.  The database check is a
     permission test (no query, no write, no SQLite lock); the engine is read
@@ -8795,6 +8799,7 @@ def health() -> Response:
             "counts": counts,
             "dependencies": dependencies,
             "failures": failures,
+            "http": observability.http_snapshot(),
         }
     )
 

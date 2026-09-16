@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -58,6 +59,7 @@ from reportal import (
 )
 from reportal._paths import WorkspaceNotFound
 
+_log = logging.getLogger(__name__)
 # Statuses a job moves through.  ``queued`` and ``running`` are the live ones;
 # the other three are terminal and never change again.
 STATUS_QUEUED = "queued"
@@ -731,6 +733,14 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         payload = None
         failure = f"{type(exc).__name__}: {exc}"
+        _log.warning(
+            "job failed id=%s kind=%s binary_id=%s error=%s",
+            job_id,
+            job["kind"],
+            binary_id,
+            failure[:200],
+            exc_info=exc,
+        )
     status = STATUS_FAILED if failure else STATUS_DONE
     conn.execute(
         f"UPDATE {TABLE} SET status = ?, progress = ?, message = ?, result_json = ?,"

@@ -295,7 +295,13 @@ Token auth is off unless `REPORTAL_AUTH=required` or the workspace
 read), so a loopback install behaves exactly as before and no request pays for
 a check it does not need.  With it on, the `server._reportal_headers`
 middleware is the one place the gate lives: a route added later is behind it
-without being told, and a route cannot opt out by omission.  The middleware resolves the bearer token to a user
+without being told, and a route cannot opt out by omission.  The same
+middleware mints or echoes `X-Request-Id`, records process-local HTTP counters
+(`observability.record_request`, surfaced on `GET /api/health` as `http`), and
+emits a structured completion line for every interesting `/api` call
+(method, path, status, duration_ms, request_id, actor), so journalctl can
+answer whether a request succeeded and how long it took without uvicorn's
+access log.  The middleware resolves the bearer token to a user
 (`auth.authenticate`, constant-time digest comparison), refuses a disabled user,
 computes the permission the method and path need (`auth.required_permission`:
 `read`, `write`, or `admin` for `/api/users*`) and compares it with the role's

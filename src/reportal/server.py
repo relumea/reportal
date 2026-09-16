@@ -19,6 +19,7 @@ import json
 import logging
 import re
 import sqlite3
+import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextvars import ContextVar, Token
 from typing import Any
@@ -29,7 +30,17 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
-from reportal import __version__, auth, disclosure, error_docs, journal, llm, metering, store
+from reportal import (
+    __version__,
+    auth,
+    disclosure,
+    error_docs,
+    journal,
+    llm,
+    metering,
+    observability,
+    store,
+)
 from reportal._paths import WorkspaceNotFound, db_path
 
 
@@ -508,22 +519,56 @@ async def optional_json_body(request: Request) -> dict[str, Any]:
     return await json_body(request)
 
 
+def _log_api_completion(
+    *,
+    method: str,
+    path: str,
+    status: int,
+    duration_ms: int,
+    request_id: str,
+    actor: str,
+) -> None:
+    """One structured line an operator can grep by request id or status."""
+    message = "request method=%s path=%s status=%s duration_ms=%s request_id=%s actor=%s"
+    args = (method, path, status, duration_ms, request_id, actor)
+    if status >= 500:
+        _log.error(message, *args)
+    elif status >= 400 or duration_ms >= observability.SLOW_REQUEST_MS:
+        _log.warning(message, *args)
+    else:
+        _log.info(message, *args)
+
+
 @app.middleware("http")
 async def _reportal_headers(request: Request, call_next: Any) -> Response:
-    """Validate the Host header, carry the request to the helpers, add headers."""
+    """Validate the Host header, correlate the request, carry helpers, add headers."""
     token: Token[str] = _ACCEPT_ENCODING.set(request.headers.get("accept-encoding", ""))
     caller_token: Token[Mapping[str, Any] | None] = _CALLER.set(None)
+    request_id = observability.resolve_request_id(
+        request.headers.get(observability.REQUEST_ID_HEADER)
+    )
+    request_id_token = observability.set_request_id(request_id)
+    started = time.perf_counter()
+    actor = journal.LOCAL_ACTOR
+    response: Response | None = None
     try:
         if ALLOWED_HOSTS is not None:
             host = request.headers.get("host", "")
             if host and _hostname_of(host) not in ALLOWED_HOSTS:
-                _log.warning("Rejected request with Host header %r", host)
-                return json_error(400, error="unexpected Host header", detail="host not allowed")
-        actor = journal.LOCAL_ACTOR
+                _log.warning(
+                    "Rejected request with Host header %r request_id=%s",
+                    host,
+                    request_id,
+                )
+                response = json_error(
+                    400, error="unexpected Host header", detail="host not allowed"
+                )
+                return response
         if request.url.path.startswith("/api"):
             actor, refusal = authenticate(request)
             if refusal is not None:
-                return refusal
+                response = refusal
+                return response
             # Set after authentication, because that is what resolves the role
             # `disclosure` branches on.  A refusal returns before this, so an
             # error body is serialized with no caller and is redacted.
@@ -547,13 +592,34 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
                 stack.enter_context(
                     llm.charging(_charge_credits(organisation_id, request.url.path))
                 )
-            response: Response = await call_next(request)
+            response = await call_next(request)
+            return response
     finally:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        if response is not None and request.url.path.startswith("/api"):
+            observability.record_request(status=response.status_code, duration_ms=duration_ms)
+            response.headers[observability.REQUEST_ID_HEADER] = request_id
+            if observability.should_log_completion(
+                path=request.url.path,
+                status=response.status_code,
+                duration_ms=duration_ms,
+            ):
+                _log_api_completion(
+                    method=request.method,
+                    path=request.url.path,
+                    status=response.status_code,
+                    duration_ms=duration_ms,
+                    request_id=request_id,
+                    actor=actor,
+                )
+            for key, value in SECURITY_HEADERS:
+                response.headers[key] = value
+        elif response is not None:
+            for key, value in SECURITY_HEADERS:
+                response.headers[key] = value
         _ACCEPT_ENCODING.reset(token)
         _CALLER.reset(caller_token)
-    for key, value in SECURITY_HEADERS:
-        response.headers[key] = value
-    return response
+        observability.reset_request_id(request_id_token)
 
 
 @app.exception_handler(JsonError)
@@ -565,7 +631,11 @@ async def _handle_json_error(request: Request, exc: JsonError) -> Response:
 @app.exception_handler(WorkspaceNotFound)
 async def _handle_workspace_not_found(request: Request, exc: WorkspaceNotFound) -> Response:
     """A missing workspace is a 500 naming the directory that was searched."""
-    _log.error("No reportal workspace for %s", request.url.path)
+    _log.error(
+        "No reportal workspace for %s request_id=%s",
+        request.url.path,
+        observability.current_request_id(),
+    )
     return json_error(500, error="no-workspace", detail=str(exc))
 
 
@@ -601,7 +671,13 @@ async def _handle_http_exception(request: Request, exc: StarletteHTTPException) 
 @app.exception_handler(Exception)
 async def _handle_error(request: Request, exc: Exception) -> Response:
     """Log unhandled errors and keep the JSON contract for API routes."""
-    _log.error("Unhandled error serving %s", request.url.path, exc_info=exc)
+    _log.error(
+        "Unhandled error serving %s %s request_id=%s",
+        request.method,
+        request.url.path,
+        observability.current_request_id(),
+        exc_info=exc,
+    )
     if request.url.path.startswith("/api/"):
         return json_error(500, error="internal server error")
     return Response(
@@ -615,4 +691,5 @@ def run(host: str, port: int) -> None:
     """Serve the application with uvicorn until interrupted."""
     import uvicorn
 
+    observability.configure_logging()
     uvicorn.run(app, host=host, port=port, log_level="warning", access_log=False)
