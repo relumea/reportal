@@ -164,6 +164,10 @@ full below.
 | Agent tool calls | LLM endpoint response, gated by an analyst's confirmation | `agent._drive`, `agent.confirm`, `mcp_server.call_tool` |
 | MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
+| Background continuations (pipeline/auto workers, agent loop, conversation
+  context) | The authorized request that started them; no second principal |
+  `pipeline.function_knowledge`, `auto_llm_worker`, `agent._execute`,
+  `conversations.scope_knowledge` |
 | Workspace `reportal.toml` and database files | Local filesystem | `_paths`, `store`, `journal` |
 | Readiness check (`reportal doctor`) | Local operator; the workspace, the port and the optional paths | `doctor.report`, `_port_check`, `_schema_check` |
 
