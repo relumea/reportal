@@ -1,12 +1,14 @@
 """The API reference stays a provenance of the router: docs/API.md must carry a
-table row for every route the FastAPI app answers.
+table row for every route the FastAPI app answers, and must not advertise a
+route the app does not answer.
 
 The CLI reference already has this promise (`tests/test_cli_docs.py` walks the
 Typer app against docs/CLI.md); this is the same shape for the HTTP surface.
 It walks the live router tables (api.router plus ui.router: the composed app
 keeps included routers lazy, so the app table alone misses every API route)
 and fails the gate for a route with no row, or no same-method family row,
-which is how the `remediation/yara` row covers `remediation/<fmt>`.
+which is how the `remediation/yara` row covers `remediation/<fmt>`, and for a
+doc row whose path is neither a live route nor a concrete family member of one.
 """
 
 import re
@@ -93,9 +95,35 @@ def check_paths(routes: set[tuple[str, str]], rows: dict[str, set[str]]) -> list
     return problems
 
 
+def check_extra_rows(routes: set[tuple[str, str]], rows: dict[str, set[str]]) -> list[str]:
+    """Doc rows that name no live route and are not a concrete family member.
+
+    The family exception is the reverse of :func:`check_paths`: a row whose
+    last segment is concrete may stand for a live ``.../<id>`` sibling (the
+    ``remediation/yara`` row for ``remediation/{fmt}``).
+    """
+    live: dict[str, set[str]] = {}
+    for method, path in routes:
+        live.setdefault(method, set()).add(norm(path))
+    problems: list[str] = []
+    for method, documented in sorted(rows.items()):
+        live_paths = live.get(method, set())
+        for path in sorted(documented):
+            if path in live_paths:
+                continue
+            last = path.split("/")[-1]
+            sibling = family(path) + "<id>"
+            if last != "<id>" and sibling in live_paths:
+                continue
+            problems.append(f"{method} {path}: no live route")
+    return problems
+
+
 def check_docs() -> list[str]:
-    """Routes with no table row of their own and no same-method family row."""
-    return check_paths(router_routes(), doc_rows(API_DOCS.read_text(encoding="utf-8")))
+    """Routes missing a row, and rows that name no live route."""
+    routes = router_routes()
+    rows = doc_rows(API_DOCS.read_text(encoding="utf-8"))
+    return check_paths(routes, rows) + check_extra_rows(routes, rows)
 
 
 def test_every_route_has_a_table_row_or_family() -> None:
@@ -109,7 +137,14 @@ def test_an_undocumented_route_is_reported() -> None:
     assert check_paths(routes, rows) == ["GET /api/probe/{thing_id}: no row in docs/API.md"]
 
 
+def test_a_phantom_doc_row_is_reported() -> None:
+    routes = {("GET", "/api/other")}
+    rows = {"GET": {"/api/probe/<id>"}}
+    assert check_extra_rows(routes, rows) == ["GET /api/probe/<id>: no live route"]
+
+
 def test_a_family_row_covers_its_last_segment() -> None:
     routes = {("GET", "/api/things/{fmt}")}
     rows = {"GET": {"/api/things/yara"}}
     assert check_paths(routes, rows) == []
+    assert check_extra_rows(routes, rows) == []

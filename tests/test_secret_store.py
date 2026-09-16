@@ -610,7 +610,7 @@ class TestMcp:
             {"name": "virustotal.api_key", "value": API_KEY, "scope": "team", "team_id": 99},
         )
         assert failed
-        assert payload["error"] == "team not found"
+        assert payload["error"] == auth.ERROR_TEAM_NOT_FOUND
 
         payload, failed = mcp_server.call_tool("delete_secret", {"name": "nope.missing"})
         assert failed

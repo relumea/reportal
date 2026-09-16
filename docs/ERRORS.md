@@ -150,15 +150,15 @@ allowed. Send a plain `http`/`https` URL.
 
 ### edge-not-found
 
-`404`. No analyst-declared callee edge carries the requested id on that
-function. An edge belongs to the function that declared it, so an id that exists
-on another function reads the same way.
+`404` (`edge not found`). No analyst-declared callee edge carries the requested
+id on that function. An edge belongs to the function that declared it, so an id
+that exists on another function reads the same way.
 
 ### string-not-found
 
-`404`. No analyst string carries the requested id at that scope. A string
-belongs to the function or analysis it was recorded against, so an id that
-exists at another scope reads the same way.
+`404` (`string not found`). No analyst string carries the requested id at that
+scope. A string belongs to the function or analysis it was recorded against, so
+an id that exists at another scope reads the same way.
 
 ### run-not-found
 
@@ -337,12 +337,12 @@ is nothing to undo.
 
 ### binary-not-found
 
-`404`. The id names no stored binary. The body counts every not-found case for
-this resource, including one that belongs to another binary.
+`404` (`binary not found`). The id names no stored binary. The body counts every
+not-found case for this resource, including one that belongs to another binary.
 
 ### function-not-found
 
-`404`. The id names no stored function.
+`404` (`function not found`). The id names no stored function.
 
 ### collection-not-found
 
@@ -825,7 +825,8 @@ case-insensitively).
 
 ### team-not-found
 
-`404`. No team carries that id, or no such team is named in a scope request.
+`404` (`team-not-found`). No team carries that id, or no such team is named in a
+scope request.
 
 ### not-a-team-member
 

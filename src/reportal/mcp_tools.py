@@ -3606,7 +3606,7 @@ def _tool_set_secret(arguments: dict[str, Any]) -> dict[str, Any]:
     scope, team_id = _secret_scope(arguments)
     with contextlib.closing(_open()) as conn:
         if team_id is not None and auth.get_team(conn, team_id) is None:
-            raise ToolError("team not found", f"no team with id {team_id}")
+            raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
         with journal.journaled(conn, journal.new_action()) as log:
             try:
                 row = secret_store.journaled_set(
@@ -4462,13 +4462,16 @@ def _tool_update_user(arguments: dict[str, Any]) -> dict[str, Any]:
     role = _arg_optional_str(arguments, "role") or None
     disabled = arguments.get("disabled")
     if disabled is not None and not isinstance(disabled, bool):
-        raise ToolError("invalid params", "disabled must be a boolean")
+        raise ToolError(auth.ERROR_INVALID_USER, "disabled must be a boolean")
     active_team = _arg_optional_int(arguments, "active_team_id", 0) or None
     clear_active_team = _arg_optional_bool(arguments, "clear_active_team", False)
     if active_team is not None and clear_active_team:
-        raise ToolError("invalid user", "active_team_id and clear_active_team are exclusive")
+        raise ToolError(
+            auth.ERROR_INVALID_USER,
+            "active_team_id and clear_active_team are exclusive",
+        )
     if role is None and disabled is None and active_team is None and not clear_active_team:
-        raise ToolError("invalid user", "provide role, disabled or an active team")
+        raise ToolError(auth.ERROR_INVALID_USER, "provide role, disabled or an active team")
     with contextlib.closing(_open()) as conn:
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")

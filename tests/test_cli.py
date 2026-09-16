@@ -161,6 +161,26 @@ class TestServe:
             for timer in timers:
                 timer.cancel()
 
+    def test_an_existing_database_gains_later_tables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Opening the DB upgrades a file that predates later tables."""
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        with sqlite3.connect(db) as raw:
+            raw.execute("CREATE TABLE binaries (id INTEGER PRIMARY KEY, name TEXT)")
+            raw.commit()
+
+        from reportal import server as _server
+
+        with contextlib.closing(_server.db()) as conn:
+            names = {
+                str(row[0])
+                for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            }
+        assert "feedback" in names
+        assert "users" in names
+
 
 class TestInit:
     def test_init_writes_marker_and_db(self, tmp_path: Path) -> None:
