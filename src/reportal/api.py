@@ -2311,7 +2311,9 @@ def _member_edit(member: Any) -> dict[str, Any]:
     """Decode a ``{"name"|"index", ...}`` member edit.
 
     ``new_pointer``, ``new_count`` and ``new_bits`` are tri-state: an absent key
-    leaves the field as it is, an explicit ``null`` clears it.
+    leaves the field as it is, an explicit ``null`` clears it.  The selector
+    needs exactly one of ``name`` or ``index``; naming neither or both is 400
+    ``invalid member``, matching the MCP tool and the domain.
     """
     if not isinstance(member, dict):
         raise json_error(400, error="invalid member", detail="member must be an object")
@@ -2323,6 +2325,14 @@ def _member_edit(member: Any) -> dict[str, Any]:
         isinstance(selector_index, bool) or not isinstance(selector_index, int)
     ):
         raise json_error(400, error="invalid member", detail="member index must be an integer")
+    if selector_name is None and selector_index is None:
+        raise json_error(400, error="invalid member", detail="member needs a name or an index")
+    if selector_name is not None and selector_index is not None:
+        raise json_error(
+            400,
+            error="invalid member",
+            detail="member name and index are exclusive",
+        )
     new_name = member.get("new_name")
     new_type = member.get("new_type")
     if new_name is not None and not isinstance(new_name, str):
@@ -2403,6 +2413,11 @@ def _member_addition(body: dict[str, Any]) -> dict[str, Any]:
     return addition
 
 
+def _path_member_selector(segment: str) -> dict[str, Any]:
+    """Select a member or enum value by path segment: digits are an index."""
+    return {"index": int(segment)} if segment.isdigit() else {"name": segment}
+
+
 @router.post("/api/data-types/{data_type_id}/members/{member}/gap")
 def convert_data_type_member_to_gap(
     data_type_id: int, member: str, body: dict[str, Any] = Depends(optional_json_body)
@@ -2411,7 +2426,7 @@ def convert_data_type_member_to_gap(
     size = body.get("size")
     if size is not None and (isinstance(size, bool) or not isinstance(size, int)):
         return json_error(400, error="invalid size", detail="size must be an integer")
-    selector = {"index": int(member)} if member.isdigit() else {"name": member}
+    selector = _path_member_selector(member)
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -2436,7 +2451,7 @@ def convert_data_type_gap_to_member(
     new_name = _require_str(body, "name")
     new_type = _require_str(body, "type")
     conversion = _member_restore(body)
-    selector = {"index": int(member)} if member.isdigit() else {"name": member}
+    selector = _path_member_selector(member)
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -2544,7 +2559,7 @@ def update_data_type_value(
         )
     if new_name is not None and not isinstance(new_name, str):
         return json_error(400, error="invalid member", detail="new_name must be a string")
-    selector = {"index": int(value)} if value.isdigit() else {"name": value}
+    selector = _path_member_selector(value)
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -2570,7 +2585,7 @@ def update_data_type_value(
 @router.delete("/api/data-types/{data_type_id}/values/{value}")
 def remove_data_type_value(data_type_id: int, value: str) -> Response:
     """Remove one enum constant, selected by name or index."""
-    selector = {"index": int(value)} if value.isdigit() else {"name": value}
+    selector = _path_member_selector(value)
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -2730,6 +2745,20 @@ def _optional_signature_bits(value: Any) -> int | None:
     return None if value is signatures.UNSET or value is None else int(value)
 
 
+def _signature_parameter_field_error(at: Any, kind: Any, bits: Any) -> Response | None:
+    """Validate optional ``at``/``kind``/``bits`` for a parameter write, or None."""
+    for key, value in (("at", at), ("kind", kind)):
+        if value is not None and value is not signatures.UNSET and not isinstance(value, str):
+            return json_error(400, error="invalid parameter", detail=f"{key} must be a string")
+    if (
+        bits is not None
+        and bits is not signatures.UNSET
+        and (isinstance(bits, bool) or not isinstance(bits, int))
+    ):
+        return json_error(400, error="invalid parameter", detail="bits must be an integer")
+    return None
+
+
 @router.get("/api/binaries/{binary_id}/signatures")
 def list_binary_signatures(binary_id: int) -> Response:
     """The binary's parsed function signatures, ordered by name."""
@@ -2879,15 +2908,9 @@ def add_function_signature_parameter(
     at = _signature_field(body, "at")
     kind = _signature_field(body, "kind")
     bits = _signature_field(body, "bits")
-    for key, value in (("at", at), ("kind", kind)):
-        if value is not None and value is not signatures.UNSET and not isinstance(value, str):
-            return json_error(400, error="invalid parameter", detail=f"{key} must be a string")
-    if (
-        bits is not None
-        and bits is not signatures.UNSET
-        and (isinstance(bits, bool) or not isinstance(bits, int))
-    ):
-        return json_error(400, error="invalid parameter", detail="bits must be an integer")
+    field_error = _signature_parameter_field_error(at, kind, bits)
+    if field_error is not None:
+        return field_error
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -2945,15 +2968,9 @@ def update_function_signature_parameter(
         return json_error(400, error="invalid type", detail="type must be a string")
     if name is not None and not isinstance(name, str):
         return json_error(400, error="invalid name", detail="name must be a string")
-    for key, value in (("at", at), ("kind", kind)):
-        if value is not None and value is not signatures.UNSET and not isinstance(value, str):
-            return json_error(400, error="invalid parameter", detail=f"{key} must be a string")
-    if (
-        bits is not None
-        and bits is not signatures.UNSET
-        and (isinstance(bits, bool) or not isinstance(bits, int))
-    ):
-        return json_error(400, error="invalid parameter", detail="bits must be an integer")
+    field_error = _signature_parameter_field_error(at, kind, bits)
+    if field_error is not None:
+        return field_error
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -9247,7 +9264,6 @@ def job_events(request: Request, job_id: int) -> Response:
 # The bound every bulk read and write shares: a batch is a caller's list, not a
 # corpus dump, so an id list or a definition list past this is a 400.
 _BATCH_ID_LIMIT = 200
-MAX_BULK_TYPE_DEFINITIONS = 100
 
 
 def _id_list(request: Request, name: str) -> list[int] | None:
@@ -9321,7 +9337,7 @@ def _definition_list(body: dict[str, Any]) -> list[Any] | None:
         raw = data_types.split_definitions(raw)
     if not isinstance(raw, list) or not raw:
         return None
-    if len(raw) > MAX_BULK_TYPE_DEFINITIONS:
+    if len(raw) > data_types.MAX_BULK_DEFINITIONS:
         return None
     if any(not isinstance(entry, (str, dict)) for entry in raw):
         return None
@@ -9422,28 +9438,7 @@ def create_analysis_data_types(
     unusable one is skipped with its reason rather than guessed at, and the
     batch is one journaled action, one entry per type.
     """
-    definitions = _definition_list(body)
-    if definitions is None:
-        return json_error(
-            400,
-            error="invalid types",
-            detail=(
-                f"types must be a non-empty list of at most {MAX_BULK_TYPE_DEFINITIONS} definitions"
-            ),
-        )
-    with contextlib.closing(_open()) as conn:
-        analysis = store.get_analysis(conn, analysis_id)
-        if analysis is None:
-            return json_error(
-                404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
-            )
-        binary_id = int(analysis["binary_id"])
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            report = surface.bulk_data_type_definitions(
-                conn, log, binary_id=binary_id, definitions=definitions, create=True
-            )
-    return json_response(log.attach(report))
+    return _bulk_analysis_data_types(analysis_id, body, create=True)
 
 
 @router.put("/api/analyses/{analysis_id}/data-types")
@@ -9456,13 +9451,19 @@ def update_analysis_data_types(
     does not carry is skipped ``no stored type named ...`` rather than created,
     which is what makes this the update half of the hosted pair.
     """
+    return _bulk_analysis_data_types(analysis_id, body, create=False)
+
+
+def _bulk_analysis_data_types(analysis_id: int, body: dict[str, Any], *, create: bool) -> Response:
+    """Shared body of the bulk create and update data-type routes."""
     definitions = _definition_list(body)
     if definitions is None:
         return json_error(
             400,
             error="invalid types",
             detail=(
-                f"types must be a non-empty list of at most {MAX_BULK_TYPE_DEFINITIONS} definitions"
+                "types must be a non-empty list of at most"
+                f" {data_types.MAX_BULK_DEFINITIONS} definitions"
             ),
         )
     with contextlib.closing(_open()) as conn:
@@ -9475,7 +9476,7 @@ def update_analysis_data_types(
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             report = surface.bulk_data_type_definitions(
-                conn, log, binary_id=binary_id, definitions=definitions, create=False
+                conn, log, binary_id=binary_id, definitions=definitions, create=create
             )
     return json_response(log.attach(report))
 

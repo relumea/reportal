@@ -10029,31 +10029,12 @@ def crypto_scan(
         typer.echo(json.dumps(log.attach(result)))
         return
     _print_journal_action(log, json_output)
-    findings = result.get("findings")
-    findings = findings if isinstance(findings, list) else []
-    console.print(f"\n[bold cyan]binary {binary_id}[/bold cyan]")
-    if not findings:
-        console.print("[yellow]No crypto indicators.[/yellow]")
-        return
-    by_confidence = result.get("by_confidence")
-    by_confidence = by_confidence if isinstance(by_confidence, dict) else {}
-    console.print(
-        f"{result.get('count', len(findings))} findings,"
-        f" high {by_confidence.get('high', 0)}, medium {by_confidence.get('medium', 0)}"
+    _print_confidence_findings(
+        binary_id,
+        result,
+        title=f"binary {binary_id}",
+        empty="No crypto indicators.",
     )
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Confidence", style="cyan")
-    table.add_column("Kind")
-    table.add_column("Name")
-    table.add_column("Detail")
-    for finding in findings:
-        table.add_row(
-            str(finding.get("confidence", "")),
-            str(finding.get("kind", "")),
-            str(finding.get("name", "")),
-            str(finding.get("detail", "")),
-        )
-    console.print(table)
 
 
 # ── pe-info ────────────────────────────────────────────────────────
@@ -10633,13 +10614,19 @@ def protocols_command(
 # ── behavior ───────────────────────────────────────────────────────
 
 
-def _print_behavior(binary_id: int, domain: str, result: dict[str, Any]) -> None:
-    """Print one behavior scan's confidence counts and findings table."""
+def _print_confidence_findings(
+    binary_id: int,
+    result: dict[str, Any],
+    *,
+    title: str,
+    empty: str,
+) -> None:
+    """Print a confidence-bucketed findings table shared by crypto and behavior."""
     findings = result.get("findings")
     findings = findings if isinstance(findings, list) else []
-    console.print(f"\n[bold cyan]binary {binary_id} {domain}[/bold cyan]")
+    console.print(f"\n[bold cyan]{title}[/bold cyan]")
     if not findings:
-        console.print(f"[yellow]No {domain} behavior found.[/yellow]")
+        console.print(f"[yellow]{empty}[/yellow]")
         return
     by_confidence = result.get("by_confidence")
     by_confidence = by_confidence if isinstance(by_confidence, dict) else {}
@@ -10660,6 +10647,16 @@ def _print_behavior(binary_id: int, domain: str, result: dict[str, Any]) -> None
             str(finding.get("detail", "")),
         )
     console.print(table)
+
+
+def _print_behavior(binary_id: int, domain: str, result: dict[str, Any]) -> None:
+    """Print one behavior scan's confidence counts and findings table."""
+    _print_confidence_findings(
+        binary_id,
+        result,
+        title=f"binary {binary_id} {domain}",
+        empty=f"No {domain} behavior found.",
+    )
 
 
 @app.command("behavior")

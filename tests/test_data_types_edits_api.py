@@ -231,6 +231,30 @@ class TestTypeFieldRoutes:
         assert status.startswith("400")
         assert json_body(body, headers)["error"] == "invalid request"
 
+    def test_member_edit_needs_a_selector(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _seed_type(conn, binary_id)
+        status, headers, body = _patch(
+            f"/api/data-types/{data_type_id}",
+            {"member": {"new_name": "x"}},
+        )
+        assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid member"
+        assert "name or an index" in payload["detail"]
+
+    def test_member_name_and_index_are_exclusive(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _seed_type(conn, binary_id)
+        status, headers, body = _patch(
+            f"/api/data-types/{data_type_id}",
+            {"member": {"name": "field_C", "index": 1, "new_name": "x"}},
+        )
+        assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid member"
+        assert "exclusive" in payload["detail"]
+
     def test_the_kind_change_lands_in_history(self, conn: sqlite3.Connection) -> None:
         binary_id = _seed_binary(conn)
         data_type_id = _seed_type(conn, binary_id)

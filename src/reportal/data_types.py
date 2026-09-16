@@ -837,14 +837,21 @@ def _load(conn: sqlite3.Connection, data_type_id: int) -> dict[str, Any]:
 
 
 def _member_index(row: Mapping[str, Any], *, name: str | None, index: int | None) -> int:
-    """Return the position of the selected member, or raise :class:`UnknownMemberError`."""
+    """Return the position of the selected member, or raise.
+
+    ``name`` and ``index`` are exclusive: naming both is
+    :class:`InvalidMemberError` rather than silently preferring one, and naming
+    neither is the same error rather than a missing-member 404.
+    """
     members = list(row["members"])
+    if index is not None and name is not None:
+        raise InvalidMemberError("name and index are exclusive; select the member with one of them")
     if index is not None:
         if 0 <= index < len(members):
             return index
         raise UnknownMemberError(f"member index {index} is out of range")
     if name is None:
-        raise UnknownMemberError("no member selector given")
+        raise InvalidMemberError("no member selector given")
     for position, member in enumerate(members):
         if str(member["name"]) == name:
             return position
@@ -888,14 +895,23 @@ def _insert_position(row: Mapping[str, Any], *, index: int | None, after: str | 
 
 
 def _value_index(row: Mapping[str, Any], *, name: str | None, index: int | None) -> int:
-    """Return the position of the selected enum value, or raise."""
+    """Return the position of the selected enum value, or raise.
+
+    ``name`` and ``index`` are exclusive: naming both is
+    :class:`InvalidValueError` rather than silently preferring one, and naming
+    neither is the same error rather than a missing-value 404.
+    """
     values = list(row["values"])
+    if index is not None and name is not None:
+        raise InvalidValueError(
+            "name and index are exclusive; select the enum value with one of them"
+        )
     if index is not None:
         if 0 <= index < len(values):
             return index
         raise UnknownValueError(f"enum value index {index} is out of range")
     if name is None:
-        raise UnknownValueError("no enum value selector given")
+        raise InvalidValueError("no enum value selector given")
     for position, value in enumerate(values):
         if str(value["name"]) == name:
             return position

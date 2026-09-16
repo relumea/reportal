@@ -214,6 +214,14 @@ class TestEdits:
         with pytest.raises(data_types.InvalidMemberError):
             data_types.update_member(conn, data_type_id, name="field_C")
 
+    def test_update_member_needs_exactly_one_selector(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id, DEFINITION)
+        with pytest.raises(data_types.InvalidMemberError, match="no member selector"):
+            data_types.update_member(conn, data_type_id, new_name="x")
+        with pytest.raises(data_types.InvalidMemberError, match="exclusive"):
+            data_types.update_member(conn, data_type_id, name="field_C", index=1, new_name="x")
+
     def test_add_member_appends_at_the_total_size(self, conn: sqlite3.Connection) -> None:
         binary_id = _seed_binary(conn)
         data_type_id = _make_type(conn, binary_id, DEFINITION)

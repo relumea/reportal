@@ -949,7 +949,11 @@ def _type_edit(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _member_selector(value: dict[str, Any], key: str) -> dict[str, Any]:
-    """Decode a member or enum-value selector object's name/index."""
+    """Decode a member or enum-value selector object's name/index.
+
+    Exactly one of ``name`` or ``index`` is required; naming both is refused
+    rather than silently preferring the index.
+    """
     name = value.get("name")
     index = value.get("index")
     if name is not None and not isinstance(name, str):
@@ -958,6 +962,8 @@ def _member_selector(value: dict[str, Any], key: str) -> dict[str, Any]:
         raise ToolError("invalid params", f"{key}.index must be an integer")
     if name is None and index is None:
         raise ToolError("invalid params", f"{key} needs a name or an index")
+    if name is not None and index is not None:
+        raise ToolError("invalid params", f"{key} name and index are exclusive")
     return {"name": name, "index": index}
 
 
