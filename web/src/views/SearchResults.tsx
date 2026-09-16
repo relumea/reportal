@@ -34,10 +34,15 @@ export function functionHref(id: number): string {
   return `/functions/${id}`;
 }
 
-// reportal has no per-collection or per-tag detail route, so those hits lead to
-// the view that owns the entity rather than to a page that does not exist.
-export const COLLECTIONS_HREF = "/collections";
-const BINARIES_HREF = "/binaries";
+// reportal has no per-collection or per-tag detail route, so those hits open
+// the owning view with `?id=` so the matched row is selected.
+export function collectionHref(id: number): string {
+  return `/collections?id=${id}`;
+}
+
+export function tagHref(id: number): string {
+  return `/tags?id=${id}`;
+}
 
 export function searchHits(results: SearchResults): SearchHit[] {
   return [
@@ -51,8 +56,8 @@ export function searchHits(results: SearchResults): SearchHit[] {
 export function hitHref(hit: SearchHit): string {
   if (hit.kind === "binary") return binaryHref(hit.row.id);
   if (hit.kind === "function") return functionHref(hit.row.id);
-  if (hit.kind === "collection") return COLLECTIONS_HREF;
-  return BINARIES_HREF;
+  if (hit.kind === "collection") return collectionHref(hit.row.id);
+  return tagHref(hit.row.id);
 }
 
 /** The kind label a result row shows. */
@@ -71,7 +76,7 @@ function hitMeta(hit: SearchHit): ReactNode {
     return (
       <>
         <span className="search-row-kind">{hitKindLabel(hit)}</span>
-        <span>{hit.row.sha256.slice(0, 16)}</span>
+        <span title={hit.row.sha256}>{hit.row.sha256.slice(0, 16)}</span>
         <span>{hit.row.size.toLocaleString()} B</span>
         <span>{[hit.row.format, hit.row.arch].filter(Boolean).join(" / ") || "n/a"}</span>
         {_tags(hit.row.tags)}

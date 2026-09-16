@@ -178,12 +178,12 @@ function CollectionDetailPanel({
             {
               label: "",
               render: (row) => (
-                <Button
+                <ConfirmButton
+                  label="Remove"
+                  message={`Remove ${row.name} from this collection?`}
                   pending={busy === `remove-${row.id}`}
-                  onClick={() => void removeMember(row.id)}
-                >
-                  Remove
-                </Button>
+                  onConfirm={() => void removeMember(row.id)}
+                />
               ),
             },
           ]}
@@ -231,7 +231,16 @@ export function CollectionsView({
   );
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [selected, setSelected] = useState<number | null>(null);
+  const selectedFromQuery = (() => {
+    const id = Number(query.id);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  })();
+  const [selected, setSelected] = useState<number | null>(selectedFromQuery);
+  const [queryIdSynced, setQueryIdSynced] = useState(query.id ?? "");
+  if ((query.id ?? "") !== queryIdSynced) {
+    setQueryIdSynced(query.id ?? "");
+    if (selectedFromQuery !== null) setSelected(selectedFromQuery);
+  }
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 

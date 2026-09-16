@@ -18,7 +18,7 @@ import {
 import { SEARCH_KIND_LABELS, SEARCH_KINDS } from "../constants";
 import type { SearchKind, SearchResults } from "../types";
 import { useAsync } from "../useAsync";
-import { COLLECTIONS_HREF, binaryHref, functionHref } from "./SearchResults";
+import { collectionHref, binaryHref, functionHref, tagHref } from "./SearchResults";
 
 export function SearchView({
   query,
@@ -158,7 +158,7 @@ export function SearchView({
                   { label: "ID", key: "id", numeric: true },
                   {
                     label: "Name",
-                    render: (row) => <Link to={COLLECTIONS_HREF}>{row.name}</Link>,
+                    render: (row) => <Link to={collectionHref(row.id)}>{row.name}</Link>,
                   },
                   { label: "Description", key: "description" },
                   { label: "Binaries", key: "binary_count", numeric: true },
@@ -176,7 +176,10 @@ export function SearchView({
               <DataTable
                 columns={[
                   { label: "ID", key: "id", numeric: true },
-                  { label: "Name", key: "name" },
+                  {
+                    label: "Name",
+                    render: (row) => <Link to={tagHref(row.id)}>{row.name}</Link>,
+                  },
                   { label: "Binaries", key: "binary_count", numeric: true },
                 ]}
                 rows={results.tags}

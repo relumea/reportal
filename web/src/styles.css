@@ -2972,6 +2972,12 @@ kbd.key {
   :root {
     --table-max-height: 460px;
   }
+
+  .chat-input {
+    min-width: 0;
+    width: 100%;
+    flex: 1 1 100%;
+  }
 }
 
 /* ── Full-file memory page ────────────────────────────────────────────

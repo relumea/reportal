@@ -408,14 +408,12 @@ function TeamMembers({
           {
             label: "",
             render: (row) => (
-              <Button
-                size="sm"
-                tone="ghost"
+              <ConfirmButton
+                label="Remove"
+                message={`Remove ${row.name} from ${team.name}?`}
                 pending={busy === `remove-${team.id}-${row.id}`}
-                onClick={() => onRemove(row.id)}
-              >
-                Remove
-              </Button>
+                onConfirm={() => onRemove(row.id)}
+              />
             ),
           },
         ]}
@@ -436,6 +434,7 @@ function ActivityPanel(): ReactNode {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [note, setNote] = useState("");
   const items: ActivityItem[] = feed.data?.items ?? [];
   return (
     <Panel
@@ -492,10 +491,12 @@ function ActivityPanel(): ReactNode {
           disabled={!message.trim()}
           onClick={() => {
             setError(null);
+            setNote("");
             setBusy(true);
             void api("/users/feedback", { method: "POST", json: { message: message.trim() } })
               .then(() => {
                 setMessage("");
+                setNote("Feedback stored.");
                 feed.reload();
                 notes.reload();
               })
@@ -507,6 +508,7 @@ function ActivityPanel(): ReactNode {
         </Button>
       </Toolbar>
       {error ? <ErrorNote error={error} /> : null}
+      {note ? <Note>{note}</Note> : null}
       {notes.data && notes.data.feedback.length > 0 ? (
         <DataTable
           columns={[
@@ -628,13 +630,12 @@ function SecretsPanel(): ReactNode {
             {
               label: "",
               render: (row) => (
-                <Button
-                  size="sm"
+                <ConfirmButton
+                  label="Remove"
+                  message={`Remove ${row.name}?`}
                   pending={busy === `rm:${row.name}`}
-                  onClick={() => remove(row)}
-                >
-                  Remove
-                </Button>
+                  onConfirm={() => remove(row)}
+                />
               ),
             },
           ]}

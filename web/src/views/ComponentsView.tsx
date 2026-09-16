@@ -5,6 +5,7 @@ import { api } from "../api";
 import {
   Badge,
   Button,
+  ConfirmButton,
   DataTable,
   EmptyState,
   ErrorNote,
@@ -137,15 +138,15 @@ export function ComponentsView(): ReactNode {
                   >
                     Reload
                   </Button>
-                  <Button
-                    size="sm"
-                    disabled={!row.withdrawable}
-                    title={row.withdrawable ? undefined : row.withdraw_reason}
-                    pending={busy === `withdraw:${row.name}`}
-                    onClick={() => void withdrawOne(row)}
-                  >
-                    Withdraw
-                  </Button>
+                  <span title={row.withdrawable ? undefined : row.withdraw_reason}>
+                    <ConfirmButton
+                      label="Withdraw"
+                      message={`Withdraw ${row.name}?`}
+                      disabled={!row.withdrawable}
+                      pending={busy === `withdraw:${row.name}`}
+                      onConfirm={() => void withdrawOne(row)}
+                    />
+                  </span>
                 </div>
               ),
             },

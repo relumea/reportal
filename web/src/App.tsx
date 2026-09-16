@@ -231,6 +231,11 @@ function BinariesRoute(): ReactNode {
   return <BinariesView query={Object.fromEntries(params)} />;
 }
 
+function TagsRoute(): ReactNode {
+  const [params] = useSearchParams();
+  return <TagsView query={Object.fromEntries(params)} />;
+}
+
 function CollectionsRoute(): ReactNode {
   const [params] = useSearchParams();
   return <CollectionsView query={Object.fromEntries(params)} />;
@@ -525,7 +530,7 @@ export function App(): ReactNode {
     },
     {
       path: "/tags",
-      element: <TagsView />,
+      element: <TagsRoute />,
       handle: { view: "tags", title: "Tags" },
     },
     {

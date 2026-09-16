@@ -89,11 +89,11 @@ function SeamCard({ seam }: { seam: IntegrationSeam }): ReactNode {
 
 /** What this install can do, read from `GET /api/config`. */
 function InstanceCard(): ReactNode {
-  const { data, error } = useAsync(() => api<InstanceConfig>("/config"), []);
+  const { data, error, reload } = useAsync(() => api<InstanceConfig>("/config"), []);
   if (error) {
     return (
       <Card title="Instance">
-        <Muted>{String(error)}</Muted>
+        <ErrorNote error={error} onRetry={reload} />
       </Card>
     );
   }
@@ -142,11 +142,11 @@ function InstanceCard(): ReactNode {
 
 /** Readiness before a start, read from `GET /api/doctor`. */
 function ReadinessCard(): ReactNode {
-  const { data, error } = useAsync(() => api<DoctorReport>("/doctor"), []);
+  const { data, error, reload } = useAsync(() => api<DoctorReport>("/doctor"), []);
   if (error) {
     return (
       <Card title="Readiness">
-        <Muted>{String(error)}</Muted>
+        <ErrorNote error={error} onRetry={reload} />
       </Card>
     );
   }
@@ -190,7 +190,7 @@ function ReadinessCard(): ReactNode {
  * value rather than a guess: a config file with a wrong path is worse than none.
  */
 function McpCard(): ReactNode {
-  const { data, error } = useAsync(() => api<InstanceConfig>("/config"), []);
+  const { data, error, reload } = useAsync(() => api<InstanceConfig>("/config"), []);
   const [copied, setCopied] = useState("");
 
   const copy = async (label: string, text: string): Promise<void> => {
@@ -206,7 +206,7 @@ function McpCard(): ReactNode {
   if (error) {
     return (
       <Panel title="Connect an MCP client">
-        <ErrorNote error={error} />
+        <ErrorNote error={error} onRetry={reload} />
       </Panel>
     );
   }
@@ -252,7 +252,7 @@ function McpCard(): ReactNode {
 }
 
 export function IntegrationsView(): ReactNode {
-  const { data, error } = useAsync(() => api<IntegrationInventory>("/integrations"), []);
+  const { data, error, reload } = useAsync(() => api<IntegrationInventory>("/integrations"), []);
 
   return (
     <Panel
@@ -260,7 +260,7 @@ export function IntegrationsView(): ReactNode {
       subtitle="Every seam a third party extends reportal through, read from the live registries."
     >
       {error ? (
-        <Muted>{String(error)}</Muted>
+        <ErrorNote error={error} onRetry={reload} />
       ) : data === undefined ? (
         <Loading label="Reading the registries" rows={4} />
       ) : (

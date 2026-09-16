@@ -922,7 +922,7 @@ export function BinariesView({
               {
                 label: "SHA-256",
                 mono: true,
-                render: (row) => row.sha256.slice(0, 16),
+                render: (row) => <span title={row.sha256}>{row.sha256.slice(0, 16)}</span>,
               },
               { label: "Functions", key: "function_count", numeric: true },
               {

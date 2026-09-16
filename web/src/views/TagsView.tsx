@@ -89,9 +89,22 @@ function TagDetailPanel({ tag, onChanged }: { tag: TagRow; onChanged: () => void
   );
 }
 
-export function TagsView(): ReactNode {
+export function TagsView({
+  query = {},
+}: {
+  query?: Record<string, string>;
+}): ReactNode {
   const { data, error, reload } = useAsync(() => api<{ tags: TagRow[] }>("/tags"), []);
-  const [selected, setSelected] = useState<number | null>(null);
+  const selectedFromQuery = (() => {
+    const id = Number(query.id);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  })();
+  const [selected, setSelected] = useState<number | null>(selectedFromQuery);
+  const [queryIdSynced, setQueryIdSynced] = useState(query.id ?? "");
+  if ((query.id ?? "") !== queryIdSynced) {
+    setQueryIdSynced(query.id ?? "");
+    if (selectedFromQuery !== null) setSelected(selectedFromQuery);
+  }
 
   const tags = data?.tags;
   const current = tags?.find((tag) => tag.id === selected) ?? null;

@@ -1256,9 +1256,12 @@ export function AiDecompilationPanel({ functionId }: { functionId: number }): Re
               Save
             </Button>
             {commentByLine.has(openLine) ? (
-              <Button pending={busy === `drop:${openLine}`} onClick={() => void removeComment(openLine)}>
-                Remove
-              </Button>
+              <ConfirmButton
+                label="Remove"
+                message={`Remove comment on line ${openLine}?`}
+                pending={busy === `drop:${openLine}`}
+                onConfirm={() => void removeComment(openLine)}
+              />
             ) : null}
           </Toolbar>
         )}
