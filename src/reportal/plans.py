@@ -9,35 +9,36 @@ catalogs without a code change.
 ``internal`` is the staff/self-host tier: it removes the metered limits.  Give
 it only to organisations that are not billed, never to a self-serve signup.
 
-Why the token allowances look small
------------------------------------
+What a plan grants, and why
+---------------------------
 
-reportal resells inference.  Every AI extra (the whole-function rewrite, the
-summaries, the comments, the type and rename suggestions, the auto workers)
-spends Claude tokens that Anthropic bills at the rates in :data:`MODEL_RATES`,
-so a plan's token allowance is a direct cost of goods sold and not a number to
-pick for marketing.  The allowances below are derived from those rates rather
-than chosen: :func:`plan_token_cogs_usd` states what a tier costs to serve at
-full utilization, and :data:`MAX_COGS_SHARE` is the ceiling that share may
-reach.  ``tests/test_plans.py`` fails the gate for a catalog that breaks it,
-which is the guard against a well-meaning edit that reprices the product into a
-loss.
+A plan grants **credits**, not tokens.  A credit is one reference task (see
+:mod:`reportal.credits`), so a tenant reads its allowance as "4,200 summaries,
+or 2,100 AI decompilations, or 1,050 comment passes" rather than as a token
+count it cannot predict or compare.  Tokens stay behind the counter: the ledger
+still records them, and that record is what proves the credit price covers the
+inference it buys.
 
-The arithmetic, in one place:
-
-* the default workload model is :data:`INPUT_SHARE` input to output, because
-  reverse-engineering prompts send a decompiled function and get back a smaller
-  annotation;
-* at Claude Sonnet's ``$2``/``$10`` per MTok that blends to
-  :func:`blended_usd_per_mtok` = ``$3.60`` per million tokens;
-* a tier may spend at most :data:`MAX_COGS_SHARE` of its price on that, so a
-  ``$39`` tier carries ``39 * 0.20 / 3.60`` = ``2.1`` million tokens.
+The allowances are derived rather than chosen, because reportal resells
+inference and a credit allowance is a direct cost of goods sold.  The chain is:
+:data:`MODEL_RATES` gives the published per-million rates,
+:func:`reportal.credits.credit_cogs_usd` prices one credit at those rates, and
+a tier may spend at most :data:`MAX_COGS_SHARE` of its price on inference.  So
+a ``$39`` tier carries ``39 * 0.20 / 0.00183`` credits, rounded to a friendly
+4,200.  ``tests/test_plans.py`` asserts that ceiling rather than the literal
+numbers, so raising an allowance is allowed and raising it past what the price
+supports fails the gate.
 
 Two pressure valves keep the ceiling from being a wall.  An organisation past
-its allowance buys more at :data:`OVERAGE_USD_PER_MTOK` rather than stopping,
-and an organisation that configures its own Anthropic key spends its own
-inference budget, so :func:`metered` reports False and the allowance does not
-apply at all.  Self-hosted installs are the second case by construction.
+its allowance buys more at :data:`reportal.credits.OVERAGE_USD_PER_CREDIT`
+rather than stopping, and an organisation that configures its own model
+endpoint spends its own inference budget, so :func:`metered` reports False and
+the allowance does not apply at all.  Self-hosted installs are the second case
+by construction.
+
+:data:`INPUT_SHARE` and :func:`blended_usd_per_mtok` remain as the internal
+margin arithmetic: they are what :mod:`reportal.metering` prices a recorded
+token row with, and they are not a customer-facing number.
 """
 
 from __future__ import annotations
@@ -88,9 +89,10 @@ MAX_COGS_SHARE = 0.20
 # acquisition spend and is capped like it.
 MAX_FREE_COGS_USD = 1.00
 
-# Price of tokens past the allowance, USD per million.  Above the blended cost
-# by design: an overage is unplanned capacity and carries a thinner margin than
-# a subscription, but never a negative one.
+# Price of tokens past the allowance, USD per million.  Internal only: the
+# customer-facing overage is per credit
+# (:data:`reportal.credits.OVERAGE_USD_PER_CREDIT`), and this is the token-side
+# figure the margin arithmetic uses.
 OVERAGE_USD_PER_MTOK = 6.0
 
 
@@ -119,6 +121,18 @@ def usd_for_tokens(tokens: int, model: str = COST_MODEL) -> float:
     return tokens * blended_usd_per_mtok(model) / 1_000_000
 
 
+def _overage_usd_per_credit() -> float:
+    """The per-credit overage price, read from the credit module.
+
+    A function rather than a constant for the same reason as
+    :meth:`Plan.credit_cogs_usd`: the credit module reads this one's rates, so
+    the import runs in the other direction at call time.
+    """
+    from reportal import credits as credits_mod
+
+    return credits_mod.OVERAGE_USD_PER_CREDIT
+
+
 @dataclass(frozen=True)
 class Plan:
     """One subscription tier."""
@@ -127,7 +141,7 @@ class Plan:
     name: str
     tagline: str
     price_cents: int
-    monthly_tokens: int
+    monthly_credits: int
     monthly_auto_runs: int
     max_binaries: int
     max_api_keys: int
@@ -143,21 +157,28 @@ class Plan:
         """The tier's price in dollars."""
         return self.price_cents / 100
 
-    def token_cogs_usd(self) -> float:
-        """Inference cost, USD, if the tier burned its whole token allowance."""
-        if self.monthly_tokens == UNLIMITED:
+    def credit_cogs_usd(self) -> float:
+        """Inference cost, USD, if the tier burned its whole credit allowance.
+
+        Imported here rather than at module scope because :mod:`reportal.credits`
+        reads this module's rates: the dependency runs catalog to credits, and a
+        module-level import back would close the cycle.
+        """
+        from reportal import credits as credits_mod
+
+        if self.monthly_credits == UNLIMITED:
             return float("inf")
-        return usd_for_tokens(self.monthly_tokens)
+        return self.monthly_credits * credits_mod.credit_cogs_usd()
 
     def cogs_share(self) -> float:
         """Inference cost as a share of price; ``inf`` for a tier with no price."""
         if self.price_cents <= 0:
-            return float("inf") if self.monthly_tokens != 0 else 0.0
-        return self.token_cogs_usd() / self.price_usd
+            return float("inf") if self.monthly_credits != 0 else 0.0
+        return self.credit_cogs_usd() / self.price_usd
 
     def metered(self) -> bool:
-        """Whether this tier's token use counts against an allowance."""
-        return self.monthly_tokens != UNLIMITED
+        """Whether this tier's credit use counts against an allowance."""
+        return self.monthly_credits != UNLIMITED
 
     def describe(self) -> dict[str, object]:
         """The public shape: what a pricing page and the SPA render."""
@@ -170,7 +191,7 @@ class Plan:
             "currency": self.currency,
             "interval": self.interval,
             "trial_days": self.trial_days,
-            "monthly_tokens": self.monthly_tokens,
+            "monthly_credits": self.monthly_credits,
             "monthly_auto_runs": self.monthly_auto_runs,
             "max_binaries": self.max_binaries,
             "max_api_keys": self.max_api_keys,
@@ -178,29 +199,32 @@ class Plan:
             "features": list(self.features),
             "self_serve": self.self_serve,
             "metered": self.metered(),
-            "overage_usd_per_mtok": OVERAGE_USD_PER_MTOK,
+            "overage_usd_per_credit": _overage_usd_per_credit(),
         }
 
 
-# The catalog, cheapest first.  Every token allowance here is
-# `tokens_for_budget(price_usd * MAX_COGS_SHARE)` rounded down to a round
-# number, which is what keeps `cogs_share()` under the ceiling.
+# The catalog, cheapest first.  Every credit allowance here is
+# `price_usd * MAX_COGS_SHARE / credits.credit_cogs_usd()` rounded down to a
+# friendly number, which is what keeps `cogs_share()` under the ceiling.  The
+# feature lines say what the credits buy rather than repeating the number,
+# because "2,100 AI decompilations" is the thing a customer is actually deciding
+# about.
 PLANS: tuple[Plan, ...] = (
     Plan(
         id="free",
         name="Free",
         tagline="Evaluate the workbench on one binary.",
         price_cents=0,
-        monthly_tokens=250_000,
+        monthly_credits=540,
         monthly_auto_runs=5,
         max_binaries=3,
         max_api_keys=1,
         max_seats=1,
         features=(
-            "250K LLM tokens / month",
+            "540 credits / month",
+            "About 540 summaries or 270 AI decompilations",
             "5 auto runs / month",
-            "3 binaries",
-            "1 seat",
+            "3 binaries, 1 seat",
             "Full static analysis, unmetered",
         ),
         self_serve=False,
@@ -210,18 +234,18 @@ PLANS: tuple[Plan, ...] = (
         name="Analyst",
         tagline="For solo reverse engineers and toolchain research.",
         price_cents=3900,
-        monthly_tokens=2_000_000,
+        monthly_credits=4_200,
         monthly_auto_runs=100,
         max_binaries=25,
         max_api_keys=5,
         max_seats=1,
         features=(
-            "2M LLM tokens / month",
+            "4,200 credits / month",
+            "About 2,100 AI decompilations or 1,050 comment passes",
             "100 auto runs / month",
-            "25 binaries",
-            "1 seat",
+            "25 binaries, 1 seat",
             "14-day free trial",
-            "Overage at $6 / M tokens",
+            "Extra credits at $0.02 each",
         ),
         self_serve=True,
         trial_days=14,
@@ -231,16 +255,16 @@ PLANS: tuple[Plan, ...] = (
         name="Team",
         tagline="For SOCs and product-security teams at scale.",
         price_cents=14900,
-        monthly_tokens=8_000_000,
+        monthly_credits=16_000,
         monthly_auto_runs=500,
         max_binaries=200,
         max_api_keys=25,
         max_seats=5,
         features=(
-            "8M LLM tokens / month",
+            "16,000 credits / month",
+            "About 8,000 AI decompilations, pooled across the team",
             "500 auto runs / month",
-            "200 binaries",
-            "5 seats",
+            "200 binaries, 5 seats",
             "Shared collections and team scoping",
             "Priority email support",
         ),
@@ -251,16 +275,17 @@ PLANS: tuple[Plan, ...] = (
         name="Enterprise",
         tagline="Dedicated capacity, custom retention, invoicing.",
         price_cents=74900,
-        monthly_tokens=40_000_000,
+        monthly_credits=82_000,
         monthly_auto_runs=3000,
         max_binaries=UNLIMITED,
         max_api_keys=UNLIMITED,
         max_seats=UNLIMITED,
         features=(
-            "40M LLM tokens / month",
+            "82,000 credits / month",
+            "About 41,000 AI decompilations",
             "3,000 auto runs / month",
             "Unlimited binaries, seats and API keys",
-            "Bring your own Anthropic key (unmetered)",
+            "Bring your own model endpoint (unmetered)",
             "Invoice billing and support SLA",
         ),
         self_serve=True,
@@ -270,7 +295,7 @@ PLANS: tuple[Plan, ...] = (
         name="Internal",
         tagline="Staff and self-hosted installs; not billed.",
         price_cents=0,
-        monthly_tokens=UNLIMITED,
+        monthly_credits=UNLIMITED,
         monthly_auto_runs=UNLIMITED,
         max_binaries=UNLIMITED,
         max_api_keys=UNLIMITED,

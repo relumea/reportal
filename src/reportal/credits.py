@@ -1,0 +1,239 @@
+"""What each AI task costs a tenant, in credits.
+
+Tokens are the wrong unit to sell.  A customer cannot predict them, cannot
+compare two vendors with them, and a bill that moves because a model got
+chattier is a support ticket rather than a price.  So the token ledger stays
+(:mod:`reportal.metering` keeps recording it, and it is what proves the margin
+internally), and what a tenant actually spends is a **credit**: a fixed,
+published price per task.
+
+The unit is defined rather than chosen.  One credit is one *reference task*:
+the cheapest real operation the portal performs, a function summary over a
+median function.  :data:`REFERENCE_TASK` names it, :func:`credit_cogs_usd`
+prices it at the published Claude rates, and every other task's credit cost is
+its measured cost divided by that, rounded up.  So the table below is derived:
+change the rates in :mod:`reportal.plans` and every credit cost moves with
+them, which is what keeps the catalog honest when a model is repriced.
+
+Where the profiles come from
+----------------------------
+
+:data:`TASK_PROFILES` is measurement, not estimate.  Each ``(input, output)``
+pair was taken by running the real prompt builders in :mod:`reportal.llm` over
+the 69 reversed functions of the ``notepad-rebrew`` project (median source 878
+characters), at roughly 3.6 characters per token for C.  The input side is what
+the builder actually produced; the output side is what the prompt's declared
+answer shape implies, which is why ``comments`` is the expensive one (a line
+per meaningful line of the function) and ``summary`` the cheap one (a
+paragraph).  ``tests/test_credits.py`` pins the ordering those measurements
+produced, so a profile edit that would reprice the catalog has to be
+deliberate.
+
+Size bands
+----------
+
+A published price still has to survive a 10,000-line function.  A task's cost
+is its base credits times a band multiplier taken from the *input* size
+(:data:`SIZE_BANDS`), so a large function costs more credits than a small one
+and the per-credit margin holds at both ends.  Input is used rather than output
+because it is known before the call, which is what lets a quota refuse work
+instead of discovering the overrun afterwards.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from reportal import llm, plans
+
+# Characters of decompiled C per token, shared with the module that sizes the
+# real prompts.  Used only to size a caller's text when it has no count of its
+# own, never to invent one.
+CHARS_PER_TOKEN = llm.CHARS_PER_TOKEN
+
+
+@dataclass(frozen=True)
+class TaskProfile:
+    """One AI task: what it is, and what one call of it costs to serve."""
+
+    name: str
+    label: str
+    describe: str
+    # Median tokens in and out for one call, measured over the reference corpus.
+    input_tokens: int
+    output_tokens: int
+    # Whether one call covers one function (so a binary-wide run charges per
+    # function) or the whole request.
+    per_function: bool = False
+
+    def cogs_usd(self) -> float:
+        """What one call of this task costs in inference, at the current rates."""
+        input_rate, output_rate = plans.MODEL_RATES.get(
+            plans.COST_MODEL, max(plans.MODEL_RATES.values(), key=lambda pair: pair[1])
+        )
+        return self.input_tokens * input_rate / 1e6 + self.output_tokens * output_rate / 1e6
+
+
+# Every billable AI task, keyed by the name the API, CLI and MCP all use.
+# A task absent from this table is not billable: the static analysis surface
+# (disassembly, xrefs, structs, matching, every rule-based scan) spends CPU
+# rather than inference and is unmetered on every plan, which is the single
+# most important thing this table says by omission.
+TASK_SUMMARY = llm.TASK_SUMMARY
+TASK_COMMENTS = llm.TASK_COMMENTS
+TASK_TYPES = llm.TASK_TYPES
+TASK_DECOMPILE = llm.TASK_DECOMPILE
+TASK_RENAMES = llm.TASK_RENAMES
+TASK_TRIAGE = llm.TASK_TRIAGE
+TASK_THREAT = llm.TASK_THREAT
+TASK_AGENT = llm.TASK_AGENT
+
+TASK_PROFILES: dict[str, TaskProfile] = {
+    TASK_SUMMARY: TaskProfile(
+        name=TASK_SUMMARY,
+        label="Function summary",
+        describe="One paragraph on what a function does.",
+        input_tokens=313,
+        output_tokens=120,
+    ),
+    TASK_RENAMES: TaskProfile(
+        name=TASK_RENAMES,
+        label="Rename suggestions",
+        describe="Proposed identifier names for a function.",
+        input_tokens=400,
+        output_tokens=180,
+    ),
+    TASK_TYPES: TaskProfile(
+        name=TASK_TYPES,
+        label="Type suggestions",
+        describe="Parameter, return and local type proposals.",
+        input_tokens=337,
+        output_tokens=200,
+    ),
+    TASK_DECOMPILE: TaskProfile(
+        name=TASK_DECOMPILE,
+        label="AI decompilation",
+        describe="A whole function rewritten as readable C.",
+        input_tokens=388,
+        output_tokens=280,
+    ),
+    TASK_COMMENTS: TaskProfile(
+        name=TASK_COMMENTS,
+        label="Inline comments",
+        describe="A comment on every meaningful line of a function.",
+        input_tokens=323,
+        output_tokens=602,
+    ),
+    TASK_TRIAGE: TaskProfile(
+        name=TASK_TRIAGE,
+        label="Function triage",
+        describe="A summary, score and capabilities per function.",
+        input_tokens=340,
+        output_tokens=180,
+        per_function=True,
+    ),
+    TASK_THREAT: TaskProfile(
+        name=TASK_THREAT,
+        label="Threat narrative",
+        describe="The written half of a threat report.",
+        input_tokens=900,
+        output_tokens=400,
+    ),
+    TASK_AGENT: TaskProfile(
+        name=TASK_AGENT,
+        label="Agent turn",
+        describe="One reasoning step of the conversation agent.",
+        input_tokens=1200,
+        output_tokens=300,
+    ),
+}
+
+# The task one credit is defined as.  The cheapest real operation, so every
+# other task costs a whole number of credits greater than or equal to one and
+# nothing has to be priced in fractions.
+REFERENCE_TASK = TASK_SUMMARY
+
+# Input-size bands.  A call whose input fits the first ceiling costs the task's
+# base credits; each band above doubles it.  The first ceiling is set above the
+# reference corpus's 90th percentile (about 1,300 tokens), so an ordinary
+# function is never surcharged and only a genuinely large one is.
+SIZE_BANDS: tuple[tuple[str, int, int], ...] = (
+    ("standard", 1_500, 1),
+    ("large", 6_000, 2),
+    ("very large", 20_000, 4),
+)
+# Multiplier for an input above the last band's ceiling.
+OVERSIZE_MULTIPLIER = 8
+
+# What a tenant pays for a credit beyond its allowance.  Above the plan rate
+# (roughly a cent a credit) because unplanned capacity carries a thinner margin,
+# and far above cost, which `tests/test_credits.py` checks.
+OVERAGE_USD_PER_CREDIT = 0.02
+
+
+def credit_cogs_usd() -> float:
+    """What one credit costs to serve: the reference task, at current rates."""
+    return TASK_PROFILES[REFERENCE_TASK].cogs_usd()
+
+
+def credits_for_budget(usd: float) -> int:
+    """How many credits *usd* of inference budget buys, rounded down."""
+    return int(usd / credit_cogs_usd())
+
+
+def band_for(input_tokens: int) -> tuple[str, int]:
+    """The size band an input falls in, as ``(name, multiplier)``."""
+    for name, ceiling, multiplier in SIZE_BANDS:
+        if input_tokens <= ceiling:
+            return name, multiplier
+    return "oversize", OVERSIZE_MULTIPLIER
+
+
+def base_credits(task: str) -> int:
+    """The credits one standard-sized call of *task* costs.
+
+    Derived from the task's measured cost against the reference task and
+    rounded up, so a task never costs less than it takes to serve and the
+    cheapest task is exactly one credit.  An unknown task is priced at the
+    most expensive profile rather than free, because an unpriced task must
+    never be a way to spend inference for nothing.
+    """
+    profile = TASK_PROFILES.get(task)
+    if profile is None:
+        profile = max(TASK_PROFILES.values(), key=lambda entry: entry.cogs_usd())
+    return max(1, math.ceil(profile.cogs_usd() / credit_cogs_usd()))
+
+
+def cost_of(task: str, input_tokens: int = 0) -> int:
+    """Credits one call of *task* costs, with its size band applied."""
+    return base_credits(task) * band_for(max(0, input_tokens))[1]
+
+
+def tokens_of(text: str) -> int:
+    """Approximate token count of *text*, for sizing a call before it runs."""
+    return math.ceil(len(text) / CHARS_PER_TOKEN)
+
+
+def describe_task(task: str) -> dict[str, object]:
+    """One task's public price row: what it is and what it costs."""
+    profile = TASK_PROFILES[task]
+    return {
+        "task": profile.name,
+        "label": profile.label,
+        "describe": profile.describe,
+        "credits": base_credits(task),
+        "per_function": profile.per_function,
+        "bands": [
+            {"name": name, "max_input_tokens": ceiling, "credits": base_credits(task) * multiplier}
+            for name, ceiling, multiplier in SIZE_BANDS
+        ],
+    }
+
+
+def catalog() -> list[dict[str, object]]:
+    """Every billable task, cheapest first; the published price list."""
+    return [
+        describe_task(name)
+        for name in sorted(TASK_PROFILES, key=lambda entry: (base_credits(entry), entry))
+    ]

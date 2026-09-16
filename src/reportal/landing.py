@@ -19,6 +19,7 @@ from __future__ import annotations
 from html import escape
 
 from reportal import __version__, plans
+from reportal import credits as credits_mod
 
 # Caching: the page is derived from code, so it changes only on deploy.  A short
 # max-age keeps a proxy from serving a stale price after an upgrade while still
@@ -138,13 +139,19 @@ _FEATURES: tuple[tuple[str, str], ...] = (
 )
 
 
-def _tokens(plan: plans.Plan) -> str:
-    """A plan's monthly token allowance, in the units a human reads."""
-    if plan.monthly_tokens == plans.UNLIMITED:
+def _credits(plan: plans.Plan) -> str:
+    """A plan's monthly credit allowance, as a human reads it."""
+    if plan.monthly_credits == plans.UNLIMITED:
         return "Unlimited"
-    if plan.monthly_tokens >= 1_000_000:
-        return f"{plan.monthly_tokens / 1_000_000:g}M"
-    return f"{plan.monthly_tokens / 1_000:g}K"
+    return f"{plan.monthly_credits:,}"
+
+
+def _decompilations(plan: plans.Plan) -> str:
+    """What the allowance buys in the task customers ask about most."""
+    if plan.monthly_credits == plans.UNLIMITED:
+        return "Unlimited"
+    per = credits_mod.base_credits(credits_mod.TASK_DECOMPILE)
+    return f"~{plan.monthly_credits // per:,}"
 
 
 def _count(value: int) -> str:
@@ -185,7 +192,8 @@ def _comparison_table() -> str:
     head = "".join(f'<th class="num">{escape(plan.name)}</th>' for plan in shown)
     rows: list[tuple[str, list[str]]] = [
         ("Price / month", [_price(plan) for plan in shown]),
-        ("LLM tokens / month", [_tokens(plan) for plan in shown]),
+        ("Credits / month", [_credits(plan) for plan in shown]),
+        ("AI decompilations", [_decompilations(plan) for plan in shown]),
         ("Auto runs / month", [_count(plan.monthly_auto_runs) for plan in shown]),
         ("Binaries", [_count(plan.max_binaries) for plan in shown]),
         ("Seats", [_count(plan.max_seats) for plan in shown]),
@@ -193,7 +201,11 @@ def _comparison_table() -> str:
         (
             "Overage",
             [
-                ("Not available" if plan.price_cents == 0 else f"${plans.OVERAGE_USD_PER_MTOK:g}/M")
+                (
+                    "Not available"
+                    if plan.price_cents == 0
+                    else f"${credits_mod.OVERAGE_USD_PER_CREDIT:.2f}/credit"
+                )
                 for plan in shown
             ],
         ),
@@ -210,27 +222,56 @@ def _comparison_table() -> str:
     )
 
 
+def _task_table() -> str:
+    """What each AI task costs, in credits; the price list itself."""
+    rows = "".join(
+        "<tr>"
+        f'<th scope="row">{escape(str(row["label"]))}</th>'
+        f"<td>{escape(str(row['describe']))}</td>"
+        f'<td class="num">{row["credits"]}'
+        f"{' / function' if row['per_function'] else ''}</td>"
+        "</tr>"
+        for row in credits_mod.catalog()
+    )
+    return (
+        "<table><thead><tr>"
+        '<th scope="col">Task</th><th scope="col">What you get</th>'
+        '<th scope="col" class="num">Credits</th>'
+        f"</tr></thead><tbody>{rows}</tbody></table>"
+    )
+
+
 def _faq() -> str:
     """The questions the pricing model actually raises, answered plainly."""
-    blended = plans.blended_usd_per_mtok()
-    token_answer = (
-        "Input and output tokens the AI extras spend, exactly as the model endpoint"
-        " reports them. Nothing is estimated. We price against"
-        f" {plans.COST_MODEL} at about ${blended:.2f} per million blended tokens."
+    reference = credits_mod.TASK_PROFILES[credits_mod.REFERENCE_TASK]
+    credit_answer = (
+        "One credit is one function summary, the cheapest thing the portal does."
+        " Every other task is priced against it and published above, so you can"
+        " count what a job costs before you run it rather than after."
+    )
+    size_answer = (
+        "Larger functions cost more, in bands rather than by the token. A normal"
+        f" function is the base price, one over ~{credits_mod.SIZE_BANDS[0][1]:,} tokens"
+        " of input costs double, and a very large one costs four times. The band is"
+        " decided before the call, so nothing surprises you afterwards."
     )
     overage_answer = (
-        "A paid plan keeps working and the extra is billed at"
-        f" ${plans.OVERAGE_USD_PER_MTOK:g} per million tokens. The free plan stops at its"
+        "A paid plan keeps working and extra credits are billed at"
+        f" ${credits_mod.OVERAGE_USD_PER_CREDIT:.2f} each. The free plan stops at its"
         " allowance rather than charging you unexpectedly."
     )
     static_answer = (
         "No. Disassembly, decompilation, cross-references, matching and every scan are"
-        " unmetered on every plan. Only the AI extras and auto runs count, because only"
-        " those spend inference."
+        " unmetered on every plan. Only the AI tasks above and auto runs cost credits,"
+        " because only those spend inference."
+    )
+    failure_answer = (
+        "Nothing. A credit is charged after a task returns a result, so a failed or"
+        " refused request costs you nothing."
     )
     own_key_answer = (
         "Yes. Point the bridge at your own endpoint and your inference is your own:"
-        " token allowances stop applying, because we are not paying for it."
+        " credit allowances stop applying, because we are not paying for it."
     )
     self_host_answer = (
         "Yes. reportal is a self-hosted portal first. A self-hosted install has no"
@@ -241,13 +282,16 @@ def _faq() -> str:
         " network call until you set an AI endpoint or name a URL to fetch."
     )
     entries: tuple[tuple[str, str], ...] = (
-        ("What counts as a token?", token_answer),
+        ("What is a credit?", credit_answer),
+        ("Does a big function cost more?", size_answer),
         ("What happens when I run out?", overage_answer),
         ("Is static analysis metered?", static_answer),
+        ("What if a task fails?", failure_answer),
         ("Can I use my own model key?", own_key_answer),
         ("Can I self-host?", self_host_answer),
         ("Does my data leave the install?", privacy_answer),
     )
+    del reference
     return "".join(
         f"<h3>{escape(question)}</h3><p>{escape(answer)}</p>" for question, answer in entries
     )
@@ -283,6 +327,7 @@ def render() -> str:
   <nav>
     <a href="#features">Features</a>
     <a href="#pricing">Pricing</a>
+    <a href="#credits">Credits</a>
     <a href="#faq">FAQ</a>
     <a href="/">Open the app</a>
   </nav>
@@ -308,10 +353,18 @@ def render() -> str:
 
 <section id="pricing"><div class="wrap">
   <h2>Pricing</h2>
-  <p class="lede">Static analysis is unmetered on every plan. Token allowances cover the
-     AI extras, priced on what the inference actually costs us, so the numbers are
+  <p class="lede">Static analysis is unmetered on every plan. Credits cover the AI
+     tasks, priced on what the inference actually costs us, so the numbers are
      sustainable rather than promotional.</p>
   <div class="plans">{cards}</div>
+</div></section>
+
+<section id="credits"><div class="wrap">
+  <h2>What a task costs</h2>
+  <p class="lede">One credit is one function summary. Everything else is priced against
+     it, so you can count the cost of a job before you run it. A larger function costs
+     more, in bands rather than by the token.</p>
+  {_task_table()}
 </div></section>
 
 <section><div class="wrap">

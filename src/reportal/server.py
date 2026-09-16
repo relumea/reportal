@@ -350,6 +350,22 @@ def _meter_tokens(organisation_id: int, path: str) -> Callable[[int, int, str], 
     return sink
 
 
+def _charge_credits(organisation_id: int, path: str) -> Callable[[str, int], None]:
+    """A charge sink that debits a tenant's credits once per billable task."""
+
+    def sink(task: str, input_tokens: int) -> None:
+        with contextlib.closing(db()) as conn:
+            metering.charge_task(
+                conn,
+                organisation_id,
+                task,
+                input_tokens=input_tokens,
+                detail=path,
+            )
+
+    return sink
+
+
 def _accepts_gzip(accept_encoding: str) -> bool:
     """True when the client accepts gzip and has not refused it via q=0."""
     for token in accept_encoding.split(","):
@@ -470,10 +486,11 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
                 return refusal
         # The actor is set here, in the async middleware, so the worker thread
         # the route runs on inherits it; a value set inside a sync dependency
-        # would not reach the handler.  The usage sink rides the same scope: a
-        # tenant request gets one, so every completion underneath it is metered
-        # without any AI route knowing about billing, and a request with no
-        # tenant gets none, so a self-hosted install records nothing.
+        # would not reach the handler.  Both meters ride the same scope: a
+        # tenant request gets a credit charger (what it is billed) and a token
+        # sink (what it cost us), so every AI route is metered without knowing
+        # billing exists, and a request with no tenant gets neither, so a
+        # self-hosted install records nothing.
         organisation_id = metering.NO_ORG
         if request.url.path.startswith("/api"):
             organisation_id = caller_organisation(request)
@@ -481,6 +498,9 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
             if organisation_id != metering.NO_ORG:
                 stack.enter_context(
                     llm.recording_usage(_meter_tokens(organisation_id, request.url.path))
+                )
+                stack.enter_context(
+                    llm.charging(_charge_credits(organisation_id, request.url.path))
                 )
             response: Response = await call_next(request)
     finally:

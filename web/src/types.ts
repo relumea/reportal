@@ -3339,7 +3339,7 @@ export interface Plan {
   interval: string;
   trial_days: number;
   /** -1 means the limit does not apply. */
-  monthly_tokens: number;
+  monthly_credits: number;
   monthly_auto_runs: number;
   max_binaries: number;
   max_api_keys: number;
@@ -3347,7 +3347,7 @@ export interface Plan {
   features: string[];
   self_serve: boolean;
   metered: boolean;
-  overage_usd_per_mtok: number;
+  overage_usd_per_credit: number;
 }
 
 /** What the SPA may know about billing; never a key. */
@@ -3360,13 +3360,31 @@ export interface BillingConfig {
   checkout_plans: string[];
 }
 
+/** One size band of a task's price. */
+export interface TaskBand {
+  name: string;
+  max_input_tokens: number;
+  credits: number;
+}
+
+/** One billable AI task and what it costs, as `GET /api/plans` publishes it. */
+export interface TaskPrice {
+  task: string;
+  label: string;
+  describe: string;
+  credits: number;
+  per_function: boolean;
+  bands: TaskBand[];
+}
+
 /** `GET /api/plans`. */
 export interface PlansPayload {
   plans: Plan[];
   checkout_plans: string[];
   default_plan_id: string;
   currency: string;
-  overage_usd_per_mtok: number;
+  overage_usd_per_credit: number;
+  tasks: TaskPrice[];
   billing: BillingConfig;
 }
 
@@ -3390,8 +3408,10 @@ export interface UsagePayload {
   organisation_id: number;
   plan: Plan;
   period_started_at: string;
-  /** Inference dollars the open period has cost to serve. */
+  /** Inference dollars the open period cost to serve; an operator read. */
   cost_usd: number;
+  /** Tokens the period spent; the internal pair to `cost_usd`. */
+  tokens_used: number;
   usage: Record<string, QuotaState>;
 }
 

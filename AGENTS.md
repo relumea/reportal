@@ -303,20 +303,34 @@ usage is still metered and readable.
 | Public base URL | `REPORTAL_PUBLIC_BASE_URL` | `http://127.0.0.1:8002` |
 | Per-plan price id | `REPORTAL_STRIPE_PRICE_<PLAN>` (e.g. `..._ANALYST`) | none; a plan without one is 503 at checkout |
 
-`plans.py` is the catalog and the cost model: allowances are **derived** from
-the published Claude rates (`MODEL_RATES`, blended at `INPUT_SHARE`) and the
-share of a tier's price inference may consume (`MAX_COGS_SHARE`), never chosen
-by hand, and `tests/test_plans.py` fails the gate for a catalog that breaks the
+**Tenants spend credits, not tokens.**  `credits.py` is the per-task price
+list: one credit is one *reference task* (the cheapest real operation, a
+function summary), and every other task's price is its measured cost divided by
+that, rounded up.  `TASK_PROFILES` is measurement rather than estimate, taken
+by running the real prompt builders over the reversed `notepad-rebrew` corpus,
+and `SIZE_BANDS` scales a charge by input size so a huge function cannot be
+served at a small function's price.  `tests/test_credits.py` asserts the
+derivation (the reference task is still cheapest, no task is sold below cost,
+price order follows cost order).
+
+`plans.py` is the catalog: credit allowances are **derived** from the published
+Claude rates (`MODEL_RATES`) through `credits.credit_cogs_usd()` and the share
+of a tier's price inference may consume (`MAX_COGS_SHARE`), never chosen by
+hand, and `tests/test_plans.py` fails the gate for a catalog that breaks the
 margin.  `metering.py` is the append-only `usage_events` ledger plus
-`quota_check`; `llm.py`'s `recording_usage` sink is how a completion's
-endpoint-reported token counts reach it, installed per request by
-`server._reportal_headers`, so an AI route is metered by construction.
-`billing.py` holds the Stripe integration and its four invariants (completion
-is not payment, webhooks are idempotent through `billing_events`, the price id
-decides the plan rather than caller-supplied metadata, and an unverified
-signature changes nothing).  `landing.py` renders the public `/pricing` page
-from the same catalog.  `docs/ARCHITECTURE.md` ("Plans, metering and billing")
-is the full account.
+`quota_check` and `charge_task`; `CUSTOMER_KINDS` (credits, auto runs) is what
+a quota and the panels show, while the token rows stay as the internal
+cost-of-goods read that proves the credit price covers the inference.  `llm.py`
+carries both sinks (`recording_usage` for token counts, `charging` for the task
+charge) and `llm._complete` is the single funnel that names the task, installed
+per request by `server._reportal_headers`, so an AI route is billable by
+construction and a failed call charges nothing.  `billing.py` holds the Stripe
+integration and its four invariants (completion is not payment, webhooks are
+idempotent through `billing_events`, the price id decides the plan rather than
+caller-supplied metadata, and an unverified signature changes nothing).
+`landing.py` renders the public `/pricing` page from the same catalog.
+`docs/ARCHITECTURE.md` ("Plans, credits, metering and billing") is the full
+account.
 
 ### Sandbox configuration
 

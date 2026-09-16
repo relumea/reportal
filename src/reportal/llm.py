@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import os
 import re
 import tomllib
@@ -104,6 +105,23 @@ UNAVAILABLE_DETAIL = (
     "configure REPORTAL_LLM_ENDPOINT (and REPORTAL_LLM_API_KEY) to enable AI features"
 )
 
+# Billable task names.  They live here because this module is where each task
+# actually runs; `reportal.credits` imports them to price them, which keeps the
+# dependency one-way (credits reads llm, never the reverse) and means a task
+# cannot be run under a name the price list does not carry.
+TASK_SUMMARY = "summary"
+TASK_COMMENTS = "comments"
+TASK_TYPES = "type-suggestions"
+TASK_DECOMPILE = "ai-decompilation"
+TASK_RENAMES = "renames"
+TASK_TRIAGE = "function-triage"
+TASK_THREAT = "threat-narrative"
+TASK_AGENT = "agent-turn"
+
+# Characters of decompiled C per token, for sizing a prompt into a price band.
+# Measured over the reversed corpus `reportal.credits` profiles against.
+CHARS_PER_TOKEN = 3.6
+
 # Where a completion's token usage is reported, when anything is listening.
 # A sink rather than a direct `metering` call because this module is the bridge
 # and knows nothing about tenants: `server` installs the sink for the duration
@@ -128,6 +146,46 @@ def recording_usage(sink: Callable[[int, int, str], None]) -> Iterator[None]:
         yield
     finally:
         _USAGE_SINK.reset(token)
+
+
+# Where a task's credit charge is reported, when anything is listening.  The
+# same shape as the usage sink and for the same reason: this module knows which
+# task it is running and how large the prompt was, and knows nothing about
+# tenants, so it names the task and the request-scoped listener prices it.
+_CHARGE_SINK: ContextVar[Callable[[str, int], None] | None] = ContextVar(
+    "reportal_llm_charge_sink", default=None
+)
+
+
+@contextlib.contextmanager
+def charging(sink: Callable[[str, int], None]) -> Iterator[None]:
+    """Report every task this block runs to *sink* as ``(task, input_tokens)``.
+
+    Scoped to the block, so a charger never outlives the request that installed
+    it, and carried on a contextvar so two threads serving two tenants never
+    charge each other.
+    """
+    token = _CHARGE_SINK.set(sink)
+    try:
+        yield
+    finally:
+        _CHARGE_SINK.reset(token)
+
+
+def _report_charge(task: str, messages: list[dict[str, str]]) -> None:
+    """Tell the installed charger one *task* ran, with the prompt's size.
+
+    The size is the prompt actually sent, so the size band a charge lands in is
+    the real one rather than a nominal profile.  A failed call never reaches
+    here: the charge follows the completion, so a tenant is not billed for a
+    request the endpoint refused.
+    """
+    sink = _CHARGE_SINK.get()
+    if sink is None:
+        return
+    size = sum(len(message.get("content", "")) for message in messages)
+    with contextlib.suppress(Exception):
+        sink(task, math.ceil(size / CHARS_PER_TOKEN))
 
 
 def _report_usage(completion: Any, model: str) -> None:
@@ -809,12 +867,20 @@ def confidence(value: Any) -> float:
     return DEFAULT_TYPE_CONFIDENCE
 
 
-def _complete(messages: list[dict[str, str]], client: LlmClient | None) -> str:
-    """Ask *client* (or the process client) and return its text content."""
+def _complete(messages: list[dict[str, str]], client: LlmClient | None, task: str = "") -> str:
+    """Ask *client* (or the process client) and return its text content.
+
+    *task* names the billable operation for the installed charger.  The charge
+    happens after the call returns, so a refused or failed request costs the
+    tenant nothing.
+    """
     active = client if client is not None else get_client()
     if not active.available():
         raise LlmUnavailable(UNAVAILABLE_DETAIL)
-    return active.complete(messages, temperature=DEFAULT_TEMPERATURE)
+    answer = active.complete(messages, temperature=DEFAULT_TEMPERATURE)
+    if task:
+        _report_charge(task, messages)
+    return answer
 
 
 # ── Artifacts ──────────────────────────────────────────────────────
@@ -826,7 +892,7 @@ def summarize(code: str, *, client: LlmClient | None = None, context: str = "") 
     A response that is not a JSON object, or that carries no non-empty
     ``summary`` string, raises :class:`LlmError` naming ``summary``.
     """
-    data = _parse_json(_complete(summary_messages(code, context), client))
+    data = _parse_json(_complete(summary_messages(code, context), client, TASK_SUMMARY))
     if not isinstance(data, dict):
         raise LlmError("LLM summary response was not a JSON object")
     return {"summary": _required_str(data, "summary", what="summary")}
@@ -842,7 +908,7 @@ def rewrite_decompilation(
     answer, a JSON value that is neither object nor string, or an object with no
     non-empty ``code`` raises :class:`LlmError` naming ``code``.
     """
-    data = _parse_json(_complete(rewrite_messages(code, context), client))
+    data = _parse_json(_complete(rewrite_messages(code, context), client, TASK_DECOMPILE))
     if isinstance(data, str):
         if not data.strip():
             raise LlmError("LLM rewrite response was empty")
@@ -872,7 +938,7 @@ def threat_narrative(context: str, *, client: LlmClient | None = None) -> dict[s
             ),
         },
     ]
-    data = _parse_json(_complete(messages, client))
+    data = _parse_json(_complete(messages, client, TASK_THREAT))
     if not isinstance(data, dict):
         raise LlmError("LLM threat response was not a JSON object")
     return {"summary": _required_str(data, "summary", what="threat")}
@@ -889,7 +955,7 @@ def inline_comments(
     response in which no entry has both raises :class:`LlmError` naming the
     field instead of reading as an empty artifact.
     """
-    data = _parse_json(_complete(comments_messages(code, context), client))
+    data = _parse_json(_complete(comments_messages(code, context), client, TASK_COMMENTS))
     entries = _entry_list(data, keys=("comments",), what="comments")
     comments: list[dict[str, Any]] = []
     reason = ""
@@ -921,7 +987,7 @@ def suggest_types(
     response in which no entry has both raises :class:`LlmError` naming the
     field instead of reading as an empty artifact.
     """
-    data = _parse_json(_complete(types_messages(code, context), client))
+    data = _parse_json(_complete(types_messages(code, context), client, TASK_TYPES))
     entries = _entry_list(data, keys=("suggestions", "types"), what="type suggestion")
     suggestions: list[dict[str, Any]] = []
     reason = ""
@@ -960,7 +1026,7 @@ def rename_suggestions(
     really occurs in *code* is the caller's check, since the caller holds the
     stored decompilation it will apply against.
     """
-    data = _parse_json(_complete(renames_messages(code, context), client))
+    data = _parse_json(_complete(renames_messages(code, context), client, TASK_RENAMES))
     entries = _entry_list(data, keys=("suggestions", "renames"), what="renames")
     suggestions: list[dict[str, Any]] = []
     reason = ""
@@ -1005,7 +1071,9 @@ def function_triage(
     ``0.0`` and missing capabilities are an empty list, since the summary is the
     one field a triage row cannot do without.
     """
-    data = _parse_json(_complete(function_triage_messages(context, context_kind), client))
+    data = _parse_json(
+        _complete(function_triage_messages(context, context_kind), client, TASK_TRIAGE)
+    )
     if not isinstance(data, dict):
         raise LlmError("LLM triage response was not a JSON object")
     summary = data.get("summary")

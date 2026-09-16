@@ -14,6 +14,7 @@ from pathlib import Path
 
 from conftest import on_request
 
+from reportal import credits as credits_mod
 from reportal import landing, plans
 
 
@@ -44,18 +45,20 @@ class TestPricingAgreesWithTheCatalog:
         assert ">Internal<" not in landing.render()
 
     def test_the_overage_rate_is_the_catalog_rate(self) -> None:
-        assert f"${plans.OVERAGE_USD_PER_MTOK:g}" in _text(landing.render())
+        assert f"${credits_mod.OVERAGE_USD_PER_CREDIT:.2f}" in _text(landing.render())
 
-    def test_the_quoted_blended_cost_is_computed(self) -> None:
-        """The FAQ's cost figure is derived, so it cannot go stale."""
-        assert f"${plans.blended_usd_per_mtok():.2f}" in _text(landing.render())
+    def test_every_billable_task_is_priced_on_the_page(self) -> None:
+        """The task table is the price list, so it has to carry every task."""
+        body = _text(landing.render())
+        for row in credits_mod.catalog():
+            assert str(row["label"]) in body
 
-    def test_the_token_allowances_are_the_catalog_allowances(self) -> None:
-        """The compare table's token row is derived, not transcribed."""
+    def test_the_credit_allowances_are_the_catalog_allowances(self) -> None:
+        """The compare table's credit row is derived, not transcribed."""
         body = _text(landing.render())
         for plan in plans.public_plans():
-            if plan.monthly_tokens >= 1_000_000:
-                assert f"{plan.monthly_tokens / 1_000_000:g}M" in body
+            if plan.monthly_credits != plans.UNLIMITED:
+                assert f"{plan.monthly_credits:,}" in body
 
 
 class TestMarkup:

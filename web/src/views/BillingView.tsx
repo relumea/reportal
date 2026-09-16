@@ -20,11 +20,13 @@ import { api } from "../api";
 import {
   Badge,
   Button,
+  DataTable,
   EmptyState,
   ErrorNote,
   Field,
   Loading,
   Muted,
+  NA,
   Note,
   Panel,
   Readout,
@@ -40,15 +42,16 @@ import type {
   Plan,
   PlansPayload,
   QuotaState,
+  TaskPrice,
 } from "../types";
 import { useAsync } from "../useAsync";
 
 /** A limit the plan does not apply. */
 const UNLIMITED = -1;
 
-/** Metered dimensions, in the order the quota panel shows them. */
+/** Billable dimensions, in the order the quota panel shows them. */
 const DIMENSIONS: ReadonlyArray<readonly [string, string]> = [
-  ["llm_tokens", "LLM tokens"],
+  ["credits", "Credits"],
   ["auto_run", "Auto runs"],
 ];
 
@@ -135,6 +138,34 @@ function PlanCards({
         );
       })}
     </div>
+  );
+}
+
+/** What each AI task costs, so a user can budget before running one. */
+function TaskPrices({ tasks }: { tasks: TaskPrice[] }): ReactNode {
+  return (
+    <DataTable<TaskPrice>
+      rows={tasks}
+      rowKey={(row) => row.task}
+      columns={[
+        { key: "label", label: "Task" },
+        { key: "describe", label: "What you get" },
+        {
+          label: "Credits",
+          numeric: true,
+          render: (row) => (row.per_function ? `${row.credits} / function` : row.credits),
+        },
+        {
+          label: "Large input",
+          numeric: true,
+          render: (row) => {
+            const large = row.bands[1];
+            if (!large) return NA;
+            return `${large.credits} over ${large.max_input_tokens.toLocaleString()} tok`;
+          },
+        },
+      ]}
+    />
   );
 }
 
@@ -251,7 +282,7 @@ export function BillingView(): ReactNode {
                 label="Price"
                 value={payload.plan.price_cents === 0 ? "Free" : money(payload.plan.price_usd)}
               />
-              <Readout label="Inference cost" value={`$${payload.cost_usd.toFixed(2)}`} />
+              <Readout label="Credits used" value={payload.usage.credits?.used ?? 0} />
               {payload.subscription ? (
                 <Readout
                   label="Subscription"
@@ -288,8 +319,15 @@ export function BillingView(): ReactNode {
           ) : null}
 
           <Panel
+            title="What a task costs"
+            subtitle="One credit is one function summary; a larger function costs more."
+          >
+            <TaskPrices tasks={catalog.data.tasks} />
+          </Panel>
+
+          <Panel
             title="Plans"
-            subtitle={`Overage is billed at ${money(catalog.data.overage_usd_per_mtok)} per million tokens.`}
+            subtitle={`Extra credits are billed at $${catalog.data.overage_usd_per_credit.toFixed(2)} each.`}
           >
             <PlanCards
               plans={catalog.data.plans}

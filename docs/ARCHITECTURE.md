@@ -31,6 +31,8 @@ reportal/
 │   │                         #   registry; the one module that executes a sample
 │   ├── auth.py               # local identity: users, teams, roles, bearer tokens, the gate
 │   │                         #   and the object-visibility rule (visible_clause/may_write)
+│   ├── credits.py            # the per-task price list, derived from measured
+│   │                         #   token profiles (what a tenant actually spends)
 │   ├── plans.py              # the subscription catalog and the cost model it is
 │   │                         #   derived from (Claude token rates -> allowances)
 │   ├── metering.py           # the append-only usage ledger and the quota checks
@@ -422,7 +424,7 @@ Each domain's result is stored as its own scan kind (`DOMAIN_SCAN_KINDS`).
 two domains in `HARDENING_DOMAINS`. `anti-analysis` matches the same two
 standalone engine payloads against `ANTI_ANALYSIS_RULES`, a fixed table of
 categories (`anti-debug-api`, `timing-check`, `vm-or-sandbox-artifact`,
-`exception-tampering`, `debugger-detection-string`) with import rules and
+`exception-tampering`, `debugger-detection-string`, `io-port-probe`, `cpu-state-probe`) with import rules and
 case-insensitive string regexes. `obfuscation` reads `rebrew fingerprints` too
 and, when the store holds one, the triage dossier, then applies numeric and
 structural thresholds: a code-like section (`_is_code_section`: a name
@@ -2416,7 +2418,7 @@ access control*: it groups teams, and `organisations` plus a team's
 `organisation_id` is all it is.  No read or write consults it for authorization,
 which is stated where a reader will look rather than left to be discovered.
 Deleting an organisation leaves its teams in place.  It is, however, the unit a
-subscription and a usage ledger attach to (see "Plans, metering and billing"):
+subscription and a usage ledger attach to (see "Plans, credits, metering and billing"):
 that is a billing relationship rather than a permission, so an organisation
 still decides nothing about who may read an object.
 
@@ -2431,27 +2433,56 @@ of these columns existed when identity first shipped, so all three are in
 to no organisation, and a user that predates the switch has no active team,
 which reads as "see every team".
 
-## Plans, metering and billing
+## Plans, credits, metering and billing
 
-Three modules, split by what each is allowed to know.  `plans.py` is the
-catalog, `metering.py` is the ledger and the quota, and `billing.py` is the
-provider integration.  Nothing above them knows a price and nothing below them
-knows a customer.
+Four modules, split by what each is allowed to know.  `credits.py` is the price
+list, `plans.py` the catalog, `metering.py` the ledger and the quota, and
+`billing.py` the provider integration.  Nothing above them knows a price and
+nothing below them knows a customer.
 
-**The catalog is code, and the prices are derived.**  reportal resells
-inference: every AI extra spends Claude tokens Anthropic bills for, so a plan's
-token allowance is a cost of goods sold rather than a marketing number.
-`plans.py` carries the published per-million rates (`MODEL_RATES`), blends them
-at `INPUT_SHARE` (reverse-engineering prompts are input-heavy: a decompiled
-function in, a summary out) and derives each tier's allowance from the share of
-its price that inference may consume (`MAX_COGS_SHARE`, 20%).  `tests/test_plans.py`
-asserts that property rather than the literal numbers, so raising an allowance
-is allowed and raising it past what the price supports fails the gate.  The free
-tier has no price to take a share of, so it is bounded outright by
-`MAX_FREE_COGS_USD`.  Two pressure valves keep the ceiling from being a wall: a
-paid tier past its allowance buys more at `OVERAGE_USD_PER_MTOK` instead of
-stopping, and a tenant pointing the bridge at its own endpoint is not metered at
-all, because reportal is not paying for it.
+**Tokens are not the unit of sale.**  A customer cannot predict a token count,
+cannot compare two vendors with one, and a bill that moves because a model got
+chattier is a support ticket rather than a price.  So what a tenant spends is a
+**credit**: a fixed, published price per task, and the token ledger stays
+behind the counter as the internal cost-of-goods read that proves the credit
+price still covers the inference.  `metering.CUSTOMER_KINDS` is what a quota
+and the usage panel show (credits and auto runs); `metering.KINDS` is
+everything the ledger holds, tokens included.
+
+**A credit is defined, not chosen.**  One credit is one *reference task*: the
+cheapest real operation the portal performs, a function summary over a median
+function (`credits.REFERENCE_TASK`).  Every other task's price is its measured
+cost divided by that, rounded up, so the table is derived and a rate change
+moves every price with it.  `credits.TASK_PROFILES` is measurement rather than
+estimate: each `(input, output)` pair came from running the real prompt
+builders in `llm.py` over the 69 reversed functions of the `notepad-rebrew`
+project.  That is why `comments` is the expensive task (a line per meaningful
+line) and `summary` the cheap one.  `tests/test_credits.py` asserts the
+derivation: that the reference task is still the cheapest, that no task is sold
+below cost, and that price order follows cost order, so a cheap task can never
+become a loophole.
+
+**A published price still has to survive a 10,000-line function.**  A task's
+cost is its base credits times a band multiplier taken from the *input* size
+(`credits.SIZE_BANDS`), so a large function costs more than a small one and the
+per-credit margin holds at both ends.  Input is used rather than output because
+it is known before the call, which is what lets a quota refuse work instead of
+discovering the overrun afterwards.  The first ceiling sits above the reference
+corpus's 90th percentile, so an ordinary function is never surcharged.
+
+**The catalog is code, and the allowances are derived.**  A plan grants
+credits, so a tenant reads its allowance as "4,200 summaries, or 2,100 AI
+decompilations" rather than as a token count.  The chain is: `MODEL_RATES`
+gives the published per-million rates, `credits.credit_cogs_usd()` prices one
+credit at those rates, and a tier may spend at most `MAX_COGS_SHARE` (20%) of
+its price on inference.  `tests/test_plans.py` asserts that ceiling rather than
+the literal numbers, so raising an allowance is allowed and raising it past
+what the price supports fails the gate.  The free tier has no price to take a
+share of, so it is bounded outright by `MAX_FREE_COGS_USD`.  Two pressure
+valves keep the ceiling from being a wall: a paid tier past its allowance buys
+more at `credits.OVERAGE_USD_PER_CREDIT` instead of stopping, and a tenant
+pointing the bridge at its own endpoint is not metered at all, because reportal
+is not paying for it.
 
 **The ledger is append-only.**  `metering.py` writes one `usage_events` row per
 metered event and never updates or deletes one, because a disputed invoice has
@@ -2460,13 +2491,18 @@ ledger sums two ways: units, which the quota compares, and dollars
 (`period_cost_usd`), which is the margin read.  Starting a new period moves the
 window rather than clearing rows.
 
-**Metering is attached once, not per call site.**  `llm.py` gained a usage sink
-(`recording_usage`) that every completion reports its endpoint-reported token
-counts to, and `server._reportal_headers` installs one for the duration of a
-request that has a tenant.  So an AI route is metered by construction and no AI
-code knows billing exists.  Counts are never estimated: a response carrying no
-usage block records nothing, because a guessed number that bills a customer is
-worse than a missing one.
+**Metering is attached once, not per call site.**  `llm.py` carries two sinks
+and `server._reportal_headers` installs both for the duration of a request that
+has a tenant.  `recording_usage` takes each completion's endpoint-reported
+token counts (the internal cost read) and `charging` takes the task name and
+the prompt's real size (the customer charge).  `llm._complete` is the single
+funnel every task runs through, so naming the task there is what makes an AI
+route billable: no AI code knows billing exists, and a task cannot run under a
+name the price list does not carry.  Two properties matter.  Counts are never
+estimated: a response carrying no usage block records nothing, because a
+guessed number that bills a customer is worse than a missing one.  And the
+charge follows the completion, so a failed or refused request costs the tenant
+nothing.
 
 **A workspace with no organisation is unmetered.**  `organisation_plan` reads a
 missing tenant as the `internal` plan, so a self-hosted or single-operator

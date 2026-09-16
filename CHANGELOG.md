@@ -7,6 +7,56 @@ view renders it from here.
 
 ## Unreleased
 
+- Tenants spend credits, not tokens.  Token counts are the wrong unit to sell:
+  a customer cannot predict one, cannot compare two vendors with one, and a
+  bill that moves because a model got chattier is a support ticket rather than
+  a price.  `credits.py` is the per-task price list that replaces them.  One
+  credit is one *reference task*, the cheapest real operation the portal
+  performs (a function summary over a median function), and every other task is
+  its measured cost divided by that, rounded up: an AI decompilation is 2
+  credits, triage 2 per function, inline comments 4.  The profiles are
+  measurement rather than estimate, taken by running the real prompt builders
+  over the 69 reversed functions of the `notepad-rebrew` project, which is why
+  comments are the expensive task (a line per meaningful line) and a summary
+  the cheap one.
+
+  A published price still has to survive a 10,000-line function, so a charge
+  scales by input size in bands rather than by the token: standard, double over
+  ~1,500 tokens of input, four times over 6,000.  The band is decided from the
+  input, which is known before the call, so a quota refuses work instead of
+  discovering the overrun afterwards, and the first ceiling sits above the
+  reference corpus's 90th percentile so an ordinary function is never
+  surcharged.
+
+  Plans now grant credits on the same derivation as before: Analyst is 4,200
+  credits at $39, Team 16,000 at $149, Enterprise 82,000 at $749, each still
+  under the 20% cost-of-goods ceiling, with the free tier bounded outright at a
+  dollar of inference.  `tests/test_credits.py` asserts the derivation rather
+  than the literal numbers: that the reference task is still the cheapest, that
+  no task is sold below what it costs to serve, and that price order follows
+  cost order, so a cheap task can never become a loophole.
+
+  Tokens stay behind the counter.  The ledger still records them and
+  `period_cost_usd` still prices them, because that pair is what proves the
+  credit price covers the inference it buys; `metering.CUSTOMER_KINDS` is what
+  a quota and the panels show and `metering.KINDS` is everything the ledger
+  holds.  Charging attaches at one seam: `llm._complete` is the single funnel
+  every task runs through, so naming the task there makes an AI route billable
+  without any AI code knowing billing exists, and the charge follows the
+  completion so a failed or refused request costs nothing.  The pricing page
+  and the Billing view both render the task list from the same catalog.
+
+- CPU-state inspection is a hardening finding.  The anti-analysis rule table
+  gains a `cpu-state-probe` category matching `SIDT`/`SGDT`/`SLDT`, `CPUID`
+  and FPU-state capture (`FNSTENV`/`FSTENV`/`FXSAVE`/`FSAVE`) in disassembly
+  text, the environment-sensitive key-derivation shape, at medium confidence;
+  ordinary prose never matches.  Same scan, same pipeline, no new surfaces.
+- Anti-emulation port probes are a hardening finding.  The anti-analysis rule
+  table gains an `io-port-probe` category matching `in`/`out` mnemonics with
+  immediate or `dx` port operands in disassembly text (the SIDT-keyed RAT's
+  0x4F/0xEF probing shape), at medium confidence like the other string-only
+  evidence; ordinary prose never matches.  Same scan, same pipeline, no new
+  surfaces.
 - The PDF deliverable covers the new compositions.  The report renders Attack
   surface, Exploitability, Go build and Renames sections from the stored
   scans (each omitted when its source is absent, like every other section),

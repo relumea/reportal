@@ -26,16 +26,26 @@ plan's allowance is priced against the middle model (:data:`reportal.plans.COST_
 from __future__ import annotations
 
 import sqlite3
+from types import ModuleType
 from typing import Any
 
 from reportal import auth, plans
 
-# The metered dimensions.  Tokens gate the AI extras and auto runs gate the
-# batch worker; everything static (disassembly, xrefs, struct recovery, the
-# scans) is unmetered because it costs CPU rather than inference.
+# The metered dimensions.  Credits are what a tenant spends and what a plan
+# grants; auto runs gate the batch worker; everything static (disassembly,
+# xrefs, struct recovery, the scans) is unmetered because it costs CPU rather
+# than inference.
+#
+# Tokens are recorded but are not a customer-facing dimension: the row is the
+# internal cost-of-goods read (`period_cost_usd`), so an operator can prove the
+# credit price still covers what the inference cost, and a customer never sees
+# a number that moves because a model got chattier.  `CUSTOMER_KINDS` is what a
+# quota and the usage panel show; `KINDS` is everything the ledger holds.
 KIND_TOKENS = "llm_tokens"
 KIND_AUTO_RUN = "auto_run"
-KINDS: tuple[str, ...] = (KIND_TOKENS, KIND_AUTO_RUN)
+KIND_CREDITS = "credits"
+CUSTOMER_KINDS: tuple[str, ...] = (KIND_CREDITS, KIND_AUTO_RUN)
+KINDS: tuple[str, ...] = (KIND_CREDITS, KIND_AUTO_RUN, KIND_TOKENS)
 
 # The organisation id meaning "no tenant": a single-install or self-hosted
 # workspace that is not billed.
@@ -124,6 +134,49 @@ def organisation_for_binary(conn: sqlite3.Connection, binary_id: int) -> int:
     if row is None or row["organisation_id"] is None:
         return NO_ORG
     return int(row["organisation_id"])
+
+
+def _credits_mod() -> ModuleType:
+    """The credit catalog, imported at call time.
+
+    :mod:`reportal.credits` reads :mod:`reportal.plans` for its rates and this
+    module reads both, so the import runs here rather than at module scope.
+    """
+    from reportal import credits as credits_mod
+
+    return credits_mod
+
+
+def charge_task(
+    conn: sqlite3.Connection,
+    organisation_id: int,
+    task: str,
+    *,
+    input_tokens: int = 0,
+    calls: int = 1,
+    detail: str = "",
+    commit: bool = True,
+) -> int:
+    """Charge a tenant for *calls* of *task* and return the credits taken.
+
+    This is the one write a billable operation makes: the credit price comes
+    from the task catalog with its size band applied, so a caller names what it
+    did rather than computing a price, and a task's price can only be changed
+    in one place.  A run with no tenant charges nothing and returns zero.
+    """
+    if organisation_id == NO_ORG:
+        return 0
+    amount = int(_credits_mod().cost_of(task, input_tokens)) * max(0, calls)
+    if amount:
+        record_usage(
+            conn,
+            organisation_id,
+            KIND_CREDITS,
+            amount,
+            detail=detail or task,
+            commit=commit,
+        )
+    return amount
 
 
 def record_usage(
@@ -234,9 +287,14 @@ def start_period(conn: sqlite3.Connection, organisation_id: int, *, commit: bool
 
 
 def _limit_for(plan: plans.Plan, kind: str) -> int:
-    """The plan's allowance for one metered dimension."""
+    """The plan's allowance for one metered dimension.
+
+    Tokens carry no allowance: they are recorded for the internal cost read and
+    never gate a request, so they answer UNLIMITED here and the credit
+    dimension is what a quota actually stops on.
+    """
     return {
-        KIND_TOKENS: plan.monthly_tokens,
+        KIND_CREDITS: plan.monthly_credits,
         KIND_AUTO_RUN: plan.monthly_auto_runs,
     }.get(kind, plans.UNLIMITED)
 
@@ -302,8 +360,8 @@ def quota_check(
         "metered": True,
         "overage_units": over if billable else 0,
         "overage_usd": (
-            round(over * plans.OVERAGE_USD_PER_MTOK / 1_000_000, 6)
-            if billable and kind == KIND_TOKENS
+            round(over * _credits_mod().OVERAGE_USD_PER_CREDIT, 4)
+            if billable and kind == KIND_CREDITS
             else 0.0
         ),
         "reason": "" if allowed else f"{kind} quota exhausted on the {plan.name} plan",
@@ -311,12 +369,19 @@ def quota_check(
 
 
 def usage_summary(conn: sqlite3.Connection, organisation_id: int) -> dict[str, Any]:
-    """Every metered dimension's state, plus the period and the cost to serve."""
+    """Every customer-facing dimension's state, plus the period and the internals.
+
+    ``usage`` carries only what a tenant is billed on.  ``tokens_used`` and
+    ``cost_usd`` are the internal pair: what the period actually spent and what
+    it cost, which an operator reads to check the credit price still covers the
+    inference, and which the customer-facing panels do not show.
+    """
     plan = organisation_plan(conn, organisation_id)
     return {
         "organisation_id": organisation_id,
         "plan": plan.describe(),
         "period_started_at": period_started_at(conn, organisation_id),
         "cost_usd": round(period_cost_usd(conn, organisation_id), 4),
-        "usage": {kind: quota_check(conn, organisation_id, kind) for kind in KINDS},
+        "tokens_used": period_usage(conn, organisation_id, KIND_TOKENS),
+        "usage": {kind: quota_check(conn, organisation_id, kind) for kind in CUSTOMER_KINDS},
     }

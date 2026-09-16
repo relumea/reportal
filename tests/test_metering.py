@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from reportal import auth, metering, plans
+from reportal import credits as credits_mod
 
 
 def _organisation(conn: sqlite3.Connection, plan_id: str = "analyst") -> int:
@@ -28,7 +29,7 @@ class TestSelfHostedStaysUnmetered:
         assert metering.organisation_plan(conn, metering.NO_ORG).id == plans.SELF_HOST_PLAN_ID
 
     def test_no_tenant_is_never_refused(self, conn: sqlite3.Connection) -> None:
-        checked = metering.quota_check(conn, metering.NO_ORG, metering.KIND_TOKENS, 10**9)
+        checked = metering.quota_check(conn, metering.NO_ORG, metering.KIND_CREDITS, 10**9)
         assert checked["allowed"] is True
         assert checked["metered"] is False
 
@@ -96,7 +97,7 @@ class TestQuota:
 
     def test_use_inside_the_allowance_is_allowed(self, conn: sqlite3.Connection) -> None:
         organisation_id = _organisation(conn, "analyst")
-        checked = metering.quota_check(conn, organisation_id, metering.KIND_TOKENS, 1000)
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 100)
         assert checked["allowed"] is True
         assert checked["overage_units"] == 0
 
@@ -105,19 +106,19 @@ class TestQuota:
     ) -> None:
         """An overage is billable capacity; work continues."""
         organisation_id = _organisation(conn, "analyst")
-        allowance = plans.get_plan("analyst").monthly_tokens
-        metering.record_usage(conn, organisation_id, metering.KIND_TOKENS, allowance)
-        checked = metering.quota_check(conn, organisation_id, metering.KIND_TOKENS, 1_000_000)
+        allowance = plans.get_plan("analyst").monthly_credits
+        metering.record_usage(conn, organisation_id, metering.KIND_CREDITS, allowance)
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 100)
         assert checked["allowed"] is True
-        assert checked["overage_units"] == 1_000_000
-        assert checked["overage_usd"] == pytest.approx(plans.OVERAGE_USD_PER_MTOK)
+        assert checked["overage_units"] == 100
+        assert checked["overage_usd"] == pytest.approx(100 * credits_mod.OVERAGE_USD_PER_CREDIT)
 
     def test_the_free_plan_actually_stops(self, conn: sqlite3.Connection) -> None:
         """Free has nothing to invoice an overage against."""
         organisation_id = _organisation(conn, "free")
-        allowance = plans.get_plan("free").monthly_tokens
-        metering.record_usage(conn, organisation_id, metering.KIND_TOKENS, allowance)
-        checked = metering.quota_check(conn, organisation_id, metering.KIND_TOKENS, 1)
+        allowance = plans.get_plan("free").monthly_credits
+        metering.record_usage(conn, organisation_id, metering.KIND_CREDITS, allowance)
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
         assert checked["allowed"] is False
         assert checked["overage_units"] == 0
         assert "quota" in checked["reason"]
@@ -132,13 +133,13 @@ class TestQuota:
             (metering.STATUS_PAST_DUE, organisation_id),
         )
         conn.commit()
-        checked = metering.quota_check(conn, organisation_id, metering.KIND_TOKENS, 1)
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
         assert checked["allowed"] is False
         assert checked["reason"] == "subscription past due"
 
     def test_an_unmetered_plan_reports_unlimited(self, conn: sqlite3.Connection) -> None:
         organisation_id = _organisation(conn, "internal")
-        checked = metering.quota_check(conn, organisation_id, metering.KIND_TOKENS, 10**9)
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 10**9)
         assert checked["allowed"] is True
         assert checked["limit"] == plans.UNLIMITED
 
@@ -159,7 +160,7 @@ class TestSummary:
     def test_the_summary_covers_every_metered_dimension(self, conn: sqlite3.Connection) -> None:
         organisation_id = _organisation(conn, "team")
         summary = metering.usage_summary(conn, organisation_id)
-        assert set(summary["usage"]) == set(metering.KINDS)
+        assert set(summary["usage"]) == set(metering.CUSTOMER_KINDS)
         assert summary["plan"]["id"] == "team"
         assert summary["organisation_id"] == organisation_id
 

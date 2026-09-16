@@ -112,6 +112,9 @@ from reportal import (
     zipcrypto,
 )
 from reportal import (
+    credits as credits_mod,
+)
+from reportal import (
     docs as docs_mod,
 )
 from reportal import (
@@ -11099,7 +11102,8 @@ def list_plans() -> Response:
             "checkout_plans": [plan.id for plan in plans_mod.checkout_plans()],
             "default_plan_id": plans_mod.DEFAULT_PLAN_ID,
             "currency": "usd",
-            "overage_usd_per_mtok": plans_mod.OVERAGE_USD_PER_MTOK,
+            "overage_usd_per_credit": credits_mod.OVERAGE_USD_PER_CREDIT,
+            "tasks": credits_mod.catalog(),
             "billing": billing.public_billing_config(),
         }
     )

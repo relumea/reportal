@@ -323,7 +323,7 @@ class TestSubscriptionLifecycle:
                 _subscription_event(organisation_id, event_id="evt_due", status="past_due")
             ),
         )
-        checked = metering.quota_check(conn, organisation_id, metering.KIND_TOKENS, 1)
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
         assert checked["allowed"] is False
 
     def test_the_mirrored_subscription_is_readable(

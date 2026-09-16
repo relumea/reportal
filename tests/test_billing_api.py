@@ -65,7 +65,7 @@ class TestUsageRoute:
         assert status.startswith("200")
         payload = json_body(b"".join(chunks), {})
         assert payload["plan"]["id"] == plans.DEFAULT_PLAN_ID
-        assert set(payload["usage"]) == set(metering.KINDS)
+        assert set(payload["usage"]) == set(metering.CUSTOMER_KINDS)
 
     def test_an_unknown_organisation_is_a_404(self, portal_db: Path) -> None:
         status, _, chunks = on_request("GET", "/api/organisations/424242/usage")
@@ -75,10 +75,10 @@ class TestUsageRoute:
     def test_recorded_usage_shows_up(self, portal_db: Path) -> None:
         organisation_id = _organisation(portal_db)
         with contextlib.closing(store.connect(portal_db)) as conn:
-            metering.record_usage(conn, organisation_id, metering.KIND_TOKENS, 4242)
+            metering.record_usage(conn, organisation_id, metering.KIND_CREDITS, 4242)
         _, _, chunks = on_request("GET", f"/api/organisations/{organisation_id}/usage")
         payload = json_body(b"".join(chunks), {})
-        assert payload["usage"][metering.KIND_TOKENS]["used"] == 4242
+        assert payload["usage"][metering.KIND_CREDITS]["used"] == 4242
 
 
 class TestBillingRoute:

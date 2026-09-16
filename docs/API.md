@@ -56,8 +56,8 @@ scope as its own 404; `docs/THREAT_MODEL.md` carries the residuals.
 | `/api/organisations` | POST | create an organisation; body `{"name", "description"?}`; 201, journaled; 400 `invalid-organisation` for a blank name, 409 `organisation-exists` |
 | `/api/organisations/<id>` | GET | one organisation with its teams; 404 `organisation-not-found` |
 | `/api/organisations/<id>` | DELETE | delete an organisation; its teams stay and stop being grouped; journaled |
-| `/api/plans` | GET | every public plan, cheapest first, with the purchasable subset named; read-only |
-| `/api/organisations/<id>/usage` | GET | metered use in the organisation's open period (tokens, auto runs) against its plan; 404 `organisation-not-found`; read-only |
+| `/api/plans` | GET | every public plan, cheapest first, with the purchasable subset named, plus `tasks`: the per-task credit price list (`credits.py`), each row carrying its size bands; read-only |
+| `/api/organisations/<id>/usage` | GET | metered use in the organisation's open period (credits, auto runs) against its plan, plus the internal `tokens_used`/`cost_usd` pair; 404 `organisation-not-found`; read-only |
 | `/api/organisations/<id>/billing` | GET | the organisation's plan, quota state and subscription, if any, plus whether billing is configured; 404 `organisation-not-found`; read-only |
 | `/api/organisations/<id>/plan` | PUT | assign the organisation a plan, restarting its period; body `{"plan_id"}` naming a plan in `GET /api/plans`; operators only, 400 `invalid plan`, 404 `organisation-not-found`; journaled |
 | `/api/organisations/<id>/billing/checkout` | POST | start a self-serve checkout for a paid plan; body `{"plan_id"}`; answers the payment URL (`provider`, `session_id`, `url`); 400 `invalid plan` for an unknown or non-purchasable plan, 404 `organisation-not-found` |
