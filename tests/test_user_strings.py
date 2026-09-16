@@ -131,6 +131,42 @@ class TestStore:
         assert again["note"] == "later"
         assert same["note"] == "later"
 
+    def test_a_journaled_re_add_snapshots_and_reverts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import journal
+
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                first = user_strings.journaled_add(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=ids["function"],
+                    value="hello",
+                )
+                again = user_strings.journaled_add(
+                    conn,
+                    log,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=ids["function"],
+                    value="hello",
+                    note="later",
+                )
+            assert first["id"] == again["id"]
+            assert again["note"] == "later"
+            journal.revert_action(conn, action)
+            assert (
+                user_strings.list_strings(
+                    conn,
+                    scope_kind=user_strings.SCOPE_FUNCTION,
+                    scope_id=ids["function"],
+                )
+                == []
+            )
+
     def test_a_different_kind_is_a_different_entry(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
