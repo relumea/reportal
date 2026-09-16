@@ -320,7 +320,12 @@ export function BillingView(): ReactNode {
 
           <Panel
             title="What a task costs"
-            subtitle="One credit is one function summary; a larger function costs more."
+            subtitle={
+              catalog.data.tasks[0]
+                ? `One credit is one ${catalog.data.tasks[0].label.toLowerCase()}, measured` +
+                  "; a larger function costs more."
+                : "Measured per task; a larger function costs more."
+            }
           >
             <TaskPrices tasks={catalog.data.tasks} />
           </Panel>

@@ -424,7 +424,7 @@ Each domain's result is stored as its own scan kind (`DOMAIN_SCAN_KINDS`).
 two domains in `HARDENING_DOMAINS`. `anti-analysis` matches the same two
 standalone engine payloads against `ANTI_ANALYSIS_RULES`, a fixed table of
 categories (`anti-debug-api`, `timing-check`, `vm-or-sandbox-artifact`,
-`exception-tampering`, `debugger-detection-string`, `io-port-probe`, `cpu-state-probe`) with import rules and
+`exception-tampering`, `debugger-detection-string`, `io-port-probe`, `cpu-state-probe`, `int3-trap`, `lock-canary`) with import rules and
 case-insensitive string regexes. `obfuscation` reads `rebrew fingerprints` too
 and, when the store holds one, the triage dossier, then applies numeric and
 structural thresholds: a code-like section (`_is_code_section`: a name
@@ -2450,17 +2450,33 @@ and the usage panel show (credits and auto runs); `metering.KINDS` is
 everything the ledger holds, tokens included.
 
 **A credit is defined, not chosen.**  One credit is one *reference task*: the
-cheapest real operation the portal performs, a function summary over a median
-function (`credits.REFERENCE_TASK`).  Every other task's price is its measured
-cost divided by that, rounded up, so the table is derived and a rate change
-moves every price with it.  `credits.TASK_PROFILES` is measurement rather than
-estimate: each `(input, output)` pair came from running the real prompt
-builders in `llm.py` over the 69 reversed functions of the `notepad-rebrew`
-project.  That is why `comments` is the expensive task (a line per meaningful
-line) and `summary` the cheap one.  `tests/test_credits.py` asserts the
-derivation: that the reference task is still the cheapest, that no task is sold
-below cost, and that price order follows cost order, so a cheap task can never
-become a loophole.
+cheapest real operation the portal performs (`credits.REFERENCE_TASK`).  Every
+other task's price is its measured cost divided by that, rounded up, so the
+table is derived and a rate change moves every price with it.
+`tests/test_credits.py` asserts the derivation: that the reference task is
+still the cheapest, that no task is sold below cost, and that price order
+follows cost order, so a cheap task can never become a loophole.
+
+**The profiles are measured, and the measurement is repeatable.**
+`tools/bench_credits.py` runs the real task functions over real decompiled C,
+through the same sink the server meters with, and records the token counts the
+endpoint itself reported.  It writes a JSON run, diffs against an earlier one
+(`--compare`) and exits non-zero when a task now costs more than it charges, so
+a prompt edit or a model swap is a command rather than a guess.
+
+That benchmark overturned the first version of the table, and the reason is
+worth keeping in mind.  The *visible* answer sizes were close: the shape a
+prompt declares predicts them to about 23% median error.  But a reasoning model
+bills its deliberation as completion tokens, and the deliberation is where the
+money goes: measured at 2.7x the visible answer for triage and 22.3x for a
+whole-function rewrite.  So a profile is stated as `visible_tokens` (what a
+reader sees, which a prompt shape predicts) times `thinking_ratio` (what the
+model spends getting there, which only measurement finds), and
+`ai-decompilation` turned out to be the most expensive task rather than the
+mid-priced one it was first assumed to be.  The ratios are model-specific: a
+model that does not reason has a ratio near 1.0, so this is the knob to
+re-measure when the bridge is pointed somewhere new, not a constant of the
+product.
 
 **A published price still has to survive a 10,000-line function.**  A task's
 cost is its base credits times a band multiplier taken from the *input* size

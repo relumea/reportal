@@ -304,14 +304,27 @@ usage is still metered and readable.
 | Per-plan price id | `REPORTAL_STRIPE_PRICE_<PLAN>` (e.g. `..._ANALYST`) | none; a plan without one is 503 at checkout |
 
 **Tenants spend credits, not tokens.**  `credits.py` is the per-task price
-list: one credit is one *reference task* (the cheapest real operation, a
-function summary), and every other task's price is its measured cost divided by
-that, rounded up.  `TASK_PROFILES` is measurement rather than estimate, taken
-by running the real prompt builders over the reversed `notepad-rebrew` corpus,
-and `SIZE_BANDS` scales a charge by input size so a huge function cannot be
-served at a small function's price.  `tests/test_credits.py` asserts the
-derivation (the reference task is still cheapest, no task is sold below cost,
-price order follows cost order).
+list: one credit is one *reference task* (whichever operation measures
+cheapest), and every other task's price is its measured cost divided by that,
+rounded up.  `SIZE_BANDS` scales a charge by input size so a huge function
+cannot be served at a small function's price, and `tests/test_credits.py`
+asserts the derivation (the reference task is still cheapest, no task is sold
+below cost, price order follows cost order).
+
+`TASK_PROFILES` is measurement, and `tools/bench_credits.py` is how to re-take
+it: it runs the real task functions over real decompiled C through the
+production sink and reports what the endpoint counted, diffs against a stored
+run (`--compare`) and exits non-zero when a task costs more than it charges.
+
+    .venv/bin/python tools/bench_credits.py --sample 8 \
+        --key-file ~/.secrets/deepseek.txt --json .scratch/bench-credits.json
+
+A profile is `visible_tokens` times `thinking_ratio`, because a reasoning model
+bills deliberation as completion tokens: measured at 2.7x the visible answer
+for triage and 22.3x for a whole-function rewrite, which is what makes
+`ai-decompilation` the dearest task.  Those ratios are model-specific, so
+re-measure after a prompt edit, a model change or a corpus change rather than
+treating the table as fixed.
 
 `plans.py` is the catalog: credit allowances are **derived** from the published
 Claude rates (`MODEL_RATES`) through `credits.credit_cogs_usd()` and the share

@@ -222,6 +222,15 @@ def _comparison_table() -> str:
     )
 
 
+def _reference_label() -> str:
+    """The task one credit is defined as, named from the catalog.
+
+    Derived rather than written into the copy: the reference task is whichever
+    operation measures cheapest, and it has already moved once.
+    """
+    return str(credits_mod.TASK_PROFILES[credits_mod.REFERENCE_TASK].label)
+
+
 def _task_table() -> str:
     """What each AI task costs, in credits; the price list itself."""
     rows = "".join(
@@ -245,9 +254,10 @@ def _faq() -> str:
     """The questions the pricing model actually raises, answered plainly."""
     reference = credits_mod.TASK_PROFILES[credits_mod.REFERENCE_TASK]
     credit_answer = (
-        "One credit is one function summary, the cheapest thing the portal does."
-        " Every other task is priced against it and published above, so you can"
-        " count what a job costs before you run it rather than after."
+        f"One credit is one {_reference_label().lower()}, the cheapest thing the"
+        " portal does. Every other task is priced against it and published above,"
+        " measured rather than estimated, so you can count what a job costs before"
+        " you run it rather than after."
     )
     size_answer = (
         "Larger functions cost more, in bands rather than by the token. A normal"
@@ -361,9 +371,10 @@ def render() -> str:
 
 <section id="credits"><div class="wrap">
   <h2>What a task costs</h2>
-  <p class="lede">One credit is one function summary. Everything else is priced against
-     it, so you can count the cost of a job before you run it. A larger function costs
-     more, in bands rather than by the token.</p>
+  <p class="lede">One credit is one {_reference_label().lower()}. Everything else is
+     priced against it from measured token use, so you can count the cost of a job
+     before you run it. A larger function costs more, in bands rather than by the
+     token.</p>
   {_task_table()}
 </div></section>
 

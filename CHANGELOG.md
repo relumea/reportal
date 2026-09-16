@@ -7,6 +7,44 @@ view renders it from here.
 
 ## Unreleased
 
+- The credit prices are measured, and the measurement is a command.
+  `tools/bench_credits.py` runs the real task functions over real decompiled C,
+  through the same sink the server meters with, and records the token counts
+  the endpoint itself reported.  It writes a JSON run, diffs against an earlier
+  one (`--compare`) and exits non-zero when a task costs more than it charges,
+  so a prompt edit or a model swap is a re-run rather than a guess.
+
+  The first run against `deepseek-flash` over 8 functions per task overturned
+  the estimated table, and the reason is worth stating.  The *visible* answer
+  sizes were close: the shape a prompt declares predicts them to about 23%
+  median error, and the whole-function rewrite was within 4%.  But a reasoning
+  model bills its deliberation as completion tokens, and the deliberation is
+  where the money goes: measured at 2.7x the visible answer for triage, 7.2x
+  for comments, 10.2x for renames and 22.3x for a whole-function rewrite.  AI
+  decompilation was being sold at a sixteenth of what it cost.
+
+  So a profile is now `visible_tokens` times `thinking_ratio` rather than one
+  output number: what a reader sees, which a prompt shape predicts, times what
+  the model spends getting there, which only measurement finds.  The catalog
+  moved with it: `ai-decompilation` is 16 credits rather than 2 and is now the
+  dearest task, `function-triage` measured cheapest and became the reference
+  task one credit is defined as, and the plans re-derive from the same 20%
+  cost-of-goods ceiling at 2,000 credits for Analyst, 7,700 for Team and
+  39,000 for Enterprise.  Extra credits are $0.04.  Every task now covers its
+  measured cost, which `tests/test_credits.py` checks, and the pricing page and
+  Billing view name the reference task from the catalog rather than in prose,
+  because it has already moved once.
+
+- Independent writeups feed the signature tables.  Check Point's NSIXloader
+  analysis adds `$PLUGINSDIR`/`.onGUIInit`/`InitPluginsDir` crypter markers
+  to the NSIS row and their BoxedApp packer research adds a `BoxedApp`
+  packer row: same filetype scan, same pipeline, no new surfaces.
+- Research-roadmap detections from the vendor blogs.  `docs/RESEARCH_ROADMAP.md`
+  mines every Zenyard and RevEng.AI research post for statically-detectable
+  signals and tracks each to a module; this round ships four rows: the
+  `cpu-state-probe`, `int3-trap` and `lock-canary` hardening categories, the
+  `ddos-template` networking behavior rule, and the `iot-dropper` execution
+  rule.  Same scans, same pipelines, no new surfaces.
 - Tenants spend credits, not tokens.  Token counts are the wrong unit to sell:
   a customer cannot predict one, cannot compare two vendors with one, and a
   bill that moves because a model got chattier is a support ticket rather than

@@ -40,6 +40,35 @@ class TestTheUnit:
             assert credits_mod.base_credits(task) >= 1
 
 
+class TestMeasuredProfiles:
+    """The profiles are observations, and the shape of one has to stay honest."""
+
+    def test_output_is_visible_answer_times_thinking(self) -> None:
+        """A profile states what a reader sees and what the model spent getting there."""
+        for profile in credits_mod.TASK_PROFILES.values():
+            assert profile.output_tokens == round(profile.visible_tokens * profile.thinking_ratio)
+
+    def test_no_profile_claims_a_model_thinks_less_than_nothing(self) -> None:
+        """A ratio below 1 would mean invisible output, which cannot happen."""
+        for profile in credits_mod.TASK_PROFILES.values():
+            assert profile.thinking_ratio >= 1.0
+
+    def test_every_profile_carries_a_real_prompt_size(self) -> None:
+        for profile in credits_mod.TASK_PROFILES.values():
+            assert profile.input_tokens > 0
+            assert profile.visible_tokens > 0
+
+    def test_the_rewrite_is_the_most_deliberated_task(self) -> None:
+        """Measured: a whole-function rewrite thinks far longer than a triage line.
+
+        Pinned because it is the counter-intuitive result the benchmark found,
+        and the one an edit is most likely to undo by "tidying" the table.
+        """
+        rewrite = credits_mod.TASK_PROFILES[credits_mod.TASK_DECOMPILE]
+        triage = credits_mod.TASK_PROFILES[credits_mod.TASK_TRIAGE]
+        assert rewrite.thinking_ratio > triage.thinking_ratio * 2
+
+
 class TestSolvency:
     """A task must never be sold for less than it costs to serve."""
 
