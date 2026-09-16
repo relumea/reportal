@@ -227,7 +227,13 @@ export function BillingView(): ReactNode {
 
   if (rows.length === 0) {
     return (
-      <EmptyState>
+      <EmptyState
+        action={
+          <a className="back-link" href="#/users">
+            Open Users
+          </a>
+        }
+      >
         Billing is scoped to an organisation, and this install has none. Create one in Users,
         then come back.
       </EmptyState>

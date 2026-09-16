@@ -329,13 +329,25 @@ function BinaryPanel({
       }
     >
       <div className="cockpit-binary-list">
-        {summaries.map((summary) => (
-          <BinaryRow
-            key={summary.binary.id}
-            summary={summary}
-            flashing={changed.has(`binary-${summary.binary.id}`)}
-          />
-        ))}
+        {summaries.length === 0 ? (
+          <EmptyState
+            action={
+              <a className="back-link" href="#/binaries">
+                Open Binaries
+              </a>
+            }
+          >
+            No binary registered yet. Upload or import one from Binaries.
+          </EmptyState>
+        ) : (
+          summaries.map((summary) => (
+            <BinaryRow
+              key={summary.binary.id}
+              summary={summary}
+              flashing={changed.has(`binary-${summary.binary.id}`)}
+            />
+          ))
+        )}
       </div>
     </Panel>
   );
@@ -351,7 +363,15 @@ function SectionPanel({
   if (summary === null) {
     return (
       <Panel title="Section coverage" hue="stub">
-        <EmptyState>No binary registered yet.</EmptyState>
+        <EmptyState
+          action={
+            <a className="back-link" href="#/binaries">
+              Open Binaries
+            </a>
+          }
+        >
+          No binary registered yet. Upload or import one from Binaries to see section coverage.
+        </EmptyState>
       </Panel>
     );
   }
@@ -406,7 +426,15 @@ function RunPanel({
   if (run === null) {
     return (
       <Panel title="Live run" hue="stub">
-        <EmptyState>No auto run yet. Start one from Auto-mode.</EmptyState>
+        <EmptyState
+          action={
+            <a className="back-link" href="#/auto">
+              Open Auto-mode
+            </a>
+          }
+        >
+          No auto run yet. Start one from Auto-mode.
+        </EmptyState>
       </Panel>
     );
   }

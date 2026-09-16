@@ -396,7 +396,7 @@ export function ConversationsView(): ReactNode {
                   </Button>
                   <ConfirmButton
                     label="Delete"
-                    message="Delete chat?"
+                    message={`Delete chat "${row.title || `#${row.id}`}"?`}
                     pending={busy === `delete-${row.id}`}
                     onConfirm={() => void remove(row.id)}
                   />
@@ -491,7 +491,7 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
           </a>
           <ConfirmButton
             label="Delete"
-            message="Delete chat?"
+            message={`Delete chat "${data.title}"?`}
             pending={removing}
             onConfirm={() => void remove()}
           />

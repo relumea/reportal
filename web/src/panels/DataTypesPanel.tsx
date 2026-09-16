@@ -819,7 +819,7 @@ function DataTypeCard({
           </Button>
           <ConfirmButton
             label="Delete type"
-            message="Delete type?"
+            message={`Delete type ${dataType.name}?`}
             pending={busy === "delete"}
             onConfirm={removeType}
           />
@@ -1225,7 +1225,7 @@ function EnumValueRow({
           </Button>
           <ConfirmButton
             label="Remove"
-            message="Remove?"
+            message={`Remove enum value ${value.name}?`}
             pending={busy === "remove"}
             onConfirm={remove}
           />
@@ -1444,7 +1444,7 @@ function MemberRow({
           )}
           <ConfirmButton
             label="Remove"
-            message="Remove?"
+            message={`Remove member ${member.name}?`}
             pending={busy === "remove"}
             onConfirm={remove}
           />

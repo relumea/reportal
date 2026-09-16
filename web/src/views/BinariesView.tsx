@@ -797,7 +797,7 @@ export function BinariesView({
                   <div className="actions-cell">
                     <ConfirmButton
                       label="Delete"
-                      message="Delete family?"
+                      message={`Delete family ${row.name}?`}
                       pending={busy === `family-delete-${row.family_id}`}
                       onConfirm={() => void removeFamily(row.family_id)}
                     />
@@ -992,7 +992,7 @@ export function BinariesView({
               </Button>
               <ConfirmButton
                 label="Delete"
-                message={`Delete ${selected.size}?`}
+                message={`Delete ${selected.size} selected ${selected.size === 1 ? "binary" : "binaries"}?`}
                 pending={busy === "delete"}
                 disabled={selected.size === 0}
                 onConfirm={() => void runBulk("delete", "")}

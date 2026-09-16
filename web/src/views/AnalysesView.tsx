@@ -757,7 +757,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               </Button>
               <ConfirmButton
                 label="Delete"
-                message={`Delete ${selected.size}?`}
+                message={`Delete ${selected.size} selected ${selected.size === 1 ? "analysis" : "analyses"}?`}
                 pending={busy === "delete"}
                 disabled={selected.size === 0}
                 onConfirm={() => void runBulk("delete", "")}

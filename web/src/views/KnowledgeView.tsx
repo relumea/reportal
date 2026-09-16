@@ -287,7 +287,7 @@ export function KnowledgeView(): ReactNode {
                   <div className="actions-cell">
                     <ConfirmButton
                       label="Delete"
-                      message="Delete document?"
+                      message={`Delete document "${row.title || `#${row.id}`}"?`}
                       pending={busy === `delete-${row.id}`}
                       onConfirm={() => void remove(row.id)}
                     />
@@ -310,12 +310,15 @@ export function KnowledgeView(): ReactNode {
         subtitle="Semantic and keyword search over this scope's documents."
         actions={
           <Toolbar>
-            <Field label="Query">
+            <Field label="Query" hint="Enter searches">
               <input
                 type="search"
                 placeholder="semantic search over this scope"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && query.trim()) setSubmitted(query);
+                }}
               />
             </Field>
             <Button tone="primary" disabled={!query.trim()} onClick={() => setSubmitted(query)}>

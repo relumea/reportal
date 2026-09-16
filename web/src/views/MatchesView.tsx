@@ -455,13 +455,16 @@ export function MatchesView({
       subtitle="Cross-function candidates recorded for one binary's functions."
       actions={
         <Toolbar>
-          <Field label="Function">
+          <Field label="Function" hint="Enter loads">
             <input
               type="number"
               min="1"
               placeholder="function id"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onSelectFunction(Number(draft) || null);
+              }}
             />
           </Field>
           <Button tone="primary" onClick={() => onSelectFunction(Number(draft) || null)}>
@@ -487,8 +490,14 @@ export function MatchesView({
       }
     >
       {functionId === null ? (
-        <EmptyState>
-          Enter a function id to open its binary's match view. Function ids are listed on the
+        <EmptyState
+          action={
+            <a className="back-link" href="#/functions">
+              Browse functions
+            </a>
+          }
+        >
+          Enter a function id to open its binary&apos;s match view. Function ids are listed on the
           Functions page.
         </EmptyState>
       ) : functionResult.error ? (

@@ -497,7 +497,7 @@ function ParameterRow({
           </Button>
           <ConfirmButton
             label="Remove"
-            message="Remove?"
+            message={`Remove parameter ${name.trim() || `#${parameter.index}`}?`}
             pending={busy === "remove"}
             onConfirm={remove}
           />

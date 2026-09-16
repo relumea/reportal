@@ -201,7 +201,7 @@ export function CommentsPanel({
                         </Button>
                         <ConfirmButton
                           label="Delete"
-                          message="Delete comment?"
+                          message="Delete this comment?"
                           pending={busy === `remove-${comment.id}`}
                           onConfirm={() => void remove(comment.id)}
                         />

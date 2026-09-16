@@ -153,7 +153,12 @@ export function ComponentsView(): ReactNode {
           ]}
           rows={rows}
           rowKey={(row) => row.name}
-          empty={<EmptyState>No components registered.</EmptyState>}
+          empty={
+            <EmptyState>
+              No components registered. Built-ins and entry-point plugins appear here once the
+              server has loaded them; use Reload all after installing a plugin package.
+            </EmptyState>
+          }
         />
       )}
     </Panel>

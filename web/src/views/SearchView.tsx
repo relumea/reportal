@@ -54,12 +54,15 @@ export function SearchView({
       subtitle="Names, hashes, tags and paths across the whole workspace."
       actions={
         <Toolbar>
-          <Field label="Query">
+          <Field label="Query" hint="Enter searches">
             <input
               type="search"
               placeholder="name, hash, path"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onQuery(draft);
+              }}
             />
           </Field>
           <Field label="Match">

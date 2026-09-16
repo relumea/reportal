@@ -120,7 +120,10 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
         <Loading label="Loading the symbol files" rows={2} />
       ) : entry.state === "error" ? (
         entry.error === "no-symbols" || String(entry.error).includes("no-symbols") ? (
-          <EmptyState>No symbol file ingested for this binary yet.</EmptyState>
+          <EmptyState>
+            No symbol file ingested for this binary yet. Choose a PDB or ELF/DWARF file above and
+            upload it.
+          </EmptyState>
         ) : (
           <ErrorNote error={entry.error} onRetry={refresh} />
         )

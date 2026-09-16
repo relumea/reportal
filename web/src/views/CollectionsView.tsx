@@ -150,11 +150,14 @@ function CollectionDetailPanel({
         <Button pending={busy === "tags"} onClick={() => void saveTags()}>
           Save tags
         </Button>
-        <Field label="Binary id">
+        <Field label="Binary id" hint="Enter adds">
           <input
             inputMode="numeric"
             value={binaryId}
             onChange={(event) => setBinaryId(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && binaryId.trim() !== "") void addMember();
+            }}
           />
         </Field>
         <Button
@@ -189,7 +192,11 @@ function CollectionDetailPanel({
           ]}
           rows={data.binaries}
           rowKey={(row) => row.id}
-          empty={<EmptyState>No binaries in this collection yet.</EmptyState>}
+          empty={
+            <EmptyState>
+              No binaries in this collection yet. Enter a binary id above and add it.
+            </EmptyState>
+          }
         />
       )}
     </Panel>
@@ -289,11 +296,14 @@ export function CollectionsView({
         }
       >
         <Toolbar>
-          <Field label="Name">
+          <Field label="Name" hint="Enter creates">
             <input
               placeholder="name"
               value={name}
               onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && name.trim()) void create();
+              }}
             />
           </Field>
           <Field label="Description">

@@ -1693,11 +1693,14 @@ export function TagsPanel({ binaryId }: { binaryId: number }): ReactNode {
       subtitle="Free-form labels stored locally with the binary."
       actions={
         <Toolbar>
-          <Field label="Tag">
+          <Field label="Tag" hint="Enter adds">
             <input
               placeholder="tag name"
               value={name}
               onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && name.trim()) void add();
+              }}
             />
           </Field>
           <Button tone="primary" pending={busy === "add"} onClick={() => void add()}>
@@ -1717,7 +1720,7 @@ export function TagsPanel({ binaryId }: { binaryId: number }): ReactNode {
                   <div className="actions-cell">
                     <ConfirmButton
                       label="Remove"
-                      message="Remove tag?"
+                      message={`Remove tag ${tag.name}?`}
                       pending={busy === `remove-${tag.id}`}
                       onConfirm={() => void remove(tag)}
                     />

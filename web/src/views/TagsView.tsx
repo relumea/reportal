@@ -75,8 +75,20 @@ function TagDetailPanel({ tag, onChanged }: { tag: TagRow; onChanged: () => void
       }
     >
       <Toolbar>
-        <Field label="Name" hint="the exact name every link keeps">
-          <input value={name} onChange={(event) => setName(event.target.value)} />
+        <Field label="Name" hint="the exact name every link keeps; Enter saves">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                name.trim() &&
+                name !== tag.name
+              ) {
+                void save();
+              }
+            }}
+          />
         </Field>
       </Toolbar>
       {actionError ? <ErrorNote error={actionError} /> : null}
