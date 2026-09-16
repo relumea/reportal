@@ -603,6 +603,19 @@ view renders it from here.
   and the same reading exports as CycloneDX 1.5, SPDX 2.3 or CSV.  Before this
   the module a function came from was discarded after auto-unstrip used it.
 
+- Team scope covers the whole route surface.  The middleware gate resolves
+  eleven object kinds through their owning binary (functions, analyses, data
+  types, comments, documents, conversations, pipeline and auto runs and graph
+  nodes beside the binaries and collections themselves); the listings, batch
+  reads, searches, feeds and dashboard series filter by the shared
+  `auth.visible_clause`; the match, composition, lineage, related, benchmark,
+  transfer and canonical-names operations score only visible binaries; the
+  writes check `may_write` and the creates refuse a hidden scope as its own
+  404.  `tools/audit_scope.py` (run by `make lint`) fails a new object-id
+  route without coverage.  The journal halves of the feeds stay global by
+  decision: entries carry free-text descriptions, never object references
+  (`docs/THREAT_MODEL.md` states the residual).
+
 ## 1.2.0
 
 Closes every capability gap the parity inventory found and the crawl backlog
