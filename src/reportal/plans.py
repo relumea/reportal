@@ -13,8 +13,8 @@ What a plan grants, and why
 ---------------------------
 
 A plan grants **credits**, not tokens.  A credit is one reference task (see
-:mod:`reportal.credits`), so a tenant reads its allowance as "4,200 summaries,
-or 2,100 AI decompilations, or 1,050 comment passes" rather than as a token
+:mod:`reportal.credits`), so a tenant reads its allowance as "2,000 triage
+calls, or 1,000 summaries, or 125 AI decompilations" rather than as a token
 count it cannot predict or compare.  Tokens stay behind the counter: the ledger
 still records them, and that record is what proves the credit price covers the
 inference it buys.
@@ -24,10 +24,10 @@ inference and a credit allowance is a direct cost of goods sold.  The chain is:
 :data:`MODEL_RATES` gives the published per-million rates,
 :func:`reportal.credits.credit_cogs_usd` prices one credit at those rates, and
 a tier may spend at most :data:`MAX_COGS_SHARE` of its price on inference.  So
-a ``$39`` tier carries ``39 * 0.20 / 0.00183`` credits, rounded to a friendly
-4,200.  ``tests/test_plans.py`` asserts that ceiling rather than the literal
-numbers, so raising an allowance is allowed and raising it past what the price
-supports fails the gate.
+a ``$39`` tier carries ``39 * 0.20 / credit_cogs_usd()`` credits, rounded to a
+friendly 2,000.  ``tests/test_plans.py`` asserts that ceiling rather than the
+literal numbers, so raising an allowance is allowed and raising it past what
+the price supports fails the gate.
 
 Two pressure valves keep the ceiling from being a wall.  An organisation past
 its allowance buys more at :data:`reportal.credits.OVERAGE_USD_PER_CREDIT`
@@ -207,7 +207,7 @@ class Plan:
 # `price_usd * MAX_COGS_SHARE / credits.credit_cogs_usd()` rounded down to a
 # friendly number, which is what keeps `cogs_share()` under the ceiling.  The
 # feature lines say what the credits buy rather than repeating the number,
-# because "2,100 AI decompilations" is the thing a customer is actually deciding
+# because "125 AI decompilations" is the thing a customer is actually deciding
 # about.
 PLANS: tuple[Plan, ...] = (
     Plan(

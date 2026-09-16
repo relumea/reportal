@@ -19,6 +19,21 @@ view renders it from here.
   `uv venv`, `uv sync` and CI resolve the same one rather than the newest
   compatible release, and the README's install section and the deployment
   sequence state the floor instead of assuming a `python3` on PATH is new enough.
+- **A tenant no longer sees the model machinery.**  AI responses used to carry
+  the backend model name, raw token counts, reasoning fields and the prompt.
+  `disclosure.py` strips those through `server.json_response` for every
+  payload, and `clean_text` removes reasoning markup from the agent's prose
+  answer.  Operators (admins, or any caller while auth is off) still see the
+  real fields.  While the backend is a supplier's, `PUBLIC_ENGINE_NAME` is empty
+  so the field is omitted rather than renamed.  Tenants that read a `model`
+  key from an AI artifact or from `GET /api/config` will find it gone; credits
+  remain the billed unit.
+- **Credits charge only after a usable answer.**  An LLM or agent task that
+  fails validation, is refused, or returns nothing billable no longer spends
+  credits.  The quota window restarts only when entitlement or the provider
+  period advances, so mid-period usage is kept rather than wiped on an
+  unrelated sync, and the open-ended oversize credit band is published beside
+  the named size bands.
 - **`zstandard` is declared directly.**  `rebrew.workspace` decodes the
   `section_cells_json` cache with it, and this package imports that module — so
   it needs the dependency rather than inheriting it silently.  Previously
@@ -168,29 +183,19 @@ view renders it from here.
   bill that moves because a model got chattier is a support ticket rather than
   a price.  `credits.py` is the per-task price list that replaces them.  One
   credit is one *reference task*, the cheapest real operation the portal
-  performs (a function summary over a median function), and every other task is
-  its measured cost divided by that, rounded up: an AI decompilation is 2
-  credits, triage 2 per function, inline comments 4.  The profiles are
-  measurement rather than estimate, taken by running the real prompt builders
-  over the 69 reversed functions of the `notepad-rebrew` project, which is why
-  comments are the expensive task (a line per meaningful line) and a summary
-  the cheap one.
+  performs, and every other task is its measured cost divided by that, rounded
+  up.  A published price still has to survive a 10,000-line function, so a
+  charge scales by input size in bands rather than by the token: standard,
+  double over ~1,500 tokens of input, four times over 6,000.  The band is
+  decided from the input, which is known before the call, so a quota refuses
+  work instead of discovering the overrun afterwards.
 
-  A published price still has to survive a 10,000-line function, so a charge
-  scales by input size in bands rather than by the token: standard, double over
-  ~1,500 tokens of input, four times over 6,000.  The band is decided from the
-  input, which is known before the call, so a quota refuses work instead of
-  discovering the overrun afterwards, and the first ceiling sits above the
-  reference corpus's 90th percentile so an ordinary function is never
-  surcharged.
-
-  Plans now grant credits on the same derivation as before: Analyst is 4,200
-  credits at $39, Team 16,000 at $149, Enterprise 82,000 at $749, each still
-  under the 20% cost-of-goods ceiling, with the free tier bounded outright at a
-  dollar of inference.  `tests/test_credits.py` asserts the derivation rather
-  than the literal numbers: that the reference task is still the cheapest, that
-  no task is sold below what it costs to serve, and that price order follows
-  cost order, so a cheap task can never become a loophole.
+  The first estimated catalog (summary as the reference, AI decompilation at 2
+  credits, Analyst at 4,200) was replaced by the measured table above once
+  `tools/bench_credits.py` ran: function triage is the reference at 1 credit,
+  AI decompilation is 16, and the plans re-derived to 2,000 / 7,700 / 39,000.
+  `tests/test_credits.py` asserts the derivation rather than the literal
+  numbers.
 
   Tokens stay behind the counter.  The ledger still records them and
   `period_cost_usd` still prices them, because that pair is what proves the

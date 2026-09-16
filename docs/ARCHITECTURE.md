@@ -2560,18 +2560,19 @@ discovering the overrun afterwards.  The first ceiling sits above the reference
 corpus's 90th percentile, so an ordinary function is never surcharged.
 
 **The catalog is code, and the allowances are derived.**  A plan grants
-credits, so a tenant reads its allowance as "4,200 summaries, or 2,100 AI
-decompilations" rather than as a token count.  The chain is: `MODEL_RATES`
-gives the published per-million rates, `credits.credit_cogs_usd()` prices one
-credit at those rates, and a tier may spend at most `MAX_COGS_SHARE` (20%) of
-its price on inference.  `tests/test_plans.py` asserts that ceiling rather than
-the literal numbers, so raising an allowance is allowed and raising it past
-what the price supports fails the gate.  The free tier has no price to take a
-share of, so it is bounded outright by `MAX_FREE_COGS_USD`.  Two pressure
-valves keep the ceiling from being a wall: a paid tier past its allowance buys
-more at `credits.OVERAGE_USD_PER_CREDIT` instead of stopping, and a tenant
-pointing the bridge at its own endpoint is not metered at all, because reportal
-is not paying for it.
+credits, so a tenant reads its allowance as "2,000 triage calls, or 1,000
+summaries, or 125 AI decompilations" rather than as a token count.  The chain
+is: `MODEL_RATES` gives the published per-million rates,
+`credits.credit_cogs_usd()` prices one credit at those rates, and a tier may
+spend at most `MAX_COGS_SHARE` (20%) of its price on inference.
+`tests/test_plans.py` asserts that ceiling rather than the literal numbers, so
+raising an allowance is allowed and raising it past what the price supports
+fails the gate.  The free tier has no price to take a share of, so it is
+bounded outright by `MAX_FREE_COGS_USD`.  Two pressure valves keep the ceiling
+from being a wall: a paid tier past its allowance buys more at
+`credits.OVERAGE_USD_PER_CREDIT` instead of stopping, and a tenant pointing the
+bridge at its own endpoint is not metered at all, because reportal is not
+paying for it.
 
 **The ledger is append-only.**  `metering.py` writes one `usage_events` row per
 metered event and never updates or deletes one, because a disputed invoice has

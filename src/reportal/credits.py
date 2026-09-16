@@ -8,15 +8,12 @@ internally), and what a tenant actually spends is a **credit**: a fixed,
 published price per task.
 
 The unit is defined rather than chosen.  One credit is one *reference task*:
-the cheapest real operation the portal performs, a function summary over a
-median function.  :data:`REFERENCE_TASK` names it, :func:`credit_cogs_usd`
+the cheapest real operation the portal performs (currently function triage over
+a median function).  :data:`REFERENCE_TASK` names it, :func:`credit_cogs_usd`
 prices it at the published Claude rates, and every other task's credit cost is
 its measured cost divided by that, rounded up.  So the table below is derived:
 change the rates in :mod:`reportal.plans` and every credit cost moves with
 them, which is what keeps the catalog honest when a model is repriced.
-
-Where the profiles come from
-----------------------------
 
 Where the profiles come from
 ----------------------------
