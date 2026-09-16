@@ -228,7 +228,7 @@ def remote_enabled() -> bool:
 def require_enabled() -> None:
     """Raise :class:`DisabledExternalError` unless the remote sources are enabled."""
     if not remote_enabled():
-        raise DisabledExternalError()
+        raise DisabledExternalError
 
 
 def virustotal_key() -> str:
@@ -694,7 +694,7 @@ def run(conn: sqlite3.Connection, *, analysis_id: int, source_name: str) -> dict
     context = binary_context(conn, analysis_id)
     if not source.available():
         if source.kind == KIND_REMOTE and not remote_enabled():
-            raise DisabledExternalError()
+            raise DisabledExternalError
         raise UnavailableExternalError(source.unavailable_reason())
     payload = source.retrieve(context)
     return {

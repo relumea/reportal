@@ -161,7 +161,9 @@ function TaskPrices({ tasks }: { tasks: TaskPrice[] }): ReactNode {
           render: (row) => {
             const large = row.bands[1];
             if (!large) return NA;
-            return `${large.credits} over ${large.max_input_tokens.toLocaleString()} tok`;
+            const ceiling = large.max_input_tokens;
+            if (ceiling == null) return `${large.credits}`;
+            return `${large.credits} over ${ceiling.toLocaleString()} tok`;
           },
         },
       ]}

@@ -77,8 +77,9 @@ loud with its install hint, never a silent skip. `shellcheck` and `vnu` are the
 two external tools (`vnu` also needs Java 17+).
 
 **mypy.** `[tool.mypy]` holds the package and the suite to a graduated flag
-set: `python_version = "3.13"`, `disallow_untyped_defs`, `check_untyped_defs`,
-`warn_unused_ignores`, `no_implicit_optional`, `strict_equality`,
+set: `python_version = "3.13"`, `disallow_untyped_defs`,
+`disallow_incomplete_defs`, `check_untyped_defs`, `warn_unused_ignores`,
+`warn_redundant_casts`, `no_implicit_optional`, `strict_equality`,
 `warn_return_any` and `disallow_any_generics`. The suite runs at the same
 level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
@@ -126,7 +127,7 @@ uv pip install -e ".[cognee]" --python .venv/bin/python
 cd web && bun install
 cd web && bun run build     # tsc --noEmit + vite build into src/reportal/assets/dist
 cd web && bun run dev       # Vite dev server
-cd web && bun run lint      # oxlint src tests playwright.config.ts
+cd web && bun run lint      # oxlint --import-plugin src tests playwright.config.ts
 cd web && bun run typecheck # tsc --noEmit
 cd web && bun run test:ui   # Playwright over a seeded workspace (see tests/)
 
@@ -799,7 +800,7 @@ the floor proves nothing.
   is configured; `tests/test_graph_backends.py` exercises the real package when
   it is installed and skips when it is not.
 - Type annotations on every parameter and return; PEP 604 unions; specific generics.
-- Ruff: line length 100, `select` groups E/F/W/I/UP/B/SIM/A/DTZ/G/N/PGH/TID/RUF100/T10/C4/RET/PIE/ISC/FURB/T20, no ignores.
+- Ruff: line length 100, `select` groups E/F/W/I/UP/B/SIM/A/DTZ/G/N/PGH/TID/RUF100/T10/C4/RET/PIE/ISC/FURB/T20/ASYNC/LOG/FA/FLY/SLOT/PYI/INT/YTT/RSE, no ignores.
 - Typer CLI; human output to stderr through `Console(stderr=True)`; `--json` payloads to stdout.
 - FastAPI application served by uvicorn, loopback bind by default, Host-header guard against DNS rebinding.  `server.app` is the ASGI app and `api.router`/`ui.router` are its routes.  A handler is a plain `def` (FastAPI runs it on the threadpool) unless it parses a multipart body itself, takes `request: Request` when it reads the query string and `body: dict[str, Any] = Depends(json_body)` (or `optional_json_body`) when it reads a JSON body.  Nothing 500s on a request error: `json_error` is both a response and an exception, and the handlers in `server.py` keep FastAPI's own refusals (405, a malformed path parameter, an unreadable multipart body) inside the `{"error", "detail", "doc_url"}` envelope.
 - The API gate is one middleware (`server._reportal_headers` calling

@@ -131,10 +131,13 @@ extend-exclude = [".scratch", "docs"]
 [tool.ruff.lint]
 # Core groups (E/F/W/I/UP/B/SIM) plus correctness-oriented groups that stay
 # clean on this tree; every remaining rule is enforced (no blanket ignores).
+# ASYNC/LOG/FA/FLY/SLOT/PYI/INT/YTT/RSE are enabled because the tree already
+# passes them (RSE's two paren-on-raise hits were autofixed when added).
 select = [
     "E", "F", "W", "I", "UP", "B", "SIM",
     "A", "DTZ", "G", "N", "PGH", "TID", "RUF100",
     "T10", "C4", "RET", "PIE", "ISC", "FURB", "T20",
+    "ASYNC", "LOG", "FA", "FLY", "SLOT", "PYI", "INT", "YTT", "RSE",
 ]
 ignore = []
 
@@ -154,10 +157,10 @@ extend-immutable-calls = [
 [tool.mypy]
 # The project is annotated by convention but was never type-checked, so this is
 # a graduated set rather than `strict`: it catches every untyped def and body,
-# stale ignore, implicit Optional, non-overlapping comparison, `Any` return and
-# bare generic.  Plain `mypy` uses this config; the `--strict` tail it does not
-# cover is counted in AGENTS.md and is a documented follow-up, not a claim of
-# compliance.
+# incomplete def, stale ignore, redundant cast, implicit Optional, non-
+# overlapping comparison, `Any` return and bare generic.  Plain `mypy` uses
+# this config; the `--strict` tail it does not cover is counted in AGENTS.md
+# and is a documented follow-up, not a claim of compliance.
 python_version = "3.13"
 files = ["src/reportal", "tests"]
 # `tools/` is not part of the type-checked tree; `tests/test_smoke_seed.py`
@@ -165,8 +168,10 @@ files = ["src/reportal", "tests"]
 # this gate's scope from being reported (the module is still parsed).
 follow_imports = "silent"
 disallow_untyped_defs = true
+disallow_incomplete_defs = true
 check_untyped_defs = true
 warn_unused_ignores = true
+warn_redundant_casts = true
 no_implicit_optional = true
 strict_equality = true
 warn_return_any = true
