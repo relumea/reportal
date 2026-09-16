@@ -17,6 +17,10 @@ Description=reportal reverse-engineering portal
 Documentation=https://github.com/relumea/reportal/blob/main/docs/DEPLOY.md
 After=network-online.target
 Wants=network-online.target
+# Cap rapid Restart=on-failure loops when doctor keeps failing (bad schema,
+# taken port, missing workspace) so a broken install does not thrash the host.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -30,6 +34,13 @@ ExecStart=/srv/reportal/.venv/bin/reportal serve --host 127.0.0.1 --port 8002 --
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=20
+UMask=0077
+
+# Soft and hard ceilings for a single-operator portal.  MemoryMax is generous
+# enough for engine work and optional LLM calls; TasksMax bounds fork bombs
+# from a compromised process without constraining normal analysis.
+MemoryMax=4G
+TasksMax=512
 
 # The workspace is read-write; the rest of the host is read-only or hidden.  No
 # MemoryDenyWriteExecute: the engine's decompiler backends may need an
@@ -39,12 +50,20 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
+ProtectKernelLogs=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
 ReadWritePaths=/srv/reportal
 
 [Install]

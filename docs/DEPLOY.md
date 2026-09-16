@@ -73,7 +73,14 @@ matter:
 | `WorkingDirectory=/srv/reportal` | where the `reportal.toml` walk-up starts, so the service serves that workspace |
 | `ReadWritePaths=/srv/reportal` with `ProtectSystem=strict` | the workspace is the only writable path; the rest of the host is read-only |
 | `ProtectHome=true`, `PrivateTmp=true`, `PrivateDevices=true` | the service cannot read another user's home directory, and gets its own `/tmp` and `/dev` |
+| `ProtectClock=true`, `ProtectHostname=true`, `ProtectKernelLogs=true` | the service cannot change the clock or hostname, and cannot read the kernel log |
 | `NoNewPrivileges=true`, `RestrictSUIDSGID=true`, `LockPersonality=true` | no privilege gain, no set-user-ID binary, no personality change |
+| `RestrictNamespaces=true`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | no new namespaces, and only the socket families serving and egress need |
+| `CapabilityBoundingSet=` / `AmbientCapabilities=` | drop every capability; the service never needs one |
+| `SystemCallArchitectures=native` | refuse foreign architectures that would bypass filters |
+| `UMask=0077` | files the service creates are owner-only by default |
+| `MemoryMax=4G`, `TasksMax=512` | hard ceilings so a runaway analysis cannot starve the host |
+| `StartLimitIntervalSec=60` / `StartLimitBurst=5` | a doctor that keeps failing does not thrash `Restart=on-failure` |
 
 Two deliberate omissions, both stated in the unit's own comments: egress is not
 restricted (the AI bridge, the external sources and guarded URL ingestion call

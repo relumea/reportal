@@ -5,20 +5,42 @@ on:
     branches: [main]
   pull_request:
 
+# Least privilege: this workflow only reads the tree and never pushes,
+# opens issues, or otherwise writes through the default GITHUB_TOKEN.
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
           version: "0.8.22"
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: "1.4.0"
+
+      # Bun's global install cache, separate from the Bun binary setup-bun
+      # already caches.  Keyed on the lockfile so a dep bump still reuses a
+      # warm cache for unchanged packages.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('web/bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
 
       # java runs vnu.jar and shellcheck is a gate step.  The runner image
       # already carries Google Chrome, which backs the `ui` target's headless
@@ -27,20 +49,20 @@ jobs:
       - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-17-jre-headless shellcheck
+          sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless shellcheck
           java -version
           google-chrome-stable --version
 
       # The gate runs `vnu` by name.  The `vnu` package is a meta package whose
       # own manifest declares no bin, so nothing links a command for it; the
-      # `vnu-jar` package is what carries the wrapper and the jar.  It is
-      # installed under an explicit prefix that is on PATH and pinned to the
-      # release the local gate validates against, so the two agree on the
-      # findings, and the version is printed in this step.
+      # `vnu-jar` package is what carries the wrapper and the jar.  Install under
+      # the runner home (no root npm) at the release the local gate validates
+      # against, so the two agree on the findings, and print the version here.
       - name: Install the VNU HTML/CSS validator
         run: |
-          sudo npm install -g --prefix /usr/local vnu-jar@26.8.21
-          vnu --version
+          npm install --prefix "$HOME/.local" -g vnu-jar@26.8.21
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/vnu" --version
 
       # `rebrew` is a base dependency and `resembl` backs the similarity
       # extra; both are path sources on sibling checkouts

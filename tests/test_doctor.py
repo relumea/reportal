@@ -330,6 +330,11 @@ class TestUnit:
         assert "NoNewPrivileges=true" in text
         assert "ReadWritePaths=/srv/reportal" in text
         assert "WantedBy=multi-user.target" in text
+        assert "MemoryMax=4G" in text
+        assert "TasksMax=512" in text
+        assert "StartLimitBurst=5" in text
+        assert "CapabilityBoundingSet=" in text
+        assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" in text
 
     def test_the_unit_serves_loopback_by_default(self) -> None:
         text = UNIT.read_text(encoding="utf-8")
