@@ -413,6 +413,8 @@ def ingest_document(
         raise KnowledgeError(*_unusable_reason(data))
     chunks = chunk_text(text)
     vectors = _embed_chunks(chunks)
+    # Document and chunks share one commit: a crash between the row and its
+    # ordinals would leave a document the search path cannot retrieve.
     document_id = store.add_document(
         conn,
         scope_kind=scope_kind,
@@ -423,15 +425,22 @@ def ingest_document(
         sha256=sha256,
         size=len(data),
         text=text,
+        commit=False,
     )
-    for ordinal, chunk in enumerate(chunks):
-        store.add_chunk(
-            conn,
-            document_id=document_id,
-            ordinal=ordinal,
-            text=chunk,
-            embedding=vectors[ordinal] if vectors is not None else None,
-        )
+    try:
+        for ordinal, chunk in enumerate(chunks):
+            store.add_chunk(
+                conn,
+                document_id=document_id,
+                ordinal=ordinal,
+                text=chunk,
+                embedding=vectors[ordinal] if vectors is not None else None,
+                commit=False,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     stored = store.get_document(conn, document_id)
     return {**_summary_row(stored or {}), "duplicate": False, "embedded": vectors is not None}
 

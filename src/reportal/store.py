@@ -465,13 +465,22 @@ CREATE TABLE IF NOT EXISTS signature_history (
     created_at    TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_functions_analysis ON functions(analysis_id);
+-- ``(analysis_id, name_source)`` covers the imported-stubs listing and the
+-- plain ``analysis_id`` filter (leftmost prefix); the older single-column
+-- index is dropped so an upgrade does not keep both.
+DROP INDEX IF EXISTS idx_functions_analysis;
+CREATE INDEX IF NOT EXISTS idx_functions_analysis_name_source
+    ON functions(analysis_id, name_source);
 CREATE INDEX IF NOT EXISTS idx_analyses_binary ON analyses(binary_id);
 CREATE INDEX IF NOT EXISTS idx_matches_function ON matches(function_id);
 CREATE INDEX IF NOT EXISTS idx_matches_candidate ON matches(candidate_function_id);
 CREATE INDEX IF NOT EXISTS idx_name_history_function ON name_history(function_id);
 CREATE INDEX IF NOT EXISTS idx_signature_history_function ON signature_history(function_id);
-CREATE INDEX IF NOT EXISTS idx_binary_tags_binary ON binary_tags(binary_id);
+-- ``binary_tags`` is keyed by ``(binary_id, tag_id)``; the PK already covers
+-- binary_id, so only the reverse (tag delete / tag count) needs an index.
+DROP INDEX IF EXISTS idx_binary_tags_binary;
+CREATE INDEX IF NOT EXISTS idx_binary_tags_tag ON binary_tags(tag_id);
+CREATE INDEX IF NOT EXISTS idx_collection_tags_tag ON collection_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_collection_binaries_binary ON collection_binaries(binary_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_scans_analysis_kind ON scans(analysis_id, kind);
@@ -483,9 +492,17 @@ CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run ON pipeline_steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_auto_runs_binary ON auto_runs(binary_id);
 CREATE INDEX IF NOT EXISTS idx_auto_tasks_run ON auto_tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_auto_tasks_parent ON auto_tasks(parent_id);
-CREATE INDEX IF NOT EXISTS idx_auto_attempts_task ON auto_attempts(task_id);
+-- Unique ``(task_id, attempt)`` replaces the plain task index and stops a
+-- double-write of the same attempt number.
+DROP INDEX IF EXISTS idx_auto_attempts_task;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_attempts_task_attempt
+    ON auto_attempts(task_id, attempt);
 CREATE INDEX IF NOT EXISTS idx_documents_scope ON documents(scope_kind, scope_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
+-- Unique ``(document_id, ordinal)`` replaces the plain document index and
+-- makes a repeated ordinal unrepresentable.
+DROP INDEX IF EXISTS idx_chunks_document;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chunks_document_ordinal
+    ON chunks(document_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_graph_nodes_binary ON graph_nodes(binary_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_binary ON graph_edges(binary_id);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source);
@@ -584,14 +601,29 @@ _BACKFILLS: tuple[str, ...] = (
 # `_SCHEMA` script runs before those columns exist, so these land here after
 # the ALTER ADD COLUMN pass; `IF NOT EXISTS` keeps a fresh database and an
 # upgrade of an old one on the same path.  The table name is checked so a
-# partial fixture that never created `users` does not fail the upgrade.
-_ADDED_INDEXES: tuple[tuple[str, str], ...] = (
-    ("binaries", "CREATE INDEX IF NOT EXISTS idx_binaries_owner_team ON binaries(owner_team_id)"),
+# partial fixture that never created `users` does not fail the upgrade.  An
+# optional required column skips the statement when a stub table predates it
+# (the null-sha256 name/path index needs `binaries.sha256`).
+_ADDED_INDEXES: tuple[tuple[str, str | None, str], ...] = (
+    (
+        "binaries",
+        None,
+        "CREATE INDEX IF NOT EXISTS idx_binaries_owner_team ON binaries(owner_team_id)",
+    ),
     (
         "collections",
+        None,
         "CREATE INDEX IF NOT EXISTS idx_collections_owner_team ON collections(owner_team_id)",
     ),
-    ("users", "CREATE INDEX IF NOT EXISTS idx_users_active_team ON users(active_team_id)"),
+    ("users", None, "CREATE INDEX IF NOT EXISTS idx_users_active_team ON users(active_team_id)"),
+    (
+        "binaries",
+        "sha256",
+        (
+            "CREATE INDEX IF NOT EXISTS idx_binaries_name_path_null_sha"
+            " ON binaries(name, path) WHERE sha256 IS NULL"
+        ),
+    ),
 )
 
 
@@ -603,11 +635,16 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
     for statement in _BACKFILLS:
         conn.execute(statement)
-    for table, statement in _ADDED_INDEXES:
-        if conn.execute(
+    for table, required_column, statement in _ADDED_INDEXES:
+        if not conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
         ).fetchone():
-            conn.execute(statement)
+            continue
+        if required_column is not None:
+            columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+            if required_column not in columns:
+                continue
+        conn.execute(statement)
     conn.commit()
 
 
@@ -3668,12 +3705,15 @@ def add_document(
     source: str = "",
     mime: str = "",
     size: int = 0,
+    commit: bool = True,
 ) -> int:
     """Insert a document row; returns its id.
 
     The ``(scope_kind, scope_id, sha256)`` unique index is the dedupe key: the
     caller resolves an existing row through :func:`find_document_by_sha256`
-    before inserting, so a repeated ingest never adds a second row.
+    before inserting, so a repeated ingest never adds a second row.  Pass
+    ``commit=False`` when the caller will commit the document and its chunks
+    together.
     """
     cur = conn.execute(
         "INSERT INTO documents"
@@ -3681,7 +3721,8 @@ def add_document(
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (scope_kind, scope_id, title, source, mime, sha256, size, text, now()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(cur.lastrowid or 0)
 
 
@@ -3766,11 +3807,14 @@ def add_chunk(
     ordinal: int,
     text: str,
     embedding: Sequence[float] | None = None,
+    commit: bool = True,
 ) -> int:
     """Append one chunk of a document; returns its id.
 
     ``embedding`` is stored as JSON, or NULL when the document was ingested
     without an embeddings endpoint, which leaves the chunk to the TF-IDF path.
+    Pass ``commit=False`` when the caller will commit the document and its
+    chunks together.
     """
     stored = json.dumps([float(value) for value in embedding]) if embedding else None
     cur = conn.execute(
@@ -3778,7 +3822,8 @@ def add_chunk(
         " VALUES (?, ?, ?, ?, ?)",
         (document_id, ordinal, text, stored, now()),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(cur.lastrowid or 0)
 
 

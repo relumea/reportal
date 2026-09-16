@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     finished_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON {TABLE}(status, id);
+CREATE INDEX IF NOT EXISTS idx_jobs_binary ON {TABLE}(binary_id);
 """
 
 

@@ -157,7 +157,8 @@ dead process left `running` is closed by `recover_auto_run`, which marks its
 unfinished tasks `failed` with reason `interrupted` and merges what they
 recorded.  `auto_attempts` holds one
 row per worker call (`task_id`, `attempt`, `worker`, `status`,
-`detail_json`), written as the attempt happens, so a run interrupted mid-batch
+`detail_json`), unique on `(task_id, attempt)`, written as the attempt happens,
+so a run interrupted mid-batch
 is inspectable and `auto_store.planned_batches` returns exactly the batches
 that still need running.  Deleting a run cascades to its tasks and attempts.
 `conversations` holds chat threads scoped to a `(scope_kind, scope_id)`
@@ -179,11 +180,13 @@ and the new message to the LLM bridge, then writes the assistant turn.
 `title`, `source`, `mime`, `sha256`, `size`, the extracted `text`) with a
 UNIQUE `(scope_kind, scope_id, sha256)`, which is what makes ingest idempotent
 inside a scope; `chunks` holds the document's overlapping chunks
-(`document_id`, `ordinal`, `text`, `embedding_json`) with `ON DELETE CASCADE`,
-so deleting a document leaves no orphan chunk.  `store.add_document`,
+(`document_id`, `ordinal`, `text`, `embedding_json`) with `ON DELETE CASCADE`
+and a unique `(document_id, ordinal)`, so deleting a document leaves no orphan
+chunk and a repeated ordinal is unrepresentable.  `store.add_document`,
 `find_document_by_sha256`, `get_document`, `list_documents`, `delete_document`,
 `add_chunk`, `list_chunks` and `iter_chunks_with_embeddings` are the CRUD the
-knowledge module and the API use; `iter_chunks_with_embeddings` returns each
+knowledge module and the API use; ingest commits the document and its chunks in
+one transaction.  `iter_chunks_with_embeddings` returns each
 chunk with its document fields and its parsed vector, which serves the cosine
 ranking and the TF-IDF fallback with one query.  The embedding column is NULL
 for a document ingested without an embeddings endpoint.

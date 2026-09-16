@@ -980,9 +980,12 @@ class TestScans:
             assert conn.execute("SELECT COUNT(*) FROM scans").fetchone()[0] == 1
 
     def test_init_db_adds_lookup_indexes_used_by_queries(self, tmp_path: Path) -> None:
+        from reportal import jobs
+
         db = tmp_path / "indexed.db"
         store.init_db(db)
         with contextlib.closing(store.connect(db)) as conn:
+            jobs.ensure_schema(conn)
             names = {
                 str(row[0])
                 for row in conn.execute(
@@ -996,6 +999,54 @@ class TestScans:
         assert "idx_collections_owner_team" in names
         assert "idx_feedback_user" in names
         assert "idx_users_active_team" in names
+        assert "idx_functions_analysis_name_source" in names
+        assert "idx_binary_tags_tag" in names
+        assert "idx_collection_tags_tag" in names
+        assert "idx_chunks_document_ordinal" in names
+        assert "idx_auto_attempts_task_attempt" in names
+        assert "idx_binaries_name_path_null_sha" in names
+        assert "idx_team_members_user" in names
+        assert "idx_jobs_binary" in names
+        assert "idx_functions_analysis" not in names
+        assert "idx_binary_tags_binary" not in names
+        assert "idx_chunks_document" not in names
+        assert "idx_auto_attempts_task" not in names
+
+    def test_chunk_ordinal_and_auto_attempt_are_unique(self, tmp_path: Path) -> None:
+        db = tmp_path / "unique.db"
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            document_id = store.add_document(
+                conn,
+                scope_kind="binary",
+                scope_id=1,
+                title="note",
+                sha256="ab" * 32,
+                text="hello",
+            )
+            store.add_chunk(conn, document_id=document_id, ordinal=0, text="hello")
+            with pytest.raises(sqlite3.IntegrityError):
+                store.add_chunk(conn, document_id=document_id, ordinal=0, text="again")
+            binary_id = store.add_binary(conn, sha256="cd" * 32, name="demo.exe")
+            run_id = conn.execute(
+                "INSERT INTO auto_runs (binary_id, status, created_at) VALUES (?, ?, ?)",
+                (binary_id, "running", store.now()),
+            ).lastrowid
+            task_id = conn.execute(
+                "INSERT INTO auto_tasks (run_id, depth, kind, status, created_at)"
+                " VALUES (?, 0, 'root', 'pending', ?)",
+                (run_id, store.now()),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO auto_attempts (task_id, attempt, created_at) VALUES (?, 1, ?)",
+                (task_id, store.now()),
+            )
+            conn.commit()
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO auto_attempts (task_id, attempt, created_at) VALUES (?, 1, ?)",
+                    (task_id, store.now()),
+                )
 
     def test_connect_sets_busy_timeout(self, tmp_path: Path) -> None:
         db = tmp_path / "busy.db"

@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS {MEMBER_TABLE} (
     role    TEXT NOT NULL DEFAULT 'member',
     PRIMARY KEY (team_id, user_id)
 );
+CREATE INDEX IF NOT EXISTS idx_team_members_user ON {MEMBER_TABLE}(user_id);
 
 """
 
