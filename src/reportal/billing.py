@@ -72,6 +72,12 @@ _log = logging.getLogger("reportal")
 # make every retry look new and open a second Checkout session.
 _token_urlsafe = secrets.token_urlsafe
 
+# Wall and monotonic clocks.  A test patches ``_wall_time`` to pin webhook age
+# and idempotency buckets, and ``_monotonic`` to pin manual-intent TTLs and the
+# reconcile rate window, so a failing run replays without freezing the process.
+_wall_time = time.time
+_monotonic = time.monotonic
+
 STRIPE_API_BASE = "https://api.stripe.com/v1"
 DEFAULT_STRIPE_API_VERSION = "2026-08-26.dahlia"
 
@@ -238,7 +244,7 @@ def _checkout_urls(organisation_id: int) -> tuple[str, str]:
 
 def _idempotency_bucket(now: float | None = None) -> int:
     """Floor *now* into an :data:`IDEMPOTENCY_WINDOW_S` slot."""
-    return int((time.time() if now is None else now) // IDEMPOTENCY_WINDOW_S)
+    return int((_wall_time() if now is None else now) // IDEMPOTENCY_WINDOW_S)
 
 
 def _stripe_idempotency_key(kind: str, *parts: object, now: float | None = None) -> str:
@@ -347,7 +353,7 @@ def _store_manual_intent(organisation_id: int, plan_id: str) -> str:
     still live returns that token: a double-click must not mint a second grant
     the operator can confirm after the first already entitled the tenant.
     """
-    now = time.monotonic()
+    now = _monotonic()
     with _manual_intents_lock:
         for token, (org, plan, expires) in list(_manual_intents.items()):
             if expires <= now:
@@ -369,7 +375,7 @@ def manual_intent(token: str) -> tuple[int, str] | None:
         if entry is None:
             return None
         organisation_id, plan_id, expires = entry
-        if expires <= time.monotonic():
+        if expires <= _monotonic():
             _manual_intents.pop(token, None)
             return None
         return organisation_id, plan_id
@@ -387,7 +393,7 @@ def _take_manual_intent(token: str, organisation_id: int) -> str | None:
         if entry is None:
             return None
         intent_org, plan_id, expires = entry
-        if expires <= time.monotonic():
+        if expires <= _monotonic():
             _manual_intents.pop(token, None)
             return None
         if intent_org != organisation_id:
@@ -402,7 +408,7 @@ def _restore_manual_intent(token: str, organisation_id: int, plan_id: str) -> No
         _manual_intents[token] = (
             organisation_id,
             plan_id,
-            time.monotonic() + _MANUAL_INTENT_TTL_S,
+            _monotonic() + _MANUAL_INTENT_TTL_S,
         )
 
 
@@ -524,7 +530,7 @@ def _signature_valid(payload: bytes, header: str, secret: str) -> bool:
     if not timestamp or not signatures:
         return False
     try:
-        age = abs(time.time() - int(timestamp))
+        age = abs(_wall_time() - int(timestamp))
     except ValueError:
         return False
     if age > WEBHOOK_TOLERANCE_S:
@@ -866,7 +872,7 @@ def reconcile_allowed(organisation_id: int) -> bool:
     permanent key, so the limiter's state is bounded by the organisations
     reconciling *now* instead of by every organisation this process ever saw.
     """
-    now = time.monotonic()
+    now = _monotonic()
     with _rate_states_lock:
         for other, hits in list(_rate_states.items()):
             if all(now - hit >= _RECONCILE_WINDOW_S for hit in hits):

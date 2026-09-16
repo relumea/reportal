@@ -16,7 +16,8 @@ Two honesty notes, both deliberate:
   reason the hosted portal offers it too.
 - The 11 random header bytes are drawn per call, so two downloads of the same
   binary with the same password are not byte-identical.  ``header=`` is the
-  seam a test uses to pin the output.
+  seam a test uses to pin the output; ``_urandom`` is the entropy source a
+  test patches when the call site does not pass ``header=``.
 
 The archive is written in one pass over a spooled temporary file so a stored
 binary of any size (uploads are capped at 256 MiB) never has to be held in
@@ -108,6 +109,10 @@ class Writable(Protocol):
 _HEADER_BYTES = 12
 _HEADER_RANDOM_BYTES = _HEADER_BYTES - 1
 
+# Entropy for the 11 plaintext header bytes when the caller omits ``header=``.
+# A test patches ``_urandom`` to pin ciphertext without passing ``header=``.
+_urandom = os.urandom
+
 # ZipCrypto's three keys and the constant in key1's update.
 _KEY0_INIT = 0x12345678
 _KEY1_INIT = 0x23456789
@@ -190,7 +195,7 @@ def _encryption_header(keys: _Keys, crc: int, header: bytes | None) -> bytes:
     member's data next.
     """
     if header is None:
-        prefix = os.urandom(_HEADER_RANDOM_BYTES)
+        prefix = _urandom(_HEADER_RANDOM_BYTES)
     else:
         prefix = bytes(header)
         if len(prefix) != _HEADER_RANDOM_BYTES:

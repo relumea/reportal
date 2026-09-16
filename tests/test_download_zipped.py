@@ -65,6 +65,16 @@ class TestWriter:
 
         assert _read(blob) == PAYLOAD
 
+    def test_default_header_entropy_uses_the_urandom_seam(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Pinning ``_urandom`` makes two unprotected-header builds byte-identical."""
+        monkeypatch.setattr(zipcrypto, "_urandom", lambda n: b"\xab" * n)
+        first = zipcrypto.build_protected_zip("sample.exe", PAYLOAD, PASSWORD)
+        second = zipcrypto.build_protected_zip("sample.exe", PAYLOAD, PASSWORD)
+        assert first == second
+        assert _read(first) == PAYLOAD
+
     def test_the_member_is_deflated_and_flagged_encrypted(self) -> None:
         blob = zipcrypto.build_protected_zip("sample.exe", PAYLOAD, PASSWORD, header=FIXED_HEADER)
 

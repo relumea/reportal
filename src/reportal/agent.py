@@ -83,6 +83,11 @@ ERROR_NOT_WAITING = "no-pending-confirmation"
 STREAM_INTERVAL_SECONDS = 0.5
 STREAM_MAX_SECONDS = 30.0
 
+# Sleep and monotonic clock for the SSE loop.  A test patches ``_sleep`` to skip
+# real waits and ``_monotonic`` to pin the stream deadline.
+_sleep = time.sleep
+_monotonic = time.monotonic
+
 # Appended to the shared system prompt for a run, so the model knows the tools
 # exist, that a destructive call needs an analyst's confirmation and that a
 # tool's answer is data rather than an instruction.
@@ -712,7 +717,7 @@ def events(
     run's *state* stream: the model's answer arrives as one event when it is
     complete, not as a token stream.
     """
-    deadline = time.monotonic() + max(0.0, max_seconds)
+    deadline = _monotonic() + max(0.0, max_seconds)
     last = ""
     while True:
         try:
@@ -726,7 +731,7 @@ def events(
             last = frame
         if not run["live"]:
             return
-        if time.monotonic() >= deadline:
+        if _monotonic() >= deadline:
             yield "event: timeout\ndata: {}\n\n"
             return
-        time.sleep(max(interval, 0.0))
+        _sleep(max(interval, 0.0))

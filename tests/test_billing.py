@@ -16,7 +16,6 @@ import hmac
 import json
 import sqlite3
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +36,7 @@ def _signed(
 ) -> tuple[bytes, str]:
     """A webhook body and the ``Stripe-Signature`` header that verifies it."""
     body = json.dumps(payload).encode("utf-8")
-    timestamp = int(time.time()) - age
+    timestamp = int(billing._wall_time()) - age
     digest = hmac.new(
         secret.encode("utf-8"), f"{timestamp}.".encode() + body, hashlib.sha256
     ).hexdigest()
@@ -61,7 +60,7 @@ def _subscription_event(
                 "status": status,
                 "customer": "cus_123",
                 "cancel_at_period_end": False,
-                "current_period_end": int(time.time()) + 86400,
+                "current_period_end": int(billing._wall_time()) + 86400,
                 "metadata": {"organisation_id": str(organisation_id)},
                 "items": {"data": [{"price": {"id": price_id}}]},
             }
@@ -152,6 +151,19 @@ class TestSignatureVerification:
         for header in ("", "garbage", "t=notanumber,v1=abc", "v1=abc"):
             with pytest.raises(billing.BillingError):
                 billing.verify_webhook(body, header)
+
+    def test_signature_age_uses_the_wall_time_seam(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A pinned wall clock makes webhook age checks replayable."""
+        monkeypatch.setattr(billing, "_wall_time", lambda: 1_700_000_000.0)
+        body, header = _signed({"id": "evt_pinned", "type": "ping"})
+        assert billing.verify_webhook(body, header)["id"] == "evt_pinned"
+        stale_body, stale_header = _signed(
+            {"id": "evt_stale", "type": "ping"}, age=billing.WEBHOOK_TOLERANCE_S + 1
+        )
+        with pytest.raises(billing.BillingError):
+            billing.verify_webhook(stale_body, stale_header)
 
 
 class TestCompletionIsNotPayment:
@@ -251,7 +263,7 @@ class TestIdempotency:
     ) -> None:
         """A fresh subscription.updated with the same period end must keep usage."""
         organisation_id = _organisation(conn)
-        period_end = int(time.time()) + 86400
+        period_end = int(billing._wall_time()) + 86400
         first = _subscription_event(organisation_id, event_id="evt_start")
         first["data"]["object"]["current_period_end"] = period_end
         billing.apply_event(conn, billing.normalize_stripe_event(first))
@@ -536,7 +548,7 @@ class TestReconcileRateLimit:
     ) -> None:
         """The limiter holds the organisations reconciling now, not every one ever seen."""
         clock = [1000.0]
-        monkeypatch.setattr(billing.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(billing, "_monotonic", lambda: clock[0])
 
         assert billing.reconcile_allowed(111111) is True
         assert 111111 in billing._rate_states
@@ -644,5 +656,7 @@ class TestPeriodEndShapes:
     def test_the_line_item_field_is_read(self, stripe_env: None) -> None:
         raw = _subscription_event(1)
         del raw["data"]["object"]["current_period_end"]
-        raw["data"]["object"]["items"]["data"][0]["current_period_end"] = int(time.time()) + 900
+        raw["data"]["object"]["items"]["data"][0]["current_period_end"] = (
+            int(billing._wall_time()) + 900
+        )
         assert billing.normalize_stripe_event(raw).current_period_end

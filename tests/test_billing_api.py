@@ -6,7 +6,6 @@ import contextlib
 import hashlib
 import hmac
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +26,7 @@ def _organisation(portal_db: Path, name: str = "acme") -> int:
 
 def _signed(payload: dict[str, Any]) -> tuple[bytes, str]:
     body = json.dumps(payload).encode("utf-8")
-    timestamp = int(time.time())
+    timestamp = int(billing._wall_time())
     digest = hmac.new(
         WEBHOOK_SECRET.encode("utf-8"), f"{timestamp}.".encode() + body, hashlib.sha256
     ).hexdigest()

@@ -98,6 +98,11 @@ WORKER_ERROR_LOG_SECONDS = 30.0
 STREAM_INTERVAL_SECONDS = 0.5
 STREAM_MAX_SECONDS = 30.0
 
+# Sleep and monotonic clock for the SSE loop and worker error throttle.  A test
+# patches ``_sleep`` to skip real waits and ``_monotonic`` to pin deadlines.
+_sleep = time.sleep
+_monotonic = time.monotonic
+
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS {TABLE} (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -915,7 +920,7 @@ class JobWorker:
                 # A database that is not there yet, or a locked one, is not a
                 # reason to kill the worker: the next tick tries again.  Log
                 # occasionally so an operator can see why the queue is stuck.
-                now = time.monotonic()
+                now = _monotonic()
                 if now - self._last_error_log >= WORKER_ERROR_LOG_SECONDS:
                     self._last_error_log = now
                     _log.warning(
@@ -975,7 +980,7 @@ def events(
     state.  The stream is bounded by *max_seconds* so a client can always
     reconnect rather than hold a socket open forever.
     """
-    deadline = time.monotonic() + max(0.0, max_seconds)
+    deadline = _monotonic() + max(0.0, max_seconds)
     last = ""
     while True:
         job = get_job(conn, job_id)
@@ -988,7 +993,7 @@ def events(
             last = frame
         if not job["live"]:
             return
-        if time.monotonic() >= deadline:
+        if _monotonic() >= deadline:
             yield "event: timeout\ndata: {}\n\n"
             return
-        time.sleep(max(interval, 0.0))
+        _sleep(max(interval, 0.0))

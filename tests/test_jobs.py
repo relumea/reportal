@@ -605,11 +605,14 @@ class TestListing:
 
 class TestEvents:
     def test_the_stream_starts_with_the_current_state_and_ends_when_terminal(
-        self, conn: sqlite3.Connection, tmp_path: Path
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         job = _submit(conn, tmp_path)
+        clock = [0.0]
+        monkeypatch.setattr(jobs, "_monotonic", lambda: clock[0])
+        monkeypatch.setattr(jobs, "_sleep", lambda _seconds: clock.__setitem__(0, clock[0] + 0.1))
 
-        frames = list(jobs.events(conn, job["id"], interval=0.01, max_seconds=0.05))
+        frames = list(jobs.events(conn, job["id"], interval=0.1, max_seconds=0.05))
 
         assert frames, "a stream always sends the current state first"
         assert frames[0].startswith("event: job\ndata: ")
@@ -617,10 +620,11 @@ class TestEvents:
         assert frames[-1].startswith("event: timeout")
 
     def test_a_terminal_job_streams_one_frame_and_closes(
-        self, conn: sqlite3.Connection, tmp_path: Path
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         job = _submit(conn, tmp_path)
         jobs.run_pending(conn, limit=1)
+        monkeypatch.setattr(jobs, "_sleep", lambda _seconds: None)
 
         frames = list(jobs.events(conn, job["id"], interval=0.01, max_seconds=5.0))
 
