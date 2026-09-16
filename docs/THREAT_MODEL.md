@@ -197,17 +197,22 @@ full below.
   lies for every later engine call: a caller who can name a path can make the
   server read it, which `import_symbols` and the export tools already could.  The
   upload path is the one that streams the bytes into `binaries/` instead.
-- **The activity feed is derived and unauthenticated in its reads.**  Any
-  authenticated caller reads the whole feed, so an analyst sees the other teams'
-  action descriptions (a description names ids and paths) even when the object's
-  own route would answer 404.  Narrowing the feed to the caller's scope is the
-  next step once per-object scoping covers the journal.
+- **The journal halves of the feeds stay global.**  The analysis-log halves of
+  `/api/notifications` and `/api/users/activity` narrow to the caller's scope,
+  but the journal halves list every action: an entry carries a free-text
+  description ("tagged binary 4 with tag 7"), never a structured object
+  reference, so narrowing it would mean resolving every descriptor shape to an
+  owning binary on each read *and* on the revert path (hiding an action while
+  accepting its id for revert is a confused deputy).  A non-member learns
+  numeric ids of acted-on objects, never names or contents: the
+  cardinality-class residual below, accepted rather than filtered.
 - **The team scope narrows objects, not aggregates.**  `GET /api/health` counts
   every row and `store.search`'s per-group `total` is the unfiltered match
   count, so a member of the workspace can learn *how many* objects exist that it
-  cannot open, though not their names.  Corpus-wide operations (matching,
-  lineage, related) rank against every stored function rather than the visible
-  subset, so their scores can be influenced by data the caller cannot read.
+  cannot open, though not their names.  The dashboard, notification and
+  activity series narrow their binary-owned counts to the caller's scope; the
+  match, composition, lineage, related and benchmark runs score only visible
+  binaries, so the remaining aggregate leak is counts, not content.
 - **Multi-tenancy.**  One process owns one workspace and one database
   (`_paths.project_root`).  Concurrent independent users are outside the model,
   as is per-tenant isolation.
