@@ -39,6 +39,8 @@ class TestVocabulary:
     def test_every_scan_kind_the_store_declares_is_rateable(self) -> None:
         assert "threat" in ratings.SCAN_KINDS
         assert "triage" in ratings.SCAN_KINDS
+        assert "firmware" in ratings.SCAN_KINDS
+        assert "gobuildinfo" in ratings.SCAN_KINDS
         assert list(ratings.SCAN_KINDS) == sorted(ratings.SCAN_KINDS)
         assert ratings.kinds() == ratings.SCAN_KINDS
 

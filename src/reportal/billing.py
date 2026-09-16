@@ -761,8 +761,14 @@ def _upsert_subscription(
     )
     entitled = status in metering.ENTITLING_STATUSES
     target = plan_id if (entitled and plan_id) else plans.FALLBACK_PLAN_ID
+    # Entitled and canceled keep the org active (canceled falls to the free
+    # tier).  Every other status, including unpaid/incomplete and anything the
+    # provider invents later, fails closed as past_due so quota does not stay
+    # open while the subscription is not good.
     org_status = (
-        metering.STATUS_PAST_DUE if status == metering.STATUS_PAST_DUE else metering.STATUS_ACTIVE
+        metering.STATUS_ACTIVE
+        if entitled or status == metering.STATUS_CANCELED
+        else metering.STATUS_PAST_DUE
     )
     period_advanced = bool(current_period_end) and current_period_end != previous_end
     restart = entitled and (not started or period_advanced)

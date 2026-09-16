@@ -90,6 +90,8 @@ SCAN_KIND_COMPOSITION = "composition"
 SCAN_KIND_LIBRARY = "library"
 SCAN_KIND_UNPACK = "unpack"
 SCAN_KIND_BENCHMARK = "benchmark"
+SCAN_KIND_FIRMWARE = "firmware"
+SCAN_KIND_GOBUILDINFO = "gobuildinfo"
 
 # Per-section byte coverage is reportal's own metric over the stored function
 # table and the stored `pe-info` section table.  The hosted portal publishes no

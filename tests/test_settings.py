@@ -79,12 +79,14 @@ class TestSurface:
 
     def test_flag_truthy_spellings_agree_across_readers(self) -> None:
         """Origin reporting and the readers must accept the same env spellings."""
-        from reportal import remote_ingest, sandbox
+        from reportal import api, remote_ingest, sandbox
 
         assert auth._TRUTHY == settings.FLAG_TRUTHY
         assert sandbox._TRUTHY == settings.FLAG_TRUTHY
         assert external._TRUTHY == settings.FLAG_TRUTHY
         assert remote_ingest._TRUTHY == settings.FLAG_TRUTHY
+        assert api._QUERY_TRUE == settings.FLAG_TRUTHY
+        assert "off" in api._QUERY_FALSE
 
     def test_checkout_plan_price_envs_are_registered(self) -> None:
         from reportal import plans

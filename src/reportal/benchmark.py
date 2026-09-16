@@ -40,8 +40,9 @@ from typing import Any
 
 from reportal import engines, function_triage, library, matching, store, symbols
 
-# The scan kind one benchmark is stored under.
-SCAN_KIND = "benchmark"
+# The scan kind one benchmark is stored under.  Listed as
+# `store.SCAN_KIND_BENCHMARK` so the ratings vocabulary picks it up.
+SCAN_KIND = store.SCAN_KIND_BENCHMARK
 
 LABEL_SOURCE_CORPUS = "corpus"
 LABEL_SOURCE_NAMES = "names"

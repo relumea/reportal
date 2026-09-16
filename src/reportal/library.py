@@ -31,9 +31,9 @@ from typing import Any
 from reportal import __version__, store
 from reportal.engines import RebrewEngine
 
-# The scan kind the identification is stored under.  Defined here and listed in
+# The scan kind the identification is stored under.  Listed as
 # `store.SCAN_KIND_LIBRARY` so the ratings vocabulary picks it up.
-SCAN_KIND = "library"
+SCAN_KIND = store.SCAN_KIND_LIBRARY
 
 # Formats `sbom` can render: the two published bill-of-materials shapes and a
 # flat component list for a spreadsheet.

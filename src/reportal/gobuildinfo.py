@@ -37,8 +37,9 @@ from typing import Any
 
 from reportal import store
 
-# The stored scan kind the build information is kept under.
-SCAN_KIND = "gobuildinfo"
+# The stored scan kind the build information is kept under.  Mirrored as
+# `store.SCAN_KIND_GOBUILDINFO` so the ratings vocabulary picks it up.
+SCAN_KIND = store.SCAN_KIND_GOBUILDINFO
 
 # Magic opening the go.buildinfo payload, and the build settings lines it
 # introduces.  The version string follows the magic's pointer block; the

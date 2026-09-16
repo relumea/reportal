@@ -345,6 +345,22 @@ class TestSubscriptionLifecycle:
         checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
         assert checked["allowed"] is False
 
+    @pytest.mark.parametrize("status", ["unpaid", "incomplete", "paused"])
+    def test_non_entitling_statuses_fail_closed_on_quota(
+        self, conn: sqlite3.Connection, stripe_env: None, status: str
+    ) -> None:
+        """Unpaid/incomplete/unknown must not leave free-tier quota open."""
+        organisation_id = _organisation(conn)
+        billing.apply_event(
+            conn,
+            billing.normalize_stripe_event(
+                _subscription_event(organisation_id, event_id=f"evt_{status}", status=status)
+            ),
+        )
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
+        assert checked["allowed"] is False
+        assert metering.organisation_plan(conn, organisation_id).id == plans.FALLBACK_PLAN_ID
+
     def test_the_mirrored_subscription_is_readable(
         self, conn: sqlite3.Connection, stripe_env: None
     ) -> None:

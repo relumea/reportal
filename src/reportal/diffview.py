@@ -23,11 +23,12 @@ from typing import Any
 
 from reportal import diffing, engines, similarity, store
 
-# Kinds the diff supports: `disasm` aligns the engine's NASM listings, `decomp`
-# the decompiled C source.  `decomp` is the portal's default surface.
+# Kinds the diff supports: `decomp` aligns stored C, `disasm` the engine's NASM
+# listings.  Order matches DEFAULT_KIND and the SPA so the first entry is the
+# default surface everywhere.
 KIND_DISASM = "disasm"
 KIND_DECOMP = "decomp"
-DIFF_KINDS = (KIND_DISASM, KIND_DECOMP)
+DIFF_KINDS = (KIND_DECOMP, KIND_DISASM)
 DEFAULT_KIND = KIND_DECOMP
 
 # Normalization is on by default: an unnormalized disassembly diff is dominated

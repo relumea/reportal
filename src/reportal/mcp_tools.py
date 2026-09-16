@@ -6049,7 +6049,7 @@ def builtin_tools() -> tuple[Tool, ...]:
                 {
                     "function_id": _FUNCTION_ID,
                     "candidate_function_id": _int("Candidate function id."),
-                    "kind": _enum("Listing kind.", ("disasm", "decomp")),
+                    "kind": _enum("Listing kind.", diffview.DIFF_KINDS),
                     "normalize": _bool(
                         "Strip addresses, encoded bytes and comments before comparing."
                     ),

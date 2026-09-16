@@ -31,8 +31,9 @@ from reportal import store
 from reportal.engines import RebrewEngine, get_engine
 
 # The scan kind the provenance of an unpacked binary is stored under.  It hangs
-# off the new binary, not the packed source.
-SCAN_KIND = "unpack"
+# off the new binary, not the packed source.  Listed as `store.SCAN_KIND_UNPACK`
+# so the ratings vocabulary picks it up.
+SCAN_KIND = store.SCAN_KIND_UNPACK
 
 PACKER_LZEXE = "lzexe"
 PACKER_UPX = "upx"

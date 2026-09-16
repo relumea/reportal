@@ -100,6 +100,7 @@ from reportal import (
     sandbox,
     secret_store,
     secrets,
+    settings,
     signatures,
     similarity,
     store,
@@ -192,9 +193,10 @@ _UPLOAD_CHUNK_BYTES = 1024 * 1024
 _UPLOAD_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
 
 # Accepted spellings of a boolean query parameter (`?named=`).  Anything else
-# is a 400 rather than a silent false.
-_QUERY_TRUE = frozenset({"1", "true", "yes"})
-_QUERY_FALSE = frozenset({"0", "false", "no", ""})
+# is a 400 rather than a silent false.  Truthy spellings match settings.FLAG_TRUTHY
+# so env, workspace and query flags agree; false includes `off` (jobs pool).
+_QUERY_TRUE = settings.FLAG_TRUTHY
+_QUERY_FALSE = frozenset({"0", "false", "no", "off", ""})
 
 # Scope of the matches a binary's match run replaces: every function of the
 # binary owns the rows, and the run rewrites them.

@@ -33,8 +33,9 @@ from typing import Any, BinaryIO
 from reportal import store
 from reportal._paths import binaries_dir
 
-# The scan kind the pass is stored under and read back from.
-SCAN_KIND = "firmware"
+# The scan kind the pass is stored under.  Mirrored as `store.SCAN_KIND_FIRMWARE`
+# so the ratings vocabulary picks it up the day it lands.
+SCAN_KIND = store.SCAN_KIND_FIRMWARE
 
 # Window one entropy sample covers, and the most samples a map carries.
 ENTROPY_WINDOW = 4096
