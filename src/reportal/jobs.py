@@ -877,7 +877,8 @@ _worker_lock = threading.Lock()
 # `reportal job-run`.  It is on by default, which is what makes a serving
 # process pick a queued job up on its own.
 POOL_ENV = "REPORTAL_JOBS_POOL"
-_FALSEY = ("0", "false", "no", "off")
+# Keep in sync with ``settings.FLAG_FALSEY`` (pinned by ``tests/test_settings.py``).
+_FALSEY = frozenset({"0", "false", "no", "off", "disabled"})
 
 
 def pool_disabled() -> bool:

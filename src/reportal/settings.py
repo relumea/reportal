@@ -75,6 +75,11 @@ BOOLEAN_HINT = "must be true or false, without quotes"
 # claim the environment when a module actually ignored the value.
 FLAG_TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
 
+# Env spellings the job pool (and any other ``env_presence_wins`` flag) accepts
+# as off.  Kept identical to ``jobs._FALSEY`` so a typo cannot claim the
+# environment while the pool stays on.
+FLAG_FALSEY = frozenset({"0", "false", "no", "off", "disabled"})
+
 # Secret keys that belong in the environment or the secret store, not the
 # committed workspace file.  A non-empty workspace value still resolves (env
 # wins, then the file), but ``problems`` warns so an operator does not leave a
@@ -596,6 +601,7 @@ def _secret_in_workspace(setting: Setting, carried: Any) -> dict[str, str] | Non
 def _environment_problems() -> list[dict[str, str]]:
     """Env spellings that look set but the reader will not honour."""
     found: list[dict[str, str]] = []
+    found.extend(_flag_environment_problems())
     provider = billing.configured_provider()
     if provider not in billing.PROVIDERS:
         found.append(
@@ -617,6 +623,98 @@ def _environment_problems() -> list[dict[str, str]]:
                 else f"[{graph_backends.CONFIG_TABLE}] {graph_backends.CONFIG_BACKEND}",
                 "problem": f"names a graph backend reportal does not have ({backend!r})",
                 "hint": f"use one of {', '.join(sorted(known))} or install the matching extra",
+            }
+        )
+    runner = sandbox.configured_runner_name()
+    if runner and sandbox.get_runner(runner) is None:
+        known_runners = ", ".join(sorted(entry.name for entry in sandbox.registered_runners()))
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": sandbox.RUNNER_ENV
+                if os.environ.get(sandbox.RUNNER_ENV, "").strip()
+                else f"[{sandbox.CONFIG_TABLE}] {sandbox.CONFIG_RUNNER}",
+                "problem": f"names a sandbox runner reportal does not have ({runner!r})",
+                "hint": (
+                    f"use one of {known_runners}" if known_runners else "register a runner first"
+                ),
+            }
+        )
+    if (
+        billing.provider_name() == billing.PROVIDER_STRIPE
+        and billing.billing_configured()
+        and _loopback_public_base_url(billing.public_base_url())
+    ):
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": billing.PUBLIC_BASE_URL_ENV,
+                "problem": (
+                    "points at loopback while Stripe billing is configured"
+                    f" ({billing.public_base_url()})"
+                ),
+                "hint": (
+                    f"set {billing.PUBLIC_BASE_URL_ENV} to the URL customers reach,"
+                    " not 127.0.0.1 or localhost"
+                ),
+            }
+        )
+    return found
+
+
+def _loopback_public_base_url(url: str) -> bool:
+    """True when *url* would send a paying customer back to this host only."""
+    lowered = url.strip().lower()
+    return "127.0.0.1" in lowered or "localhost" in lowered or "[::1]" in lowered
+
+
+def _flag_environment_problems() -> list[dict[str, str]]:
+    """Flag env values that are set but the reader will not treat as on or off.
+
+    A non-empty, non-truthy spelling for an ordinary flag is ignored and the
+    workspace (or default) wins; an operator who wrote ``REPORTAL_AUTH=false``
+    or ``REPORTAL_SANDBOX=0`` to force a posture never gets it.  The job pool
+    is the exception: its falsey spellings *are* the setting, so only a value
+    outside both the truthy and falsey sets is reported.
+    """
+    found: list[dict[str, str]] = []
+    accepted = ", ".join(sorted(FLAG_TRUTHY))
+    for setting in SETTINGS:
+        if setting.kind != KIND_FLAG or not setting.env:
+            continue
+        raw = os.environ.get(setting.env, "").strip()
+        if not raw:
+            continue
+        lowered = raw.lower()
+        if setting.env_presence_wins:
+            if lowered in FLAG_TRUTHY or lowered in FLAG_FALSEY:
+                continue
+            found.append(
+                {
+                    "level": LEVEL_WARN,
+                    "where": setting.env,
+                    "problem": f"is not an on/off spelling reportal accepts ({raw!r})",
+                    "hint": (
+                        f"use one of {accepted} to leave the pool on, or"
+                        f" {', '.join(sorted(FLAG_FALSEY))} to switch it off"
+                    ),
+                }
+            )
+            continue
+        if _truthy(raw):
+            continue
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": setting.env,
+                "problem": (
+                    f"is ignored: {raw!r} is not a truthy spelling,"
+                    " so the workspace or default still applies"
+                ),
+                "hint": (
+                    f"use one of {accepted} to force it on from the environment;"
+                    " there is no env spelling that forces it off"
+                ),
             }
         )
     return found

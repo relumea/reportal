@@ -79,7 +79,7 @@ class TestSurface:
 
     def test_flag_truthy_spellings_agree_across_readers(self) -> None:
         """Origin reporting and the readers must accept the same env spellings."""
-        from reportal import api, remote_ingest, sandbox
+        from reportal import api, jobs, remote_ingest, sandbox
 
         assert auth._TRUTHY == settings.FLAG_TRUTHY
         assert sandbox._TRUTHY == settings.FLAG_TRUTHY
@@ -87,6 +87,7 @@ class TestSurface:
         assert remote_ingest._TRUTHY == settings.FLAG_TRUTHY
         assert api._QUERY_TRUE == settings.FLAG_TRUTHY
         assert "off" in api._QUERY_FALSE
+        assert jobs._FALSEY == settings.FLAG_FALSEY
 
     def test_checkout_plan_price_envs_are_registered(self) -> None:
         from reportal import plans
@@ -124,6 +125,13 @@ class TestAgreement:
         row = _row("sandbox.enabled")
         assert row["value"] is sandbox_enabled() is True
         assert row["origin"] == settings.ORIGIN_WORKSPACE
+        # And the ignored spelling is a problem: an operator who wrote ``0``
+        # to force the sandbox off never got that.
+        problems = settings.problems()
+        assert any(
+            problem["where"] == "REPORTAL_SANDBOX" and "ignored" in problem["problem"]
+            for problem in problems
+        )
 
     def test_the_job_pool_reads_its_falsey_value(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -335,6 +343,27 @@ class TestProblems:
         _workspace(tmp_path, monkeypatch, 'model = "m"\n')
         assert "is not a table" in settings.problems()[0]["problem"]
 
+    def test_an_unknown_sandbox_runner_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, '[sandbox]\nrunner = "no-such-runner"\n')
+        problems = settings.problems()
+        assert any(
+            "no-such-runner" in problem["problem"] and "sandbox" in problem["where"]
+            for problem in problems
+        )
+
+    def test_an_unknown_jobs_pool_spelling_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv("REPORTAL_JOBS_POOL", "maybe")
+        problems = settings.problems()
+        assert any(
+            problem["where"] == "REPORTAL_JOBS_POOL" and "on/off" in problem["problem"]
+            for problem in problems
+        )
+
 
 class TestCli:
     def test_the_command_prints_the_settings_and_the_origin(
@@ -386,6 +415,14 @@ class TestCli:
         result = runner.invoke(cli.app, ["serve", "--port", "0", "--no-open"])
         assert result.exit_code == 1
         assert "refusing to serve on defaults" in result.output
+
+    def test_mcp_refuses_an_unparsable_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, "[llm\nmodel = 'm'\n")
+        result = runner.invoke(cli.app, ["mcp"])
+        assert result.exit_code == 1
+        assert "refusing to run MCP on defaults" in result.output
 
 
 class TestDoctor:

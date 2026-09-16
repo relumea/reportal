@@ -52,8 +52,21 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     which makes it the application's effect; stopping it here is that effect's
     inverse.  The import is local because :mod:`reportal.jobs` pulls in the
     engine-facing modules and this one is imported by every entry point.
+
+    An unreadable ``reportal.toml`` is refused here too: a process started
+    through uvicorn (rather than ``reportal serve``) must not run on silent
+    defaults any more than the CLI path does.
     """
-    from reportal import jobs
+    from reportal import jobs, settings
+
+    failing = settings.failing()
+    if failing:
+        for problem in failing:
+            _log.error("%s: %s", problem["where"], problem["problem"])
+        raise RuntimeError(
+            "reportal.toml cannot be read; refusing to serve on defaults"
+            " (fix the file, then 'reportal config')"
+        )
 
     yield
     jobs.stop_worker()

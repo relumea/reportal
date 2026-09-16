@@ -468,7 +468,11 @@ class TestCli:
         db = tmp_path / "portal.db"
         monkeypatch.setenv(DB_ENV, str(db))
         store.init_db(db)
-        result = runner.invoke(cli.app, ["secrets-set", "virustotal.api_key", API_KEY, "--json"])
+        result = runner.invoke(
+            cli.app,
+            ["secrets-set", "virustotal.api_key", "--stdin", "--json"],
+            input=f"{API_KEY}\n",
+        )
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert payload["name"] == "virustotal.api_key"
@@ -496,15 +500,27 @@ class TestCli:
         with contextlib.closing(store.connect(db)) as conn:
             assert secret_store.value_of(conn, "llm.api_key") == API_KEY
 
-    def test_omitting_the_value_without_stdin_fails(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_omitting_stdin_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         db = tmp_path / "portal.db"
         monkeypatch.setenv(DB_ENV, str(db))
         store.init_db(db)
         result = runner.invoke(cli.app, ["secrets-set", "llm.api_key", "--json"])
         assert result.exit_code == 1
-        assert json.loads(result.stdout)["error"] == "pass a value or --stdin"
+        assert "pass --stdin" in json.loads(result.stdout)["error"]
+
+    def test_a_positional_value_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        store.init_db(db)
+        result = runner.invoke(
+            cli.app,
+            ["secrets-set", "llm.api_key", API_KEY, "--stdin", "--json"],
+            input=f"{API_KEY}\n",
+        )
+        assert result.exit_code == 1
+        assert "refuse a positional value" in json.loads(result.stdout)["error"]
 
     def test_the_human_output_lists_the_rows(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -512,7 +528,9 @@ class TestCli:
         db = tmp_path / "portal.db"
         monkeypatch.setenv(DB_ENV, str(db))
         store.init_db(db)
-        runner.invoke(cli.app, ["secrets-set", "virustotal.api_key", API_KEY])
+        runner.invoke(
+            cli.app, ["secrets-set", "virustotal.api_key", "--stdin"], input=f"{API_KEY}\n"
+        )
         listed = runner.invoke(cli.app, ["secrets-list"])
         assert listed.exit_code == 0, listed.output
         assert "virustotal.api_key" in listed.output
@@ -534,13 +552,14 @@ class TestCli:
             [
                 "secrets-set",
                 "virustotal.api_key",
-                API_KEY,
+                "--stdin",
                 "--scope",
                 "team",
                 "--team-id",
                 str(team["id"]),
                 "--json",
             ],
+            input=f"{API_KEY}\n",
         )
         assert stored.exit_code == 0, stored.output
         missing = runner.invoke(
@@ -548,12 +567,13 @@ class TestCli:
             [
                 "secrets-set",
                 "virustotal.api_key",
-                API_KEY,
+                "--stdin",
                 "--scope",
                 "team",
                 "--team-id",
                 "999",
             ],
+            input=f"{API_KEY}\n",
         )
         assert missing.exit_code == 1
         assert "no team with id 999" in missing.output
@@ -562,7 +582,9 @@ class TestCli:
         db = tmp_path / "portal.db"
         monkeypatch.setenv(DB_ENV, str(db))
         store.init_db(db)
-        result = runner.invoke(cli.app, ["secrets-set", "VirusTotal", API_KEY])
+        result = runner.invoke(
+            cli.app, ["secrets-set", "VirusTotal", "--stdin"], input=f"{API_KEY}\n"
+        )
         assert result.exit_code == 1
         assert "invalid secret" in result.output
 
@@ -572,10 +594,10 @@ class TestCli:
         monkeypatch.setenv(DB_ENV, str(tmp_path / "missing" / "portal.db"))
         for argv in (
             ["secrets-list"],
-            ["secrets-set", "llm.api_key", "value"],
+            ["secrets-set", "llm.api_key", "--stdin"],
             ["secrets-rm", "llm.api_key"],
         ):
-            result = runner.invoke(cli.app, argv)
+            result = runner.invoke(cli.app, argv, input="value\n")
             assert result.exit_code == 1, argv
             assert "no reportal database" in result.output
 

@@ -1641,6 +1641,23 @@ def mcp(
     """Run the stdio MCP server for a local MCP client."""
     from reportal import mcp_server, mcp_tools
 
+    # Same gate as ``serve``: an unreadable marker leaves every reader on its
+    # default, which is the silent-misconfiguration incident the config report
+    # already refuses.
+    failing = settings.failing()
+    if failing:
+        for problem in failing:
+            console.print(
+                f"[red]fail[/red] {escape(problem['where'])}: {escape(problem['problem'])}"
+            )
+            if problem.get("hint"):
+                console.print(f"  {escape(problem['hint'])}")
+        _fail(
+            "reportal.toml cannot be read; refusing to run MCP on defaults"
+            " (fix the file, then 'reportal config')",
+            json_output,
+        )
+
     try:
         workspace = project_root()
     except WorkspaceNotFound as exc:
@@ -2553,27 +2570,38 @@ def secrets_list_command(
 def secrets_set_command(
     name: str = typer.Argument(..., help="Secret name, e.g. virustotal.api_key"),
     value: str = typer.Argument(
-        "", help="The value; omit and pass --stdin to read one line from stdin"
+        "",
+        help="Refused: a positional value lands in the shell history; pass --stdin instead",
     ),
     scope: str = typer.Option("", "--scope", help="local (default) or team"),
     team_id: int = typer.Option(0, "--team-id", help="Team id for a team scope"),
     stdin: bool = typer.Option(
-        False, "--stdin", help="Read the value from stdin instead of the argument"
+        False, "--stdin", help="Read the value from stdin (required; keeps it out of argv)"
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Store or replace one secret, journaled and revertible.
 
-    A value passed as an argument lands in the shell history; `--stdin` reads
-    one line from stdin instead, which is what a script should use.
+    The value must come from ``--stdin``: a positional argument lands in the
+    shell history and process listings, which is exactly what the secret store
+    exists to avoid.
     """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if stdin:
-        value = sys.stdin.readline().rstrip("\n")
-    elif not value:
-        _fail("pass a value or --stdin", json_output)
+    if not stdin:
+        _fail(
+            "pass --stdin to read the value (a positional value lands in the shell history)",
+            json_output,
+        )
+    if value:
+        _fail(
+            "refuse a positional value (it lands in the shell history); pass --stdin only",
+            json_output,
+        )
+    value = sys.stdin.readline().rstrip("\n")
+    if not value:
+        _fail("stdin carried no value", json_output)
     try:
         with contextlib.closing(store.connect(portal_db)) as conn:
             resolved_scope, resolved_team = secret_store.normalize_scope(

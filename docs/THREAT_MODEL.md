@@ -342,8 +342,8 @@ path named.  None of these are demonstrated here.
   is journaled, so a rotation is revertible and the *previous* value stays in
   `journal_entries` until that action is reverted or pruned: that is the one
   residual worth naming, and it is what makes a rotation undoable.  The value
-  is never passed through argv unless an operator types it as a command
-  argument, which `reportal secrets-set --stdin` avoids.
+  is never passed through argv: ``reportal secrets-set`` requires ``--stdin``
+  so the value cannot land in the shell history or a process listing.
 - `secrets.py` is a scanner, not a credential store: it finds secret-shaped
   strings in a binary's strings and records both the value and a `redacted` form
   (`secrets._add`, `secrets.redact`).  The raw value is stored in the scan
