@@ -15,7 +15,7 @@ one file.
   operator confirmation (development and self-hosted demos only).
 * ``disabled``: no self-serve checkout.
 
-The four invariants this module is built around, each of which is a way a
+The invariants this module is built around, each of which is a way a
 billing integration loses money or double-charges if it is skipped:
 
 **Completion is not payment.**  ``checkout.session.completed`` fires when the
@@ -27,6 +27,12 @@ never on the completion event alone.
 in ``billing_events`` inside the same transaction that applies it.  A
 redelivery finds the row and answers ``duplicate`` without touching the
 subscription.
+
+**Outbound Stripe writes share one Idempotency-Key.**  Checkout and portal
+POSTs derive the key from the logical operation and a short time bucket, and
+transport retries reuse that same key, so a timeout after Stripe already
+applied the write cannot open a second session.  Manual checkout reuses the
+live token for the same organisation and plan for the same reason.
 
 **The price id is the source of truth.**  A webhook maps the subscription's
 price back to a plan through :func:`reportal.plans.plan_for_price_id` rather
@@ -59,8 +65,10 @@ from reportal import auth, metering, plans
 
 _log = logging.getLogger("reportal")
 
-# Entropy source for Stripe idempotency keys and manual checkout tokens.  A
-# test patches ``_token_urlsafe`` to pin the key a checkout records.
+# Entropy source for manual checkout tokens.  A test patches ``_token_urlsafe``
+# to pin the key a checkout records.  Stripe writes use
+# :func:`_stripe_idempotency_key` instead: a fresh token per HTTP attempt would
+# make every retry look new and open a second Checkout session.
 _token_urlsafe = secrets.token_urlsafe
 
 STRIPE_API_BASE = "https://api.stripe.com/v1"
@@ -71,6 +79,13 @@ DEFAULT_STRIPE_API_VERSION = "2026-08-26.dahlia"
 # short enough that a captured body cannot be replayed indefinitely.
 WEBHOOK_TOLERANCE_S = 300
 _REQUEST_TIMEOUT_S = 20.0
+# Stripe retains Idempotency-Key values for 24 hours.  This window is shorter:
+# a double-click or a timeout retry inside it shares one key, and a deliberate
+# later checkout gets a fresh session.  The key itself is not stored locally.
+IDEMPOTENCY_WINDOW_S = 300
+# Transient transport failures only: the same Idempotency-Key is reused so a
+# timeout after Stripe already applied the write cannot create a second object.
+_STRIPE_TRANSIENT_ATTEMPTS = 3
 
 PROVIDER_ENV = "REPORTAL_BILLING_PROVIDER"
 STRIPE_SECRET_ENV = "REPORTAL_STRIPE_SECRET_KEY"
@@ -204,8 +219,30 @@ def _checkout_urls(organisation_id: int) -> tuple[str, str]:
 # ── Stripe REST ────────────────────────────────────────────────────
 
 
-def _stripe_request(path: str, form: dict[str, str]) -> dict[str, Any]:
-    """POST a form-encoded body to Stripe and return the parsed object."""
+def _idempotency_bucket(now: float | None = None) -> int:
+    """Floor *now* into an :data:`IDEMPOTENCY_WINDOW_S` slot."""
+    return int((time.time() if now is None else now) // IDEMPOTENCY_WINDOW_S)
+
+
+def _stripe_idempotency_key(kind: str, *parts: object, now: float | None = None) -> str:
+    """A key stable for one logical Stripe write inside the idempotency window.
+
+    Stripe deduplicates POSTs that share this header.  The key is derived from
+    the operation (checkout vs portal), its natural inputs, and the current
+    time bucket — never from a fresh random token — so a double-click and a
+    transport retry of the same logical write cannot open a second session.
+    """
+    joined = "-".join(str(part).replace(":", "") for part in parts)
+    return f"reportal-{kind}-{joined}-{_idempotency_bucket(now)}"
+
+
+def _stripe_request(path: str, form: dict[str, str], *, idempotency_key: str) -> dict[str, Any]:
+    """POST a form-encoded body to Stripe and return the parsed object.
+
+    *idempotency_key* is required and is sent on every attempt of this call.
+    A timeout after Stripe already applied the write then returns the first
+    object rather than creating a second Checkout or Portal session.
+    """
     key = _secret_key()
     if not key:
         raise BillingError(503, "billing-unconfigured")
@@ -213,25 +250,30 @@ def _stripe_request(path: str, form: dict[str, str]) -> dict[str, Any]:
         "Authorization": f"Bearer {key}",
         "Stripe-Version": api_version(),
         "Content-Type": "application/x-www-form-urlencoded",
-        # Stripe deduplicates retries by this key, so a network timeout that is
-        # actually a success cannot create a second subscription.
-        "Idempotency-Key": _token_urlsafe(24),
+        "Idempotency-Key": idempotency_key,
     }
-    try:
-        with httpx.Client(timeout=_REQUEST_TIMEOUT_S) as client:
-            response = client.post(f"{STRIPE_API_BASE}{path}", data=form, headers=headers)
-            try:
-                payload = response.json()
-            except ValueError as exc:
-                raise BillingError(502, "billing provider returned a non-JSON body") from exc
-            if response.status_code >= 400:
-                message = (
-                    str(payload.get("error", {}).get("message", "")) or "provider rejected the call"
-                )
-                raise BillingError(502, f"billing provider error: {message}")
-            return dict(payload)
-    except httpx.HTTPError as exc:
-        raise BillingError(502, f"billing provider unreachable: {exc}") from exc
+    last_exc: httpx.HTTPError | None = None
+    for _attempt in range(_STRIPE_TRANSIENT_ATTEMPTS):
+        try:
+            with httpx.Client(timeout=_REQUEST_TIMEOUT_S) as client:
+                response = client.post(f"{STRIPE_API_BASE}{path}", data=form, headers=headers)
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise BillingError(502, "billing provider returned a non-JSON body") from exc
+                if response.status_code >= 400:
+                    message = (
+                        str(payload.get("error", {}).get("message", ""))
+                        or "provider rejected the call"
+                    )
+                    raise BillingError(502, f"billing provider error: {message}")
+                return dict(payload)
+        except (httpx.TimeoutException, httpx.ConnectError) as exc:
+            last_exc = exc
+            continue
+        except httpx.HTTPError as exc:
+            raise BillingError(502, f"billing provider unreachable: {exc}") from exc
+    raise BillingError(502, f"billing provider unreachable: {last_exc}") from last_exc
 
 
 def _stripe_checkout(organisation: dict[str, Any], plan: plans.Plan) -> CheckoutSession:
@@ -255,7 +297,11 @@ def _stripe_checkout(organisation: dict[str, Any], plan: plans.Plan) -> Checkout
     }
     if plan.trial_days:
         form["subscription_data[trial_period_days]"] = str(plan.trial_days)
-    payload = _stripe_request("/checkout/sessions", form)
+    payload = _stripe_request(
+        "/checkout/sessions",
+        form,
+        idempotency_key=_stripe_idempotency_key("checkout", organisation_id, plan.id),
+    )
     url = str(payload.get("url") or "")
     if not url:
         raise BillingError(502, "provider returned no checkout URL")
@@ -274,11 +320,19 @@ MAX_MANUAL_INTENTS = 256
 
 
 def _store_manual_intent(organisation_id: int, plan_id: str) -> str:
-    """Record a pending manual grant and return its one-time token."""
+    """Record a pending manual grant and return its one-time token.
+
+    A second call for the same organisation and plan while the first token is
+    still live returns that token: a double-click must not mint a second grant
+    the operator can confirm after the first already entitled the tenant.
+    """
     now = time.monotonic()
-    for token, (_, _, expires) in list(_manual_intents.items()):
+    for token, (org, plan, expires) in list(_manual_intents.items()):
         if expires <= now:
             _manual_intents.pop(token, None)
+            continue
+        if org == organisation_id and plan == plan_id:
+            return token
     token = _token_urlsafe(24)
     _manual_intents[token] = (organisation_id, plan_id, now + _MANUAL_INTENT_TTL_S)
     while len(_manual_intents) > MAX_MANUAL_INTENTS:
@@ -385,6 +439,7 @@ def start_billing_portal(conn: sqlite3.Connection, organisation_id: int) -> Port
     payload = _stripe_request(
         "/billing_portal/sessions",
         {"customer": customer, "return_url": f"{_public_base_url()}/#/billing"},
+        idempotency_key=_stripe_idempotency_key("portal", organisation_id, customer),
     )
     url = str(payload.get("url") or "")
     if not url:

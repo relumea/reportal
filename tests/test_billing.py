@@ -439,11 +439,24 @@ class TestManualMode:
 
     def test_the_intent_map_is_bounded(self, conn: sqlite3.Connection, manual_env: None) -> None:
         """Past the cap the oldest token is dropped so a burst cannot grow the map without bound."""
-        organisation_id = _organisation(conn)
         billing._manual_intents.clear()
-        for _ in range(billing.MAX_MANUAL_INTENTS + 8):
+        for index in range(billing.MAX_MANUAL_INTENTS + 8):
+            # Distinct organisations so each call is a new logical grant; the
+            # same org+plan reuses its live token and would never fill the map.
+            organisation_id = _organisation(conn, f"tenant-{index}")
             billing.start_checkout(conn, {"id": organisation_id}, "analyst")
         assert len(billing._manual_intents) == billing.MAX_MANUAL_INTENTS
+
+    def test_a_second_checkout_reuses_the_live_token(
+        self, conn: sqlite3.Connection, manual_env: None
+    ) -> None:
+        """A double-click must not mint a second confirmable grant."""
+        organisation_id = _organisation(conn)
+        billing._manual_intents.clear()
+        first = billing.start_checkout(conn, {"id": organisation_id}, "analyst")
+        second = billing.start_checkout(conn, {"id": organisation_id}, "analyst")
+        assert first.session_id == second.session_id
+        assert len(billing._manual_intents) == 1
 
     def test_manual_intent_uses_the_token_urlsafe_seam(
         self, monkeypatch: pytest.MonkeyPatch
@@ -485,6 +498,64 @@ class TestReconcileRateLimit:
         with pytest.raises(billing.BillingError) as caught:
             billing.reconcile_account(conn, 424242)
         assert caught.value.status == 503
+
+
+class TestStripeRequestIdempotency:
+    """Checkout POSTs must share one Idempotency-Key across retries and double-clicks."""
+
+    def test_the_key_is_stable_inside_the_window(self) -> None:
+        now = float(billing.IDEMPOTENCY_WINDOW_S * 5_666_666)
+        first = billing._stripe_idempotency_key("checkout", 7, "analyst", now=now)
+        second = billing._stripe_idempotency_key(
+            "checkout", 7, "analyst", now=now + billing.IDEMPOTENCY_WINDOW_S - 1
+        )
+        assert first == second
+        assert first.startswith("reportal-checkout-7-analyst-")
+
+    def test_the_key_rotates_after_the_window(self) -> None:
+        now = float(billing.IDEMPOTENCY_WINDOW_S * 5_666_666)
+        first = billing._stripe_idempotency_key("checkout", 7, "analyst", now=now)
+        later = billing._stripe_idempotency_key(
+            "checkout", 7, "analyst", now=now + billing.IDEMPOTENCY_WINDOW_S
+        )
+        assert first != later
+
+    def test_a_timeout_retry_reuses_the_same_key(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A timeout after Stripe applied the write must not open a second session."""
+        seen: list[str] = []
+
+        class _Response:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, str]:
+                return {"id": "cs_test", "url": "https://checkout.example/s"}
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                del args
+
+            def post(self, url: str, data: object, headers: dict[str, str]) -> _Response:
+                del url, data
+                seen.append(headers["Idempotency-Key"])
+                if len(seen) == 1:
+                    raise billing.httpx.TimeoutException("timed out")
+                return _Response()
+
+        monkeypatch.setattr(billing.httpx, "Client", _Client)
+        session = billing._stripe_checkout({"id": 42}, plans.get_plan("analyst"))
+        assert session.session_id == "cs_test"
+        assert len(seen) == 2
+        assert seen[0] == seen[1]
+        assert seen[0] == billing._stripe_idempotency_key("checkout", 42, "analyst")
 
 
 class TestPeriodEndShapes:
