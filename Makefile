@@ -17,6 +17,10 @@ PORT ?= 8002
 # The coverage floor the `test` target enforces; keep it equal to
 # `[tool.coverage.report] fail_under` in pyproject.toml.
 COVERAGE_MIN ?= 92
+# Reproducible SPA/wheel timestamps: honour an explicit SOURCE_DATE_EPOCH,
+# else the tree's HEAD commit time, else a fixed zero (gzip/zip mtimes).
+SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || printf '0')
+REPRO_ENV = SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) LC_ALL=C TZ=UTC
 
 help: ## Show this help
 	@awk 'BEGIN {FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2} END {printf "\n"}' $(MAKEFILE_LIST)
@@ -32,8 +36,8 @@ uv-check:
 
 # ── run ──────────────────────────────────────────────────────────────
 run: venv-check bun-check ## Build the SPA, then serve the portal on PORT (default 8002)
-	cd web && $(BUN) run build
-	$(PY) scripts/precompress_spa.py
+	cd web && $(REPRO_ENV) $(BUN) run build
+	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
 	$(PY) -m reportal serve --port $(PORT)
 
 serve: venv-check ## Serve the portal from the current SPA build, without rebuilding
@@ -71,17 +75,19 @@ test-fast: venv-check ## pytest without coverage (quicker)
 	$(PY) -m pytest --no-cov -q
 
 ui: venv-check bun-check ## Build the SPA, then run the headless-Chrome smoke and audit
-	cd web && $(BUN) run build
-	$(PY) scripts/precompress_spa.py
+	cd web && $(REPRO_ENV) $(BUN) run build
+	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
 	$(PY) tools/smoke_spa.py
 	$(PY) tools/audit_ui.py
 
 # `build/` is removed too: setuptools reuses its `build/lib` tree without
 # pruning it, so a module deleted from `src/reportal` would still be packaged
-# into the wheel from the stale copy.
+# into the wheel from the stale copy.  Precompress runs before the wheel so
+# the packaged SPA matches `make run` / `make ui` (sibling `.gz` assets).
 package-check: venv-check uv-check ## Build a wheel and assert the built SPA is packaged
 	rm -rf dist build
-	$(UV) build --wheel
+	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
+	$(REPRO_ENV) $(UV) build --wheel
 	$(PY) scripts/check_wheel.py
 
 # ── housekeeping ─────────────────────────────────────────────────────

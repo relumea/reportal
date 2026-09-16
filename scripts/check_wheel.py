@@ -59,12 +59,14 @@ def main() -> int:
     bundles = [name for name in names if name.startswith(f"{ASSETS_PREFIX}assets/")]
     js = [name for name in bundles if name.endswith(".js")]
     css = [name for name in bundles if name.endswith(".css")]
+    gz = [name for name in bundles if name.endswith((".js.gz", ".css.gz"))]
     missing = [
         label
         for label, present in (
             (ENTRY_ASSET, ENTRY_ASSET in names),
             ("an assets/*.js bundle", bool(js)),
             ("an assets/*.css bundle", bool(css)),
+            ("an assets/*.js.gz or *.css.gz sibling", bool(gz)),
         )
         if not present
     ]
@@ -72,7 +74,8 @@ def main() -> int:
         sys.stderr.write(f"{wheel.name} is missing: {', '.join(missing)}\n")
         return 1
     sys.stdout.write(
-        f"{wheel.name}: {ENTRY_ASSET}, {len(js)} JS and {len(css)} CSS asset(s) packaged\n"
+        f"{wheel.name}: {ENTRY_ASSET}, {len(js)} JS, {len(css)} CSS, "
+        f"{len(gz)} gzip asset(s) packaged\n"
     )
     return 0
 

@@ -27,6 +27,7 @@ jobs:
         with:
           enable-cache: true
           version: "0.8.22"
+          python-version: "3.13"
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -67,10 +68,18 @@ jobs:
       # `rebrew` is a base dependency and `resembl` backs the similarity
       # extra; both are path sources on sibling checkouts
       # (`[tool.uv.sources]`), so the runner clones them beside the repo.
+      # Commits are pinned so a clean CI build does not float on each
+      # sibling's default-branch tip.
       - name: Check out the sibling engines
         run: |
-          git clone --depth 1 https://github.com/maci0/rebrew ../rebrew
-          git clone --depth 1 https://github.com/maci0/resembl ../resembl
+          git init ../rebrew
+          git -C ../rebrew remote add origin https://github.com/maci0/rebrew
+          git -C ../rebrew fetch --depth 1 origin 269f25aadaf9ed0e7aa5b3c9f6b03b8a8d696c64
+          git -C ../rebrew checkout --detach FETCH_HEAD
+          git init ../resembl
+          git -C ../resembl remote add origin https://github.com/maci0/resembl
+          git -C ../resembl fetch --depth 1 origin a66d7ec5bb0c6150a00f4d42663c23d9fcba247b
+          git -C ../resembl checkout --detach FETCH_HEAD
 
       - name: Install dependencies
         run: |
@@ -80,9 +89,15 @@ jobs:
       # `package-check` asserts the built SPA is inside the wheel, so the Vite
       # build has to exist first.  `make ui` builds it locally, and CI runs the
       # build on its own because the rest of that target needs the local
-      # engine fixture.
+      # engine fixture.  Precompress matches `make run` / `make ui` so the
+      # wheel carries the sibling `.gz` assets.  SOURCE_DATE_EPOCH keeps
+      # gzip/zip timestamps stable across rebuilds of the same commit.
       - name: Build the SPA
-        run: cd web && bun run build
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          export LC_ALL=C TZ=UTC
+          cd web && bun run build
+          uv run python scripts/precompress_spa.py
 
       # `make check` without its `ui` target.  The headless-Chrome smoke and
       # audit seed a workspace from `../rebrew-projects/notepad-rebrew`, a
@@ -91,4 +106,7 @@ jobs:
       # directory rather than in any repository, so those two run on a
       # developer machine; everything else the gate does runs here.
       - name: make lint, typecheck, test and package-check
-        run: make lint typecheck test package-check
+        run: |
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          export LC_ALL=C TZ=UTC
+          make lint typecheck test package-check

@@ -646,8 +646,7 @@ def serve(
     from reportal.server import LOOPBACK_HOSTS
 
     path = _db_path(json_output=False)
-    if not path.exists():
-        store.init_db(path)
+    store.init_db(path)
 
     is_loopback = host in LOOPBACK_HOSTS
     if not is_loopback:

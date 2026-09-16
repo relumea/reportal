@@ -44,8 +44,9 @@ The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
 56 kB (18 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with the view
 chunks behind them.  On the wire that is what `ui.py` actually sends when gzip
-is accepted; without it the browser downloads the raw sizes.  `make run` and
-`make ui` run the precompress step after `vite build`.  `tools/smoke_spa.py`
+is accepted; without it the browser downloads the raw sizes.  `make run`,
+`make ui` and `make package-check` run the precompress step after `vite build`
+(CI runs the same step before the wheel check).  `tools/smoke_spa.py`
 asserts the split rather than trusting it: the entry chunk must not carry a
 marker only the binary detail view renders, and some other chunk must, so a
 view import that goes back to being static fails the gate.

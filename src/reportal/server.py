@@ -128,10 +128,9 @@ def _hostname_of(host_value: str) -> str:
 
 
 def db() -> sqlite3.Connection:
-    """Open the reportal database, creating the schema on first use."""
+    """Open the reportal database, creating or upgrading the schema as needed."""
     path = db_path()
-    if not path.exists():
-        store.init_db(path)
+    store.init_db(path)
     return store.connect(path)
 
 
