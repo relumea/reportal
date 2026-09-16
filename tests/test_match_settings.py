@@ -201,6 +201,31 @@ class TestScopeFilters:
         )
         assert _names(conn, ids["a1"]) == ["a2", "b1", "b2", "c1"]
 
+    def test_a_named_scope_narrows_to_the_visible_subset(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, ids["b"], visibility="team", owner_team_id=team_id)
+        collection = store.create_collection(conn, name="mix")
+        store.add_collection_binary(conn, collection, ids["a"])
+        store.add_collection_binary(conn, collection, ids["b"])
+
+        _run(
+            conn,
+            ids["a"],
+            matching.MatchSettings(collection_ids=(collection,), min_similarity=0.0),
+            visible_to=stranger,
+        )
+        assert _names(conn, ids["a1"]) == ["a2"]
+
 
 class TestRefusals:
     def test_unknown_platform(self) -> None:

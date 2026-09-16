@@ -507,6 +507,27 @@ class TestRoutes:
         with pytest.raises(benchmark.BenchmarkError, match="no binary"):
             _run(conn, ids, visible_to=auth.find_user(conn, "bob"))
 
+    def test_a_hidden_left_is_refused(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        store.set_binary_scope(conn, ids["left"], visibility="team", owner_team_id=team_id)
+
+        with pytest.raises(benchmark.BenchmarkError, match="no binary"):
+            _run(conn, ids, visible_to=stranger)
+        member = _run(conn, ids, visible_to=ana)
+        assert member["stored"] is True
+
     def test_a_bad_setting_is_a_400(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
         status, payload = _post(

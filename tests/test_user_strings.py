@@ -400,3 +400,17 @@ class TestDerivedAndFunctionRead:
                 visible_to=stranger,
             )
             assert listed == []
+            hidden_analysis = user_strings.list_strings(
+                conn,
+                scope_kind=user_strings.SCOPE_ANALYSIS,
+                scope_id=ids["analysis"],
+                visible_to=stranger,
+            )
+            assert hidden_analysis == []
+            member_analysis = user_strings.list_strings(
+                conn,
+                scope_kind=user_strings.SCOPE_ANALYSIS,
+                scope_id=ids["analysis"],
+                visible_to=ana,
+            )
+            assert member_analysis == []
