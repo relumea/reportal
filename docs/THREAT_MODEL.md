@@ -59,6 +59,13 @@ full below.
    `/api/functions/callees-callers`, `/api/functions/signatures`) and
    `/api/search` filter their pages by the same rule (`auth.visible_clause`)
    and a bulk action skips the ids outside it.
+   Three access layers stay distinct: team scope guards data objects,
+   role checks (`viewer`/`analyst`/`admin`) guard tenant administration
+   (users, teams, organisations, billing, components), and the secret store
+   enforces its own workspace/team `may_read`/`may_write`.  Scoping tenant
+   admin to team membership would let any member reshape the tenant, and
+   scoping global vocabularies (tags, families, models) would fragment
+   shared taxonomies for no security gain.
 2. **Application to durable local state.**  The database and workspace are
    written by the store, the journal and auto mode.  Filesystem permissions and
    host-user access therefore cross this boundary; there is no encryption.
