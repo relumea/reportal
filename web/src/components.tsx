@@ -67,6 +67,45 @@ export function CopyValue({ value }: { value: string | null | undefined }): Reac
 
 export type ButtonTone = "default" | "primary" | "ghost" | "danger";
 
+/** Tab-order controls inside *root*, skipping aria-hidden and visually empty nodes. */
+export function focusableElements(root: HTMLElement): HTMLElement[] {
+  const selector =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return Array.from(root.querySelectorAll<HTMLElement>(selector)).filter((element) => {
+    if (element.closest('[aria-hidden="true"]')) return false;
+    return element.getClientRects().length > 0;
+  });
+}
+
+/**
+ * Keep Tab cycling inside *root* (WCAG 2.1.2).  Call from a dialog's keydown;
+ * Escape and other keys are the caller's.
+ */
+export function trapTabKey(
+  event: { key: string; shiftKey: boolean; preventDefault: () => void },
+  root: HTMLElement,
+): void {
+  if (event.key !== "Tab") return;
+  const nodes = focusableElements(root);
+  if (nodes.length === 0) {
+    event.preventDefault();
+    root.focus();
+    return;
+  }
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey) {
+    if (active === first || !(active instanceof Node) || !root.contains(active)) {
+      event.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !(active instanceof Node) || !root.contains(active)) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 export function Button({
   children,
   onClick,
@@ -76,6 +115,7 @@ export function Button({
   disabled = false,
   pending = false,
   title,
+  "aria-label": ariaLabel,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -86,6 +126,7 @@ export function Button({
   /** Show a spinner and disable the control while work is in flight. */
   pending?: boolean;
   title?: string;
+  "aria-label"?: string;
 }): ReactNode {
   const classes = ["btn"];
   if (tone !== "default") classes.push(`btn-${tone}`);
@@ -97,6 +138,7 @@ export function Button({
       className={classes.join(" ")}
       disabled={disabled || pending}
       aria-busy={pending || undefined}
+      aria-label={ariaLabel}
       title={title}
       onClick={onClick}
     >
@@ -140,6 +182,11 @@ export function ConfirmButton({
   disabled?: boolean;
 }): ReactNode {
   const [confirming, setConfirming] = useState(false);
+  const groupRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!confirming) return;
+    groupRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+  }, [confirming]);
   if (!confirming) {
     return (
       <Button
@@ -154,8 +201,21 @@ export function ConfirmButton({
     );
   }
   return (
-    <span className="confirm" role="group" aria-label={message}>
-      <span className="confirm-text">{message}</span>
+    <span
+      ref={groupRef}
+      className="confirm"
+      role="group"
+      aria-label={message}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setConfirming(false);
+        }
+      }}
+    >
+      <span className="confirm-text" role="status">
+        {message}
+      </span>
       <Button
         tone="danger"
         size="sm"
@@ -460,7 +520,7 @@ export function EmptyState({
   action?: ReactNode;
 }): ReactNode {
   return (
-    <div className="empty-state">
+    <div className="empty-state" role="status">
       <p>{children}</p>
       {action}
     </div>
@@ -654,8 +714,9 @@ export function DataTable<T>({
               onKeyDown={
                 onRowClick
                   ? (event: KeyboardEvent<HTMLTableRowElement>) => {
-                      if (event.key !== "Enter") return;
+                      if (event.key !== "Enter" && event.key !== " ") return;
                       if (isInteractive(event.target)) return;
+                      event.preventDefault();
                       onRowClick(row);
                     }
                   : undefined

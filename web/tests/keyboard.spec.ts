@@ -14,7 +14,9 @@ test("tab reaches the primary nav and the first table's row actions", async ({ p
   await page.goto("/#/functions");
   await expect(page.locator("table.data-table tbody tr").first()).toBeVisible();
 
-  // The sidebar's collapse control is the first stop, then the nav links.
+  // Skip link first, then the sidebar collapse control, then the nav links.
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".skip-link:focus")).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(page.locator(".sidebar-toggle:focus")).toBeVisible();
   await page.keyboard.press("Tab");

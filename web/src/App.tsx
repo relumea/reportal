@@ -601,6 +601,9 @@ export function App(): ReactNode {
 
   return (
     <div className={collapsed ? "layout sidebar-collapsed" : "layout"}>
+      <a className="skip-link" href="#content">
+        Skip to content
+      </a>
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-dot" aria-hidden="true" />
@@ -623,6 +626,7 @@ export function App(): ReactNode {
               <span className="nav-group-label">{group.label}</span>
               {group.views.map((view) => {
                 const current = activeView === view;
+                const label = NAV_LABELS[view];
                 return (
                   <Link
                     key={view}
@@ -630,8 +634,12 @@ export function App(): ReactNode {
                     data-view={view}
                     className={current ? "nav-link active" : "nav-link"}
                     aria-current={current ? "page" : undefined}
+                    title={label}
                   >
-                    {NAV_LABELS[view]}
+                    <span className="nav-link-text">{label}</span>
+                    <span className="nav-link-mark" aria-hidden="true">
+                      {label.charAt(0)}
+                    </span>
                   </Link>
                 );
               })}
@@ -653,7 +661,7 @@ export function App(): ReactNode {
             ) : null}
           </span>
         </header>
-        <div className="content" id="content">
+        <div className="content" id="content" tabIndex={-1}>
           <ViewLoadBoundary>
             <Suspense fallback={<Loading label="Loading the view" />}>{content}</Suspense>
           </ViewLoadBoundary>

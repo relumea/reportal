@@ -4,15 +4,24 @@
 //
 // Nothing here is stored server-side, so dismissal lives in the browser: the
 // dismissed ids are kept in localStorage and filtered out of the count and the
-// list, which is where the hosted portal keeps them too.  The dialog follows
-// the same focus contract as the cheatsheet and the search modal: it takes the
-// focus on open, returns it on close, keeps Tab inside it and closes on Escape.
+// list, which is where the hosted portal keeps them too.  The dialog takes
+// focus on open, returns it on close, cycles Tab among its controls, and
+// closes on Escape.
 
 import { useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { Link } from "react-router";
 
 import { api } from "../api";
-import { Button, EmptyState, ErrorNote, Loading, SeverityBadge } from "../components";
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Loading,
+  SeverityBadge,
+  focusableElements,
+  trapTabKey,
+} from "../components";
 import type { NotificationItem, NotificationsPayload } from "../types";
 import { useAsync } from "../useAsync";
 
@@ -114,17 +123,50 @@ function NotificationsDialog({
 }): ReactNode {
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (!open) return undefined;
     restoreRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dialogRef.current?.focus();
+    const root = dialogRef.current;
+    if (root) {
+      const first = focusableElements(root)[0];
+      (first ?? root).focus();
+    }
     return () => restoreRef.current?.focus();
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onFocusIn = (event: FocusEvent): void => {
+      const root = dialogRef.current;
+      if (!root || !(event.target instanceof Node) || root.contains(event.target)) return;
+      const first = focusableElements(root)[0];
+      (first ?? root).focus();
+    };
+    document.addEventListener("focusin", onFocusIn);
+    return () => document.removeEventListener("focusin", onFocusIn);
+  }, [open]);
+
   if (!open) return null;
   const shown = items.filter((item) => !dismissed.includes(item.id));
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (dialogRef.current) trapTabKey(event, dialogRef.current);
+  };
+
   return (
-    <div className="notifications-overlay" onClick={onClose}>
+    <div
+      className="notifications-overlay"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <div
         className="notifications-dialog"
         role="dialog"
@@ -132,15 +174,11 @@ function NotificationsDialog({
         aria-label="Notifications"
         tabIndex={-1}
         ref={dialogRef}
-        onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") onClose();
-          if (event.key === "Tab") event.preventDefault();
-        }}
+        onKeyDown={onKeyDown}
       >
         <div className="notifications-head">
           <strong>Notifications</strong>
-          <span>
+          <span role="status">
             {loading
               ? "loading"
               : `${shown.length} new of ${items.length}${latest ? `, latest ${latest}` : ""}`}
@@ -167,12 +205,16 @@ function NotificationsDialog({
               <span className="notification-when">{item.at}</span>
               <span className="notification-text">{item.message}</span>
               {item.binary_id ? (
-                <a href={`#/binaries/${item.binary_id}`} onClick={onClose}>
+                <Link to={`/binaries/${item.binary_id}`} onClick={onClose}>
                   {item.binary_name ?? `binary ${item.binary_id}`}
-                </a>
+                </Link>
               ) : null}
               {item.action ? <span className="notification-src">{item.action}</span> : null}
-              <Button tone="ghost" onClick={() => onDismiss(item.id)}>
+              <Button
+                tone="ghost"
+                aria-label={`Dismiss notification: ${item.message}`}
+                onClick={() => onDismiss(item.id)}
+              >
                 Dismiss
               </Button>
             </div>
