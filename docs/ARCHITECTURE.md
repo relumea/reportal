@@ -306,16 +306,25 @@ the call that created or rotated it.
 
 A binary or a collection additionally carries a scope (`owner_team_id` plus a
 `visibility` of `public` or `team`), and the same dependency enforces it:
-`server._scoped_object` resolves the object a path names (a function or an
-analysis resolves through the binary it belongs to, since that is where the
-scope lives) and `_enforce_scope` refuses a read a non-member may not make with
-the object's own 404 (no existence disclosure) and a write with 403
-`scope-forbidden`.  `auth.visible_clause` is the one SQL rule the listings,
-`/api/search` and the bulk guard share, and `auth.may_write` is the one
-predicate the scope setters and the collection membership route share.  A team
-delete resets its objects to public rather than orphaning them.  `docs/THREAT_MODEL.md` carries the residual
-risks, the largest of which is that authorization is per route kind rather than
-per object.
+`server._scoped_object` resolves the object a path names (eleven kinds: binary,
+collection, function, analysis, data type, comment, document, conversation,
+pipeline run, auto run and graph node, each through its owning binary, since
+that is where the scope lives) and `_enforce_scope` refuses a read a non-member
+may not make with the object's own 404 (no existence disclosure) and a write
+with 403 `scope-forbidden`.  `auth.visible_clause` is the one SQL rule the
+listings (binaries, collections, analyses, jobs, documents, conversations),
+the batch reads (matches, callees-callers, signatures, canonical-names), the
+scoped listings (comments, strings), the search pages (store search, knowledge
+search, graph query), the feeds (notifications and activity log halves) and the
+series (dashboard analyses, auto runs, software types) share; the corpus
+operations (match, composition, lineage, related, benchmark, transfer) score
+only visible binaries; `auth.may_write` is the one predicate the scope setters,
+the collection membership and tag writes, the job submit and the bulk guards
+share; and the creates (analyses, documents, conversations, families) refuse a
+hidden scope as its own 404.  A team delete resets its objects to public rather
+than orphaning them.  `docs/THREAT_MODEL.md` carries the residual risks, the
+largest of which is that the journal halves of the feeds stay global by
+decision rather than by oversight.
 
 ## Sandbox detonation
 
