@@ -5,32 +5,68 @@ single-host application: one SQLite database plus a few workspace directories,
 no replica and no managed storage.  The row store is `reportal.store` (schema in
 `store._SCHEMA`), the request-scoped undo log is `reportal.journal`, the auto-run
 undo log is `reportal.auto_mode`, and every inverse is replayed by
-`reportal.effects.apply_undo_plan`.  A symbol named below is the checkable
-source of the claim.
+`reportal.effects.apply_undo_plan`.  Whole-workspace durability is
+`reportal.backup` (`reportal backup` / `reportal restore` / `reportal
+backup-info`).  A symbol named below is the checkable source of the claim.
+
+## Objectives (RPO / RTO)
+
+| Objective | Value | Why |
+|-----------|-------|-----|
+| RPO (how much work you can lose) | One backup interval | There is no continuous replication.  With the shipped daily timer (`deploy/reportal-backup.timer`) that is up to about 24 hours of writes; a tighter cron or timer shortens it.  With no scheduled backup, RPO is unbounded. |
+| RTO (how long until service returns) | Time to place a host, install the package, and `reportal restore --overwrite --yes` | Dominated by archive size and disk speed.  Measure it during the restore drill below; do not guess from the backup job's exit code. |
+
+Point-in-time recovery inside one interval does not exist: a backup is a full
+workspace snapshot, not a WAL shipping stream.  Logical corruption that sat in
+production longer than the interval is only recoverable if an older archive was
+kept.
 
 ## State inventory
 
-| State | Location | Written by | Rebuildable |
-|-------|----------|-----------|-------------|
-| Portal database | the marker's `[portal] db` name, `reportal.db` by default, override `REPORTAL_DB` (`_paths.db_path`); `reportal config` prints the path in force | `reportal init` -> `store.init_db` | No: the rows are the work |
-| Action journal (revert record) | `journal_entries` table, same database | `journal.ensure_schema`, `journal.Journal.flush` | Partially: it is what makes another write revertible |
-| Auto runs and attempts | `auto_runs`, `auto_tasks`, `auto_attempts` tables | `auto_store`; undo plan in `auto_runs.effects_json` | The undo plan is the recoverable part |
-| Uploaded binaries | `<workspace>/binaries/<sha256><suffix>` (`_paths.binaries_dir`) | `api.upload_binary` | Yes, re-upload the same file (content-addressed) |
-| Engine reports and PDF | `<workspace>/reports/<binary_id>/`, PDF at `pdf.REPORT_PDF_NAME` | the report route and `pdf` | Yes, re-run the report |
-| Imported binary bytes | the rebrew project (`binaries.path`, `rebrew_contexts.project_dir`) | `reportal import-rebrew` | Outside reportal: re-run the import |
-| Stored derived rows | `disasm_cache`, `decompilations`, `scans`, `binary_fingerprints`, `ai_artifacts` | routes and engine runs | `disasm_cache` and `scans` regenerate on demand; AI artifacts cost a model call |
-| Similarity cache | process memory only (`similarity.PREPARED_CACHE_SIZE`) | `similarity` | Yes, recomputed on the next request |
+| State | Location | Written by | In `reportal backup`? | Rebuildable |
+|-------|----------|-----------|----------------------|-------------|
+| Portal database | `[portal] db` / `REPORTAL_DB` / `reportal.db` (`_paths.db_path`) | `store.init_db` and every write path | Yes (SQLite backup API after `wal_checkpoint(TRUNCATE)`) | No: the rows are the work |
+| Action journal | `journal_entries` in the portal database | `journal.Journal.flush` | Yes (same file) | Partially: it is what makes another write revertible |
+| Auto runs and attempts | `auto_runs`, `auto_tasks`, `auto_attempts` | `auto_store` | Yes | The undo plan is the recoverable part |
+| Secret store | tables in the portal database | `secret_store` | Yes (plaintext in the archive) | No |
+| Uploaded binaries | `<workspace>/binaries/<sha256><suffix>` | `api.upload_binary` | Yes | Re-upload (content-addressed) |
+| Engine reports and PDF | `<workspace>/reports/<binary_id>/` | report route / `pdf` | Yes | Re-run the report |
+| Workspace marker | `reportal.toml` | `reportal init` / operators | Yes | Re-create; secrets in env are not in the file |
+| Imported binary bytes | rebrew project (`binaries.path`, `rebrew_contexts.project_dir`) | `reportal import-rebrew` | No (path left external on restore) | Outside reportal: re-run the import |
+| Derived rows | `disasm_cache`, `decompilations`, `scans`, `ai_artifacts`, … | routes / engines | Yes | Caches regenerate; AI artifacts cost a model call |
+| Similarity cache | process memory (`similarity.PREPARED_CACHE_SIZE`) | `similarity` | No | Recomputed on the next request |
+| rebrew `coverage.db` / compile cache | rebrew project | rebrew | No | Re-run analysis in that project |
 
-reportal keeps no compile cache.  The rebrew engine's own compile cache lives in
-the rebrew project, which reportal does not own or back up.
+Auto mode may leave the database in WAL (`auto_mode.DB_JOURNAL_MODE`) with
+`synchronous = NORMAL`.  `reportal backup` checkpoints before copying, so the
+archive does not depend on shipping `-wal` / `-shm` sidecars.  A hand copy of
+the live files still must include those sidecars or stop the server first.
 
-Auto mode switches the database to WAL (`auto_mode.DB_JOURNAL_MODE`), a
-database-level setting that persists, with `auto_mode.DB_SYNCHRONOUS =
-"NORMAL"`.  Once it has, `reportal.db-wal` and `reportal.db-shm` sit beside the
-database.  Copy all three, or stop the server first and let a checkpoint fold
-the WAL back in.
+## What is protected
 
-## What the code already guarantees
+- `reportal backup` writes one gzip tar of the live database (configured path
+  included), `reportal.toml`, `binaries/`, and `reports/`, with a manifest that
+  `reportal restore` checks before touching the workspace (`backup.create`,
+  `backup.restore`).  Round-trip coverage is `tests/test_backup.py`.
+- The default archive path is a dated file under `../reportal-backups/` beside
+  the workspace, never inside it.  Writing inside the workspace is refused so
+  an instance wipe of the workspace directory cannot take the only copy.
+- `deploy/reportal-backup.service` plus `deploy/reportal-backup.timer` are the
+  scheduled form: daily into `/srv/backups/`, failing the unit when the archive
+  is missing or zero bytes.
+
+## Failure domains (accepted unless the operator moves the archive)
+
+| Disaster | Posture |
+|----------|---------|
+| Instance / workspace directory loss | Recoverable if an archive exists outside that directory |
+| Host disk / same-volume loss | Not covered by the default sibling `reportal-backups/` path; keep `/srv/backups` (or equivalent) on another volume or host |
+| Zone / region loss | Out of scope in-tree; copy archives off-box |
+| Malicious or fat-finger delete of data and backups | One account that can write both can delete both; use a separate backup principal, append-only storage, or offline copies |
+| Logical corruption for longer than retention | Keep multiple dated archives; there is no PITR inside one file |
+| Bad deploy / schema upgrade | Additive upgrades via `store._upgrade_schema`; roll back by restoring a pre-upgrade archive after stopping the service |
+
+## What the code already guarantees (row-level undo)
 
 - A request-scoped write is journaled through `journal.journaled`, which flushes
   only on a clean exit; a failed request leaves no half-recorded action.  Entry
@@ -82,19 +118,23 @@ Not revertible, with the reason:
 
 ## Recovery procedures
 
-### A corrupt database
+### Instance loss or corrupt database (whole workspace)
 
-1. Stop the server (Ctrl+C on `reportal serve`).  Confirm nothing has it open.
-2. Check integrity: `sqlite3 <workspace>/reportal.db "PRAGMA integrity_check;"`.
-   A result other than `ok` means the file is damaged.
-3. Restore `reportal.db` from the last good backup (with its `-wal` and `-shm`
-   companions, or after a clean stop).  reportal ships no automatic backup and
-   no `.bak` generation.
-4. If a table is missing a column a newer release added, `store._upgrade_schema`
-   adds it on the next `store.init_db`, which every command runs through
-   `server.db` or `cli._db_path`.  A missing database is recreated empty by
-   `store.init_db`; that restores the schema, not the rows.
-5. Start the server and check `GET /api/health` (version, db path, counts).
+1. Stop the service: `systemctl stop reportal` (or Ctrl+C on `reportal serve`).
+2. Optional integrity check on a suspect file:
+   `sqlite3 <db> "PRAGMA integrity_check;"` (anything other than `ok` means the
+   file is damaged).
+3. Inspect the archive without writing: `reportal backup-info /path/to/archive.tar.gz`.
+4. Restore into the workspace directory (destructive):
+   `cd /srv/reportal && reportal restore /srv/backups/reportal-YYYY-MM-DD.tar.gz --overwrite --yes`.
+   Paths that lived under the archived root are rewritten; imported binaries
+   whose files lived outside that root are reported and left pointing where they
+   were.
+5. `reportal doctor` then `systemctl start reportal`.  Confirm `GET /api/health`
+   (version, db path, counts).
+
+`store.init_db` recreates an empty schema when the file is missing; that restores
+the tables, not the rows.  Prefer `reportal restore`.
 
 ### A half-run auto mode
 
@@ -148,24 +188,50 @@ Not revertible, with the reason:
 
 ## Restore drill
 
-A backup that has never been restored is a hypothesis.  After setting up
-backups, and periodically afterwards:
+A backup that has never been restored is a hypothesis.  After enabling the
+timer (or any schedule), and periodically afterwards:
 
-1. Copy a workspace to a scratch directory (database plus `-wal`/`-shm`, and
-   `binaries/` and `reports/` if the portal stored them).
-2. Point a new process at the copy:
-   `REPORTAL_DB=<scratch>/reportal.db reportal stats`.
-3. Check the schema opens and the counts look right (the same numbers
-   `store.counts` reports through `GET /api/health`).
-4. Spot-check one binary: `reportal report <binary_id> --output <scratch>/out`.
-5. Record the date and the result next to the backup destination.
+1. Copy a recent archive to a scratch host or directory (do not overwrite
+   production).
+2. `mkdir /tmp/reportal-drill && cd /tmp/reportal-drill && reportal init`
+3. `reportal restore /path/to/archive.tar.gz --overwrite --yes`
+4. `REPORTAL_DB=$(reportal config 2>/dev/null | true); reportal stats` and
+   compare counts to `GET /api/health` on production (or the manifest
+   `counts`).
+5. Spot-check one binary: `reportal report <binary_id> --output /tmp/drill-out`.
+6. Record the date, archive name, wall-clock restore time (your RTO sample),
+   and pass/fail next to the backup destination.
+7. Delete the scratch workspace.
+
+Automated proof in CI is the round trip in `tests/test_backup.py`; the drill
+above is what proves the operator path and the off-box archive still load.
+
+## Scheduling and failure visibility
+
+```bash
+sudo mkdir -p /srv/backups
+sudo chown reportal:reportal /srv/backups
+sudo cp deploy/reportal-backup.service deploy/reportal-backup.timer /etc/systemd/system/
+# edit both if the workspace is not /srv/reportal
+sudo systemctl daemon-reload
+sudo systemctl enable --now reportal-backup.timer
+systemctl list-timers reportal-backup.timer
+systemctl --failed
+journalctl -u reportal-backup.service -n 50
+```
+
+A successful run leaves a non-empty `/srv/backups/reportal-YYYY-MM-DD.tar.gz`.
+The oneshot runs `test -s` on that path so a zero-byte write fails the unit.
 
 ## Known gaps
 
-- No automatic backup ships with reportal; the procedure above is manual.
-- Backups hold the same secrets the workspace holds (the optional LLM key lives
-  in the environment or `reportal.toml`, not in the database).
+- No continuous replication or PITR; RPO is the backup interval.
+- Archives are not encrypted; they hold every secret the workspace database
+  holds (`docs/THREAT_MODEL.md`).  LLM keys in the environment are not in the
+  archive unless also stored in the secret store.
+- Default and timer destinations are still the same host unless the operator
+  copies archives elsewhere.
 - A revert cannot be verified as observationally equivalent to a rerun; see the
   gaps section of [COMPONENTS.md](COMPONENTS.md).
-- Recovery assumes one process over the database.  A second process writing
-  while a revert runs is outside the model.
+- Recovery assumes one writer over the database during `reportal restore`.
+  Stop the service first.

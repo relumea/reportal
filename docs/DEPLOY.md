@@ -113,18 +113,29 @@ at startup rather than serving.
 
 ## Backups
 
-A backup is the workspace, and the workspace is the whole state:
+A backup is the workspace, and the workspace is the whole state reportal owns:
 `reportal backup [--output PATH]` writes one archive through SQLite's backup API
-and `reportal restore` reads it back.  Running it from a timer is the standard
-shape:
+(after a WAL checkpoint) and `reportal restore` reads it back.  The live
+database path follows `[portal] db` / `REPORTAL_DB`, not only a file named
+`reportal.db` beside the marker.  The default `--output` is a dated file under
+`../reportal-backups/` beside the workspace; writing inside the workspace is
+refused so an instance wipe cannot take the only copy.
+
+Ship the timer so the job is not tribal knowledge:
 
 ```bash
-sudo -u reportal .venv/bin/reportal backup --output /srv/backups/reportal-$(date +%F).tar.gz
+sudo mkdir -p /srv/backups && sudo chown reportal:reportal /srv/backups
+sudo cp deploy/reportal-backup.service deploy/reportal-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now reportal-backup.timer
 ```
 
-The archive carries every secret the workspace holds and is not encrypted, so it
-needs the same care as the workspace itself (`docs/THREAT_MODEL.md`).
-`docs/DR_RUNBOOK.md` has the recovery procedures and the restore drill.
+The oneshot writes `/srv/backups/reportal-$(date +%F).tar.gz` and fails if that
+file is missing or empty (`systemctl --failed` / `journalctl -u
+reportal-backup.service`).  Keep that directory on another volume when the disk
+is the failure you care about.  The archive carries every secret the workspace
+database holds and is not encrypted (`docs/THREAT_MODEL.md`).
+`docs/DR_RUNBOOK.md` states RPO/RTO, the state inventory, and the restore drill.
 
 ## Upgrading
 

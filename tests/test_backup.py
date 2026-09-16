@@ -86,7 +86,7 @@ def _rewrite(archive: Path, mutate: Any) -> Path:
 class TestCreate:
     def test_the_archive_carries_the_workspace(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path / "one")
-        result = backup.create(workspace=root)
+        result = backup.create(workspace=root, output=tmp_path / "snapshot.tar.gz")
         archive = Path(result["path"])
         assert archive.is_file()
         names = _names(archive)
@@ -99,6 +99,7 @@ class TestCreate:
         assert manifest["counts"]["binaries"] == 1
         assert manifest["counts"]["reports"] == 1
         assert manifest["root"] == str(root.resolve())
+        assert manifest["database"] == str((root / "reportal.db").resolve())
 
     def test_an_explicit_output_is_honoured(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path / "one")
@@ -107,16 +108,51 @@ class TestCreate:
         assert Path(result["path"]) == target
         assert target.is_file()
 
+    def test_the_default_output_lands_outside_the_workspace(self, tmp_path: Path) -> None:
+        root = _workspace(tmp_path / "one")
+        result = backup.create(workspace=root)
+        archive = Path(result["path"])
+        assert archive.is_file()
+        assert archive.parent == (tmp_path / "reportal-backups")
+        assert not archive.is_relative_to(root.resolve())
+
+    def test_an_output_inside_the_workspace_is_refused(self, tmp_path: Path) -> None:
+        root = _workspace(tmp_path / "one")
+        with pytest.raises(backup.BackupError) as failure:
+            backup.create(workspace=root, output=root / "inside.tar.gz")
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
     def test_a_directory_without_a_database_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(backup.BackupError) as failure:
-            backup.create(workspace=tmp_path / "empty")
+            backup.create(workspace=tmp_path / "empty", output=tmp_path / "out.tar.gz")
         assert failure.value.code == backup.ERROR_NOT_A_WORKSPACE
+
+    def test_a_configured_database_path_is_backed_up(self, tmp_path: Path) -> None:
+        root = tmp_path / "one"
+        root.mkdir(parents=True)
+        (root / "reportal.toml").write_text('[portal]\ndb = "state/portal.db"\n', encoding="utf-8")
+        db = root / "state" / "portal.db"
+        db.parent.mkdir(parents=True)
+        store.init_db(db)
+        stored = root / "binaries" / ("aa" * 32)
+        stored.parent.mkdir(parents=True)
+        stored.write_bytes(b"MZ")
+        with contextlib.closing(store.connect(db)) as conn:
+            store.add_binary(conn, sha256="aa" * 32, name="demo.exe", path=str(stored), size=2)
+        archive = Path(backup.create(workspace=root, output=tmp_path / "cfg.tar.gz")["path"])
+        assert "reportal.db" in _names(archive)
+        target = tmp_path / "two"
+        target.mkdir()
+        result = backup.restore(archive, workspace=target)
+        assert Path(result["database"]) == target / "state" / "portal.db"
+        assert (target / "state" / "portal.db").is_file()
+        assert not (target / "reportal.db").exists()
+        with contextlib.closing(store.connect(target / "state" / "portal.db")) as conn:
+            assert [row["name"] for row in store.list_binaries(conn)] == ["demo.exe"]
 
     def test_the_database_in_the_archive_is_readable(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path / "one")
-        result = backup.create(workspace=root)
-        with contextlib.closing(store.connect(Path(result["path"]))) as _unused:
-            pass
+        result = backup.create(workspace=root, output=tmp_path / "readable.tar.gz")
         with tarfile.open(result["path"], "r:gz") as tar:
             extracted = tar.extractfile("reportal.db")
             assert extracted is not None
@@ -130,7 +166,7 @@ class TestCreate:
 class TestRestore:
     def test_a_round_trip_into_another_directory(self, tmp_path: Path) -> None:
         source = _workspace(tmp_path / "one")
-        archive = Path(backup.create(workspace=source)["path"])
+        archive = Path(backup.create(workspace=source, output=tmp_path / "round.tar.gz")["path"])
         before = _paths(source / "reportal.db")
 
         target = tmp_path / "two"
@@ -152,7 +188,7 @@ class TestRestore:
         outside.write_bytes(b"MZ")
         with contextlib.closing(store.connect(root / "reportal.db")) as conn:
             store.add_binary(conn, sha256="bb" * 32, name="imported.exe", path=str(outside), size=2)
-        archive = Path(backup.create(workspace=root)["path"])
+        archive = Path(backup.create(workspace=root, output=tmp_path / "ext.tar.gz")["path"])
         target = tmp_path / "two"
         target.mkdir()
         result = backup.restore(archive, workspace=target)
@@ -162,7 +198,7 @@ class TestRestore:
 
     def test_an_existing_workspace_needs_overwrite(self, tmp_path: Path) -> None:
         source = _workspace(tmp_path / "one")
-        archive = Path(backup.create(workspace=source)["path"])
+        archive = Path(backup.create(workspace=source, output=tmp_path / "need.tar.gz")["path"])
         target = _workspace(tmp_path / "two")
         with pytest.raises(backup.BackupError) as failure:
             backup.restore(archive, workspace=target)
@@ -170,7 +206,7 @@ class TestRestore:
 
     def test_overwrite_replaces_the_state(self, tmp_path: Path) -> None:
         source = _workspace(tmp_path / "one")
-        archive = Path(backup.create(workspace=source)["path"])
+        archive = Path(backup.create(workspace=source, output=tmp_path / "ow.tar.gz")["path"])
         target = tmp_path / "two"
         target.mkdir()
         backup.restore(archive, workspace=target)
@@ -182,7 +218,7 @@ class TestRestore:
 
     def test_a_refused_archive_leaves_the_workspace_alone(self, tmp_path: Path) -> None:
         source = _workspace(tmp_path / "one")
-        archive = Path(backup.create(workspace=source)["path"])
+        archive = Path(backup.create(workspace=source, output=tmp_path / "safe.tar.gz")["path"])
         broken = _rewrite(
             archive,
             lambda member, payload: (
@@ -210,7 +246,11 @@ class TestManifest:
         assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
 
     def test_a_member_the_manifest_does_not_name_is_refused(self, tmp_path: Path) -> None:
-        archive = Path(backup.create(workspace=_workspace(tmp_path / "one"))["path"])
+        archive = Path(
+            backup.create(workspace=_workspace(tmp_path / "one"), output=tmp_path / "base.tar.gz")[
+                "path"
+            ]
+        )
         extra = archive.with_name("extra.tar.gz")
         with tarfile.open(archive, "r:gz") as source, tarfile.open(extra, "w:gz") as sink:
             for member in source.getmembers():
@@ -225,7 +265,11 @@ class TestManifest:
         assert failure.value.code == backup.ERROR_UNSAFE_ARCHIVE
 
     def test_an_unknown_format_version_is_refused(self, tmp_path: Path) -> None:
-        archive = Path(backup.create(workspace=_workspace(tmp_path / "one"))["path"])
+        archive = Path(
+            backup.create(workspace=_workspace(tmp_path / "one"), output=tmp_path / "ver.tar.gz")[
+                "path"
+            ]
+        )
 
         def bump(member: tarfile.TarInfo, payload: bytes | None) -> tuple[str, bytes | None]:
             if member.name != backup.MANIFEST_NAME or payload is None:
@@ -243,7 +287,11 @@ class TestManifest:
             backup.describe(tmp_path / "nope.tar.gz")
 
     def test_describe_reports_the_manifest(self, tmp_path: Path) -> None:
-        archive = Path(backup.create(workspace=_workspace(tmp_path / "one"))["path"])
+        archive = Path(
+            backup.create(workspace=_workspace(tmp_path / "one"), output=tmp_path / "desc.tar.gz")[
+                "path"
+            ]
+        )
         described = backup.describe(archive)
         assert described["path"] == str(archive)
         assert described["counts"]["binaries"] == 1

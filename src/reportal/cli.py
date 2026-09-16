@@ -503,7 +503,7 @@ def backup_command(
         Path(""),
         "--output",
         "-o",
-        help="Where to write the archive; a name in the workspace by default",
+        help="Where to write the archive; a dated file under ../reportal-backups by default",
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:

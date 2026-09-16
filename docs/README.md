@@ -5,7 +5,7 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | module map, store schema, engine contract, component model, HTTP surface, SPA modules, matching, auto mode, verification |
 | [COMPONENTS.md](COMPONENTS.md) | the component model: revertible effects, reactive activation, the effect dispatcher, and its conformance gaps against the context paradigm |
 | [DEPLOY.md](DEPLOY.md) | the deployment sequence: what a host needs, the systemd unit, the readiness check that gates a start, remote access, backups and upgrades |
-| [DR_RUNBOOK.md](DR_RUNBOOK.md) | state inventory, what is revertible, recovery procedures for the named failures, and a restore drill |
+| [DR_RUNBOOK.md](DR_RUNBOOK.md) | state inventory, RPO/RTO, backup/restore procedures, and the restore drill |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | trust boundaries, untrusted inputs and where they are validated, secrets, out-of-scope surfaces, and residual risks |
 | [SECURITY.md](../SECURITY.md) | supported versions statement, how to report a vulnerability, and security claims checked against the code |
 | [API.md](API.md) | every HTTP route: path, method, body, response and the codes it answers |

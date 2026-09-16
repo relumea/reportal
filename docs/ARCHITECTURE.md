@@ -172,10 +172,12 @@ The request path is `server.py` (shared app plus helpers) composed by
 `engines.py`; tests inject a fake engine through `engines.set_engine()` rather
 than running the engine.
 
-The tree also carries `deploy/reportal.service`, the systemd unit a host
-copies and edits (`docs/DEPLOY.md` is the sequence around it), and every gate
-target keeps working without it: the unit is data a test verifies with
-`systemd-analyze verify` on a copy whose paths point into a temporary directory.
+The tree also carries `deploy/reportal.service` and the matching
+`deploy/reportal-backup.service` / `deploy/reportal-backup.timer` templates a
+host copies and edits (`docs/DEPLOY.md` is the sequence around them;
+`docs/DR_RUNBOOK.md` is the recovery path). Every gate target keeps working
+without them: the serve unit is data a test verifies with `systemd-analyze
+verify` on a copy whose paths point into a temporary directory.
 
 ## Library choices
 
@@ -2651,20 +2653,29 @@ marketing numbers and the billing numbers are the same numbers;
 ## Backup and restore
 
 `backup.py` is the one module that reads or writes a whole workspace.  `create`
-copies the database through SQLite's own backup API after a
-`wal_checkpoint(TRUNCATE)`, then adds the marker, the stored binaries and the
-generated reports to a gzip-compressed tar with a manifest.  The checkpoint is
-what makes the archive one consistent snapshot: a plain file copy would ship the
-database without its `-wal` sidecar, silently dropping the writes that had not
-been folded in yet.
+copies the live database (the path `_paths.db_path` / `database_path` resolve,
+not a hard-coded `reportal.db` beside the marker) through SQLite's own backup
+API after a `wal_checkpoint(TRUNCATE)`, then adds the marker, the stored
+binaries and the generated reports to a gzip-compressed tar with a manifest.
+The checkpoint is what makes the archive one consistent snapshot: a plain file
+copy would ship the database without its `-wal` sidecar, silently dropping the
+writes that had not been folded in yet.  The database member is always named
+`reportal.db` inside the archive so a restore can place it at whatever path the
+restored marker (or `REPORTAL_DB`) names.
+
+The default output path is a dated file under a sibling `reportal-backups/`
+directory; an `--output` inside the workspace is refused so the archive does not
+share the workspace wipe domain.  `deploy/reportal-backup.timer` is the
+scheduled form that writes under `/srv/backups/` and fails on a zero-byte file.
 
 The manifest records the format and version, the reportal version, the time, the
-absolute workspace root and every member name.  `read_manifest` is the gate a
-restore runs before it touches anything: an unreadable archive, a missing
-manifest, an unknown format version, a member the manifest does not name and a
-member whose path leaves the archive root are each refused with a named code.
-The `..` check runs over the archive's own name list, so a crafted archive
-cannot write outside the workspace even if a tar implementation would follow it.
+absolute workspace root, the live database path and every member name.
+`read_manifest` is the gate a restore runs before it touches anything: an
+unreadable archive, a missing manifest, an unknown format version, a member the
+manifest does not name and a member whose path leaves the archive root are each
+refused with a named code.  The `..` check runs over the archive's own name
+list, so a crafted archive cannot write outside the workspace even if a tar
+implementation would follow it.
 
 A restore stages the archive in a temporary directory, rewrites the stored
 binary paths, moves the directories in, and moves the database last, so a

@@ -210,11 +210,15 @@ The same surface is `GET /api/knowledge/config` and `POST /api/knowledge/fetch` 
 ## Backup and restore
 
 `reportal backup` writes the workspace's whole state as one gzipped tar: the
-SQLite database (copied through SQLite's backup API after a WAL checkpoint, so
-the snapshot is consistent), the stored binaries, the generated reports and
-`reportal.toml`, with a manifest naming the format, the version, the time and
-every member. `reportal backup-info <archive>` prints that manifest without
-touching anything, and `reportal restore <archive>` reads it back.
+SQLite database at the configured path (copied through SQLite's backup API after
+a WAL checkpoint, so the snapshot is consistent), the stored binaries, the
+generated reports and `reportal.toml`, with a manifest naming the format, the
+version, the time and every member. The default output is a dated file under
+`../reportal-backups/` beside the workspace (never inside it).
+`reportal backup-info <archive>` prints that manifest without touching anything,
+and `reportal restore <archive>` reads it back. Schedule it with
+`deploy/reportal-backup.timer`; recovery steps and RPO/RTO are in
+[docs/DR_RUNBOOK.md](docs/DR_RUNBOOK.md).
 
 A restore stages the archive in a temporary directory and checks it against its
 own manifest before it moves anything, so an unreadable, truncated or crafted

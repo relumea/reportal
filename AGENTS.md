@@ -31,7 +31,7 @@ reportal/
 ├── Makefile                 # make check / make run
 ├── scripts/                 # vnu-html.sh, check_wheel.py, precompress_spa.py, …
 ├── .github/workflows/check.yml
-├── deploy/reportal.service
+├── deploy/                   # reportal.service, reportal-backup.service/.timer
 ├── docs/                    # see docs/README.md
 ├── tests/                   # pytest, tmp_path based (no tests/__init__.py)
 ├── tools/                   # smoke_spa.py, audit_ui.py, seed_e2e.py, cdp.py

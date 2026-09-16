@@ -17,6 +17,13 @@ Two things make the archive honest rather than merely a copy of the files:
   user's own rebrew project) is left alone and reported, because reportal never
   owned it.
 
+The live database path follows the workspace marker and ``REPORTAL_DB`` the same
+way every other command does; the archive always stores that file under the
+member name ``reportal.db`` so a restore can place it wherever the restored
+marker names.  The default output path is a dated file under a sibling
+``reportal-backups/`` directory, never inside the workspace, so an instance wipe
+of the workspace cannot take the only copy.
+
 The archive is a tar of relative paths, so it is append-only in practice: a
 member outside the manifest's names is refused rather than extracted, which
 keeps a crafted archive from writing anywhere the workspace does not expect.
@@ -40,6 +47,8 @@ from reportal._paths import (
     MARKER,
     REPORTS_DIR,
     WorkspaceNotFound,
+    database_path,
+    db_path,
     project_root,
 )
 
@@ -53,7 +62,7 @@ FORMAT_VERSION = 1
 # crafted archive cannot leave a half-written workspace behind.
 STAGING_PREFIX = ".restore-"
 
-# The default archive name, and the suffix a caller's name gets when it has none.
+# The default archive name a caller may still pass explicitly.
 DEFAULT_NAME = "reportal-backup.tar.gz"
 ARCHIVE_SUFFIXES = (".tar.gz", ".tgz")
 
@@ -78,6 +87,39 @@ def _workspace() -> Path:
         return project_root()
     except WorkspaceNotFound as exc:
         raise BackupError(ERROR_NOT_A_WORKSPACE, str(exc)) from exc
+
+
+def _resolve_root_and_db(workspace: Path | None) -> tuple[Path, Path]:
+    """The workspace root and the live database path for one backup or restore.
+
+    An explicit *workspace* reads the marker's ``[portal] db`` via
+    :func:`database_path` and ignores ``REPORTAL_DB``, which is what tests and
+    multi-root callers need.  With no override the live process path
+    (:func:`db_path`) wins, so an operator who pointed ``REPORTAL_DB`` at the
+    real file gets that file in the archive rather than an empty default name
+    beside the marker.
+    """
+    if workspace is not None:
+        root = Path(workspace)
+        return root, database_path(root)
+    return _workspace(), db_path()
+
+
+def _default_output(root: Path) -> Path:
+    """A dated archive path beside the workspace, never inside it.
+
+    Writing the archive into the workspace puts the only copy in the same
+    failure domain as the data it protects (instance wipe of the workspace
+    directory).  A sibling ``reportal-backups/`` directory survives a workspace
+    delete on the same host; operators who need a separate disk still pass
+    ``--output``.
+    """
+    return root.parent / "reportal-backups" / suggest_name()
+
+
+def _sidecar_paths(db: Path) -> list[Path]:
+    """The WAL and shared-memory sidecars SQLite keeps beside *db*."""
+    return [db.parent / f"{db.name}-wal", db.parent / f"{db.name}-shm"]
 
 
 def _checkpoint(db: Path) -> None:
@@ -133,15 +175,28 @@ def create(
 
     Raises :class:`BackupError` when there is no workspace or the archive cannot
     be written.  The manifest is the archive's own index: a restore refuses an
-    archive whose members do not match it.
+    archive whose members do not match it.  The live database is always stored
+    under the archive name :data:`DB_NAME` so a restore can place it wherever
+    the restored marker (or ``REPORTAL_DB``) names.
     """
-    root = workspace if workspace is not None else _workspace()
-    db = root / DB_NAME
+    root, db = _resolve_root_and_db(workspace)
     if not db.is_file():
         raise BackupError(ERROR_NOT_A_WORKSPACE, f"no reportal database at {db}")
-    target = output if output is not None else root / DEFAULT_NAME
-    if output is not None:
-        target = Path(output).expanduser()
+    target = _default_output(root) if output is None else Path(output).expanduser()
+    try:
+        resolved_target = target.resolve()
+        resolved_root = root.resolve()
+        if resolved_target == resolved_root or resolved_target.is_relative_to(resolved_root):
+            raise BackupError(
+                ERROR_INVALID_ARCHIVE,
+                f"refusing to write {target} inside the workspace; pass --output outside it",
+            )
+    except BackupError:
+        raise
+    except OSError:
+        # A missing parent is fine; create() mkdirs it below.  The relative_to
+        # check only matters when both paths already resolve.
+        pass
     _checkpoint(db)
     members = [(DB_NAME, db), *_members(root)]
     manifest: dict[str, Any] = {
@@ -150,6 +205,7 @@ def create(
         "version": __version__,
         "created_at": store.now(),
         "root": str(root.resolve()),
+        "database": str(db.resolve()),
         "members": [name for name, _path in members],
         "counts": {
             "binaries": sum(1 for name, _path in members if name.startswith(f"{BINARIES_DIR}/")),
@@ -280,16 +336,23 @@ def restore(
     workspace exactly as it was.  A workspace that already holds a database is
     refused unless *overwrite*, which is the destructive half; the caller
     confirms it.  Stored binary paths that lived under the archive's root are
-    rewritten to the new root, and the ones that did not are reported.
+    rewritten to the new root, and the ones that did not are reported.  The
+    database lands at the path the restored marker (or ``REPORTAL_DB``) names,
+    not always beside the marker as ``reportal.db``.
     """
     manifest = read_manifest(archive)
-    root = workspace if workspace is not None else _workspace()
+    root, _ = _resolve_root_and_db(workspace)
     root = Path(root)
-    db = root / DB_NAME
-    if db.exists() and not overwrite:
+    # Refuse before extracting when the destination already holds a database.
+    # The marker may not be present yet on a fresh root, so fall back to the
+    # default name the archive itself carries.
+    provisional = database_path(root) if (root / MARKER).is_file() else root / DB_NAME
+    if workspace is None:
+        provisional = db_path()
+    if provisional.exists() and not overwrite:
         raise BackupError(
             ERROR_NOT_A_WORKSPACE,
-            f"{db} already exists; pass overwrite to replace the workspace's state",
+            f"{provisional} already exists; pass overwrite to replace the workspace's state",
         )
     old_root = Path(str(manifest.get("root") or "")).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -320,17 +383,24 @@ def restore(
         marker = staged / MARKER
         if marker.is_file() and (overwrite or not (root / MARKER).exists()):
             shutil.copy2(marker, root / MARKER)
+        # Resolve the live destination only after the marker is in place, so a
+        # custom ``[portal] db`` from the archive is honoured.  REPORTAL_DB still
+        # wins when this restore is the process-wide workspace.
+        db = db_path() if workspace is None else database_path(root)
+        db.parent.mkdir(parents=True, exist_ok=True)
         # The staged database is WAL-checkpointed by the archive's own copy, so
         # it can be moved into place last: the binaries it names are already
         # there, which keeps a half-restored workspace from looking complete.
-        for sidecar in (f"{DB_NAME}-wal", f"{DB_NAME}-shm"):
-            stale = root / sidecar
+        for stale in _sidecar_paths(db):
             if stale.exists():
                 stale.unlink()
+        if db.exists():
+            db.unlink()
         shutil.move(str(staged_db), str(db))
     return {
         "path": str(archive),
         "workspace": str(root),
+        "database": str(db),
         "root": str(old_root),
         "version": str(manifest.get("version") or ""),
         "created_at": str(manifest.get("created_at") or ""),

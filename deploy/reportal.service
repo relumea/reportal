@@ -4,7 +4,7 @@
 # /etc/systemd/system/reportal.service, replace /srv/reportal with the workspace
 # root, replace the reportal account with the one that owns that directory, then
 # `systemctl daemon-reload && systemctl enable --now reportal`.  docs/DEPLOY.md
-# has the whole sequence, including the backup it should run against.
+# has the whole sequence, including the backup timer that should run against it.
 #
 # The hardening below assumes the workspace directory is the service's whole
 # state.  Egress is deliberately not restricted: the AI bridge, the external

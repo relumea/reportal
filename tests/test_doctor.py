@@ -26,6 +26,8 @@ from reportal import auth, cli, doctor, graph_backends, sandbox
 runner = CliRunner()
 
 UNIT = Path(__file__).resolve().parents[1] / "deploy" / "reportal.service"
+BACKUP_UNIT = Path(__file__).resolve().parents[1] / "deploy" / "reportal-backup.service"
+BACKUP_TIMER = Path(__file__).resolve().parents[1] / "deploy" / "reportal-backup.timer"
 
 
 def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -381,6 +383,44 @@ class TestUnit:
             [tool, "verify", str(unit)], capture_output=True, text=True, check=False
         )
         assert completed.returncode == 0, completed.stderr
+
+    def test_systemd_accepts_the_backup_units(self, tmp_path: Path) -> None:
+        tool = __import__("shutil").which("systemd-analyze")
+        if tool is None:
+            pytest.skip("systemd-analyze is not installed")
+        root = tmp_path / "root"
+        backups = tmp_path / "backups"
+        backups.mkdir()
+        (root / ".venv" / "bin").mkdir(parents=True)
+        binary = root / ".venv" / "bin" / "reportal"
+        binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        binary.chmod(0o755)
+        user = __import__("getpass").getuser()
+        group = __import__("grp").getgrgid(__import__("os").getgid()).gr_name
+        service_text = (
+            BACKUP_UNIT.read_text(encoding="utf-8")
+            .replace("/srv/reportal", str(root))
+            .replace("/srv/backups", str(backups))
+            .replace("User=reportal", f"User={user}")
+            .replace("Group=reportal", f"Group={group}")
+        )
+        service = tmp_path / "reportal-backup.service"
+        service.write_text(service_text, encoding="utf-8")
+        timer = tmp_path / "reportal-backup.timer"
+        timer.write_text(BACKUP_TIMER.read_text(encoding="utf-8"), encoding="utf-8")
+        for path in (service, timer):
+            completed = subprocess.run(
+                [tool, "verify", str(path)], capture_output=True, text=True, check=False
+            )
+            assert completed.returncode == 0, f"{path.name}: {completed.stderr}"
+
+    def test_the_backup_unit_writes_outside_the_workspace(self) -> None:
+        text = BACKUP_UNIT.read_text(encoding="utf-8")
+        assert "/srv/backups/reportal-" in text
+        assert "test -s" in text
+        assert "ReadWritePaths=/srv/reportal /srv/backups" in text
+        assert BACKUP_TIMER.is_file()
+        assert "OnCalendar=daily" in BACKUP_TIMER.read_text(encoding="utf-8")
 
     def test_the_graph_backend_registry_reports_its_configured_name(self) -> None:
         # The optional check reads this; a name no registry holds would make the
