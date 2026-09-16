@@ -6887,7 +6887,9 @@ def create_tag(body: dict[str, Any] = Depends(json_body)) -> Response:
                 journal.journaled_create(
                     log, table="tags", key=tag_id, description=f"created tag {tag_id}"
                 )
-    return json_response(log.attach({"tag_id": tag_id, "name": name}), status=201)
+            tag = store.get_tag(conn, tag_id)
+    stored_name = str(tag["name"]) if tag is not None else name.strip()
+    return json_response(log.attach({"tag_id": tag_id, "name": stored_name}), status=201)
 
 
 @router.patch("/api/tags/{tag_id}")

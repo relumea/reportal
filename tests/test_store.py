@@ -628,6 +628,17 @@ class TestCollectionsAndTags:
         with pytest.raises(ValueError, match="already exists"):
             store.create_collection(conn, name="winsock")
 
+    def test_collection_name_is_stripped(self, conn: sqlite3.Connection) -> None:
+        collection_id = store.create_collection(conn, name="  winsock  ")
+        row = store.get_collection(conn, collection_id)
+        assert row is not None
+        assert row["name"] == "winsock"
+        with pytest.raises(ValueError, match="already exists"):
+            store.create_collection(conn, name="\twinsock\n")
+        updated = store.update_collection(conn, collection_id, name="  sockets  ")
+        assert updated is not None
+        assert updated["name"] == "sockets"
+
     def test_tags_reuse_and_tag(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="78" * 32, name="demo")
         tag_id = store.create_tag(conn, "malware")
@@ -720,6 +731,15 @@ class TestTags:
         tag_id = store.create_tag(conn, "release")
         assert store.get_tag(conn, tag_id) == {"id": tag_id, "name": "release"}
         assert store.get_tag(conn, 999) is None
+
+    def test_create_tag_strips_padding_and_reuses(self, conn: sqlite3.Connection) -> None:
+        tag_id = store.create_tag(conn, "  malware  ")
+        assert store.get_tag(conn, tag_id) == {"id": tag_id, "name": "malware"}
+        assert store.create_tag(conn, "\tmalware\n") == tag_id
+        assert store.find_tag(conn, "  malware  ") == {
+            "id": tag_id,
+            "name": "malware",
+        }
 
 
 class TestAnalysisLookup:

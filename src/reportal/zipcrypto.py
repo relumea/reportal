@@ -56,8 +56,13 @@ _DOS_TIME = 0
 _DOS_DATE = 0x0021
 
 # Zip method and flags: deflate, encrypted, sizes written up front.
+# Bit 11 (UTF-8) is set because member names are always encoded as UTF-8;
+# without it, readers assume CP437 and turn non-ASCII names into mojibake
+# (APPNOTE 6.3.x section 4.4.4).
 _METHOD_DEFLATE = 8
 _FLAG_ENCRYPTED = 0x0001
+_FLAG_UTF8 = 0x0800
+_MEMBER_FLAGS = _FLAG_ENCRYPTED | _FLAG_UTF8
 
 _LOCAL_HEADER = 0x04034B50
 _CENTRAL_HEADER = 0x02014B50
@@ -214,7 +219,7 @@ def write_protected_zip(
                 "<IHHHHHIIIHH",
                 _LOCAL_HEADER,
                 20,
-                _FLAG_ENCRYPTED,
+                _MEMBER_FLAGS,
                 _METHOD_DEFLATE,
                 _DOS_TIME,
                 _DOS_DATE,
@@ -240,7 +245,7 @@ def write_protected_zip(
                 _CENTRAL_HEADER,
                 20,
                 20,
-                _FLAG_ENCRYPTED,
+                _MEMBER_FLAGS,
                 _METHOD_DEFLATE,
                 _DOS_TIME,
                 _DOS_DATE,

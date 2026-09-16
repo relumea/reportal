@@ -109,6 +109,21 @@ class TestDirectory:
         assert listing[1]["title"] == "Beta"
         assert listing[2]["title"] == "Changelog"
 
+    def test_an_oversized_page_is_cut_on_a_byte_boundary(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """MAX_DOC_BYTES is a byte cap; slicing the decoded str would overshoot."""
+        root = _workspace(tmp_path, monkeypatch)
+        # Two-byte UTF-8 characters: a code-point slice of MAX_DOC_BYTES would
+        # keep roughly twice the intended payload.
+        body = ("é" * ((docs.MAX_DOC_BYTES // 2) + 8)).encode("utf-8")
+        assert len(body) > docs.MAX_DOC_BYTES
+        path = root / "docs" / "huge.md"
+        path.write_bytes(b"# Huge\n\n" + body)
+        text = docs._read(path)
+        assert len(text.encode("utf-8")) <= docs.MAX_DOC_BYTES
+        assert len(text) < len(body.decode("utf-8")) + 16
+
 
 class TestBlocks:
     def test_every_claimed_block_kind_is_parsed(self) -> None:

@@ -2660,15 +2660,20 @@ def revert_name(conn: sqlite3.Connection, history_id: int, *, actor: str = "reve
 def create_collection(
     conn: sqlite3.Connection, *, name: str, description: str = "", scope: str = ""
 ) -> int:
-    """Create a collection; raises ValueError when the name is taken."""
-    if not name.strip():
+    """Create a collection; raises ValueError when the name is taken.
+
+    The stored name is stripped so a padded create cannot collide with a later
+    rename that strips, and so uniqueness matches what callers see.
+    """
+    cleaned = name.strip()
+    if not cleaned:
         raise ValueError("collection name must not be empty")
-    if conn.execute("SELECT 1 FROM collections WHERE name = ?", (name,)).fetchone():
-        raise ValueError(f"collection {name!r} already exists")
+    if conn.execute("SELECT 1 FROM collections WHERE name = ?", (cleaned,)).fetchone():
+        raise ValueError(f"collection {cleaned!r} already exists")
     cur = conn.execute(
         "INSERT INTO collections (name, description, scope, created_at, updated_at)"
         " VALUES (?, ?, ?, ?, ?)",
-        (name, description, scope, now(), now()),
+        (cleaned, description, scope, now(), now()),
     )
     conn.commit()
     return int(cur.lastrowid or 0)
@@ -2972,15 +2977,16 @@ def update_collection(
     updates: list[str] = []
     params: list[Any] = []
     if name is not None:
-        if not name.strip():
+        cleaned = name.strip()
+        if not cleaned:
             raise ValueError("collection name must not be empty")
         clash = conn.execute(
-            "SELECT 1 FROM collections WHERE name = ? AND id != ?", (name, collection_id)
+            "SELECT 1 FROM collections WHERE name = ? AND id != ?", (cleaned, collection_id)
         ).fetchone()
         if clash:
-            raise ValueError(f"collection {name!r} already exists")
+            raise ValueError(f"collection {cleaned!r} already exists")
         updates.append("name = ?")
-        params.append(name)
+        params.append(cleaned)
     if description is not None:
         updates.append("description = ?")
         params.append(description)
@@ -3079,12 +3085,18 @@ def set_collection_tags(
 
 
 def create_tag(conn: sqlite3.Connection, name: str) -> int:
-    """Return the id of tag *name*, creating it when new."""
-    if not name.strip():
+    """Return the id of tag *name*, creating it when new.
+
+    Leading and trailing whitespace are stripped so a padded create matches
+    :func:`rename_tag` and :func:`find_tag`, and cannot mint a second tag that
+    only differs by surrounding spaces.
+    """
+    cleaned = name.strip()
+    if not cleaned:
         raise ValueError("tag name must not be empty")
-    conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
+    conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (cleaned,))
     conn.commit()
-    row = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()
+    row = conn.execute("SELECT id FROM tags WHERE name = ?", (cleaned,)).fetchone()
     return int(row["id"]) if row else 0
 
 
@@ -3144,8 +3156,12 @@ def get_tag(conn: sqlite3.Connection, tag_id: int) -> dict[str, Any] | None:
 
 
 def find_tag(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
-    """One tag row by exact name, or None; unlike :func:`create_tag` it never inserts."""
-    row = conn.execute("SELECT id, name FROM tags WHERE name = ?", (name,)).fetchone()
+    """One tag row by exact name, or None; unlike :func:`create_tag` it never inserts.
+
+    The lookup strips the same way :func:`create_tag` and :func:`rename_tag`
+    do, so a padded name resolves to the stored tag rather than missing it.
+    """
+    row = conn.execute("SELECT id, name FROM tags WHERE name = ?", (name.strip(),)).fetchone()
     return dict(row) if row else None
 
 

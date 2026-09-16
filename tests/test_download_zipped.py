@@ -72,7 +72,7 @@ class TestWriter:
             "<HHHHIIIHH", blob[6:30]
         )
 
-        assert flags == 0x0001
+        assert flags == zipcrypto._MEMBER_FLAGS
         assert method == zipfile.ZIP_DEFLATED
         assert crc == __import__("zlib").crc32(PAYLOAD)
         assert size == len(PAYLOAD)
@@ -81,6 +81,18 @@ class TestWriter:
             "the stored size counts the 12-byte encryption header"
         )
         assert blob[30 : 30 + name_len] == b"sample.exe"
+
+    def test_a_non_ascii_member_name_round_trips(self) -> None:
+        """UTF-8 bit 11 must be set or stdlib zipfile reads the name as CP437."""
+        name = "café.bin"
+        blob = zipcrypto.build_protected_zip(name, PAYLOAD, PASSWORD, header=FIXED_HEADER)
+
+        with zipfile.ZipFile(io.BytesIO(blob)) as archive:
+            assert archive.namelist() == [name]
+            flags = struct.unpack_from("<H", blob, 6)[0]
+            assert flags == zipcrypto._MEMBER_FLAGS
+            archive.setpassword(PASSWORD.encode("utf-8"))
+            assert archive.read(name) == PAYLOAD
 
     def test_the_wrong_password_is_refused(self) -> None:
         blob = zipcrypto.build_protected_zip("sample.exe", PAYLOAD, PASSWORD, header=FIXED_HEADER)

@@ -176,11 +176,16 @@ def pages() -> list[dict[str, Any]]:
 
 
 def _read(path: Path) -> str:
-    """One document's text, bounded; an unreadable file reads as empty."""
+    """One document's text, bounded; an unreadable file reads as empty.
+
+    The bound is :data:`MAX_DOC_BYTES` of UTF-8 payload, not of Unicode code
+    points: a multi-byte character near the ceiling is replaced rather than
+    splitting the limit in the wrong unit or reading the whole file first.
+    """
     try:
-        if path.stat().st_size > MAX_DOC_BYTES:
-            return path.read_text(encoding="utf-8", errors="replace")[:MAX_DOC_BYTES]
-        return path.read_text(encoding="utf-8", errors="replace")
+        with path.open("rb") as handle:
+            data = handle.read(MAX_DOC_BYTES)
+        return data.decode("utf-8", errors="replace")
     except OSError:
         return ""
 
