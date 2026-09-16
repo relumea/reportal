@@ -80,7 +80,10 @@ def feed(
     *actor* narrows the feed to one name (the empty string means "the writes no
     request made").  *since* is an inclusive ISO timestamp, compared as text the
     way the rows are written.  An unknown source name raises ``ValueError``,
-    which the callers map to their own error vocabulary.
+    which the callers map to their own error vocabulary.  Analysis-log rows are
+    omitted under a bare *actor* filter (they carry no actor); pass
+    *visible_to* as well when a scoped self-service read should keep the
+    binary-scoped log half beside that caller's own journal actions.
     """
     if limit < 1:
         raise ValueError("limit must be positive")
@@ -92,9 +95,12 @@ def feed(
     if SOURCE_ACTION in sources:
         actions = journal.list_actions(conn, since=since, actor=actor, limit=journal.MAX_LIST_LIMIT)
         items.extend(_item_from_action(row) for row in actions)
-    if SOURCE_LOG in sources and actor is None:
-        # An analysis-log entry carries no actor: the log records what the
-        # engine or the analyst did, and only the journal knows who asked.
+    # An analysis-log entry carries no actor: the log records what the engine or
+    # the analyst did, and only the journal knows who asked.  A bare ``actor``
+    # filter therefore skips the log half.  A caller that also names
+    # ``visible_to`` is a scoped self-service read: keep the binary-scoped log
+    # rows beside that caller's own journal actions.
+    if SOURCE_LOG in sources and (actor is None or visible_to is not None):
         entries = analysis_log.list_recent(
             conn, limit=analysis_log.MAX_LOG_LIMIT, since=since, visible_to=visible_to
         )

@@ -518,6 +518,19 @@ async def optional_json_body(request: Request) -> dict[str, Any]:
     return await json_body(request)
 
 
+def _actor_for_log(actor: str) -> str:
+    """Drop authenticated usernames from completion lines.
+
+    ``local`` is the auth-off sentinel and is not personal data; an empty string
+    is a refused or unresolved caller.  Any other value is a user name and must
+    not land in journalctl: operators correlate via ``request_id``, and the
+    journal already records the actor under access control.
+    """
+    if actor in ("", journal.LOCAL_ACTOR):
+        return actor
+    return "authenticated"
+
+
 def _log_api_completion(
     *,
     method: str,
@@ -529,7 +542,7 @@ def _log_api_completion(
 ) -> None:
     """One structured line an operator can grep by request id or status."""
     message = "request method=%s path=%s status=%s duration_ms=%s request_id=%s actor=%s"
-    args = (method, path, status, duration_ms, request_id, actor)
+    args = (method, path, status, duration_ms, request_id, _actor_for_log(actor))
     if status >= 500:
         _log.error(message, *args)
     elif status >= 400 or duration_ms >= observability.SLOW_REQUEST_MS:

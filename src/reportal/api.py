@@ -11530,6 +11530,10 @@ def user_activity(request: Request) -> Response:
     bounded by :data:`activity.MAX_ACTIVITY_LIMIT`.  ``sources`` names the item
     kinds to merge.  Nothing is stored: the feed is derived, so a revert or a
     prune shows at once.
+
+    Self-service while auth is on: a non-admin caller sees only its own
+    journaled actions (plus analysis-log rows for binaries it may reach) and
+    cannot name another actor.  An admin, or auth off, keeps the workspace feed.
     """
     actor = request.query_params.get("actor")
     since_raw = _query_text(request, "since")
@@ -11551,6 +11555,17 @@ def user_activity(request: Request) -> Response:
     raw_sources = _query_text(request, "sources")
     if raw_sources is not None:
         sources = tuple(part.strip() for part in raw_sources.split(",") if part.strip())
+    caller = _caller(request)
+    own_name: str | None = None
+    if caller is not None and str(caller.get("role")) != auth.ROLE_ADMIN:
+        own_name = str(caller["name"])
+        if actor is not None and actor != own_name:
+            return json_error(
+                403,
+                error=auth.ERROR_FORBIDDEN,
+                detail="an analyst may only read its own activity",
+            )
+        actor = own_name
     with contextlib.closing(_open()) as conn:
         try:
             payload = activity.feed(
@@ -11559,24 +11574,35 @@ def user_activity(request: Request) -> Response:
                 since=since,
                 limit=limit,
                 sources=sources,
-                visible_to=_caller(request),
+                visible_to=caller,
             )
         except ValueError as exc:
             return json_error(400, error="invalid sources", detail=str(exc))
-        payload["actors"] = activity.actors(conn)
+        if own_name is not None:
+            payload["actors"] = [row for row in activity.actors(conn) if row["actor"] == own_name]
+        else:
+            payload["actors"] = activity.actors(conn)
     return json_response(payload)
 
 
 @router.get("/api/users/feedback")
 def list_feedback(request: Request) -> Response:
-    """Stored feedback notes, newest first, bounded; read-only."""
+    """Stored feedback notes, newest first, bounded; read-only.
+
+    Self-service while auth is on: a non-admin caller sees only the notes it
+    wrote.  An admin, or auth off, keeps the full listing.
+    """
     limit = _query_int(request, "limit")
     limit = 50 if limit is None else limit
     if not 1 <= limit <= 500:
         return json_error(400, error="invalid limit", detail="limit must be between 1 and 500")
+    caller = _caller(request)
+    owner_id: int | None = None
+    if caller is not None and str(caller.get("role")) != auth.ROLE_ADMIN:
+        owner_id = int(caller["id"])
     with contextlib.closing(_open()) as conn:
-        notes = store.list_feedback(conn, limit=limit)
-        total = store.count_feedback(conn)
+        notes = store.list_feedback(conn, limit=limit, user_id=owner_id)
+        total = store.count_feedback(conn, user_id=owner_id)
     return json_response({"feedback": notes, "count": len(notes), "total": total})
 
 

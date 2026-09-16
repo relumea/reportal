@@ -214,6 +214,19 @@ class TestFeedbackStore:
         assert store.count_feedback(conn) == 1
         assert [note["id"] for note in store.list_feedback(conn)] == [1]
 
+    def test_list_and_count_narrow_by_owner(self, conn: sqlite3.Connection) -> None:
+        ana, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        bob, _ = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.add_feedback(conn, body="ana note", actor="ana", user_id=int(ana["id"]))
+        store.add_feedback(conn, body="bob note", actor="bob", user_id=int(bob["id"]))
+
+        assert store.count_feedback(conn, user_id=int(ana["id"])) == 1
+        assert [note["body"] for note in store.list_feedback(conn, user_id=int(ana["id"]))] == [
+            "ana note"
+        ]
+        assert store.count_feedback(conn, user_id=int(bob["id"])) == 1
+        assert store.count_feedback(conn) == 2
+
     def test_a_blank_or_oversized_note_is_refused(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(store.InvalidFeedbackError):
             store.add_feedback(conn, body="   ")
@@ -262,6 +275,36 @@ class TestActivityRoute:
 
         assert status.startswith("200")
         assert _get("/api/users", token=token)[0].startswith("403"), "the user table stays admin"
+
+    def test_an_analyst_only_sees_its_own_actions(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _log(conn, "ana", 1, "created tag 1")
+        _log(conn, "bob", 2, "created tag 2")
+        _, ana_token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        _, bob_token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        _, admin_token = auth.add_user(conn, name="root", role=auth.ROLE_ADMIN)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+
+        status, payload = _get("/api/users/activity?sources=action", token=ana_token)
+        assert status.startswith("200")
+        assert payload["count"] == 1
+        assert payload["items"][0]["actor"] == "ana"
+        assert all(row["actor"] == "ana" for row in payload["actors"])
+
+        status, refused = _get("/api/users/activity?actor=bob", token=ana_token)
+        assert status.startswith("403")
+        assert refused["error"] == auth.ERROR_FORBIDDEN
+
+        status, admin_feed = _get("/api/users/activity?sources=action", token=admin_token)
+        assert status.startswith("200")
+        assert admin_feed["count"] == 2
+        assert {row["actor"] for row in admin_feed["actors"]} >= {"ana", "bob"}
+
+        status, bob_feed = _get("/api/users/activity?sources=action", token=bob_token)
+        assert status.startswith("200")
+        assert bob_feed["count"] == 1
+        assert bob_feed["items"][0]["actor"] == "bob"
 
 
 class TestFeedbackRoute:
@@ -312,6 +355,37 @@ class TestFeedbackRoute:
         assert status.startswith("201")
         assert payload["actor"] == "ana"
         assert payload["user_id"] is not None, "the note names the authenticated user"
+
+    def test_an_analyst_only_lists_its_own_notes(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, ana_token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        _, bob_token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        _, admin_token = auth.add_user(conn, name="root", role=auth.ROLE_ADMIN)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+
+        assert _post("/api/users/feedback", {"message": "from ana"}, token=ana_token)[0].startswith(
+            "201"
+        )
+        assert _post("/api/users/feedback", {"message": "from bob"}, token=bob_token)[0].startswith(
+            "201"
+        )
+
+        status, ana_list = _get("/api/users/feedback", token=ana_token)
+        assert status.startswith("200")
+        assert ana_list["total"] == 1
+        assert ana_list["feedback"][0]["body"] == "from ana"
+
+        status, bob_list = _get("/api/users/feedback", token=bob_token)
+        assert status.startswith("200")
+        assert bob_list["total"] == 1
+        assert bob_list["feedback"][0]["body"] == "from bob"
+
+        status, admin_list = _get("/api/users/feedback", token=admin_token)
+        assert status.startswith("200")
+        assert admin_list["total"] == 2
+        bodies = {note["body"] for note in admin_list["feedback"]}
+        assert bodies == {"from ana", "from bob"}
 
 
 class TestCli:

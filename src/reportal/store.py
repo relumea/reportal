@@ -2770,15 +2770,36 @@ def get_feedback(conn: sqlite3.Connection, feedback_id: int) -> dict[str, Any] |
     return dict(row) if row else None
 
 
-def list_feedback(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, Any]]:
-    """Feedback notes, newest first, bounded."""
+def list_feedback(
+    conn: sqlite3.Connection, *, limit: int = 50, user_id: int | None = None
+) -> list[dict[str, Any]]:
+    """Feedback notes, newest first, bounded.
+
+    *user_id* narrows the page to one owner's notes; ``None`` is every note.
+    """
     bounded = max(1, min(int(limit), 500))
-    return _rows(conn.execute("SELECT * FROM feedback ORDER BY id DESC LIMIT ?", (bounded,)))
+    if user_id is None:
+        return _rows(conn.execute("SELECT * FROM feedback ORDER BY id DESC LIMIT ?", (bounded,)))
+    return _rows(
+        conn.execute(
+            "SELECT * FROM feedback WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+            (user_id, bounded),
+        )
+    )
 
 
-def count_feedback(conn: sqlite3.Connection) -> int:
-    """How many feedback notes are stored, whatever a reader's page is."""
-    return int(conn.execute("SELECT COUNT(*) AS n FROM feedback").fetchone()["n"])
+def count_feedback(conn: sqlite3.Connection, *, user_id: int | None = None) -> int:
+    """How many feedback notes are stored, whatever a reader's page is.
+
+    *user_id* counts one owner's notes; ``None`` counts every note.
+    """
+    if user_id is None:
+        return int(conn.execute("SELECT COUNT(*) AS n FROM feedback").fetchone()["n"])
+    return int(
+        conn.execute("SELECT COUNT(*) AS n FROM feedback WHERE user_id = ?", (user_id,)).fetchone()[
+            "n"
+        ]
+    )
 
 
 def set_binary_scope(
