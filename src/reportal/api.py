@@ -4524,7 +4524,7 @@ def function_disasm(request: Request, function_id: int) -> Response:
         except engines.EngineError as exc:
             return json_error(500, error="engine-error", detail=str(exc))
         if fmt == CACHEABLE_DISASM_FORMAT:
-            store.set_disasm(conn, function_id, disasm)
+            store.set_disasm(conn, function_id, disasm, extent_size=size, project_dir=project_dir)
     return json_response({"va": va, "size": size, "format": fmt, "disasm": disasm})
 
 

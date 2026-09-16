@@ -557,11 +557,14 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
         project_dir = store.get_rebrew_context(conn, int(function["binary_id"]))
         if project_dir is None:
             return None
+        extent_size = int(function["size"])
         try:
-            text = engine.disassemble(project_dir, int(function["va"]), int(function["size"]))
+            text = engine.disassemble(project_dir, int(function["va"]), extent_size)
         except engines.EngineError:
             return None
-        store.set_disasm(conn, function_id, text)
+        store.set_disasm(
+            conn, function_id, text, extent_size=extent_size, project_dir=project_dir
+        )
         return text
 
     return disassemble

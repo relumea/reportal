@@ -564,6 +564,46 @@ class TestDisasmCache:
         assert store.get_disasm(conn, second) is None
         assert store.get_disasm(conn, other) == "other\n"
 
+    def test_a_stale_extent_write_is_refused(self, conn: sqlite3.Connection) -> None:
+        """A compute that used the old size cannot land after the extent moved."""
+        function_id = _seed_function(conn)
+        assert store.set_disasm(conn, function_id, "bits 32\n", extent_size=8) is False
+        assert store.get_disasm(conn, function_id) is None
+
+    def test_a_mismatched_extent_row_is_dropped_on_read(self, conn: sqlite3.Connection) -> None:
+        """Read-side identity check closes the cache-aside race after a clear."""
+        binary_id = store.add_binary(conn, sha256="3c" * 32, name="demo")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        function_id = store.add_function(conn, analysis_id=analysis_id, va=0x1000, size=8)
+        store.set_rebrew_context(conn, binary_id, "/projects/demo")
+        store.set_disasm(
+            conn, function_id, "bits 32\n", extent_size=8, project_dir="/projects/demo"
+        )
+        conn.execute("UPDATE functions SET size = 16 WHERE id = ?", (function_id,))
+        conn.commit()
+        assert store.get_disasm(conn, function_id) is None
+        row = conn.execute(
+            "SELECT COUNT(*) FROM disasm_cache WHERE function_id = ?", (function_id,)
+        ).fetchone()
+        assert row is not None and row[0] == 0
+
+    def test_a_mismatched_project_dir_row_is_dropped_on_read(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = store.add_binary(conn, sha256="3d" * 32, name="demo")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        function_id = store.add_function(conn, analysis_id=analysis_id, va=0x1000, size=8)
+        store.set_rebrew_context(conn, binary_id, "/first")
+        store.set_disasm(conn, function_id, "bits 32\n", extent_size=8, project_dir="/first")
+        # Bypass set_rebrew_context so the cache row is not cleared by the write
+        # path; the read must still refuse the listing for the new project.
+        conn.execute(
+            "UPDATE rebrew_contexts SET project_dir = ? WHERE binary_id = ?",
+            ("/second", binary_id),
+        )
+        conn.commit()
+        assert store.get_disasm(conn, function_id) is None
+
 
 class TestDecompilations:
     def test_round_trip(self, conn: sqlite3.Connection) -> None:

@@ -513,6 +513,15 @@ class TestManualMode:
             billing.start_checkout(conn, {"id": organisation_id}, "analyst")
         assert len(billing._manual_intents) == billing.MAX_MANUAL_INTENTS
 
+    def test_a_restore_keeps_the_intent_map_bounded(self) -> None:
+        """A failed durable write must not grow the map past the same cap."""
+        billing._manual_intents.clear()
+        for index in range(billing.MAX_MANUAL_INTENTS):
+            billing._manual_intents[f"live-{index}"] = (index, "analyst", 1e18)
+        billing._restore_manual_intent("restored-token", 999, "analyst")
+        assert len(billing._manual_intents) == billing.MAX_MANUAL_INTENTS
+        assert "restored-token" in billing._manual_intents
+
     def test_a_second_checkout_reuses_the_live_token(
         self, conn: sqlite3.Connection, manual_env: None
     ) -> None:

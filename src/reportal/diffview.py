@@ -87,7 +87,13 @@ def _disassembly(
         )
     except engines.EngineError as exc:
         raise DiffError(500, "engine-error", str(exc)) from exc
-    store.set_disasm(conn, function_id, listing)
+    store.set_disasm(
+        conn,
+        function_id,
+        listing,
+        extent_size=int(function["size"]),
+        project_dir=project_dir,
+    )
     return listing
 
 

@@ -410,6 +410,8 @@ def _restore_manual_intent(token: str, organisation_id: int, plan_id: str) -> No
             plan_id,
             _monotonic() + _MANUAL_INTENT_TTL_S,
         )
+        while len(_manual_intents) > MAX_MANUAL_INTENTS:
+            _manual_intents.pop(next(iter(_manual_intents)))
 
 
 def complete_manual_checkout(

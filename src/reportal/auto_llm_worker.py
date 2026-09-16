@@ -234,7 +234,13 @@ def _gather(ctx: WorkerContext) -> tuple[str, str] | WorkerResult:
             disasm = engine.disassemble(
                 str(ctx.project_dir), va, int(ctx.function["size"]), DISASM_FORMAT
             )
-            store.set_disasm(ctx.conn, function_id, disasm)
+            store.set_disasm(
+                ctx.conn,
+                function_id,
+                disasm,
+                extent_size=int(ctx.function["size"]),
+                project_dir=str(ctx.project_dir),
+            )
         if decomp is None:
             decompiled = engine.decompile(str(ctx.project_dir), va)
             decomp = str(decompiled.get("code") or "")

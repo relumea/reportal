@@ -627,7 +627,13 @@ def _effect_prepare(ctx: Context) -> None:
         )
     except engines.EngineError as exc:
         raise StepFailure(f"engine-error: {exc}") from exc
-    store.set_disasm(conn, function_id, listing)
+    store.set_disasm(
+        conn,
+        function_id,
+        listing,
+        extent_size=int(function["size"]),
+        project_dir=project_dir,
+    )
     _record_effect(
         ctx,
         conn,

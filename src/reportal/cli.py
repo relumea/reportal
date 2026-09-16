@@ -8662,7 +8662,9 @@ def disasm(
             except engines.EngineError as exc:
                 _fail(str(exc), json_output)
             if fmt == store.CACHEABLE_DISASM_FORMAT:
-                store.set_disasm(conn, function_id, listing)
+                store.set_disasm(
+                    conn, function_id, listing, extent_size=size, project_dir=project_dir
+                )
         else:
             listing = cached
     payload = {

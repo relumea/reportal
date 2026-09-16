@@ -1779,7 +1779,9 @@ def _tool_get_disasm(arguments: dict[str, Any]) -> dict[str, Any]:
                 return {"va": va, "size": size, "format": fmt, "disasm": cached}
         disasm = _run_engine(lambda: _engine().disassemble(project_dir, va, size, fmt))
         if fmt == CACHEABLE_DISASM_FORMAT:
-            store.set_disasm(conn, function_id, str(disasm))
+            store.set_disasm(
+                conn, function_id, str(disasm), extent_size=size, project_dir=project_dir
+            )
     return {"va": va, "size": size, "format": fmt, "disasm": disasm}
 
 

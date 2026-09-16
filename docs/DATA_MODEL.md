@@ -62,6 +62,9 @@ Storing it is not engine-gated: an import succeeds without an engine installed.
 
 `disasm_cache` stores one NASM listing per function, keyed by function id,
 written by the disassembly route and by matching's default disassembler.
+Each row also records the `extent_size` and `project_dir` the listing was
+produced from; a read whose live function size or rebrew context no longer
+matches drops the row instead of serving it.
 `decompilations` stores one decompiled source per function, keyed by function
 id and carrying the backend that produced it, written by `reportal decompile`
 and `POST /api/functions/<id>/decompilation`; `GET` on that route recomputes

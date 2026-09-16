@@ -197,6 +197,8 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE TABLE IF NOT EXISTS disasm_cache (
     function_id INTEGER PRIMARY KEY REFERENCES functions(id) ON DELETE CASCADE,
     text        TEXT NOT NULL,
+    extent_size INTEGER NOT NULL,
+    project_dir TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL
 );
 
@@ -589,12 +591,19 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # The organisation a team belongs to.  A team that predates the hierarchy
     # belongs to none, which is what a standalone install meant.
     ("teams", "organisation_id", "INTEGER"),
+    # The engine inputs a cached listing was produced from.  A row that predates
+    # these columns has no recorded identity, so the backfill below drops it
+    # rather than serving a listing that may no longer match the live extent
+    # or project directory.
+    ("disasm_cache", "extent_size", "INTEGER NOT NULL DEFAULT -1"),
+    ("disasm_cache", "project_dir", "TEXT NOT NULL DEFAULT ''"),
 )
 
 # Statements run after the columns above are added, to fill what an existing
 # database could not know.  Each is idempotent, so running it again is a no-op.
 _BACKFILLS: tuple[str, ...] = (
     "UPDATE collections SET updated_at = created_at WHERE updated_at = ''",
+    "DELETE FROM disasm_cache WHERE extent_size < 0",
 )
 
 # Indexes that need a column `_ADDED_COLUMNS` (or auth) creates first.  The main
@@ -2321,23 +2330,93 @@ def clear_matches_for(conn: sqlite3.Connection, function_id: int) -> None:
 CACHEABLE_DISASM_FORMAT = "nasm"
 
 
-def set_disasm(conn: sqlite3.Connection, function_id: int, text: str) -> None:
-    """Store the assembly listing of *function_id*, replacing any earlier one."""
+def _disasm_identity(conn: sqlite3.Connection, function_id: int) -> tuple[int, str] | None:
+    """The live ``(extent_size, project_dir)`` of *function_id*, or None if gone.
+
+    ``project_dir`` is empty when the binary has no rebrew context yet; a
+    listing written against that empty identity is still validated on read.
+    """
+    row = conn.execute(
+        "SELECT f.size AS size, r.project_dir AS project_dir"
+        " FROM functions f"
+        " JOIN analyses a ON a.id = f.analysis_id"
+        " LEFT JOIN rebrew_contexts r ON r.binary_id = a.binary_id"
+        " WHERE f.id = ?",
+        (function_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    live_dir = "" if row["project_dir"] is None else str(row["project_dir"])
+    return int(row["size"]), live_dir
+
+
+def set_disasm(
+    conn: sqlite3.Connection,
+    function_id: int,
+    text: str,
+    *,
+    extent_size: int | None = None,
+    project_dir: str | None = None,
+) -> bool:
+    """Store the assembly listing of *function_id*, replacing any earlier one.
+
+    *extent_size* and *project_dir* are the engine inputs the listing was
+    produced from.  When given, the write is refused if the live function or
+    rebrew context has moved on, so a concurrent invalidation cannot be
+    overwritten by a stale compute.  When omitted, the live values are
+    recorded (test seeding and callers that already hold a consistent
+    snapshot).  Returns False when the function is gone or the write was
+    refused.
+    """
+    live = _disasm_identity(conn, function_id)
+    if live is None:
+        return False
+    live_size, live_dir = live
+    if extent_size is not None and extent_size != live_size:
+        return False
+    if project_dir is not None and project_dir != live_dir:
+        return False
+    recorded_size = live_size if extent_size is None else extent_size
+    recorded_dir = live_dir if project_dir is None else project_dir
     conn.execute(
-        "INSERT INTO disasm_cache (function_id, text, created_at) VALUES (?, ?, ?)"
+        "INSERT INTO disasm_cache"
+        " (function_id, text, extent_size, project_dir, created_at)"
+        " VALUES (?, ?, ?, ?, ?)"
         " ON CONFLICT(function_id) DO UPDATE SET text = excluded.text,"
+        " extent_size = excluded.extent_size, project_dir = excluded.project_dir,"
         " created_at = excluded.created_at",
-        (function_id, text, now()),
+        (function_id, text, recorded_size, recorded_dir, now()),
     )
     conn.commit()
+    return True
 
 
 def get_disasm(conn: sqlite3.Connection, function_id: int) -> str | None:
-    """Return the cached assembly listing of *function_id*, or None."""
+    """Return the cached assembly listing of *function_id*, or None.
+
+    A row whose recorded extent or project directory no longer matches the
+    live function is dropped rather than served: the write paths clear on
+    those changes, and this read-side check closes the cache-aside race where
+    a stale compute lands after the clear.
+    """
     row = conn.execute(
-        "SELECT text FROM disasm_cache WHERE function_id = ?", (function_id,)
+        "SELECT d.text AS text, d.extent_size AS extent_size,"
+        " d.project_dir AS project_dir, f.size AS size,"
+        " r.project_dir AS live_dir"
+        " FROM disasm_cache d"
+        " JOIN functions f ON f.id = d.function_id"
+        " JOIN analyses a ON a.id = f.analysis_id"
+        " LEFT JOIN rebrew_contexts r ON r.binary_id = a.binary_id"
+        " WHERE d.function_id = ?",
+        (function_id,),
     ).fetchone()
-    return str(row["text"]) if row else None
+    if row is None:
+        return None
+    live_dir = "" if row["live_dir"] is None else str(row["live_dir"])
+    if int(row["extent_size"]) != int(row["size"]) or str(row["project_dir"]) != live_dir:
+        clear_disasm(conn, function_id)
+        return None
+    return str(row["text"])
 
 
 def clear_disasm(conn: sqlite3.Connection, function_id: int) -> bool:
