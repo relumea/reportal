@@ -186,6 +186,12 @@ class TestFeed:
         with pytest.raises(ValueError):
             activity.feed(conn, limit=0)
 
+    def test_a_non_positive_log_limit_is_refused(self, conn: sqlite3.Connection) -> None:
+        from reportal import analysis_log
+
+        with pytest.raises(ValueError, match="limit must be positive"):
+            analysis_log.list_recent(conn, limit=0)
+
     def test_actors_reports_what_appears(self, conn: sqlite3.Connection) -> None:
         _log(conn, "ana", 1, "created tag 1")
         _log(conn, "ana", 2, "created tag 2")
