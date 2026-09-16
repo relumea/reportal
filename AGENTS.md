@@ -355,9 +355,10 @@ margin.  `metering.py` is the append-only `usage_events` ledger plus
 a quota and the panels show, while the token rows stay as the internal
 cost-of-goods read that proves the credit price covers the inference.  `llm.py`
 carries both sinks (`recording_usage` for token counts, `charging` for the task
-charge) and `llm._complete` is the single funnel that names the task, installed
-per request by `server._reportal_headers`, so an AI route is billable by
-construction and a failed call charges nothing.  `billing.py` holds the Stripe
+charge) and each artifact runner (plus an agent turn) reports the charge only
+after a usable answer, installed per request by `server._reportal_headers`, so
+an AI route is billable by construction and a failed or unusable call charges
+nothing.  `billing.py` holds the Stripe
 integration and its four invariants (completion is not payment, webhooks are
 idempotent through `billing_events`, the price id decides the plan rather than
 caller-supplied metadata, and an unverified signature changes nothing).

@@ -243,6 +243,22 @@ class TestIdempotency:
         billing.apply_event(conn, event)
         assert metering.period_usage(conn, organisation_id, metering.KIND_TOKENS) == 1234
 
+    def test_a_mid_period_update_does_not_restart_the_period(
+        self, conn: sqlite3.Connection, stripe_env: None
+    ) -> None:
+        """A fresh subscription.updated with the same period end must keep usage."""
+        organisation_id = _organisation(conn)
+        period_end = int(time.time()) + 86400
+        first = _subscription_event(organisation_id, event_id="evt_start")
+        first["data"]["object"]["current_period_end"] = period_end
+        billing.apply_event(conn, billing.normalize_stripe_event(first))
+        metering.record_usage(conn, organisation_id, metering.KIND_TOKENS, 1234)
+        second = _subscription_event(organisation_id, event_id="evt_flip")
+        second["data"]["object"]["current_period_end"] = period_end
+        second["data"]["object"]["cancel_at_period_end"] = True
+        billing.apply_event(conn, billing.normalize_stripe_event(second))
+        assert metering.period_usage(conn, organisation_id, metering.KIND_TOKENS) == 1234
+
     def test_an_event_with_no_id_is_refused(self, conn: sqlite3.Connection) -> None:
         event = billing.BillingEvent(event_id="", provider="stripe", kind="ping")
         with pytest.raises(billing.BillingError):

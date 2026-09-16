@@ -144,6 +144,18 @@ class TestCatalogShape:
             assert str(row["label"]).strip()
             assert str(row["describe"]).strip()
 
+    def test_the_catalog_includes_the_oversize_band(self) -> None:
+        """Past the last ceiling still has a price; the published row must say so."""
+        for row in credits_mod.catalog():
+            bands = row["bands"]
+            assert isinstance(bands, list) and bands
+            last = bands[-1]
+            assert last["name"] == "oversize"
+            assert last["max_input_tokens"] is None
+            assert last["credits"] == credits_mod.base_credits(str(row["task"])) * (
+                credits_mod.OVERSIZE_MULTIPLIER
+            )
+
     def test_triage_is_charged_per_function(self) -> None:
         """A binary-wide run multiplies, so the row has to say so."""
         assert credits_mod.TASK_PROFILES[credits_mod.TASK_TRIAGE].per_function is True

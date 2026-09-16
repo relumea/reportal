@@ -2584,13 +2584,13 @@ window rather than clearing rows.
 and `server._reportal_headers` installs both for the duration of a request that
 has a tenant.  `recording_usage` takes each completion's endpoint-reported
 token counts (the internal cost read) and `charging` takes the task name and
-the prompt's real size (the customer charge).  `llm._complete` is the single
-funnel every task runs through, so naming the task there is what makes an AI
-route billable: no AI code knows billing exists, and a task cannot run under a
-name the price list does not carry.  Two properties matter.  Counts are never
+the prompt's real size (the customer charge).  Each artifact runner and the
+agent turn report the charge only after a usable answer, so a refused request
+or an answer that fails validation costs the tenant nothing; `llm._complete`
+is the shared HTTP call underneath those runners.  Two properties matter.  Counts are never
 estimated: a response carrying no usage block records nothing, because a
 guessed number that bills a customer is worse than a missing one.  And the
-charge follows the completion, so a failed or refused request costs the tenant
+charge follows a usable completion, so a failed or refused request costs the tenant
 nothing.
 
 **A workspace with no organisation is unmetered.**  `organisation_plan` reads a

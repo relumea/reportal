@@ -172,18 +172,22 @@ def charging(sink: Callable[[str, int], None]) -> Iterator[None]:
         _CHARGE_SINK.reset(token)
 
 
-def _report_charge(task: str, messages: list[dict[str, str]]) -> None:
+def _report_charge(task: str, messages: list[dict[str, Any]]) -> None:
     """Tell the installed charger one *task* ran, with the prompt's size.
 
     The size is the prompt actually sent, so the size band a charge lands in is
     the real one rather than a nominal profile.  A failed call never reaches
-    here: the charge follows the completion, so a tenant is not billed for a
-    request the endpoint refused.
+    here: the charge follows a usable completion, so a tenant is not billed for
+    a request the endpoint refused or an answer the artifact could not use.
     """
     sink = _CHARGE_SINK.get()
     if sink is None:
         return
-    size = sum(len(message.get("content", "")) for message in messages)
+    size = 0
+    for message in messages:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            size += len(content)
     with contextlib.suppress(Exception):
         sink(task, math.ceil(size / CHARS_PER_TOKEN))
 
@@ -896,20 +900,16 @@ def confidence(value: Any) -> float:
     return DEFAULT_TYPE_CONFIDENCE
 
 
-def _complete(messages: list[dict[str, str]], client: LlmClient | None, task: str = "") -> str:
+def _complete(messages: list[dict[str, str]], client: LlmClient | None) -> str:
     """Ask *client* (or the process client) and return its text content.
 
-    *task* names the billable operation for the installed charger.  The charge
-    happens after the call returns, so a refused or failed request costs the
-    tenant nothing.
+    Charging is the caller's job after it has a usable artifact: a refused
+    request or an answer that fails validation must cost the tenant nothing.
     """
     active = client if client is not None else get_client()
     if not active.available():
         raise LlmUnavailable(UNAVAILABLE_DETAIL)
-    answer = active.complete(messages, temperature=DEFAULT_TEMPERATURE, json_object=True)
-    if task:
-        _report_charge(task, messages)
-    return answer
+    return active.complete(messages, temperature=DEFAULT_TEMPERATURE, json_object=True)
 
 
 # ── Artifacts ──────────────────────────────────────────────────────
@@ -921,10 +921,13 @@ def summarize(code: str, *, client: LlmClient | None = None, context: str = "") 
     A response that is not a JSON object, or that carries no non-empty
     ``summary`` string, raises :class:`LlmError` naming ``summary``.
     """
-    data = _parse_json(_complete(summary_messages(code, context), client, TASK_SUMMARY))
+    messages = summary_messages(code, context)
+    data = _parse_json(_complete(messages, client))
     if not isinstance(data, dict):
         raise LlmError("LLM summary response was not a JSON object")
-    return {"summary": _required_str(data, "summary", what="summary")}
+    result = {"summary": _required_str(data, "summary", what="summary")}
+    _report_charge(TASK_SUMMARY, messages)
+    return result
 
 
 def rewrite_decompilation(
@@ -937,14 +940,19 @@ def rewrite_decompilation(
     answer, a JSON value that is neither object nor string, or an object with no
     non-empty ``code`` raises :class:`LlmError` naming ``code``.
     """
-    data = _parse_json(_complete(rewrite_messages(code, context), client, TASK_DECOMPILE))
+    messages = rewrite_messages(code, context)
+    data = _parse_json(_complete(messages, client))
     if isinstance(data, str):
         if not data.strip():
             raise LlmError("LLM rewrite response was empty")
-        return {"code": data}
+        result = {"code": data}
+        _report_charge(TASK_DECOMPILE, messages)
+        return result
     if not isinstance(data, dict):
         raise LlmError("LLM rewrite response was not a JSON object")
-    return {"code": _required_str(data, "code", what="rewrite")}
+    result = {"code": _required_str(data, "code", what="rewrite")}
+    _report_charge(TASK_DECOMPILE, messages)
+    return result
 
 
 def threat_narrative(context: str, *, client: LlmClient | None = None) -> dict[str, Any]:
@@ -967,10 +975,12 @@ def threat_narrative(context: str, *, client: LlmClient | None = None) -> dict[s
             ),
         },
     ]
-    data = _parse_json(_complete(messages, client, TASK_THREAT))
+    data = _parse_json(_complete(messages, client))
     if not isinstance(data, dict):
         raise LlmError("LLM threat response was not a JSON object")
-    return {"summary": _required_str(data, "summary", what="threat")}
+    result = {"summary": _required_str(data, "summary", what="threat")}
+    _report_charge(TASK_THREAT, messages)
+    return result
 
 
 def inline_comments(
@@ -984,7 +994,8 @@ def inline_comments(
     response in which no entry has both raises :class:`LlmError` naming the
     field instead of reading as an empty artifact.
     """
-    data = _parse_json(_complete(comments_messages(code, context), client, TASK_COMMENTS))
+    messages = comments_messages(code, context)
+    data = _parse_json(_complete(messages, client))
     entries = _entry_list(data, keys=("comments",), what="comments")
     comments: list[dict[str, Any]] = []
     reason = ""
@@ -1002,7 +1013,9 @@ def inline_comments(
             continue
         comments.append({"line": line, "comment": comment})
     _raise_if_all_dropped(entries, len(comments), reason, what="comments")
-    return {"comments": comments}
+    result = {"comments": comments}
+    _report_charge(TASK_COMMENTS, messages)
+    return result
 
 
 def suggest_types(
@@ -1016,7 +1029,8 @@ def suggest_types(
     response in which no entry has both raises :class:`LlmError` naming the
     field instead of reading as an empty artifact.
     """
-    data = _parse_json(_complete(types_messages(code, context), client, TASK_TYPES))
+    messages = types_messages(code, context)
+    data = _parse_json(_complete(messages, client))
     entries = _entry_list(data, keys=("suggestions", "types"), what="type suggestion")
     suggestions: list[dict[str, Any]] = []
     reason = ""
@@ -1039,7 +1053,9 @@ def suggest_types(
             }
         )
     _raise_if_all_dropped(entries, len(suggestions), reason, what="type suggestion")
-    return {"suggestions": suggestions}
+    result = {"suggestions": suggestions}
+    _report_charge(TASK_TYPES, messages)
+    return result
 
 
 def rename_suggestions(
@@ -1055,7 +1071,8 @@ def rename_suggestions(
     really occurs in *code* is the caller's check, since the caller holds the
     stored decompilation it will apply against.
     """
-    data = _parse_json(_complete(renames_messages(code, context), client, TASK_RENAMES))
+    messages = renames_messages(code, context)
+    data = _parse_json(_complete(messages, client))
     entries = _entry_list(data, keys=("suggestions", "renames"), what="renames")
     suggestions: list[dict[str, Any]] = []
     reason = ""
@@ -1082,7 +1099,9 @@ def rename_suggestions(
             }
         )
     _raise_if_all_dropped(entries, len(suggestions), reason, what="renames")
-    return {"suggestions": suggestions}
+    result = {"suggestions": suggestions}
+    _report_charge(TASK_RENAMES, messages)
+    return result
 
 
 def function_triage(
@@ -1100,9 +1119,8 @@ def function_triage(
     ``0.0`` and missing capabilities are an empty list, since the summary is the
     one field a triage row cannot do without.
     """
-    data = _parse_json(
-        _complete(function_triage_messages(context, context_kind), client, TASK_TRIAGE)
-    )
+    messages = function_triage_messages(context, context_kind)
+    data = _parse_json(_complete(messages, client))
     if not isinstance(data, dict):
         raise LlmError("LLM triage response was not a JSON object")
     summary = data.get("summary")
@@ -1120,11 +1138,13 @@ def function_triage(
             capabilities.append(value)
             if len(capabilities) >= TRIAGE_CAPABILITY_LIMIT:
                 break
-    return {
+    result = {
         "summary": summary.strip(),
         "score": confidence(data.get("score")),
         "capabilities": capabilities,
     }
+    _report_charge(TASK_TRIAGE, messages)
+    return result
 
 
 #: Normalized-payload runner per artifact kind.

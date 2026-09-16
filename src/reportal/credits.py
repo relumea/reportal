@@ -263,16 +263,27 @@ def tokens_of(text: str) -> int:
 def describe_task(task: str) -> dict[str, object]:
     """One task's public price row: what it is and what it costs."""
     profile = TASK_PROFILES[task]
+    base = base_credits(task)
+    bands: list[dict[str, object]] = [
+        {"name": name, "max_input_tokens": ceiling, "credits": base * multiplier}
+        for name, ceiling, multiplier in SIZE_BANDS
+    ]
+    # Past the last ceiling there is still a price; omit it and the catalog
+    # understates what an oversize input actually costs.
+    bands.append(
+        {
+            "name": "oversize",
+            "max_input_tokens": None,
+            "credits": base * OVERSIZE_MULTIPLIER,
+        }
+    )
     return {
         "task": profile.name,
         "label": profile.label,
         "describe": profile.describe,
-        "credits": base_credits(task),
+        "credits": base,
         "per_function": profile.per_function,
-        "bands": [
-            {"name": name, "max_input_tokens": ceiling, "credits": base_credits(task) * multiplier}
-            for name, ceiling, multiplier in SIZE_BANDS
-        ],
+        "bands": bands,
     }
 
 

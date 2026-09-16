@@ -3376,7 +3376,8 @@ export interface BillingConfig {
 /** One size band of a task's price. */
 export interface TaskBand {
   name: string;
-  max_input_tokens: number;
+  /** Ceiling for this band; `null` for the open-ended oversize band. */
+  max_input_tokens: number | null;
   credits: number;
 }
 

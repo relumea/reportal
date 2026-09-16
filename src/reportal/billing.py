@@ -598,7 +598,22 @@ def _upsert_subscription(
     cancel_at_period_end: bool,
     plan_id: str | None,
 ) -> None:
-    """Mirror the provider's subscription state and set the entitled plan."""
+    """Mirror the provider's subscription state and set the entitled plan.
+
+    The quota window restarts only when entitlement begins or the provider's
+    billing period advances.  A mid-period status or plan mirror must not wipe
+    usage; that would hand the tenant a fresh allowance on every webhook.
+    """
+    previous = conn.execute(
+        f"SELECT current_period_end FROM {metering.SUBSCRIPTION_TABLE} WHERE organisation_id = ?",
+        (organisation_id,),
+    ).fetchone()
+    previous_end = str(previous["current_period_end"] or "") if previous is not None else ""
+    org = conn.execute(
+        f"SELECT period_started_at FROM {auth.ORG_TABLE} WHERE id = ?",
+        (organisation_id,),
+    ).fetchone()
+    started = str(org["period_started_at"] or "") if org is not None else ""
     conn.execute(
         f"INSERT INTO {metering.SUBSCRIPTION_TABLE} "
         "(organisation_id, provider, customer_id, subscription_id, status, "
@@ -626,10 +641,19 @@ def _upsert_subscription(
     org_status = (
         metering.STATUS_PAST_DUE if status == metering.STATUS_PAST_DUE else metering.STATUS_ACTIVE
     )
-    conn.execute(
-        f"UPDATE {auth.ORG_TABLE} SET plan_id = ?, status = ?, period_started_at = ? WHERE id = ?",
-        (target, org_status, auth.now(), organisation_id),
-    )
+    period_advanced = bool(current_period_end) and current_period_end != previous_end
+    restart = entitled and (not started or period_advanced)
+    if restart:
+        conn.execute(
+            f"UPDATE {auth.ORG_TABLE} SET plan_id = ?, status = ?, period_started_at = ? "
+            "WHERE id = ?",
+            (target, org_status, auth.now(), organisation_id),
+        )
+    else:
+        conn.execute(
+            f"UPDATE {auth.ORG_TABLE} SET plan_id = ?, status = ? WHERE id = ?",
+            (target, org_status, organisation_id),
+        )
 
 
 def apply_event(conn: sqlite3.Connection, event: BillingEvent) -> dict[str, Any]:

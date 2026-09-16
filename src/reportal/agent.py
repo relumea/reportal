@@ -624,6 +624,9 @@ def _drive(
                 )
                 journal.journaled_messages(conn, log, conversation_id, before)
                 return payload(get_run(conn, run_id))
+            # One agent turn is one billable task; charge only after a usable
+            # reply, matching artifact paths that bill after validation.
+            llm._report_charge(llm.TASK_AGENT, messages)
             store.add_message(
                 conn,
                 conversation_id=conversation_id,
@@ -643,6 +646,8 @@ def _drive(
             finished = payload(get_run(conn, run_id))
             finished["sources"] = list(sources)
             return finished
+        # A tool-call turn is still one agent turn and still billable.
+        llm._report_charge(llm.TASK_AGENT, messages)
         call = calls[0]
         name = str(call.get("name") or "")
         arguments, parse_error = _parse_arguments(str(call.get("arguments") or ""))
