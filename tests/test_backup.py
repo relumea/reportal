@@ -116,6 +116,14 @@ class TestCreate:
         assert archive.parent == (tmp_path / "reportal-backups")
         assert not archive.is_relative_to(root.resolve())
 
+    def test_suggest_name_uses_the_utc_clock_not_the_host_tz(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A store stamp already in UTC must not be re-interpreted through the
+        # host zone: the filename is the absolute instant, fixed-width.
+        monkeypatch.setattr(store, "now", lambda: "2026-03-08T07:30:00+00:00")
+        assert backup.suggest_name() == "reportal-backup-20260308T073000.tar.gz"
+
     def test_an_output_inside_the_workspace_is_refused(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path / "one")
         with pytest.raises(backup.BackupError) as failure:

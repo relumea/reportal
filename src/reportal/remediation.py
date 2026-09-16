@@ -47,6 +47,7 @@ import subprocess
 import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -978,16 +979,29 @@ def _stix_pattern(finding: Mapping[str, Any], category: str) -> str | None:
 
 
 def _stix_timestamp(meta: Mapping[str, Any]) -> str:
-    """Return the supplied date as an ISO 8601 timestamp.
+    """Return the supplied date as a UTC ISO 8601 timestamp with a ``Z`` suffix.
 
-    A value carrying a time is used as it is; a bare date gets midnight UTC, and
-    an absent date falls back to today so a payload built without meta is still
-    well-formed.
+    A bare date is midnight UTC; an aware value is converted to UTC; a naive
+    clock time is treated as UTC (the same policy as :func:`reportal.store.now`
+    and :func:`reportal.notifications.parse_since`).  An absent or unparseable
+    date falls back to today's UTC date so a payload built without meta is still
+    well-formed STIX.
     """
     raw = str(meta.get("date") or "").strip()
     if not raw:
-        return f"{store.now()[:10]}T00:00:00Z"
-    return raw if "T" in raw else f"{raw}T00:00:00Z"
+        raw = store.now()[:10]
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        # Keep the prior best-effort for non-ISO YARA meta that still looks like
+        # a calendar day; anything else falls back to today rather than emitting
+        # a timezone-less or garbage timestamp.
+        if "T" not in raw:
+            return f"{raw}T00:00:00Z"
+        raw = store.now()[:10]
+        parsed = datetime.fromisoformat(raw)
+    parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _stix_identity(timestamp: str) -> dict[str, Any]:

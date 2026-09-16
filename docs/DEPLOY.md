@@ -130,8 +130,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now reportal-backup.timer
 ```
 
-The oneshot writes `/srv/backups/reportal-$(date +%F).tar.gz` and fails if that
-file is missing or empty (`systemctl --failed` / `journalctl -u
+The oneshot writes `/srv/backups/reportal-$(date -u +%F).tar.gz` (UTC calendar
+day, matching the timer's `OnCalendar=... UTC`) and fails if that file is
+missing or empty (`systemctl --failed` / `journalctl -u
 reportal-backup.service`).  Keep that directory on another volume when the disk
 is the failure you care about.  The archive carries every secret the workspace
 database holds and is not encrypted (`docs/THREAT_MODEL.md`).

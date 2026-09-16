@@ -420,7 +420,9 @@ class TestUnit:
         assert "test -s" in text
         assert "ReadWritePaths=/srv/reportal /srv/backups" in text
         assert BACKUP_TIMER.is_file()
-        assert "OnCalendar=daily" in BACKUP_TIMER.read_text(encoding="utf-8")
+        timer_text = BACKUP_TIMER.read_text(encoding="utf-8")
+        assert "OnCalendar=*-*-* 00:00:00 UTC" in timer_text
+        assert "date -u +%%F" in BACKUP_UNIT.read_text(encoding="utf-8")
 
     def test_the_graph_backend_registry_reports_its_configured_name(self) -> None:
         # The optional check reads this; a name no registry holds would make the

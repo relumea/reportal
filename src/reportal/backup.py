@@ -37,6 +37,7 @@ import shutil
 import sqlite3
 import tarfile
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -417,6 +418,12 @@ def describe(archive: Path) -> dict[str, Any]:
 
 
 def suggest_name() -> str:
-    """The default archive name for the current workspace."""
-    stamp = store.now().replace(":", "").replace("-", "")
-    return f"reportal-backup-{stamp[:15]}.tar.gz"
+    """The default archive name for the current workspace.
+
+    Parsed from :func:`reportal.store.now` so the stamp is always the UTC
+    calendar instant, not a host-local wall time, and so a future change to the
+    ISO form (offset sign, fractional seconds) cannot scramble the filename the
+    way a raw ``replace("-", "")`` on the offset would.
+    """
+    stamp = datetime.fromisoformat(store.now()).astimezone(UTC).strftime("%Y%m%dT%H%M%S")
+    return f"reportal-backup-{stamp}.tar.gz"

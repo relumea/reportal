@@ -220,8 +220,9 @@ systemctl --failed
 journalctl -u reportal-backup.service -n 50
 ```
 
-A successful run leaves a non-empty `/srv/backups/reportal-YYYY-MM-DD.tar.gz`.
-The oneshot runs `test -s` on that path so a zero-byte write fails the unit.
+A successful run leaves a non-empty `/srv/backups/reportal-YYYY-MM-DD.tar.gz`
+named for the UTC calendar day.  The oneshot runs `test -s` on that path so a
+zero-byte write fails the unit.
 
 ## Known gaps
 

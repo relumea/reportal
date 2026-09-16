@@ -1058,6 +1058,26 @@ class TestBuildStixBundle:
         assert indicator["created"] == "2026-09-12T00:00:00Z"
         assert indicator["modified"] == "2026-09-12T00:00:00Z"
 
+    def test_aware_meta_dates_normalize_to_utc_z(self) -> None:
+        # A US Eastern wall time must not freeze as -04:00 in the bundle: STIX
+        # consumers that assume Z would shift the instant by four hours.
+        bundle = remediation.build_stix_bundle(
+            name="demo.exe",
+            indicators=_iocs(urls=[_ioc("http://evil.example.com/x", "url")]),
+            meta={"date": "2026-09-12T12:00:00-04:00"},
+        )
+        indicator = next(obj for obj in bundle["objects"] if obj["type"] == "indicator")
+        assert indicator["valid_from"] == "2026-09-12T16:00:00Z"
+        assert indicator["created"] == "2026-09-12T16:00:00Z"
+        # +00:00 and Z for the same instant must stay byte-identical to a bare date.
+        via_offset = remediation.build_stix_bundle(
+            name="demo.exe", indicators={}, meta={"date": "2026-09-12T00:00:00+00:00"}
+        )
+        via_date = remediation.build_stix_bundle(
+            name="demo.exe", indicators={}, meta={"date": "2026-09-12"}
+        )
+        assert via_offset == via_date
+
     def test_ids_are_deterministic_across_builds(self) -> None:
         indicators = _iocs(urls=[_ioc("http://evil.example.com/x", "url")])
         first = remediation.build_stix_bundle(
