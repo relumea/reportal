@@ -6,9 +6,10 @@ at least one JavaScript and one CSS bundle under ``assets/dist/assets/`` are
 packaged.  A wheel without the built UI would ship a server whose SPA routes
 404, so a missing asset is a hard failure rather than a warning.
 
-It also checks that the packaged ``manual/`` directory carries the in-app docs
-(``ERRORS.md`` and ``CHANGELOG.md`` at minimum): a wheel that omits them makes
-``GET /api/docs`` answer 404 ``no-docs`` on every host without a checkout.
+It also checks that the packaged ``manual/`` directory carries every in-app
+docs page (``docs.PAGE_ORDER`` plus ``CHANGELOG.md``): a wheel that omits any
+of them makes ``GET /api/docs`` thin or 404 ``no-docs`` on every host without
+a checkout.
 
 It also checks that every packaged module exists in ``src/reportal``: setuptools
 reuses an existing ``build/lib`` tree without pruning it, so a module deleted
@@ -21,15 +22,17 @@ import sys
 import zipfile
 from pathlib import Path
 
+from reportal.docs import CHANGELOG_FILE, PAGE_ORDER
+
 DIST_DIR = Path("dist")
 WHEEL_GLOB = "reportal-*.whl"
 ASSETS_PREFIX = "reportal/assets/dist/"
 ENTRY_ASSET = f"{ASSETS_PREFIX}index.html"
 MANUAL_PREFIX = "reportal/manual/"
-MANUAL_REQUIRED = (
-    f"{MANUAL_PREFIX}ERRORS.md",
-    f"{MANUAL_PREFIX}CHANGELOG.md",
+MANUAL_REQUIRED = tuple(f"{MANUAL_PREFIX}{stem}.md" for stem in PAGE_ORDER) + (
+    f"{MANUAL_PREFIX}{CHANGELOG_FILE}",
 )
+LICENSE_SUFFIX = ".dist-info/licenses/LICENSE"
 PACKAGE_PREFIX = "reportal/"
 SOURCE_DIR = Path("src/reportal")
 
@@ -54,13 +57,20 @@ def missing_manual(names: set[str]) -> list[str]:
     return [path for path in MANUAL_REQUIRED if path not in names]
 
 
+def newest_wheel(dist_dir: Path = DIST_DIR) -> Path | None:
+    """The most recently modified ``reportal-*.whl`` under *dist_dir*, if any."""
+    wheels = list(dist_dir.glob(WHEEL_GLOB))
+    if not wheels:
+        return None
+    return max(wheels, key=lambda path: path.stat().st_mtime)
+
+
 def main() -> int:
     """Verify the newest wheel in ``dist/`` carries the built SPA and no stale module."""
-    wheels = sorted(DIST_DIR.glob(WHEEL_GLOB))
-    if not wheels:
+    wheel = newest_wheel()
+    if wheel is None:
         sys.stderr.write(f"no {WHEEL_GLOB} in {DIST_DIR}/; run `uv build --wheel` first\n")
         return 1
-    wheel = wheels[-1]
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
     stale = stale_modules(names)
@@ -74,6 +84,7 @@ def main() -> int:
     js = [name for name in bundles if name.endswith(".js")]
     css = [name for name in bundles if name.endswith(".css")]
     gz = [name for name in bundles if name.endswith((".js.gz", ".css.gz"))]
+    has_license = any(name.endswith(LICENSE_SUFFIX) for name in names)
     manual_gaps = missing_manual(names)
     missing = [
         label
@@ -82,6 +93,7 @@ def main() -> int:
             ("an assets/*.js bundle", bool(js)),
             ("an assets/*.css bundle", bool(css)),
             ("an assets/*.js.gz or *.css.gz sibling", bool(gz)),
+            (f"*{LICENSE_SUFFIX}", has_license),
             *((path, path in names) for path in MANUAL_REQUIRED),
         )
         if not present

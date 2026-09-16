@@ -98,13 +98,12 @@ where = ["src"]
 [tool.setuptools.package-data]
 # The built SPA (Vite output into `assets/dist/`) ships in the wheel: the
 # package serves `index.html` and its `assets/*.js` and `assets/*.css` from
-# there.  A pattern does not cross a directory separator, so the two levels of
-# `dist/` are named explicitly; a deeper layout would need another line.
-# `manual/*.md` is the in-app docs browser payload (`scripts/sync_packaged_docs.py`
-# mirrors `docs/` + `CHANGELOG.md` into it before `uv build`).
+# there.  Recursive `**` (setuptools 69+) covers nested hashed chunks if the
+# Vite layout grows past `dist/assets/`.  `manual/*.md` is the in-app docs
+# browser payload (`scripts/sync_packaged_docs.py` mirrors `docs/` +
+# `CHANGELOG.md` into it before `uv build`).
 reportal = [
-    "assets/dist/*",
-    "assets/dist/assets/*",
+    "assets/dist/**",
     "manual/*.md",
 ]
 

@@ -56,6 +56,9 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true
 ProtectControlGroups=true
+# Hide other processes' /proc entries; the portal never needs them.
+ProtectProc=invisible
+ProcSubset=pid
 RestrictSUIDSGID=true
 RestrictRealtime=true
 RestrictNamespaces=true

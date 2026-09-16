@@ -75,6 +75,7 @@ matter:
 | `WorkingDirectory=/srv/reportal` | where the `reportal.toml` walk-up starts, so the service serves that workspace |
 | `ReadWritePaths=/srv/reportal` with `ProtectSystem=strict` | the workspace is the only writable path; the rest of the host is read-only |
 | `ProtectHome=true`, `PrivateTmp=true`, `PrivateDevices=true` | the service cannot read another user's home directory, and gets its own `/tmp` and `/dev` |
+| `ProtectProc=invisible`, `ProcSubset=pid` | `/proc` shows only the service's own process; other PIDs stay hidden |
 | `ProtectClock=true`, `ProtectHostname=true`, `ProtectKernelLogs=true` | the service cannot change the clock or hostname, and cannot read the kernel log |
 | `NoNewPrivileges=true`, `RestrictSUIDSGID=true`, `LockPersonality=true` | no privilege gain, no set-user-ID binary, no personality change |
 | `RestrictNamespaces=true`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | no new namespaces, and only the socket families serving and egress need |
