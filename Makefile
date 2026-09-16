@@ -49,6 +49,7 @@ check-fast: lint typecheck test-fast ## Fast iteration: no coverage, no browsers
 lint: venv-check bun-check ## ruff + ruff format check + oxlint + shellcheck + VNU HTML/CSS
 	$(PY) -m ruff check .
 	$(PY) -m ruff format --check .
+	$(PY) tools/audit_scope.py
 	cd web && $(BUN) run lint
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is required; install with: apt-get install shellcheck (Debian) or brew install shellcheck (macOS)" >&2; exit 1; }
 	shellcheck scripts/*.sh
