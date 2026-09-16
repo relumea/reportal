@@ -38,7 +38,9 @@ class ScriptedAgentClient(llm.LlmClient):
         *,
         tools: list[dict[str, Any]] | None = None,
         temperature: float = llm.DEFAULT_TEMPERATURE,
+        max_tokens: int = llm.MAX_AGENT_TOKENS,
     ) -> dict[str, Any]:
+        del max_tokens
         self.calls.append(messages)
         self.tools_seen.append(tools)
         turn = self.turns.pop(0) if self.turns else {"content": "done"}
@@ -62,7 +64,9 @@ class FailingAgentClient(llm.LlmClient):
         *,
         tools: list[dict[str, Any]] | None = None,
         temperature: float = llm.DEFAULT_TEMPERATURE,
+        max_tokens: int = llm.MAX_AGENT_TOKENS,
     ) -> dict[str, Any]:
+        del messages, tools, temperature, max_tokens
         raise llm.LlmError(self.message)
 
 
@@ -532,10 +536,16 @@ class TestBounds:
                 *,
                 tools: list[dict[str, Any]] | None = None,
                 temperature: float = llm.DEFAULT_TEMPERATURE,
+                max_tokens: int = llm.MAX_AGENT_TOKENS,
             ) -> dict[str, Any]:
                 with contextlib.closing(store.connect(self.db)) as conn:
                     agent.cancel(conn, conversation_id=ids["conversation"])
-                return super().chat(messages, tools=tools, temperature=temperature)
+                return super().chat(
+                    messages,
+                    tools=tools,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
 
         client = CancellingClient([{"tool_calls": [_call("list_binaries")]}], ids["db"])
         with contextlib.closing(store.connect(ids["db"])) as conn:
