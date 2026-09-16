@@ -62,8 +62,6 @@ FORMAT_VERSION = 1
 # crafted archive cannot leave a half-written workspace behind.
 STAGING_PREFIX = ".restore-"
 
-# The default archive name a caller may still pass explicitly.
-DEFAULT_NAME = "reportal-backup.tar.gz"
 ARCHIVE_SUFFIXES = (".tar.gz", ".tgz")
 
 # Error codes the CLI and the surfaces report.

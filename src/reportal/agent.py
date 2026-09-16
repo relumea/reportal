@@ -61,9 +61,8 @@ MAX_TOOL_RESULT_CHARS = 4000
 MAX_ARGUMENT_CHARS = 2000
 MAX_EVENTS = 200
 
-# Where a truncated tool result and a truncated argument list end.
+# Where a truncated tool result ends.
 TOOL_RESULT_MARKER = "...[truncated]"
-ARGUMENT_MARKER = "...[truncated]"
 
 # Event kinds the run records, in the order they can happen.
 EVENT_STARTED = "run-started"
@@ -74,22 +73,11 @@ EVENT_MESSAGE = "assistant-message"
 EVENT_CANCELLED = "run-cancelled"
 EVENT_FAILED = "run-failed"
 EVENT_LIMIT = "tool-limit"
-EVENT_KINDS: tuple[str, ...] = (
-    EVENT_STARTED,
-    EVENT_TOOL_CALL,
-    EVENT_TOOL_REJECTED,
-    EVENT_CONFIRMATION_REQUIRED,
-    EVENT_MESSAGE,
-    EVENT_CANCELLED,
-    EVENT_FAILED,
-    EVENT_LIMIT,
-)
 
 # The error codes the surfaces report, shared by the API, CLI and MCP.
 ERROR_RUN_NOT_FOUND = "run not found"
 ERROR_NOT_CANCELLABLE = "run-not-cancellable"
 ERROR_NOT_WAITING = "no-pending-confirmation"
-ERROR_INVALID_APPROVAL = "invalid approval"
 
 # SSE stream bounds, the shape `jobs.events` uses.
 STREAM_INTERVAL_SECONDS = 0.5

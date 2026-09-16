@@ -57,7 +57,6 @@ ERROR_NO_UNPACKER = "no-unpacker"
 ERROR_UNPACK_FAILED = "unpack-failed"
 
 NO_PACKER_DETAIL = "binary {binary_id} ({name}) carries no known packer signature"
-NO_PACKER_METHOD = "{detail}; a packer that rewrites its own stub is not identified"
 UPX_HINT = "unpacking UPX needs the external '{tool}' tool, which reportal does not ship"
 
 # The provenance note each method contributes, so a reader of the scan knows

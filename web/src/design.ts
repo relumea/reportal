@@ -127,14 +127,6 @@ export function qualityHue(band: string): HueFamily | null {
   return QUALITY_HUES[band.trim().toLowerCase()] ?? null;
 }
 
-// Function statuses the API counts as matched; mirrors store.MATCHED_STATUSES.
-const MATCHED_STATUS_SET = new Set(["EXACT", "RELOC", "PROVEN", "MATCHED"]);
-
-/** Whether a reported function status counts as a byte match. */
-export function isMatchedStatus(status: string): boolean {
-  return MATCHED_STATUS_SET.has(status.trim().toUpperCase());
-}
-
 // ── Instrument geometry ────────────────────────────────────────────
 
 /** Quantized steps of a level meter; discrete steps stay readable at distance. */

@@ -295,16 +295,6 @@ def _quoted(code: str) -> list[str]:
     return found
 
 
-def _known_names(conn: sqlite3.Connection, binary_id: int) -> dict[str, int]:
-    """Every function name of one binary mapped to its id, first wins."""
-    known: dict[str, int] = {}
-    for function in store.list_functions(conn, binary_id=binary_id):
-        name = str(function["name"] or "")
-        if name and name not in known:
-            known[name] = int(function["id"])
-    return known
-
-
 def _known_imports(conn: sqlite3.Connection, binary_id: int) -> dict[str, int]:
     """The binary's imported names mapped to their VA."""
     known: dict[str, int] = {}

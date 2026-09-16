@@ -124,18 +124,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def organisation_for_binary(conn: sqlite3.Connection, binary_id: int) -> int:
-    """The organisation id owning *binary_id*'s team, or 0 when none does."""
-    row = conn.execute(
-        f"SELECT t.organisation_id FROM binaries b "
-        f"LEFT JOIN {auth.TEAM_TABLE} t ON t.id = b.owner_team_id WHERE b.id = ?",
-        (binary_id,),
-    ).fetchone()
-    if row is None or row["organisation_id"] is None:
-        return NO_ORG
-    return int(row["organisation_id"])
-
-
 def _credits_mod() -> ModuleType:
     """The credit catalog, imported at call time.
 

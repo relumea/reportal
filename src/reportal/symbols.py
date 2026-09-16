@@ -74,10 +74,8 @@ PDB_MAGIC = pdb.CONTAINER_MAGIC
 # ELF constants the readers use.
 _SHT_SYMTAB = 2
 _SHT_DYNSYM = 11
-_SHT_NOBITS = 8
 _STT_OBJECT = 1
 _STT_FUNC = 2
-_SECTION_NAME = ".shstrtab"
 
 
 class SymbolError(Exception):

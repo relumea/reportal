@@ -90,12 +90,6 @@ MAX_COGS_SHARE = 0.20
 # acquisition spend and is capped like it.
 MAX_FREE_COGS_USD = 1.00
 
-# Price of tokens past the allowance, USD per million.  Internal only: the
-# customer-facing overage is per credit
-# (:data:`reportal.credits.OVERAGE_USD_PER_CREDIT`), and this is the token-side
-# figure the margin arithmetic uses.
-OVERAGE_USD_PER_MTOK = 6.0
-
 
 def blended_usd_per_mtok(model: str = COST_MODEL) -> float:
     """Cost of one million metered tokens, USD, at :data:`INPUT_SHARE`.

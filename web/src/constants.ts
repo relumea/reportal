@@ -190,13 +190,6 @@ export const AUTO_MAX_TASKS_MIN = 1;
 export const AUTO_MAX_TASKS_MAX = 5000;
 export const DEFAULT_AUTO_MAX_TASKS = 200;
 
-// Optional LLM spend caps. Empty on the form means unlimited; the bounds
-// match auto_mode's. USD needs a rate in dollars per million tokens.
-export const AUTO_MAX_TOKENS_MIN = 1;
-export const AUTO_MAX_TOKENS_MAX = 10_000_000;
-export const AUTO_MAX_USD_MIN = 0.000001;
-export const AUTO_MAX_USD_MAX = 1_000_000;
-
 // Results the Knowledge view's search asks for; mirrors the API's
 // knowledge.DEFAULT_SEARCH_LIMIT.
 export const DEFAULT_KNOWLEDGE_LIMIT = 10;
@@ -226,10 +219,6 @@ export const GRAPH_NO_GRAPH = "no-graph";
 // a large binary's graph holds far more than this.
 export const MAX_GRAPH_ROWS_SHOWN = 500;
 
-// Statuses a lineage row carries, in the panel's display order; mirrors the
-// API's lineage.LINEAGE_STATUSES.
-export const LINEAGE_STATUSES = ["unchanged", "changed", "removed", "added"] as const;
-
 // Orders the binary register accepts; the server sorts and echoes the value,
 // and `id` is the insertion order it always used.  The names match the
 // analyses list's, where the two controls mean the same thing.
@@ -258,19 +247,6 @@ export const MAX_LINEAGE_ROWS_SHOWN = 200;
 // Confidence labels a family detection match carries, strongest first; mirrors
 // the API's capabilities.CONFIDENCE_HIGH/_MEDIUM plus families.CONFIDENCE_LOW.
 export const DETECT_CONFIDENCES = ["high", "medium", "low"] as const;
-
-// Classifications a related-binary relationship carries, strongest first;
-// mirrors the API's related.RELATED_CLASSIFICATIONS.
-export const RELATED_CLASSIFICATIONS = [
-  "identical",
-  "same-imports",
-  "same-toolchain",
-  "similar-lifecycle",
-  "similar-capabilities",
-  "similar-size",
-  "unrelated",
-] as const;
-
 
 // Signature categories a file-type detection carries, in panel order; mirrors
 // the API's filetypes.FILE_CATEGORIES.
@@ -490,14 +466,6 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   collection: "Collection",
   tag: "Tag",
 };
-
-// Shortest SHA-256 prefix the hash query accepts; mirrors the API's
-// store.MIN_SHA256_PREFIX.
-export const MIN_SHA256_PREFIX = 8;
-
-// Rows one search group returns when the caller names no limit; mirrors
-// store.DEFAULT_SEARCH_LIMIT.
-export const DEFAULT_SEARCH_LIMIT = 50;
 
 // Wait before a typed query reaches the API, in milliseconds.
 export const SEARCH_DEBOUNCE_MS = 220;

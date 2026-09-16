@@ -60,7 +60,6 @@ ERROR_NO_LABELS = "no-labels"
 # input instead of showing a failure.
 REASON_NO_SYMBOLS = "no-symbols"
 REASON_NO_PROPOSALS = "no-proposals"
-ERROR_NO_PROPOSALS = "no-proposals"
 
 # Where a stored rename proposal can be read from, best first.  The library
 # reading keeps every candidate the engine reported, while the unstrip one keeps

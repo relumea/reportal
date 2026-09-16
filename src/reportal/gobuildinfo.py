@@ -45,7 +45,7 @@ SCAN_KIND = store.SCAN_KIND_GOBUILDINFO
 # introduces.  The version string follows the magic's pointer block; the
 # settings are `key\tvalue` lines after the module path line.
 BUILDINFO_MAGIC = b"Go buildinf:"
-SETTING_PREFIX = b"build\t"
+SETTING_PREFIX = "build\t"
 
 # Bytes of the file searched for the magic.  A Go binary is megabytes; the
 # section sits past the text, so the whole file is scanned but the match
@@ -101,7 +101,7 @@ def parse_buildinfo(data: bytes, *, build_id: str = "") -> dict[str, Any]:
     settings: dict[str, str] = {}
     dependencies: list[dict[str, str]] = []
     for line in text.splitlines():
-        if line.startswith("build\t"):
+        if line.startswith(SETTING_PREFIX):
             rest = line.split("\t", 1)[1]
             key, _, value = rest.partition("=")
             settings[key.strip()] = value.strip()

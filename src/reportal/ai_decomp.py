@@ -71,9 +71,6 @@ MAX_TOKEN_LINES = 40
 # Longest override name accepted, in characters.
 MAX_OVERRIDE_NAME = 128
 
-# Longest per-line comment accepted, in characters (the analyst comment bound).
-MAX_LINE_COMMENT_CHARS = comments.MAX_COMMENT_CHARS
-
 # The rating vocabulary, the hosted analyst feedback field.
 RATINGS: tuple[str, ...] = ("up", "down")
 

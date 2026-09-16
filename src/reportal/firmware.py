@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any, BinaryIO
 
 from reportal import store
-from reportal._paths import binaries_dir
 
 # The scan kind the pass is stored under.  Mirrored as `store.SCAN_KIND_FIRMWARE`
 # so the ratings vocabulary picks it up the day it lands.
@@ -373,10 +372,3 @@ def write_region(source: Path, target: Path, *, offset: int, size: int) -> int:
             written += len(chunk)
             remaining -= len(chunk)
     return written
-
-
-def temp_region_path(name: str) -> Path:
-    """A path under the workspace's `binaries/` directory for one carved region."""
-    directory = binaries_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / f".carve-{name}"

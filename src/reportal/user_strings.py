@@ -47,7 +47,6 @@ MAX_NOTE_CHARS = 500
 MAX_STRINGS_PER_SCOPE = 500
 
 # Where a read's entries came from.
-SOURCE_ANALYST = "analyst"
 SOURCE_DERIVED = "decompilation"
 
 # The note the merged read carries about the derived half.

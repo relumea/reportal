@@ -83,7 +83,6 @@ DEFAULT_TIMEOUT_SECONDS = 10
 MAX_TIMEOUT_SECONDS = 60
 DEFAULT_MEMORY_MB = 512
 MAX_MEMORY_MB = 4096
-DEFAULT_CPU_SECONDS = 10
 MAX_CPU_SECONDS = 60
 DEFAULT_FILE_MB = 64
 
@@ -329,9 +328,6 @@ RUNNERS: list[Runner] = [BwrapRunner()]
 # The in-tree runner name.  Withdrawing it is refused: a workspace with no
 # plugin still needs a runner, and the refresh path documents it as unremovable.
 BUILTIN_RUNNER = RUNNERS[0].name
-
-# A broken registration is skipped with a warning; a duplicate name is refused.
-_REGISTRY_ERRORS: list[str] = []
 
 
 def register_runner(runner: Runner) -> Runner:
