@@ -13,9 +13,10 @@ and inline emphasis is left as its literal markdown.  A construct outside the
 subset becomes a paragraph, which is readable rather than lost.
 
 Where the documents live is resolved once per request: an explicit
-`REPORTAL_DOCS` override, the workspace's own `docs/` directory, or the checkout
-the package was installed from.  A wheel without either answers 404 `no-docs`
-with that reason instead of an empty page.
+`REPORTAL_DOCS` override, the workspace's own `docs/` directory, the checkout
+the package was installed from, or the packaged `manual/` directory the wheel
+ships.  A wheel with neither the checkout nor that package-data directory
+answers 404 `no-docs` with that reason instead of an empty page.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ DOCS_ENV = "REPORTAL_DOCS"
 # The files the browser serves: the repository's docs directory and the
 # changelog beside it.  A page's slug is its filename without its extension.
 DOCS_DIRECTORY = "docs"
+# Packaged copy under the installed wheel (`scripts/sync_packaged_docs.py`).
+PACKAGED_MANUAL = "manual"
 CHANGELOG_FILE = "CHANGELOG.md"
 
 # The largest document the reader will parse, so a stray huge file cannot turn a
@@ -63,6 +66,7 @@ PAGE_ORDER: tuple[str, ...] = (
     "ERRORS",
     "PARITY",
     "TODO",
+    "DEPLOY",
     "DR_RUNBOOK",
     "REVENGAI",
 )
@@ -103,8 +107,9 @@ def documents_dir() -> Path | None:
 
     An explicit ``REPORTAL_DOCS`` wins, then the workspace's own ``docs/``
     directory, then the checkout the package was installed from (an editable
-    install keeps one).  None is the honest answer for an installed wheel that
-    ships neither, and every caller turns it into 404 ``no-docs``.
+    install keeps one), then the packaged ``manual/`` directory the wheel
+    ships.  None is the honest answer when none of those resolve, and every
+    caller turns it into 404 ``no-docs``.
     """
     override = os.environ.get(DOCS_ENV, "").strip()
     if override:
@@ -120,7 +125,10 @@ def documents_dir() -> Path | None:
         return workspace
     # <checkout>/src/reportal/docs.py -> <checkout>/docs
     checkout = Path(__file__).resolve().parent.parent.parent / DOCS_DIRECTORY
-    return checkout if checkout.is_dir() else None
+    if checkout.is_dir():
+        return checkout
+    packaged = Path(__file__).resolve().parent / PACKAGED_MANUAL
+    return packaged if packaged.is_dir() else None
 
 
 def changelog_path() -> Path | None:
@@ -404,6 +412,10 @@ def _page_files() -> list[Path]:
         return []
     available: dict[str, Path] = {}
     for path in sorted(directory.glob("*.md")):
+        # The changelog is appended once via changelog_path(), whether it sits
+        # beside docs/ (checkout) or inside the packaged manual/ directory.
+        if path.name == CHANGELOG_FILE:
+            continue
         available.setdefault(path.stem, path)
     ordered: list[Path] = []
     for stem in PAGE_ORDER:

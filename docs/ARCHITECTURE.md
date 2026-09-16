@@ -131,7 +131,7 @@ reportal/
 │   ├── threat.py             # local threat report: IOC extraction, ATT&CK mapping, narrative,
 │   │                         #   software-type classification and the 0-100 threat score
 │   ├── error_docs.py         # the error-code catalogue and the doc_url every error body carries
-│   ├── docs.py               # the in-app manual: resolve REPORTAL_DOCS/workspace/checkout,
+│   ├── docs.py               # the in-app manual: resolve REPORTAL_DOCS/workspace/checkout/packaged,
 │   │                         #   the page index and the markdown-to-blocks reader
 │   ├── analytics.py          # the dashboard's bounded time series over stored rows
 │   ├── ratings.py            # the analyst's verdict on a stored agent artifact
@@ -1021,13 +1021,15 @@ list item's depth is its indent, which is what the view uses to indent it.
 
 Where the documents live resolves once per request, first match wins: an
 explicit `REPORTAL_DOCS` directory, then the workspace's own `docs/`, then the
-checkout beside the installed package.  None of the three is a real error (a
-wheel installed on a host with neither), so it answers 404 `no-docs` with that
-reason rather than an empty manual, and a slug that is not a page is 404
-`no-doc`.  `MAX_DOC_BYTES` bounds one read, so a stray huge file cannot turn a
-page load into a slow parse; the truncation is silent, which is the one
-deliberate residual here because the alternative (refusing to show a document
-that is merely long) is worse for a reader.
+checkout beside the installed package, then the packaged `manual/` directory
+the wheel ships (`scripts/sync_packaged_docs.py` mirrors `docs/` and
+`CHANGELOG.md` into it before `uv build`).  None of the four is a real error (a
+wheel installed on a host with neither a checkout nor that package-data tree),
+so it answers 404 `no-docs` with that reason rather than an empty manual, and a
+slug that is not a page is 404 `no-doc`.  `MAX_DOC_BYTES` bounds one read, so a
+stray huge file cannot turn a page load into a slow parse; the truncation is
+silent, which is the one deliberate residual here because the alternative
+(refusing to show a document that is merely long) is worse for a reader.
 
 The same reader is what grounds a conversation about reportal itself
 (`conversations.SCOPE_KIND_DOCS`): `docs.excerpts()` hands the pages to
@@ -2229,7 +2231,8 @@ source, size, chunk count and a Delete action, and searches the scope through
 score and ranking method.
 The build step is the accepted tradeoff
 for a UI-heavy portal; package-data ships `assets/dist/` and its `assets/`
-bundles, and `make package-check` reads the built wheel back to assert them.
+bundles plus the mirrored `manual/*.md` docs tree, and `make package-check`
+reads the built wheel back to assert them.
 
 ## Matching
 

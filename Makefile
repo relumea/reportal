@@ -110,15 +110,17 @@ ui: venv-check bun-check ## Build the SPA, then run the headless-Chrome smoke an
 
 # `build/` is removed too: setuptools reuses its `build/lib` tree without
 # pruning it, so a module deleted from `src/reportal` would still be packaged
-# into the wheel from the stale copy.  Precompress runs before the wheel so
-# the packaged SPA matches `make run` / `make ui` (sibling `.gz` assets).
+# into the wheel from the stale copy.  Precompress and the docs sync run before
+# the wheel so the packaged SPA and in-app manual match `make run` / a checkout.
 package-check: venv-check uv-check ## Build a wheel and assert the built SPA is packaged
 	rm -rf dist build
 	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
+	$(PY) scripts/sync_packaged_docs.py
 	$(REPRO_ENV) $(UV) build --wheel
 	$(PY) scripts/check_wheel.py
 
 # ── housekeeping ─────────────────────────────────────────────────────
 clean: ## Remove build artifacts and caches
 	rm -rf dist build .mypy_cache .pytest_cache .ruff_cache
+	rm -rf src/reportal/manual
 	find . -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null; true

@@ -65,6 +65,11 @@ SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=
 ReadWritePaths=/srv/reportal
+# Drop the service's SysV IPC objects on stop so a restart cannot inherit a
+# leftover semaphore or shared-memory segment from a previous start.
+RemoveIPC=true
+# Keep the process away from the host keyring; reportal never uses it.
+KeyringMode=private
 
 [Install]
 WantedBy=multi-user.target

@@ -87,6 +87,21 @@ class TestDirectory:
         with pytest.raises(docs.NoDocsError):
             docs.pages()
 
+    def test_the_packaged_manual_is_the_last_fallback(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """A wheel install has no checkout docs/; package-data `manual/` still serves."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv(docs.DOCS_ENV, raising=False)
+        packaged = tmp_path / "site-packages" / "reportal" / docs.PACKAGED_MANUAL
+        packaged.mkdir(parents=True)
+        (packaged / "guide.md").write_text("# Guide\n\nBody.\n", encoding="utf-8")
+        (packaged / "CHANGELOG.md").write_text("# Changelog\n\n## 1.0\n", encoding="utf-8")
+        docs_py = tmp_path / "site-packages" / "reportal" / "docs.py"
+        monkeypatch.setattr(docs, "__file__", str(docs_py))
+        assert docs.documents_dir() == packaged
+        assert [page["slug"] for page in docs.pages()] == ["guide", "changelog"]
+
     def test_the_changelog_is_the_last_page(self, tmp_path: Path, monkeypatch: Any) -> None:
         _workspace(tmp_path, monkeypatch)
         listing = docs.pages()

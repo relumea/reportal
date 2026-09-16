@@ -26,7 +26,7 @@ import re
 # Where the catalogue is published.  The path is the section anchor's base and
 # the one the checker reads; the repository URL is the package's own homepage.
 DOC_PATH = "docs/ERRORS.md"
-DOC_BASE_URL = "https://github.com/maci0/reportal/blob/main/docs/ERRORS.md"
+DOC_BASE_URL = "https://github.com/relumea/reportal/blob/main/docs/ERRORS.md"
 
 # The section every field-level validation message shares.
 INVALID_PARAMS_ANCHOR = "invalid-params"

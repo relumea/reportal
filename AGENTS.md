@@ -106,8 +106,10 @@ the commit that raises coverage.
 **Packaging.** `make package-check` builds the wheel with `uv build --wheel`,
 then `scripts/check_wheel.py` reads it back and asserts the built SPA is
 packaged: `assets/dist/index.html` plus at least one `assets/*.js` and one
-`assets/*.css`. The bundle is generated and gitignored, so this checks the
-wheel that is actually built rather than a committed artifact.
+`assets/*.css` (and their `.gz` siblings), and the mirrored in-app manual under
+`manual/` (`ERRORS.md` and `CHANGELOG.md` at minimum). The SPA and manual trees
+are generated and gitignored, so this checks the wheel that is actually built
+rather than a committed artifact.
 
 ## Commands
 

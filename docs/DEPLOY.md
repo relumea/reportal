@@ -42,7 +42,9 @@ sudo -u reportal .venv/bin/pip install reportal            # or the built wheel
 sudo -u reportal .venv/bin/reportal init
 
 # 4. The SPA, unless the wheel already carries a build (it does when the
-#    release was packaged after `bun run build`).
+#    release was packaged after `bun run build`).  The same wheel also ships
+#    the in-app manual under `reportal/manual/`, so `reportal docs` works
+#    without a source checkout.
 cd web && bun install && bun run build && cd ..
 
 # 5. Readiness: every check is a read.
@@ -78,6 +80,8 @@ matter:
 | `RestrictNamespaces=true`, `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | no new namespaces, and only the socket families serving and egress need |
 | `CapabilityBoundingSet=` / `AmbientCapabilities=` | drop every capability; the service never needs one |
 | `SystemCallArchitectures=native` | refuse foreign architectures that would bypass filters |
+| `RemoveIPC=true` | drop SysV IPC objects the service created when it stops |
+| `KeyringMode=private` | the service cannot use the host keyring |
 | `UMask=0077` | files the service creates are owner-only by default |
 | `MemoryMax=4G`, `TasksMax=512` | hard ceilings so a runaway analysis cannot starve the host |
 | `StartLimitIntervalSec=60` / `StartLimitBurst=5` | a doctor that keeps failing does not thrash `Restart=on-failure` |

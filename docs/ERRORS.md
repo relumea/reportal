@@ -3,7 +3,7 @@
 Every JSON error reportal returns has the same shape:
 
 ```json
-{"error": "no-scan", "detail": "no threat scan for binary 7; ...", "doc_url": "https://github.com/maci0/reportal/blob/main/docs/ERRORS.md#no-scan"}
+{"error": "no-scan", "detail": "no threat scan for binary 7; ...", "doc_url": "https://github.com/relumea/reportal/blob/main/docs/ERRORS.md#no-scan"}
 ```
 
 `error` is a stable, sanitized code: branch on it, never on `detail`, which is

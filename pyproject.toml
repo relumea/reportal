@@ -8,9 +8,11 @@ build-backend = "setuptools.build_meta"
 name = "reportal"
 dynamic = ["version"]
 description = "Self-hosted reverse-engineering portal over rebrew, resembl and recoverage"
+readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
+authors = [{ name = "Marcel W. Wysocki" }]
 keywords = ["reverse-engineering", "decompilation", "binary-matching", "portal"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -41,8 +43,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/maci0/reportal"
-Repository = "https://github.com/maci0/reportal"
+Homepage = "https://github.com/relumea/reportal"
+Repository = "https://github.com/relumea/reportal"
 
 [project.optional-dependencies]
 dev = [
@@ -91,9 +93,12 @@ where = ["src"]
 # package serves `index.html` and its `assets/*.js` and `assets/*.css` from
 # there.  A pattern does not cross a directory separator, so the two levels of
 # `dist/` are named explicitly; a deeper layout would need another line.
+# `manual/*.md` is the in-app docs browser payload (`scripts/sync_packaged_docs.py`
+# mirrors `docs/` + `CHANGELOG.md` into it before `uv build`).
 reportal = [
     "assets/dist/*",
     "assets/dist/assets/*",
+    "manual/*.md",
 ]
 
 [tool.uv]
