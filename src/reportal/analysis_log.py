@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Any
 
 # Severities an entry may carry, in increasing order of attention.  The set is
@@ -66,8 +65,14 @@ class UnknownSeverityError(ValueError):
 
 
 def now() -> str:
-    """Return the current UTC time as an ISO 8601 string (second resolution)."""
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    """Return the current UTC time; delegates to :func:`reportal.store.now`.
+
+    Imported lazily so this module stays free of a load-time cycle with
+    :mod:`reportal.store` (which imports the log helpers).
+    """
+    from reportal import store
+
+    return store.now()
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:

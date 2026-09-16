@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
-from reportal import journal, threat
+from reportal import journal, store, threat
 
 # The window a caller gets without asking, its bound, and how many analyses the
 # software-type derivation examines before it says it stopped.
@@ -58,7 +58,7 @@ def _day(value: str) -> str:
 
 def window(days: int, *, today: date | None = None) -> list[str]:
     """The inclusive list of dates a series covers, oldest first."""
-    end = today if today is not None else datetime.now(UTC).date()
+    end = today if today is not None else date.fromisoformat(store.now()[:10])
     return [(end - timedelta(days=offset)).isoformat() for offset in range(days - 1, -1, -1)]
 
 

@@ -28,6 +28,14 @@ def _send(
 
 
 class TestStore:
+    def test_now_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(store, "now", lambda: "2026-03-01T00:00:00+00:00")
+        assert auth.now() == "2026-03-01T00:00:00+00:00"
+
+    def test_new_token_uses_the_token_urlsafe_seam(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(auth, "_token_urlsafe", lambda _n: "pinned-token-bytes")
+        assert auth.new_token() == f"{auth.TOKEN_PREFIX}pinned-token-bytes"
+
     def test_a_token_is_shown_once_and_only_its_digest_is_stored(
         self, conn: sqlite3.Connection
     ) -> None:

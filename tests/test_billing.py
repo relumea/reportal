@@ -445,6 +445,15 @@ class TestManualMode:
             billing.start_checkout(conn, {"id": organisation_id}, "analyst")
         assert len(billing._manual_intents) == billing.MAX_MANUAL_INTENTS
 
+    def test_manual_intent_uses_the_token_urlsafe_seam(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(billing, "_token_urlsafe", lambda _n: "pinned-manual-token")
+        billing._manual_intents.clear()
+        token = billing._store_manual_intent(1, "analyst")
+        assert token == "pinned-manual-token"
+        assert billing.manual_intent(token) == (1, "analyst")
+
 
 class TestReconcileRateLimit:
     """The reconcile path calls out, so it is bounded."""

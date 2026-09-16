@@ -47,7 +47,6 @@ import subprocess
 import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -663,7 +662,7 @@ def _fingerprint_meta(binary: Mapping[str, Any], fingerprint: Mapping[str, Any])
     """Build the rule meta block from the binary row and its fingerprint."""
     sha256 = str(fingerprint.get("sha256") or binary.get("sha256") or "")
     meta: dict[str, Any] = {
-        "date": datetime.now(UTC).date().isoformat(),
+        "date": store.now()[:10],
         "binary": str(binary.get("name") or ""),
     }
     if sha256:
@@ -987,7 +986,7 @@ def _stix_timestamp(meta: Mapping[str, Any]) -> str:
     """
     raw = str(meta.get("date") or "").strip()
     if not raw:
-        return f"{datetime.now(UTC).date().isoformat()}T00:00:00Z"
+        return f"{store.now()[:10]}T00:00:00Z"
     return raw if "T" in raw else f"{raw}T00:00:00Z"
 
 

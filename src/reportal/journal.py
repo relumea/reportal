@@ -36,7 +36,6 @@ import secrets
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -171,14 +170,19 @@ def current_actor() -> str:
     return _ACTOR.get()
 
 
+# Entropy source for action ids.  A test patches ``_token_hex`` to pin the id
+# a run records, so a journaled action replays under a fixed seed.
+_token_hex = secrets.token_hex
+
+
 def new_action() -> str:
     """Return a short unique action id for one request or invocation."""
-    return secrets.token_hex(ACTION_ID_BYTES)
+    return _token_hex(ACTION_ID_BYTES)
 
 
 def now() -> str:
-    """The journal's own UTC timestamp, in the format the store's tables use."""
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    """The journal's UTC timestamp; delegates to :func:`reportal.store.now`."""
+    return store.now()
 
 
 class Journal:

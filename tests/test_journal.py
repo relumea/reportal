@@ -30,6 +30,16 @@ runner = CliRunner()
 BOUNDARY = "----reportal-journal-test"
 
 
+class TestClockAndActionSeams:
+    def test_now_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(store, "now", lambda: "2026-02-01T00:00:00+00:00")
+        assert journal.now() == "2026-02-01T00:00:00+00:00"
+
+    def test_new_action_uses_the_token_hex_seam(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(journal, "_token_hex", lambda _n: "aabbccddee01")
+        assert journal.new_action() == "aabbccddee01"
+
+
 def _seed(conn: sqlite3.Connection) -> dict[str, int]:
     binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe", path="/x/demo.exe")
     analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")

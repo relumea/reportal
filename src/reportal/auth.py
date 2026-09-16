@@ -32,7 +32,6 @@ import secrets
 import sqlite3
 import tomllib
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 from typing import Any
 
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
@@ -234,8 +233,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def now() -> str:
-    """The current UTC time as an ISO 8601 string (second resolution)."""
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    """The current UTC time; delegates to :func:`reportal.store.now`.
+
+    Imported lazily so this module stays free of a load-time cycle with
+    :mod:`reportal.store` (which imports auth for scope helpers).
+    """
+    from reportal import store
+
+    return store.now()
 
 
 def _truthy(value: str) -> bool:
@@ -278,9 +283,14 @@ def required() -> bool:
     return _workspace_required()
 
 
+# Entropy source for bearer tokens.  A test patches ``_token_urlsafe`` to pin
+# the token a create or rotate returns, so auth setup is seed-reproducible.
+_token_urlsafe = secrets.token_urlsafe
+
+
 def new_token() -> str:
     """Return a fresh bearer token; only its digest is ever stored."""
-    return f"{TOKEN_PREFIX}{secrets.token_urlsafe(TOKEN_BYTES)}"
+    return f"{TOKEN_PREFIX}{_token_urlsafe(TOKEN_BYTES)}"
 
 
 def hash_token(token: str) -> str:

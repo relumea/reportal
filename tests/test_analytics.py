@@ -53,6 +53,10 @@ class TestSeries:
         dates = analytics.window(3, today=datetime(2026, 9, 13, tzinfo=UTC).date())
         assert dates == ["2026-09-11", "2026-09-12", "2026-09-13"]
 
+    def test_the_default_window_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(store, "now", lambda: "2026-01-15T12:00:00+00:00")
+        assert analytics.window(3) == ["2026-01-13", "2026-01-14", "2026-01-15"]
+
     def test_a_day_outside_the_bounds_is_refused(self) -> None:
         assert analytics.normalize_days(1) == 1
         for days in (0, -1, analytics.MAX_SERIES_DAYS + 1, True):

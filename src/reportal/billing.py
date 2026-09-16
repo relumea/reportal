@@ -59,6 +59,10 @@ from reportal import auth, metering, plans
 
 _log = logging.getLogger("reportal")
 
+# Entropy source for Stripe idempotency keys and manual checkout tokens.  A
+# test patches ``_token_urlsafe`` to pin the key a checkout records.
+_token_urlsafe = secrets.token_urlsafe
+
 STRIPE_API_BASE = "https://api.stripe.com/v1"
 DEFAULT_STRIPE_API_VERSION = "2026-08-26.dahlia"
 
@@ -211,7 +215,7 @@ def _stripe_request(path: str, form: dict[str, str]) -> dict[str, Any]:
         "Content-Type": "application/x-www-form-urlencoded",
         # Stripe deduplicates retries by this key, so a network timeout that is
         # actually a success cannot create a second subscription.
-        "Idempotency-Key": secrets.token_urlsafe(24),
+        "Idempotency-Key": _token_urlsafe(24),
     }
     try:
         with httpx.Client(timeout=_REQUEST_TIMEOUT_S) as client:
@@ -275,7 +279,7 @@ def _store_manual_intent(organisation_id: int, plan_id: str) -> str:
     for token, (_, _, expires) in list(_manual_intents.items()):
         if expires <= now:
             _manual_intents.pop(token, None)
-    token = secrets.token_urlsafe(24)
+    token = _token_urlsafe(24)
     _manual_intents[token] = (organisation_id, plan_id, now + _MANUAL_INTENT_TTL_S)
     while len(_manual_intents) > MAX_MANUAL_INTENTS:
         _manual_intents.pop(next(iter(_manual_intents)))

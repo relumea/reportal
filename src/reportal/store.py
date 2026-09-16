@@ -491,7 +491,12 @@ CREATE INDEX IF NOT EXISTS idx_data_types_binary ON data_types(binary_id);
 
 
 def now() -> str:
-    """Return the current UTC time as an ISO 8601 string (second resolution)."""
+    """Return the current UTC time as an ISO 8601 string (second resolution).
+
+    The one process clock writers and readers share.  A test patches this to
+    pin timestamps; ``auth.now``, ``journal.now`` and ``analysis_log.now``
+    delegate here so one patch covers every stored stamp.
+    """
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 

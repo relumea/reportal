@@ -964,6 +964,14 @@ class TestBuildStixBundle:
     def _meta(self) -> dict[str, Any]:
         return {"date": "2026-09-12"}
 
+    def test_a_missing_date_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(store, "now", lambda: "2026-05-20T18:00:00+00:00")
+        bundle = remediation.build_stix_bundle(name="demo.exe", indicators={}, meta={})
+        identities = [obj for obj in bundle["objects"] if obj["type"] == "identity"]
+        assert identities[0]["created"] == "2026-05-20T00:00:00Z"
+        meta = remediation._fingerprint_meta({"name": "demo.exe"}, {})
+        assert meta["date"] == "2026-05-20"
+
     def test_the_bundle_wrapper_is_stix_21(self) -> None:
         bundle = remediation.build_stix_bundle(
             name="demo.exe",
