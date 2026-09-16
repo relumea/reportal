@@ -179,6 +179,10 @@ class _Elf:
         self.data = data
         if data[:4] != ELF_MAGIC:
             raise UnreadableSymbolError("not an ELF file")
+        # e_ident is 16 bytes; a magic-only prefix must not IndexError on class
+        # or endianness before the header unpack refuses the truncation.
+        if len(data) < 16:
+            raise UnreadableSymbolError("the ELF is truncated")
         self.is64 = data[4] == 2
         if data[5] != 1:
             raise UnreadableSymbolError("only a little-endian ELF is read")

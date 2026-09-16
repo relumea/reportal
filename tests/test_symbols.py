@@ -303,6 +303,12 @@ class TestElfSymbols:
         with pytest.raises(symbols.UnreadableSymbolError):
             symbols.parse(elf[:40])
 
+    def test_a_magic_only_prefix_is_refused(self) -> None:
+        with pytest.raises(symbols.UnreadableSymbolError) as caught:
+            symbols.parse(symbols.ELF_MAGIC)
+        assert caught.value.code == symbols.ERROR_UNREADABLE
+        assert "truncated" in caught.value.detail
+
 
 # ── DWARF ──────────────────────────────────────────────────────────
 
