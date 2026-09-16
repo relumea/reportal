@@ -763,9 +763,11 @@ the floor proves nothing.
   enabled user exists, and `docs/THREAT_MODEL.md` records the boundary.
   Object authorization rides the same check: a binary or a collection carries a
   `visibility` (`public`/`team`) and an `owner_team_id`, `server._enforce_scope`
-  resolves the object a path names (a function or analysis through its binary) and
-  `auth.visible_clause` is the SQL rule the listings, the search and the bulk guard
-  share, so a new route is scoped by construction too.
+  resolves the object a path names (eleven kinds through their owning binary;
+  `tools/audit_scope.py`, run by `make lint`, fails a new object-id route
+  without gate or handler coverage) and `auth.visible_clause` is the SQL rule
+  the listings, the searches, the feeds, the series, the bulk guards and the
+  corpus operations share, so a new route is scoped by construction too.
 - SPA is Vite + React + TypeScript in `web/`, built with bun into
   `src/reportal/assets/dist/` (generated, gitignored).  Routing is
   react-router and every fetch is `@tanstack/react-query`; no CDN.  Every view
