@@ -28,6 +28,7 @@ import json
 import re
 import sqlite3
 import threading
+import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2933,15 +2934,26 @@ def revert_name(conn: sqlite3.Connection, history_id: int, *, actor: str = "reve
 # ── Collections ────────────────────────────────────────────────────
 
 
+def _canonical_label(name: str) -> str:
+    """Strip padding and NFC-normalize a tag or collection name.
+
+    Identity lookups and writes share this form so an NFD spelling (typical of
+    macOS filenames pasted into a name) matches the NFC row already stored,
+    and so create/find/rename cannot disagree about padding alone.
+    """
+    return unicodedata.normalize("NFC", name.strip())
+
+
 def create_collection(
     conn: sqlite3.Connection, *, name: str, description: str = "", scope: str = ""
 ) -> int:
     """Create a collection; raises ValueError when the name is taken.
 
-    The stored name is stripped so a padded create cannot collide with a later
-    rename that strips, and so uniqueness matches what callers see.
+    The stored name is stripped and NFC-normalized so a padded or NFD create
+    cannot collide with a later rename that canonicalizes the same way, and so
+    uniqueness matches what callers see.
     """
-    cleaned = name.strip()
+    cleaned = _canonical_label(name)
     if not cleaned:
         raise ValueError("collection name must not be empty")
     if conn.execute("SELECT 1 FROM collections WHERE name = ?", (cleaned,)).fetchone():
@@ -3159,7 +3171,9 @@ def find_collection_by_name(conn: sqlite3.Connection, name: str) -> dict[str, An
     """One collection row by exact name, or None; unlike :func:`create_collection`.
 
     Archive extraction reuses a collection named after the archive instead of
-    failing on the name it would create a second time.
+    failing on the name it would create a second time.  The lookup uses the same
+    strip-and-NFC form as :func:`create_collection`, so a padded or NFD query
+    finds the stored row rather than minting a duplicate.
     """
     row = conn.execute(
         """
@@ -3168,7 +3182,7 @@ def find_collection_by_name(conn: sqlite3.Connection, name: str) -> dict[str, An
         ) AS binary_count
         FROM collections c WHERE c.name = ?
         """,
-        (name,),
+        (_canonical_label(name),),
     ).fetchone()
     return dict(row) if row else None
 
@@ -3253,7 +3267,7 @@ def update_collection(
     updates: list[str] = []
     params: list[Any] = []
     if name is not None:
-        cleaned = name.strip()
+        cleaned = _canonical_label(name)
         if not cleaned:
             raise ValueError("collection name must not be empty")
         clash = conn.execute(
@@ -3335,7 +3349,8 @@ def set_collection_tags(
     """
     if get_collection(conn, collection_id) is None:
         raise KeyError(f"no collection with id {collection_id}")
-    wanted = {name.strip() for name in names if name.strip()}
+    wanted = {_canonical_label(name) for name in names}
+    wanted.discard("")
     current = {str(tag["name"]) for tag in collection_tags(conn, collection_id)}
     added = sorted(wanted - current)
     removed = sorted(current - wanted)
@@ -3363,11 +3378,12 @@ def set_collection_tags(
 def create_tag(conn: sqlite3.Connection, name: str) -> int:
     """Return the id of tag *name*, creating it when new.
 
-    Leading and trailing whitespace are stripped so a padded create matches
-    :func:`rename_tag` and :func:`find_tag`, and cannot mint a second tag that
-    only differs by surrounding spaces.
+    Leading and trailing whitespace are stripped and the name is NFC-normalized
+    so a padded or NFD create matches :func:`rename_tag` and :func:`find_tag`,
+    and cannot mint a second tag that only differs by surrounding spaces or
+    combining-mark spelling.
     """
-    cleaned = name.strip()
+    cleaned = _canonical_label(name)
     if not cleaned:
         raise ValueError("tag name must not be empty")
     conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (cleaned,))
@@ -3401,7 +3417,7 @@ def rename_tag(conn: sqlite3.Connection, tag_id: int, name: str) -> dict[str, An
     """
     if get_tag(conn, tag_id) is None:
         return None
-    cleaned = name.strip()
+    cleaned = _canonical_label(name)
     if not cleaned:
         raise ValueError("tag name must not be empty")
     existing = find_tag(conn, cleaned)
@@ -3434,10 +3450,13 @@ def get_tag(conn: sqlite3.Connection, tag_id: int) -> dict[str, Any] | None:
 def find_tag(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
     """One tag row by exact name, or None; unlike :func:`create_tag` it never inserts.
 
-    The lookup strips the same way :func:`create_tag` and :func:`rename_tag`
-    do, so a padded name resolves to the stored tag rather than missing it.
+    The lookup strips and NFC-normalizes the same way :func:`create_tag` and
+    :func:`rename_tag` do, so a padded or NFD name resolves to the stored tag
+    rather than missing it.
     """
-    row = conn.execute("SELECT id, name FROM tags WHERE name = ?", (name.strip(),)).fetchone()
+    row = conn.execute(
+        "SELECT id, name FROM tags WHERE name = ?", (_canonical_label(name),)
+    ).fetchone()
     return dict(row) if row else None
 
 

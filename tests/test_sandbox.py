@@ -192,6 +192,19 @@ class _FakeRunner(sandbox.Runner):
         return True
 
 
+class TestReadTail:
+    def test_a_byte_seek_into_a_multibyte_char_does_not_prefix_replacement(
+        self, tmp_path: Path
+    ) -> None:
+        # aa + U+00E9 + bbb is 61 61 C3 A9 62 62 62; a 4-byte tail seeks onto A9.
+        path = tmp_path / "tail.txt"
+        path.write_bytes(b"aa\xc3\xa9bbb")
+        text, truncated = sandbox._read_tail(path, limit=4)
+        assert truncated is True
+        assert text == "bbb"
+        assert "\ufffd" not in text
+
+
 class TestReport:
     def test_a_run_records_the_command_the_status_and_the_files(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -32,6 +32,7 @@ import os
 import secrets
 import sqlite3
 import tomllib
+import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -316,12 +317,25 @@ def required_permission(method: str, path: str) -> str:
 
 
 def _has_control_characters(cleaned: str) -> bool:
-    """True when *cleaned* carries an ASCII control character (CR/LF/NUL, ...)."""
-    return any(ord(ch) < 32 for ch in cleaned)
+    """True when *cleaned* carries a control, format, or separator character.
+
+    ASCII C0 controls and DEL are refused, and so are Unicode format characters
+    (zero-width spaces, bidi controls) and line/paragraph separators that would
+    otherwise look blank in a name while still distinguishing two identities.
+    """
+    return any(
+        ord(ch) < 32 or ord(ch) == 127 or unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
+        for ch in cleaned
+    )
+
+
+def _canonical_identity_name(name: str) -> str:
+    """Strip padding and NFC-normalize an identity name before validate or lookup."""
+    return unicodedata.normalize("NFC", (name or "").strip())
 
 
 def _validated_name(name: str) -> str:
-    cleaned = (name or "").strip()
+    cleaned = _canonical_identity_name(name)
     if not cleaned:
         raise InvalidUserError(ERROR_INVALID_USER, "name must not be blank")
     if len(cleaned) > MAX_USER_NAME:
@@ -364,7 +378,9 @@ def get_user(conn: sqlite3.Connection, user_id: int) -> dict[str, Any] | None:
 
 def find_user(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
     """One user by name (case-insensitive), without its token digest."""
-    row = conn.execute(f"SELECT * FROM {TABLE} WHERE name = ?", (name.strip(),)).fetchone()
+    row = conn.execute(
+        f"SELECT * FROM {TABLE} WHERE name = ?", (_canonical_identity_name(name),)
+    ).fetchone()
     return _user_row(row) if row else None
 
 
@@ -454,7 +470,7 @@ def token_of(header_value: str | None) -> str:
 
 
 def _validated_team_name(name: str) -> str:
-    cleaned = (name or "").strip()
+    cleaned = _canonical_identity_name(name)
     if not cleaned:
         raise InvalidTeamError(ERROR_INVALID_TEAM, "name must not be blank")
     if len(cleaned) > MAX_TEAM_NAME:
@@ -517,7 +533,9 @@ def get_team(conn: sqlite3.Connection, team_id: int) -> dict[str, Any] | None:
 
 def find_team(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
     """One team by name (case-insensitive), without its members."""
-    row = conn.execute(f"SELECT * FROM {TEAM_TABLE} WHERE name = ?", (name.strip(),)).fetchone()
+    row = conn.execute(
+        f"SELECT * FROM {TEAM_TABLE} WHERE name = ?", (_canonical_identity_name(name),)
+    ).fetchone()
     return _team_row(row) if row else None
 
 
@@ -713,7 +731,7 @@ def _organisation_row(row: Any) -> dict[str, Any]:
 
 def _validated_organisation_name(name: str) -> str:
     """A usable organisation name, or :class:`InvalidUserError`."""
-    cleaned = (name or "").strip()
+    cleaned = _canonical_identity_name(name)
     if not cleaned:
         raise InvalidUserError(ERROR_INVALID_ORGANISATION, "an organisation name is required")
     if len(cleaned) > MAX_ORGANISATION_NAME:
@@ -770,7 +788,9 @@ def get_organisation(conn: sqlite3.Connection, organisation_id: int) -> dict[str
 
 def find_organisation(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
     """One organisation by name (case-insensitive), without its teams."""
-    row = conn.execute(f"SELECT * FROM {ORG_TABLE} WHERE name = ?", (name.strip(),)).fetchone()
+    row = conn.execute(
+        f"SELECT * FROM {ORG_TABLE} WHERE name = ?", (_canonical_identity_name(name),)
+    ).fetchone()
     return _organisation_row(row) if row else None
 
 

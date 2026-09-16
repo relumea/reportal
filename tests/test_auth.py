@@ -93,6 +93,19 @@ class TestStore:
             auth.create_team(conn, name="ops\rroot")
         with pytest.raises(auth.InvalidUserError, match="control characters"):
             auth.create_organisation(conn, name="corp\x00inc")
+        with pytest.raises(auth.InvalidUserError, match="control characters"):
+            auth.add_user(conn, name="ana\u200badmin", role=auth.ROLE_ANALYST)
+
+    def test_nfd_and_nfc_user_names_collapse(self, conn: sqlite3.Connection) -> None:
+        nfc = "Jos\u00e9"
+        nfd = "Jose\u0301"
+        assert nfc != nfd
+        user, _token = auth.add_user(conn, name=nfd, role=auth.ROLE_ANALYST)
+        assert user["name"] == nfc
+        assert auth.find_user(conn, nfd) is not None
+        assert auth.find_user(conn, nfc) is not None
+        with pytest.raises(auth.UserExistsError):
+            auth.add_user(conn, name=nfc, role=auth.ROLE_ANALYST)
 
     def test_unknown_ids_change_nothing(self, conn: sqlite3.Connection) -> None:
         assert auth.update_user(conn, 4242, role=auth.ROLE_ADMIN) is None

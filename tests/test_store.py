@@ -716,6 +716,30 @@ class TestCollectionsAndTags:
         assert updated is not None
         assert updated["name"] == "sockets"
 
+    def test_collection_and_tag_names_collapse_nfd_to_nfc(self, conn: sqlite3.Connection) -> None:
+        nfc = "caf\u00e9"
+        nfd = "cafe\u0301"
+        assert nfc != nfd
+        collection_id = store.create_collection(conn, name=nfd)
+        row = store.get_collection(conn, collection_id)
+        assert row is not None
+        assert row["name"] == nfc
+        found = store.find_collection_by_name(conn, nfd)
+        assert found is not None
+        assert int(found["id"]) == collection_id
+        with pytest.raises(ValueError, match="already exists"):
+            store.create_collection(conn, name=nfc)
+        tag_id = store.create_tag(conn, nfd)
+        assert store.get_tag(conn, tag_id) == {"id": tag_id, "name": nfc}
+        assert store.create_tag(conn, nfc) == tag_id
+        assert store.find_tag(conn, nfd) == {"id": tag_id, "name": nfc}
+
+    def test_find_collection_by_name_strips_padding(self, conn: sqlite3.Connection) -> None:
+        collection_id = store.create_collection(conn, name="archive extraction")
+        found = store.find_collection_by_name(conn, "  archive extraction  ")
+        assert found is not None
+        assert int(found["id"]) == collection_id
+
     def test_tags_reuse_and_tag(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="78" * 32, name="demo")
         tag_id = store.create_tag(conn, "malware")

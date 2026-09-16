@@ -641,6 +641,8 @@ def validate_rule(rule: str) -> dict[str, Any]:
                 [yarac, temp_name, os.devnull],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
                 timeout=YARAC_TIMEOUT_SECONDS,
             )

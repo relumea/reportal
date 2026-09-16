@@ -406,6 +406,14 @@ def require_runner() -> Runner:
     return runner
 
 
+def _drop_incomplete_leading_utf8(data: bytes) -> bytes:
+    """Drop leading continuation bytes left after a mid-sequence byte seek."""
+    index = 0
+    while index < len(data) and data[index] & 0xC0 == 0x80:
+        index += 1
+    return data[index:]
+
+
 def _read_tail(path: Path, limit: int) -> tuple[str, bool]:
     """The last *limit* bytes of *path* as text, and whether it was truncated."""
     try:
@@ -416,6 +424,8 @@ def _read_tail(path: Path, limit: int) -> tuple[str, bool]:
             data = handle.read(limit)
     except OSError:
         return "", False
+    if size > limit:
+        data = _drop_incomplete_leading_utf8(data)
     return data.decode("utf-8", "replace"), size > limit
 
 
