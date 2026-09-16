@@ -181,6 +181,19 @@ def get_worker(name: str) -> Worker | None:
     return next((worker for worker in workers() if worker.name == name), None)
 
 
+def unregister_worker(name: str) -> None:
+    """Withdraw the worker registered as *name*.
+
+    Raises :class:`RegistryError` for a name nothing holds.  Withdrawing a
+    built-in lasts until the next :func:`refresh_workers`.
+    """
+    _ensure_builtins()
+    _ensure_entry_points()
+    if name not in _registry:
+        raise RegistryError(f"no worker registration {name!r} to withdraw")
+    del _registry[name]
+
+
 def refresh_workers() -> tuple[Worker, ...]:
     """Discard discovered workers and re-run discovery.
 

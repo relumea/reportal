@@ -202,6 +202,23 @@ class TestReplaceIdentifier:
     def test_escaped_quotes_do_not_end_the_literal(self) -> None:
         assert renames.replace_identifier('"a \\" var";', "var", "count") == ('"a \\" var";', 0)
 
+    def test_skips_char_literals(self) -> None:
+        assert renames.replace_identifier("char c = 'v'; int v = 0;", "v", "val") == (
+            "char c = 'v'; int val = 0;",
+            1,
+        )
+
+    def test_macro_definition_name_is_left_alone(self) -> None:
+        assert renames.replace_identifier("#define foo 1\nint foo = foo;", "foo", "bar") == (
+            "#define foo 1\nint bar = bar;",
+            2,
+        )
+
+    def test_fallback_scanner_covers_the_same_literals(self) -> None:
+        assert renames._replace_identifier_scan(
+            'char *s = "var"; int var = 0;', "var", "count"
+        ) == ('char *s = "var"; int count = 0;', 1)
+
 
 class TestApplyRenames:
     def test_explicit_suggestion_rewrites_whole_tokens(self, conn: sqlite3.Connection) -> None:

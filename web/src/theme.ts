@@ -55,10 +55,20 @@ export function setTheme(theme: Theme): void {
   applyTheme(theme);
 }
 
-/** Apply the stored theme and keep `system` following the OS while it is set. */
-export function installTheme(): void {
+/**
+ * Apply the stored theme and keep `system` following the OS while it is set.
+ *
+ * Returns the function that removes the OS listener, so the installation has an
+ * inverse: the entry point installs once per page load and drops it, but a test
+ * or a future embedder that mounts the shell twice can undo it instead of
+ * stacking a second listener on the same media query.
+ */
+export function installTheme(): () => void {
   applyTheme(storedTheme());
-  window.matchMedia(DARK_QUERY).addEventListener("change", () => {
+  const query = window.matchMedia(DARK_QUERY);
+  const onChange = (): void => {
     if (storedTheme() === "system") applyTheme("system");
-  });
+  };
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
 }

@@ -71,13 +71,15 @@ _CONFIDENCE_RANK = {CONFIDENCE_HIGH: 0, CONFIDENCE_MEDIUM: 1, CONFIDENCE_LOW: 2}
 
 # Signal kinds.  A signal's kind fixes the strongest confidence it can carry on
 # its own; a section name, an import DLL or an entry-point prefix is a concrete
-# artifact, a string marker or a numeric entropy heuristic merely suggests one.
+# artifact, a string marker, a byte constant or a numeric entropy heuristic
+# merely suggests one.
 SIGNAL_SECTION = "section"
 SIGNAL_STRING = "string"
 SIGNAL_IMPORT = "import"
 SIGNAL_ENTRY_POINT = "entry-point"
 SIGNAL_ENTROPY = "entropy"
 SIGNAL_RICH_HEADER = "rich-header"
+SIGNAL_CONSTANT = "constant"
 
 SIGNAL_CONFIDENCES = {
     SIGNAL_SECTION: CONFIDENCE_MEDIUM,
@@ -86,6 +88,7 @@ SIGNAL_CONFIDENCES = {
     SIGNAL_RICH_HEADER: CONFIDENCE_MEDIUM,
     SIGNAL_STRING: CONFIDENCE_LOW,
     SIGNAL_ENTROPY: CONFIDENCE_LOW,
+    SIGNAL_CONSTANT: CONFIDENCE_LOW,
 }
 
 # Independent signal kinds a match needs before its confidence is `high`.
@@ -100,6 +103,11 @@ MAX_SIGNALS_PER_MATCH = 10
 # Strings inspected by one scan.  The engine can return tens of thousands and
 # every signature regexes each one, so the tail is dropped.
 MAX_STRINGS_INSPECTED = capabilities.MAX_STRINGS_INSPECTED
+
+# Raw bytes read per executable section for constant matching.  Family
+# constants are searched in executable sections only, so data blobs cannot
+# fire them, and the per-section cap keeps a huge section bounded.
+MAX_SECTION_BYTES = 16 * 1024 * 1024
 
 # Engine calls one run makes (pe-info, fingerprints, imports, strings).  A run
 # whose every call failed assembled nothing, so it fails instead of storing an
@@ -151,17 +159,23 @@ class SignatureMatch:
     ``section_prefixes`` are matched case-insensitively against a section name's
     start, ``imports`` against an import DLL name with a trailing ``.dll``
     ignored, and ``entry_prefixes`` against the lowercased hex of the bytes at
-    the entry point.  ``rich_header`` fires when the binary carries a Rich
-    header and ``executable_entropy`` when an executable section reaches that
-    Shannon entropy.  ``exclude_formats`` suppresses the signature outright for
-    a named format, which keeps the DOS-only packers off a PE or ELF whose
-    strings happen to carry their marker.
+    the entry point.  ``constants`` are raw byte strings searched in the
+    executable sections' bytes; a signature fires only when at least
+    ``min_constants`` distinct constants hit (default 1), so a family row can
+    require the coincidence its YARA rule requires.  ``rich_header`` fires
+    when the binary carries a Rich header and ``executable_entropy`` when an
+    executable section reaches that Shannon entropy.  ``exclude_formats``
+    suppresses the signature outright for a named format, which keeps the
+    DOS-only packers off a PE or ELF whose strings happen to carry their
+    marker.
     """
 
     section_prefixes: tuple[str, ...] = ()
     strings: tuple[re.Pattern[str], ...] = ()
     imports: tuple[str, ...] = ()
     entry_prefixes: tuple[str, ...] = ()
+    constants: tuple[bytes, ...] = ()
+    min_constants: int = 1
     rich_header: bool = False
     executable_entropy: float | None = None
     exclude_formats: tuple[str, ...] = ()
@@ -260,6 +274,39 @@ SIGNATURES: tuple[FileSignature, ...] = (
         CONFIDENCE_LOW,
         SignatureMatch(executable_entropy=HIGH_ENTROPY_THRESHOLD),
     ),
+    FileSignature(
+        "BoxedApp",
+        CATEGORY_PACKER,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"BoxedApp", r"bxilmerge", r"BxILMerge")),
+    ),
+    FileSignature(
+        "Paranoiac-RAT-family",
+        CATEGORY_PACKER,
+        CONFIDENCE_LOW,
+        SignatureMatch(
+            constants=(
+                bytes.fromhex("EA45F620"),
+                bytes.fromhex("C2CA997F"),
+                bytes.fromhex("97938F8B"),
+                bytes.fromhex("4BCC8C47"),
+            ),
+            min_constants=3,
+        ),
+    ),
+    FileSignature(
+        "NeTiS-Gafgyt-family",
+        CATEGORY_PACKER,
+        CONFIDENCE_LOW,
+        SignatureMatch(
+            constants=(
+                bytes.fromhex("730B6F0B"),
+                bytes.fromhex("C073"),
+                bytes.fromhex("C2D2536D3F917E4AD7652CB8E2449F1AF1C3AB8991725D3ED3A8B6C4961C2E7F"),
+            ),
+            min_constants=2,
+        ),
+    ),
     # ── Protectors ─────────────────────────────────────────────────────────
     FileSignature(
         "Themida/WinLicense",
@@ -299,7 +346,15 @@ SIGNATURES: tuple[FileSignature, ...] = (
         "NSIS",
         CATEGORY_INSTALLER,
         CONFIDENCE_LOW,
-        SignatureMatch(strings=_regex(r"Nullsoft", r"NSIS Error")),
+        SignatureMatch(
+            strings=_regex(
+                r"Nullsoft",
+                r"NSIS Error",
+                r"\$PLUGINSDIR",
+                r"\.onGUIInit",
+                r"InitPluginsDir",
+            )
+        ),
     ),
     FileSignature(
         "Inno Setup",
@@ -471,6 +526,44 @@ def _string_texts(evidence: dict[str, Any]) -> list[str]:
     return texts
 
 
+def _section_bytes(evidence: dict[str, Any]) -> bytes:
+    """The raw bytes under ``evidence["section_bytes"]``, or empty."""
+    raw = evidence.get("section_bytes")
+    return raw if isinstance(raw, bytes) else b""
+
+
+def read_section_bytes(path: Path, sections: Sequence[dict[str, Any]]) -> bytes:
+    """Read executable sections' raw bytes from *path*, bounded.
+
+    The section map comes from the engine's own pe-info payload and the bytes
+    are read from the file exactly where that map says they live; reportal
+    never parses a PE.  Only sections the map marks executable are read, each
+    capped at :data:`MAX_SECTION_BYTES`.  An unreadable file answers empty
+    rather than failing the scan.
+    """
+    chunks: list[bytes] = []
+    try:
+        with open(path, "rb") as handle:
+            for entry in sections:
+                if not isinstance(entry, dict) or not entry.get("execute"):
+                    continue
+                try:
+                    offset = int(entry.get("raw_offset") or 0)
+                    size = int(entry.get("raw_size") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if size <= 0:
+                    continue
+                try:
+                    handle.seek(offset)
+                    chunks.append(handle.read(min(size, MAX_SECTION_BYTES)))
+                except OSError:
+                    continue
+    except OSError:
+        return b""
+    return b"".join(chunks)
+
+
 def _import_dlls(evidence: dict[str, Any]) -> list[str]:
     """The distinct import DLL names the evidence carries, in order."""
     raw = evidence.get("imports")
@@ -546,6 +639,7 @@ def _signals(
     entropies: dict[str, float],
     executable: Sequence[str],
     format_name: str | None,
+    section_bytes: bytes = b"",
 ) -> list[dict[str, str]]:
     """The signals *signature* fires over one evidence set, deduplicated."""
     match = signature.match
@@ -571,6 +665,11 @@ def _signals(
                 break
     if match.rich_header and rich_present:
         signals.append(_signal(SIGNAL_RICH_HEADER, "present"))
+    if match.constants:
+        hits = [needle for needle in dict.fromkeys(match.constants) if needle in section_bytes]
+        if len(hits) >= match.min_constants:
+            for needle in hits:
+                signals.append(_signal(SIGNAL_CONSTANT, needle.hex()))
     if match.executable_entropy is not None:
         for name in executable:
             value = entropies.get(name)
@@ -617,6 +716,7 @@ def detect(evidence: dict[str, Any]) -> dict[str, Any]:
     entry_point = evidence.get("entry_point")
     rich_present = _rich_present(evidence)
     format_name = _format_name(evidence)
+    section_bytes = _section_bytes(evidence)
 
     found: dict[tuple[str, str], dict[str, Any]] = {}
     for signature in SIGNATURES:
@@ -631,6 +731,7 @@ def detect(evidence: dict[str, Any]) -> dict[str, Any]:
             entropies=entropies,
             executable=executable,
             format_name=format_name,
+            section_bytes=section_bytes,
         )
         if not signals:
             continue
@@ -709,6 +810,7 @@ def gather_evidence(io: FiletypeIO, path: Path) -> tuple[dict[str, Any], list[st
         "strings": [],
         "rich_header": None,
         "entry_bytes": None,
+        "section_bytes": b"",
     }
     notes: list[str] = []
     failures: list[engines.EngineError] = []
@@ -724,6 +826,7 @@ def gather_evidence(io: FiletypeIO, path: Path) -> tuple[dict[str, Any], list[st
         evidence["entry_point"] = info.get("entry_point")
         evidence["entry_bytes"] = info.get("entry_bytes")
         evidence["rich_header"] = info.get("rich_header")
+        evidence["section_bytes"] = read_section_bytes(path, evidence["sections"])
 
     try:
         fingerprint = io.fingerprint(path)

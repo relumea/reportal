@@ -27,21 +27,20 @@ import {
   StatusCell,
   UNAVAILABLE,
 } from "../components";
-import { isMatchedStatus, statusEntity } from "../design";
+import { statusEntity } from "../design";
 import { useChangedIds } from "../live";
 import type {
   AutoRun,
   AutoTask,
   BinaryListRow,
-  FunctionRow,
+  FunctionRollup,
   Health,
   StatsSeries,
   StatsSeriesDay,
   JournalEntry,
   JournalList,
-  PeInfo,
-  PeSection,
   ReportScan,
+  SectionCoverage,
 } from "../types";
 import { useAsync } from "../useAsync";
 
@@ -100,12 +99,12 @@ const QUICK_LINKS: ReadonlyArray<{ href: string; label: string }> = [
 
 interface BinarySummary {
   binary: BinaryListRow;
-  /** Function rows, or null when the request failed. */
-  functions: FunctionRow[] | null;
+  /** Function totals and per-status counts, or null when the request failed. */
+  rollup: FunctionRollup | null;
   /** Latest auto run, or null when the binary has none. */
   auto: AutoRun | null;
-  /** Stored PE metadata, or null when it was not fetched or is not stored. */
-  pe: PeInfo | null;
+  /** Stored per-section byte coverage, or null when it was not fetched. */
+  coverage: SectionCoverage | null;
   /** Matched byte share from the stored report, or null when there is none. */
   byteCoverage: number | null;
 }
@@ -117,18 +116,9 @@ interface SectionMeter {
   size: number;
 }
 
-function matchedCount(functions: FunctionRow[] | null): number | null {
-  if (!functions) return null;
-  return functions.filter((row) => isMatchedStatus(row.status)).length;
-}
-
-function statusChips(functions: FunctionRow[] | null): Array<[string, number]> {
-  if (!functions || functions.length === 0) return [];
-  const counts = new Map<string, number>();
-  for (const row of functions) {
-    const status = row.status || "unknown";
-    counts.set(status, (counts.get(status) ?? 0) + 1);
-  }
+function statusChips(rollup: FunctionRollup | null): Array<[string, number]> {
+  if (!rollup) return [];
+  const counts = new Map(Object.entries(rollup.by_status));
   const ordered = STATUS_ORDER.filter((status) => counts.has(status));
   const rest = [...counts.keys()].filter((status) => !STATUS_ORDER.includes(status)).sort();
   return [...ordered, ...rest].map((status) => [status, counts.get(status) ?? 0]);
@@ -166,37 +156,37 @@ function taskProgress(run: AutoRun): { done: number; total: number; ratio: numbe
   return { done, total: tasks.length, ratio: tasks.length ? done / tasks.length : null };
 }
 
-/** Matched function bytes inside each section, from VAs and the stored layout. */
+/**
+ * Matched function bytes inside each section.
+ *
+ * The server already derives this over the same stored rows, and its union of
+ * function extents does not double count a section two functions overlap in,
+ * which the per-row sum here used to. The view reads the answer instead of
+ * recomputing it from the whole function table.
+ */
 function sectionMeters(summary: BinarySummary): SectionMeter[] | null {
-  const sections: PeSection[] | undefined = summary.pe?.sections;
-  const base = summary.pe?.image_base;
-  if (!sections || sections.length === 0 || typeof base !== "number" || !summary.functions) {
-    return null;
-  }
+  const sections = summary.coverage?.sections;
+  if (!sections || sections.length === 0) return null;
   return sections
-    .filter((section) => section.virtual_size > 0)
-    .map((section) => {
-      const start = base + section.virtual_address;
-      const end = start + section.virtual_size;
-      let covered = 0;
-      for (const row of summary.functions ?? []) {
-        if (isMatchedStatus(row.status) && row.va >= start && row.va < end) covered += row.size;
-      }
-      return {
-        name: section.name,
-        ratio: Math.min(1, covered / section.virtual_size),
-        covered,
-        size: section.virtual_size,
-      };
-    });
+    .filter((section) => section.size > 0)
+    .map((section) => ({
+      name: section.name,
+      ratio: Math.min(1, section.covered / section.size),
+      covered: section.covered,
+      size: section.size,
+    }));
 }
 
 async function summarize(binary: BinaryListRow, withSections: boolean): Promise<BinarySummary> {
-  const [functions, auto, pe, report] = await Promise.all([
-    api<{ functions: FunctionRow[] }>(`/binaries/${binary.id}/functions`).catch(() => null),
+  // Counts and coverage are both derived server-side over the same stored rows,
+  // so this reads two small answers instead of the binary's whole function
+  // table. A 5,000-function binary used to put ~874 KB on the landing path per
+  // binary, for three numbers and a set of section meters.
+  const [rollup, auto, coverage, report] = await Promise.all([
+    api<FunctionRollup>(`/binaries/${binary.id}/function-rollup`).catch(() => null),
     api<AutoRun>(`/binaries/${binary.id}/auto`).catch(() => null),
     withSections
-      ? api<PeInfo>(`/binaries/${binary.id}/pe-info`).catch(() => null)
+      ? api<SectionCoverage>(`/binaries/${binary.id}/section-coverage`).catch(() => null)
       : Promise.resolve(null),
     withSections
       ? api<ReportScan>(`/binaries/${binary.id}/report`).catch(() => null)
@@ -205,9 +195,9 @@ async function summarize(binary: BinaryListRow, withSections: boolean): Promise<
   const byteCoverage = report?.summary?.byte_coverage_pct;
   return {
     binary,
-    functions: functions ? functions.functions : null,
+    rollup,
     auto,
-    pe,
+    coverage,
     byteCoverage: typeof byteCoverage === "number" ? byteCoverage / 100 : null,
   };
 }
@@ -219,9 +209,9 @@ function loadSummaries(binaries: BinaryListRow[]): Promise<BinarySummary[]> {
         ? summarize(binary, index < SECTION_CAP)
         : Promise.resolve({
             binary,
-            functions: null,
+            rollup: null,
             auto: null,
-            pe: null,
+            coverage: null,
             byteCoverage: null,
           }),
     ),
@@ -273,9 +263,9 @@ function BinaryRow({
   summary: BinarySummary;
   flashing: boolean;
 }): ReactNode {
-  const matched = matchedCount(summary.functions);
-  const total = summary.functions ? summary.functions.length : null;
-  const counts = statusChips(summary.functions);
+  const matched = summary.rollup?.matched ?? null;
+  const total = summary.rollup?.total ?? null;
+  const counts = statusChips(summary.rollup);
   const chips = counts.slice(0, STATUS_CHIPS);
   const extra = counts.length - chips.length;
   return (
@@ -669,15 +659,18 @@ export function DashboardView(): ReactNode {
     runningId !== null,
     (data) => (stillRunning(data?.status) ? RUN_POLL_MS : false),
   );
-  const liveFunctions = useAsync(
-    () => api<{ functions: FunctionRow[] }>(`/binaries/${runningId}/functions`),
+  // The run's coverage moves while it works, so this is the one polled read.
+  // It is the rollup, not the function table: the same three numbers at a
+  // fraction of the bytes, on a 4-second interval.
+  const liveRollup = useAsync(
+    () => api<FunctionRollup>(`/binaries/${runningId}/function-rollup`),
     [runningId],
     runningId !== null,
     (data) => (data !== undefined && stillRunning(liveRun.data?.status) ? COVERAGE_POLL_MS : false),
   );
   const runIsRunning =
     runningId !== null && (liveRun.data === undefined || liveRun.data.status === "running");
-  useCoverageSettle(runIsRunning, liveFunctions.reload);
+  useCoverageSettle(runIsRunning, liveRollup.reload);
 
   const series = useAsync(
     () => api<StatsSeries>(`/stats/series?days=${SERIES_DAYS}`),
@@ -695,7 +688,7 @@ export function DashboardView(): ReactNode {
         return {
           ...entry,
           auto: liveRun.data ?? entry.auto,
-          functions: liveFunctions.data?.functions ?? entry.functions,
+          rollup: liveRollup.data ?? entry.rollup,
         };
       })
     : null;
@@ -707,7 +700,7 @@ export function DashboardView(): ReactNode {
   const changedBinaries = useChangedIds(
     (summaryRows ?? []).map((entry) => [
       `binary-${entry.binary.id}`,
-      `${matchedCount(entry.functions)}:${entry.auto?.status ?? ""}:${entry.auto?.matched ?? ""}`,
+      `${entry.rollup?.matched ?? NA}:${entry.auto?.status ?? ""}:${entry.auto?.matched ?? ""}`,
     ]),
     summaryRows !== null,
   );
@@ -729,7 +722,7 @@ export function DashboardView(): ReactNode {
         "focus",
         focus === null
           ? ""
-          : `${focus.binary.id}:${focus.byteCoverage ?? NA}:${matchedCount(focus.functions) ?? NA}`,
+          : `${focus.binary.id}:${focus.byteCoverage ?? NA}:${focus.rollup?.matched ?? NA}`,
       ],
     ],
     focus !== null,

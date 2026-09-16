@@ -2746,6 +2746,19 @@ export interface FunctionReferences {
   count_note: string;
 }
 
+/**
+ * `GET /api/binaries/<id>/function-rollup`: the totals a summary shows.
+ *
+ * Counted in SQLite, so a view that wants the numbers never reads the rows.
+ */
+export interface FunctionRollup {
+  binary_id: number;
+  total: number;
+  matched: number;
+  /** Count per stored status, ordered by descending count. */
+  by_status: Record<string, number>;
+}
+
 /** One row of `GET /api/binaries/<id>/section-coverage`. */
 export interface SectionCoverageRow {
   name: string;

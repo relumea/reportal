@@ -279,6 +279,21 @@ def get_tool(name: str) -> Tool | None:
     return next((tool for tool in tools() if tool.name == name), None)
 
 
+def unregister_tool(name: str) -> None:
+    """Withdraw the tool registered as *name*.
+
+    Raises :class:`RegistryError` for a name nothing holds.  Withdrawing a
+    built-in lasts until the next :func:`refresh_tools`, which re-declares
+    the in-tree set; withdrawing a third-party entry lasts until its entry
+    point is re-scanned.
+    """
+    _ensure_builtins()
+    _ensure_entry_points()
+    if name not in _REGISTRY:
+        raise RegistryError(f"no tool registration {name!r} to withdraw")
+    del _REGISTRY[name]
+
+
 def refresh_tools() -> tuple[Tool, ...]:
     """Discard discovered tools and re-run discovery.
 
@@ -350,6 +365,14 @@ def _stored_scan(
         "no-scan",
         f"no {kind} scan for binary {binary_id}; call the {run_tool} tool first",
     )
+
+
+def _tool_stored_scan(arguments: dict[str, Any], kind: str, run_tool: str) -> dict[str, Any]:
+    """Serve one stored scan by id: the shape behind every ``get_*`` scan tool."""
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        return _stored_scan(conn, binary_id, kind, run_tool)
 
 
 def _ai_artifact(
@@ -451,36 +474,39 @@ def _store_ai_artifact(function_id: int, kind: str) -> dict[str, Any]:
 # ── Argument helpers ───────────────────────────────────────────────
 
 
-def _arg_int(arguments: dict[str, Any], key: str) -> int:
-    value = arguments.get(key)
+def _check_int(key: str, value: Any) -> int:
+    """*value* as an int argument, or the tool error naming *key*."""
     if isinstance(value, bool) or not isinstance(value, int):
         raise ToolError("invalid params", f"{key} must be an integer")
     return value
 
 
-def _arg_str(arguments: dict[str, Any], key: str) -> str:
-    value = arguments.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise ToolError("invalid params", f"{key} must be a non-empty string")
+def _check_str(key: str, value: Any, *, nonempty: bool) -> str:
+    """*value* as a string argument, or the tool error naming *key*."""
+    if not isinstance(value, str) or (nonempty and not value.strip()):
+        need = "a non-empty string" if nonempty else "a string"
+        raise ToolError("invalid params", f"{key} must be {need}")
     return value
+
+
+def _arg_int(arguments: dict[str, Any], key: str) -> int:
+    return _check_int(key, arguments.get(key))
+
+
+def _arg_str(arguments: dict[str, Any], key: str) -> str:
+    return _check_str(key, arguments.get(key), nonempty=True)
 
 
 def _arg_optional_int(arguments: dict[str, Any], key: str, default: int) -> int:
     if key not in arguments or arguments[key] is None:
         return default
-    value = arguments[key]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ToolError("invalid params", f"{key} must be an integer")
-    return value
+    return _check_int(key, arguments[key])
 
 
 def _arg_optional_str(arguments: dict[str, Any], key: str, default: str = "") -> str:
     if key not in arguments or arguments[key] is None:
         return default
-    value = arguments[key]
-    if not isinstance(value, str):
-        raise ToolError("invalid params", f"{key} must be a string")
-    return value
+    return _check_str(key, arguments[key], nonempty=False)
 
 
 def _arg_optional_address(arguments: dict[str, Any], key: str) -> int | None:
@@ -570,7 +596,7 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
         rows = store.list_binaries(
             conn, search=search or None, tag=tag or None, fmt=fmt or None, order=order
         )
-        total = len(store.list_binaries(conn))
+        total = store.count_binaries(conn)
         formats = store.binary_filter_values(conn)["formats"]
     return {
         "binaries": rows,
@@ -667,17 +693,11 @@ def _tool_get_triage(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_function_triage(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_FUNCTION_TRIAGE, "run_function_triage")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_FUNCTION_TRIAGE, "run_function_triage")
 
 
 def _tool_get_report(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_REPORT, "run_report")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_REPORT, "run_report")
 
 
 def _pdf_path(binary_id: int) -> Path:
@@ -725,10 +745,7 @@ def _tool_generate_pdf_report(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_structs(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_STRUCTS, "run_structs")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_STRUCTS, "run_structs")
 
 
 def _tool_list_data_types(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1499,31 +1516,19 @@ def _tool_export_signatures(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_crypto_scan(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_CRYPTO, "run_crypto_scan")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_CRYPTO, "run_crypto_scan")
 
 
 def _tool_get_pe_info(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_PE_INFO, "run_pe_info")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_PE_INFO, "run_pe_info")
 
 
 def _tool_get_filetype(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_FILETYPE, "run_filetype")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_FILETYPE, "run_filetype")
 
 
 def _tool_get_security_scan(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_SECURITY, "run_security_scan")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_SECURITY, "run_security_scan")
 
 
 def _tool_get_exploitability(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1540,24 +1545,15 @@ def _tool_get_exploitability(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_capabilities(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_CAPABILITIES, "run_capabilities")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_CAPABILITIES, "run_capabilities")
 
 
 def _tool_get_secrets_scan(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_SECRETS, "run_secrets_scan")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_SECRETS, "run_secrets_scan")
 
 
 def _tool_get_protocols_scan(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_PROTOCOLS, "run_protocols_scan")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_PROTOCOLS, "run_protocols_scan")
 
 
 def _tool_get_threat_report(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1569,10 +1565,7 @@ def _tool_get_threat_report(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_remediation(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_REMEDIATION, "run_remediation")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_REMEDIATION, "run_remediation")
 
 
 def _behavior_domain(arguments: dict[str, Any]) -> str | None:
@@ -1632,10 +1625,7 @@ def _tool_get_hardening_scan(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_unstrip(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_UNSTRIP, "run_unstrip")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_UNSTRIP, "run_unstrip")
 
 
 def _tool_get_matches(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1666,17 +1656,11 @@ def _tool_get_lineage(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_related_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_RELATED, "run_related_binaries")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_RELATED, "run_related_binaries")
 
 
 def _tool_get_composition(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_COMPOSITION, "run_composition")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_COMPOSITION, "run_composition")
 
 
 def _tool_run_composition(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2269,10 +2253,7 @@ def _tool_run_filetype(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_gobuildinfo(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, gobuildinfo.SCAN_KIND, "run_gobuildinfo")
+    return _tool_stored_scan(arguments, gobuildinfo.SCAN_KIND, "run_gobuildinfo")
 
 
 def _tool_run_gobuildinfo(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5538,10 +5519,7 @@ def _tool_list_families(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_get_detect_scan(arguments: dict[str, Any]) -> dict[str, Any]:
-    binary_id = _arg_int(arguments, "binary_id")
-    with contextlib.closing(_open()) as conn:
-        _require_binary(conn, binary_id)
-        return _stored_scan(conn, binary_id, store.SCAN_KIND_DETECT, "run_detect")
+    return _tool_stored_scan(arguments, store.SCAN_KIND_DETECT, "run_detect")
 
 
 def _tool_register_family(arguments: dict[str, Any]) -> dict[str, Any]:

@@ -396,7 +396,7 @@ def list_binaries(request: Request) -> Response:
             order=order,
             visible_to=_caller(request),
         )
-        total = len(store.list_binaries(conn, visible_to=_caller(request)))
+        total = store.count_binaries(conn, visible_to=_caller(request))
         formats = store.binary_filter_values(conn)["formats"]
     return json_response(
         {
@@ -1254,10 +1254,7 @@ def firmware_scan(binary_id: int) -> Response:
 def firmware_regions(binary_id: int) -> Response:
     """The stored carve pass of a binary; 404 `no-scan` before the first run."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         payload = firmware.regions(conn, binary_id)
     if payload is None:
         return json_error(
@@ -1405,7 +1402,24 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     of :data:`reportal.store.FUNCTION_ORDERS`).  An unknown value is a 400.
     ``total`` counts the binary's functions before filtering, so a reader can
     tell a filter from a small binary.
+
+    ``limit`` (bounded by :data:`reportal.store.MAX_FUNCTION_LIMIT`) and
+    ``offset`` page the result, and ``matched`` reports how many rows the
+    filters kept before the page was cut, so a client can tell a page from the
+    whole answer.  The page is applied last, after the two filters this handler
+    evaluates in Python (``name_source`` and ``capability``), so paging never
+    drops a row a filter would have kept.
     """
+    limit = _query_int(request, "limit")
+    if limit is not None and not 1 <= limit <= store.MAX_FUNCTION_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {store.MAX_FUNCTION_LIMIT}",
+        )
+    offset = _query_int(request, "offset") or 0
+    if offset < 0:
+        return json_error(400, error="invalid offset", detail="offset must not be negative")
     min_size = _query_int(request, "min_size")
     max_size = _query_int(request, "max_size")
     for bound_name, bound in (("min_size", min_size), ("max_size", max_size)):
@@ -1439,11 +1453,14 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     if strings_error is not None:
         return strings_error
     regex = _query_flag(request, "regex")
+    # The page goes to SQLite only when every filter is expressible there.  The
+    # three this handler evaluates in Python (`refers_to`, `name_source`,
+    # `capability`) each drop rows after the query, so a LIMIT pushed past them
+    # would cut the page before they had a say; those requests read the matches
+    # and are paged in Python below.
+    post_filtered = refers_to is not None or name_source is not None or capability is not None
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         try:
             functions = store.list_functions(
                 conn,
@@ -1457,10 +1474,30 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
                 va=va,
                 sort=sort,
                 order=order,
+                limit=None if post_filtered else limit,
+                offset=0 if post_filtered else offset,
             )
         except store.SearchError as exc:
             return json_error(400, error=exc.code, detail=exc.detail)
         total = store.count_functions(conn, binary_id=binary_id)
+        # A SQL-paged request never holds every matching row, so its match count
+        # is counted rather than measured off the page.  A post-filtered one is
+        # counted below, after the Python filters have had their say.
+        matched = (
+            len(functions)
+            if post_filtered
+            else store.count_matching_functions(
+                conn,
+                binary_id=binary_id,
+                min_size=min_size,
+                max_size=max_size,
+                strings=strings,
+                regex=regex,
+                match=match,
+                name=name,
+                va=va,
+            )
+        )
         referrers: set[int] | None = None
         if refers_to is not None:
             project_dir = _project_context(conn, binary_id)
@@ -1481,7 +1518,32 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
         functions = [row for row in functions if label(row) == name_source]
     if capability is not None:
         functions = [row for row in functions if capability in _function_capabilities(row)]
-    return json_response({"functions": functions, "count": len(functions), "total": total})
+    if post_filtered:
+        matched = len(functions)
+        if limit is not None or offset:
+            end = None if limit is None else offset + limit
+            functions = functions[offset:end]
+    return json_response(
+        {
+            "functions": functions,
+            "count": len(functions),
+            "matched": matched,
+            "total": total,
+        }
+    )
+
+
+@router.get("/api/binaries/{binary_id}/function-rollup")
+def get_binary_function_rollup(binary_id: int) -> Response:
+    """A binary's function totals and per-status breakdown, counted in SQLite.
+
+    Stored-only and derived: the same three numbers a caller used to compute by
+    reading the binary's whole function table, which is what a summary view
+    wants and what makes that read unnecessary.
+    """
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        return json_response(store.function_rollup(conn, binary_id))
 
 
 # ── Engine routes ──────────────────────────────────────────────────
@@ -1491,10 +1553,7 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
 def get_binary_fingerprint(binary_id: int) -> Response:
     """Stored fingerprint when one exists, else a live compute that is not stored."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = store.get_fingerprint(conn, binary_id)
         if stored is not None:
             return json_response(stored)
@@ -1614,10 +1673,7 @@ def match_binary(
     except matching.InvalidSettingsError as exc:
         return json_error(400, error=exc.error, detail=exc.detail)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         try:
             matching.resolve_scope(conn, settings, visible_to=_caller(request))
         except matching.InvalidSettingsError as exc:
@@ -1664,10 +1720,7 @@ def binary_matches(binary_id: int) -> Response:
     outside a match run, and ``notes`` repeats the scope's caveats.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         rows = matching.binary_match_rows(conn, binary_id)
     settings = rows[0]["settings"] if rows else None
     if settings is None:
@@ -1721,10 +1774,7 @@ def transfer_binary_matches(
     dry_run = _optional_bool(body, "dry_run", False)
     actor = _optional_str(body, "actor", "api")
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             report = matching.transfer_matches(
@@ -1844,10 +1894,7 @@ def get_binary_triage(binary_id: int) -> Response:
     what the engine returned.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_TRIAGE)
@@ -1860,10 +1907,7 @@ def get_binary_triage(binary_id: int) -> Response:
 def store_binary_report(binary_id: int) -> Response:
     """Run the engine's report into the workspace report directory and store the result."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         project_dir = _project_context(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -1877,10 +1921,7 @@ def store_binary_report(binary_id: int) -> Response:
 def get_binary_report(binary_id: int) -> Response:
     """Stored report result; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_REPORT)
@@ -1898,10 +1939,7 @@ def generate_binary_report_pdf(binary_id: int) -> Response:
     ``POST /api/jobs`` to queue it instead of waiting for it.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         result = jobs.render_pdf(conn, binary_id, {})
     return json_response(
         {
@@ -1925,10 +1963,7 @@ def get_binary_report_pdf_status(binary_id: int) -> Response:
     ``GET /api/jobs/<id>``.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         job = jobs.latest_job(conn, kind="report-pdf", binary_id=binary_id)
     target = reports_dir(binary_id) / pdf.REPORT_PDF_NAME
     exists = target.is_file()
@@ -1954,10 +1989,7 @@ def get_binary_report_pdf_status(binary_id: int) -> Response:
 def get_binary_report_pdf(binary_id: int) -> Response:
     """Serve the generated PDF report; a binary without one is a 404 no-pdf."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
     target = reports_dir(binary_id) / pdf.REPORT_PDF_NAME
     if not target.is_file():
         return json_error(
@@ -1989,10 +2021,7 @@ def store_binary_structs(binary_id: int, body: dict[str, Any] = Depends(json_bod
     if limit < 0:
         return json_error(400, error="invalid limit", detail=f"limit must not be negative: {limit}")
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         project_dir = _project_context(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -2013,10 +2042,7 @@ def store_binary_structs(binary_id: int, body: dict[str, Any] = Depends(json_bod
 def get_binary_structs(binary_id: int) -> Response:
     """Stored struct recovery; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_STRUCTS)
@@ -2078,28 +2104,25 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
     states as zero (an unknown one) sorts last in either direction.  An unknown
     value of any of the four is a 400.
     """
-    kind = (request.query_params.get("kind") or "").strip()
+    kind = _query_text(request, "kind") or ""
     if kind:
         try:
             kind = data_types.validate_kind(kind)
         except data_types.InvalidKindError as exc:
             return _data_type_failure(exc)
-    namespace = (request.query_params.get("namespace") or "").strip()
-    search = (request.query_params.get("search") or "").strip()
-    source = (request.query_params.get("source") or "").strip()
+    namespace = _query_text(request, "namespace") or ""
+    search = _query_text(request, "search") or ""
+    source = _query_text(request, "source") or ""
     if source and source not in data_types.SOURCE_LABELS:
         return _invalid_query("source", source, data_types.SOURCE_LABELS)
-    sort = (request.query_params.get("sort") or data_types.DEFAULT_TYPE_SORT).strip()
+    sort = _query_text(request, "sort") or data_types.DEFAULT_TYPE_SORT
     if sort not in data_types.TYPE_SORTS:
         return _invalid_query("sort", sort, data_types.TYPE_SORTS)
-    direction = (request.query_params.get("direction") or data_types.DEFAULT_SORT_DIRECTION).strip()
+    direction = _query_text(request, "direction") or data_types.DEFAULT_SORT_DIRECTION
     if direction not in data_types.SORT_DIRECTIONS:
         return _invalid_query("direction", direction, data_types.SORT_DIRECTIONS)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         types = data_types.list_types(conn, binary_id=binary_id)
     selected = data_types.sort_types(
         data_types.filter_types(
@@ -2711,10 +2734,7 @@ def _optional_signature_bits(value: Any) -> int | None:
 def list_binary_signatures(binary_id: int) -> Response:
     """The binary's parsed function signatures, ordered by name."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         model = signatures.list_signatures(conn, binary_id=binary_id)
     return json_response({"binary_id": binary_id, "count": len(model), "signatures": model})
 
@@ -3089,10 +3109,7 @@ def store_binary_crypto_scan(binary_id: int) -> Response:
 def get_binary_crypto_scan(binary_id: int) -> Response:
     """Stored crypto scan; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_CRYPTO)
@@ -3117,10 +3134,7 @@ def store_binary_pe_info(binary_id: int) -> Response:
 def get_binary_pe_info(binary_id: int) -> Response:
     """Stored PE metadata; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_PE_INFO)
@@ -3139,10 +3153,7 @@ def get_binary_section_coverage(binary_id: int) -> Response:
     `null` percentages and a note, never a fabricated 0%.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         coverage = store.section_byte_coverage(conn, binary_id)
     if coverage is None:
         return _no_scan(binary_id, "pe-info")
@@ -3188,7 +3199,7 @@ def _query_address_kind(
     request: Request,
 ) -> str:
     """Return the `kind` query parameter, defaulting to an absolute VA."""
-    kind = (request.query_params.get("kind") or engines.MEMORY_ADDRESS_KIND_VA).strip()
+    kind = _query_text(request, "kind") or engines.MEMORY_ADDRESS_KIND_VA
     if kind not in engines.MEMORY_ADDRESS_KINDS:
         raise json_error(
             400,
@@ -3326,10 +3337,7 @@ def store_binary_capabilities(binary_id: int) -> Response:
 def get_binary_capabilities(binary_id: int) -> Response:
     """Stored capability scan; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_CAPABILITIES)
@@ -3351,10 +3359,7 @@ def store_binary_security_scan(
             detail=f"unsupported security severity: {min_severity}",
         )
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         project_dir = _project_context(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -3375,10 +3380,7 @@ def store_binary_security_scan(
 def get_binary_security_scan(binary_id: int) -> Response:
     """Stored security scan; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_SECURITY)
@@ -3399,10 +3401,7 @@ def get_binary_exploitability(binary_id: int) -> Response:
     stored security scan.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         try:
             payload = exploitability.rank(conn, binary_id)
         except KeyError as exc:
@@ -3452,10 +3451,7 @@ def get_binary_threat(binary_id: int) -> Response:
     engine-independent payload `reportal threat` wrote.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_THREAT)
@@ -3513,10 +3509,7 @@ def _no_remediation_scan(binary_id: int) -> Response:
 def get_binary_remediation(binary_id: int) -> Response:
     """Stored remediation rule; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = _stored_remediation(conn, binary_id)
     if stored is not None:
         return json_response(stored)
@@ -3553,10 +3546,7 @@ def get_binary_remediation_artifact(binary_id: int, fmt: str) -> Response:
             ),
         )
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = _stored_remediation(conn, binary_id)
         if stored is None:
             return _no_remediation_scan(binary_id)
@@ -3629,10 +3619,7 @@ def store_binary_behavior(binary_id: int, domain: str) -> Response:
 def get_binary_behavior(binary_id: int) -> Response:
     """All three stored behavior scans of a binary, null where one is absent."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         payload: dict[str, Any] = {
             domain: _stored_behavior(conn, binary_id, domain)
             for domain in behavior.BEHAVIOR_DOMAINS
@@ -3647,10 +3634,7 @@ def get_binary_behavior_domain(binary_id: int, domain: str) -> Response:
     if error is not None:
         return error
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = _stored_behavior(conn, binary_id, domain)
         if stored is not None:
             return json_response(stored)
@@ -3719,10 +3703,7 @@ def store_binary_hardening(binary_id: int, domain: str) -> Response:
 def get_binary_hardening(binary_id: int) -> Response:
     """Both stored hardening scans of a binary, null where one is absent."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         payload: dict[str, Any] = {
             domain: _stored_hardening(conn, binary_id, domain)
             for domain in hardening.HARDENING_DOMAINS
@@ -3737,10 +3718,7 @@ def get_binary_hardening_domain(binary_id: int, domain: str) -> Response:
     if error is not None:
         return error
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = _stored_hardening(conn, binary_id, domain)
         if stored is not None:
             return json_response(stored)
@@ -3788,10 +3766,7 @@ def store_binary_secrets(binary_id: int) -> Response:
 def get_binary_secrets(binary_id: int) -> Response:
     """Stored secrets scan; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_SECRETS)
@@ -3833,10 +3808,7 @@ def store_binary_protocols(binary_id: int) -> Response:
 def get_binary_protocols(binary_id: int) -> Response:
     """Stored protocols scan; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_PROTOCOLS)
@@ -3883,10 +3855,7 @@ def store_binary_function_triage(
     function_ids = _optional_int_list(body, "function_ids")
     limit = _optional_int(body, "limit", function_triage.DEFAULT_LIMIT)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             result = journal.journaled_scan(
@@ -3905,10 +3874,7 @@ def store_binary_function_triage(
 def get_binary_function_triage(binary_id: int) -> Response:
     """Stored per-function triage; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = function_triage.stored_function_triage(conn, binary_id=binary_id)
         if stored is not None:
             return json_response(stored)
@@ -3930,10 +3896,7 @@ def store_binary_library(
     """
     min_confidence = _optional_number(body, "min_confidence", library.DEFAULT_MIN_CONFIDENCE)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         _project_context(conn, binary_id)
         engine = _engine()
         action = journal.new_action()
@@ -4043,10 +4006,7 @@ def store_binary_unstrip(
     """Identify a binary's library functions and store the rename proposals."""
     min_confidence = _optional_number(body, "min_confidence", unstrip.DEFAULT_MIN_CONFIDENCE)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         _project_context(conn, binary_id)
         engine = _engine()
         action = journal.new_action()
@@ -4070,10 +4030,7 @@ def store_binary_unstrip(
 def get_binary_unstrip(binary_id: int) -> Response:
     """Stored unstrip proposals; a binary without any is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_UNSTRIP)
@@ -4092,10 +4049,7 @@ def apply_binary_unstrip(
     if override is not None and not isinstance(override, str):
         return json_error(400, error="name must be a string")
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
@@ -4254,10 +4208,7 @@ def store_binary_lineage(
     other_binary_id = _lineage_other_id(body)
     refine = _optional_bool(body, "refine", True)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         if not _visible_binary(conn, other_binary_id, _caller(request)):
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {other_binary_id}"
@@ -4308,10 +4259,7 @@ def get_binary_lineage(request: Request, binary_id: int) -> Response:
     else:
         other_binary_id = None
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         if other_binary_id is None:
             return json_response(
                 {
@@ -4356,10 +4304,7 @@ def list_binary_scans(binary_id: int) -> Response:
     guessed one, and a binary with no analysis answers an empty list.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         scans = [] if analysis_id is None else store.list_scans(conn, analysis_id)
     return json_response(
@@ -4500,10 +4445,7 @@ def store_binary_detect(binary_id: int) -> Response:
 def get_binary_detect(binary_id: int) -> Response:
     """Stored family detection; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = families.stored_detection(conn, binary_id)
         if stored is not None:
             return json_response(stored)
@@ -4521,10 +4463,7 @@ def store_binary_related(
     limit = _optional_int(body, "limit", related.DEFAULT_LIMIT)
     include_unrelated = _optional_bool(body, "include_unrelated", False)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
@@ -4555,10 +4494,7 @@ def store_binary_related(
 def get_binary_related(binary_id: int) -> Response:
     """Stored relationship ranking; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = related.stored_related(conn, binary_id)
         if stored is not None:
             return json_response(stored)
@@ -4606,10 +4542,7 @@ def store_binary_composition(
 def get_binary_composition(binary_id: int) -> Response:
     """Stored composition analysis; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         stored = composition.stored_composition(conn, binary_id)
         if stored is not None:
             return json_response(stored)
@@ -4646,10 +4579,7 @@ def store_binary_filetype(binary_id: int) -> Response:
 def get_binary_filetype(binary_id: int) -> Response:
     """Stored file-type detection; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_FILETYPE)
@@ -4687,10 +4617,7 @@ def store_binary_gobuildinfo(binary_id: int) -> Response:
 def get_binary_gobuildinfo(binary_id: int) -> Response:
     """Stored Go build information; a binary without one is a 404 no-scan."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         if analysis_id is not None:
             stored = store.get_scan(conn, analysis_id, gobuildinfo.SCAN_KIND)
@@ -4711,10 +4638,7 @@ def get_binary_die_info(binary_id: int) -> Response:
     source stored is 404 `no-scan`.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         payload = details.die_info(conn, binary_id)
     if not payload["available"]:
         return _no_scan(binary_id, store.SCAN_KIND_FILETYPE, command="filetype")
@@ -4730,10 +4654,7 @@ def get_binary_additional_details(binary_id: int) -> Response:
     rather than run the engine.  404 `no-scan` without a stored ``pe-info``.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         if not details.source_present(conn, binary_id, store.SCAN_KIND_PE_INFO):
             return _no_scan(binary_id, store.SCAN_KIND_PE_INFO, command="pe-info")
         return json_response(details.additional_details(conn, binary_id))
@@ -4748,10 +4669,7 @@ def get_binary_additional_details_status(binary_id: int) -> Response:
     portal's asynchronous status route is for.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         return json_response(details.status(conn, binary_id))
 
 
@@ -4766,10 +4684,7 @@ def get_binary_attack_surface(binary_id: int) -> Response:
     that fills it in.  404 `no-scan` when no source scan is stored.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         try:
             payload = attack_surface.attack_surface(conn, binary_id)
         except KeyError as exc:
@@ -5036,8 +4951,7 @@ def apply_match(function_id: int, body: dict[str, Any] = Depends(json_body)) -> 
 @router.get("/api/functions/{function_id}/disasm")
 def function_disasm(request: Request, function_id: int) -> Response:
     """NASM or hex listing of one function through its rebrew project context."""
-    raw_format = request.query_params.get("format", "nasm")
-    fmt = raw_format if isinstance(raw_format, str) and raw_format.strip() else "nasm"
+    fmt = _query_text(request, "format") or "nasm"
     with contextlib.closing(_open()) as conn:
         function = store.get_function(conn, function_id)
         if function is None:
@@ -5227,12 +5141,7 @@ def _run_decompiler(project_dir: str, va: int, backend: str, named: bool) -> dic
 @router.get("/api/functions/{function_id}/decompilation")
 def function_decompilation(request: Request, function_id: int) -> Response:
     """Stored decompilation when one exists, else a live compute that is not stored."""
-    raw_backend = request.query_params.get("backend", engines.DEFAULT_DECOMPILER_BACKEND)
-    backend = (
-        raw_backend
-        if isinstance(raw_backend, str) and raw_backend.strip()
-        else engines.DEFAULT_DECOMPILER_BACKEND
-    )
+    backend = _query_text(request, "backend") or engines.DEFAULT_DECOMPILER_BACKEND
     named = _query_bool(request, "named", False)
     with contextlib.closing(_open()) as conn:
         function = store.get_function(conn, function_id)
@@ -5324,8 +5233,7 @@ def function_diff(request: Request, function_id: int, candidate_id: int | None =
     ``no-match`` when it has none); with one, the pair must be a recorded match
     for the source function (400 ``no-such-match``), mirroring apply-match.
     """
-    raw_kind = request.query_params.get("kind", diffview.DEFAULT_KIND)
-    kind = raw_kind if isinstance(raw_kind, str) and raw_kind.strip() else diffview.DEFAULT_KIND
+    kind = _query_text(request, "kind") or diffview.DEFAULT_KIND
     normalize = _query_bool(request, "normalize", diffview.DEFAULT_NORMALIZE)
     with contextlib.closing(_open()) as conn:
         if store.get_function(conn, function_id) is None:
@@ -6481,10 +6389,7 @@ def start_auto_run(binary_id: int, body: dict[str, Any] = Depends(optional_json_
     """
     params = _auto_params(body)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         functions = auto_mode.select_functions(conn, binary_id)
         run_id = auto_mode.create_auto_run(
             conn, binary_id=binary_id, params=params, functions=functions
@@ -6506,10 +6411,7 @@ def start_auto_run(binary_id: int, body: dict[str, Any] = Depends(optional_json_
 def get_binary_auto_run(binary_id: int) -> Response:
     """Latest auto run of a binary with its task tree; 404 no-run without one."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         run = auto_store.latest_auto_run(conn, binary_id)
         if run is None:
             return _no_auto_run(binary_id)
@@ -7098,10 +7000,7 @@ def list_binary_collections(request: Request, binary_id: int) -> Response:
     never discloses one it cannot.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         collections = store.collections_of_binary(conn, binary_id, visible_to=_caller(request))
     return json_response(
         {"binary_id": binary_id, "collections": collections, "count": len(collections)}
@@ -7469,10 +7368,7 @@ def delete_tag(tag_id: int) -> Response:
 @router.get("/api/binaries/{binary_id}/tags")
 def list_binary_tags(binary_id: int) -> Response:
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         tags = store.get_binary_tags(conn, binary_id)
     return json_response({"tags": tags})
 
@@ -7967,10 +7863,7 @@ def create_document(request: Request, body: dict[str, Any] = Depends(json_body))
 def list_binary_documents(binary_id: int) -> Response:
     """Documents scoped to one binary, newest last, without their text."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         documents = store.list_documents(
             conn, scope_kind=knowledge.SCOPE_KIND_BINARY, scope_id=binary_id
         )
@@ -8195,10 +8088,7 @@ def binary_knowledge(request: Request, binary_id: int) -> Response:
         request,
     )
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
     return _knowledge_hits(
         query, knowledge.SCOPE_KIND_BINARY, binary_id, visible_to=_caller(request)
     )
@@ -8223,10 +8113,7 @@ def _no_graph(binary_id: int) -> Response:
 def build_binary_graph(binary_id: int) -> Response:
     """Rebuild a binary's knowledge graph from the rows the store already holds."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             result = journal.journaled_graph_rebuild(
@@ -8252,10 +8139,7 @@ def get_binary_graph(request: Request, binary_id: int) -> Response:
         )
     include_documents = _query_bool(request, "include_documents", False)
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         if store.count_graph_nodes(conn, binary_id) == 0:
             return _no_graph(binary_id)
         payload = graph.graph_payload(
@@ -8316,10 +8200,7 @@ def sync_binary_graph(
         return json_error(400, error="invalid body", detail="backend must be a non-empty string")
     name = raw.strip() if isinstance(raw, str) else None
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         try:
             report = graph_backends.sync_graph(conn, binary_id=binary_id, backend_name=name)
         except graph_backends.UnknownBackendError as exc:
@@ -8390,10 +8271,7 @@ def list_artifact_ratings(binary_id: int) -> Response:
     not rated carries `rating: null`, so the two are distinguishable.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         payload = ratings.describe(conn, binary_id)
     return json_response(payload)
 
@@ -8402,10 +8280,7 @@ def list_artifact_ratings(binary_id: int) -> Response:
 def get_artifact_rating(binary_id: int, kind: str) -> Response:
     """One artifact's rating, whether or not a verdict is stored."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         try:
             ratings.require_artifact(conn, binary_id, kind)
         except ratings.RatingError as exc:
@@ -8425,10 +8300,7 @@ def set_artifact_rating(
     journaled, so a revert restores what was there.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
@@ -8750,10 +8622,7 @@ def _ingest_document(binary_id: int, upload: UploadFile, title: str) -> Response
             detail=f"{filename or 'upload'} is not a supported text format",
         )
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         data = _read_upload(upload, knowledge.MAX_DOCUMENT_BYTES)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -11806,10 +11675,7 @@ def run_binary_sandbox(
 def get_binary_sandbox(binary_id: int) -> Response:
     """The newest detonation report of a binary's newest analysis; 404 `no-run`."""
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         report = None if analysis_id is None else sandbox.latest_run(conn, analysis_id)
         status = sandbox.status_payload(conn, analysis_id or 0)
@@ -11831,10 +11697,7 @@ def get_binary_sandbox_status(binary_id: int) -> Response:
     binary with no analysis yet reports the install's opt-in state and no run.
     """
     with contextlib.closing(_open()) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
+        _require_binary(conn, binary_id)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         payload = sandbox.status_payload(conn, analysis_id or 0)
     return json_response({"binary_id": binary_id, **payload})

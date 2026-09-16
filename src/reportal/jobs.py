@@ -49,6 +49,7 @@ from reportal import (
     journal,
     matching,
     pdf,
+    pipeline,
     protocols,
     secrets,
     similarity,
@@ -171,6 +172,11 @@ def _domain_of(params: Mapping[str, Any], domains: tuple[str, ...], what: str) -
     return domain
 
 
+def _is_int(value: Any) -> bool:
+    """True for a real integer, false for a bool or a non-integer number."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _perform_match(
     conn: sqlite3.Connection,
     binary_id: int,
@@ -192,6 +198,36 @@ def _perform_match(
         binary_id=binary_id,
         settings=settings,
         engine=engines.get_engine(),
+        progress=progress,
+    )
+
+
+def _perform_enrich(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    params: Mapping[str, Any],
+    *,
+    progress: Callable[[int, int], None] | None = None,
+) -> dict[str, Any]:
+    """Run the AI enrichment chain over a binary's functions, one run each.
+
+    The whole-binary form of the per-function pipeline is a job rather than a
+    route: every function costs a model call per LLM stage, so the caller
+    queues it and polls instead of holding a request open for minutes.
+
+    Each function gets its own pipeline run, which is the batch's own design,
+    so one function failing leaves the rest intact and an analyst can revert
+    one function's artifacts without touching the others.  *progress* reports
+    the function count, the only granularity that exists: one function is
+    several model calls and none of them is interruptible.
+    """
+    raw_ids = params.get("function_ids")
+    function_ids = [int(value) for value in raw_ids] if isinstance(raw_ids, list) else None
+    return pipeline.run_pipeline_batch(
+        conn,
+        binary_id=binary_id,
+        limit=int(params.get("limit") or pipeline.DEFAULT_BATCH_LIMIT),
+        function_ids=function_ids,
         progress=progress,
     )
 
@@ -334,6 +370,17 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             ),
             run=_perform_match,
             perform_progress=_perform_match,
+        ),
+        # The AI enrichment chain is the one kind that runs a whole composition
+        # per function: the model calls are what the caller is queuing for, and
+        # a binary's worth of them is a batch, not a request.
+        JobKind(
+            name="ai-enrich",
+            label="AI enrichment chain over a binary's functions",
+            scan_kinds=None,
+            params=("limit", "function_ids"),
+            run=_perform_enrich,
+            perform_progress=_perform_enrich,
         ),
     )
 
@@ -554,6 +601,19 @@ def submit(
             matching.resolve_scope(conn, settings)
         except matching.InvalidSettingsError as exc:
             raise ValueError(f"{exc.error}: {exc.detail}") from exc
+    if kind == "ai-enrich":
+        # The batch's own bounds, checked now so a typo is a 400 on submit
+        # rather than a failed job later.
+        raw_limit = (params or {}).get("limit")
+        try:
+            limit = pipeline.DEFAULT_BATCH_LIMIT if raw_limit is None else int(raw_limit)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"limit must be an integer, got {raw_limit!r}") from exc
+        if not 1 <= limit <= pipeline.MAX_BATCH_LIMIT:
+            raise ValueError(f"limit must be between 1 and {pipeline.MAX_BATCH_LIMIT}, got {limit}")
+        ids = (params or {}).get("function_ids")
+        if ids is not None and (not isinstance(ids, list) or not all(_is_int(v) for v in ids)):
+            raise ValueError("function_ids must be a list of function ids")
     ensure_schema(conn)
     queued = count_jobs(conn, status=STATUS_QUEUED)
     if queued >= MAX_QUEUED_JOBS:

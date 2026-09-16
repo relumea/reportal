@@ -90,7 +90,13 @@ _UINT32 = 0xFFFFFFFF
 
 
 def _crc_table() -> tuple[int, ...]:
-    """The reflected CRC-32 table (polynomial 0xEDB88320)."""
+    """The reflected CRC-32 table (polynomial 0xEDB88320).
+
+    Hand-rolled rather than :func:`zlib.crc32` on purpose: zlib finalizes
+    (XOR-out) on every call, while ZipCrypto's key schedule needs the raw
+    internal CRC state after each byte.  The table update below is that raw
+    step; the suite's round-trip tests pin it byte for byte.
+    """
     table = []
     for index in range(256):
         value = index

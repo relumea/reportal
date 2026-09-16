@@ -543,12 +543,12 @@ to the code and states what is not implemented. In short:
 
 | Property | Implementation |
 |----------|----------------|
-| Coeffects (what a component needs) | `Component.requires`. The runner seeds `function`, `binary`, `project`, `conn` and `engine`, and `llm` only when a client is configured; each active component's `provides` joins the available set |
+| Coeffects (what a component needs) | `Component.requires`, which names every value the effect reads, the seeds included: a component reading `conn` or `engine` declares them, so a withheld seed leaves it inactive with that seed's own reason instead of raising inside the effect. The runner seeds `function`, `binary`, `project`, `conn` and `engine`, and `llm` only when a client is configured; each active component's `provides` joins the available set |
 | Effects (what a component writes) | `Context.provide` and `Context.revoke` for bindings, `Context.record` for persistent writes; every one of them journals an inverse |
 | Temporal composability | `Context.revert` applies the journaled inverses newest-first in-process, and `pipeline.revert_run` journals a stored run's descriptors back onto a context to replay them from a later process |
-| Spatial composability | `Context.subscribe` reports each change to the loader, whose `_ActivationWatch` re-evaluates every pending component: a component activates when its last requirement is bound and is recorded `deactivated` when one is revoked before it ran. A never-ready component is skipped with `requires-<name>`, `dependency-skipped:<provider>`, `dependency-failed:<provider>` or `dependency-deactivated:<provider>` |
+| Spatial composability | `Context.subscribe` reports each change to the loader and returns the inverse that detaches it, which the runner applies when the run ends so a later revert of the stored context notifies nobody, whose `_ActivationWatch` re-evaluates every pending component: a component activates when its last requirement is bound and is recorded `deactivated` when one is revoked before it ran. A never-ready component is skipped with `requires-<name>`, `dependency-skipped:<provider>`, `dependency-failed:<provider>` or `dependency-deactivated:<provider>` |
 | One effect dispatcher | `effects.apply_descriptor` resolves an undo descriptor kind through a registry (`register_effect_handler` / `effect_handlers` / `unregister_effect_handler` / `refresh_effect_handlers`); built-in kinds come from `effects.builtin_effect_handlers()` and third parties from the `reportal.effect_handlers` entry-point group, and `effects.apply_undo_plan` replays a plan newest-first. Auto mode's `revert_auto_run` uses it too |
-| Loader reconciliation | `register_component` / `components()` / `refresh_components()`; built-ins come from `reportal.pipeline.builtin_components()`, third parties from the `reportal.components` entry-point group, and a duplicate name is a `RegistryError` |
+| Loader reconciliation | `register_component` / `components()` / `unregister_component()` / `refresh_components()`; built-ins come from `reportal.pipeline.builtin_components()`, third parties from the `reportal.components` entry-point group, and a duplicate name is a `RegistryError` |
 | Registry withdrawal | Every plugin registry exposes an `unregister_*` that withdraws one entry by name (`unregister_tool`, `unregister_worker`, `unregister_graph_backend`, `unregister_effect_handler`, `unregister_source`, `unregister_model`, `unregister_runner`): unknown names raise `RegistryError`, withdrawing a built-in lasts until the next refresh, and the built-in sandbox runner refuses withdrawal so a workspace always has a runner |
 | Hot module replacement | `registrations()` records each entry's declaring module and reloadability; `reload_component(name)` re-imports it and swaps the entry in place, `reload_all()` reports one result per entry, and `pipeline.ComponentHost` drives deactivate → reload → activate against a live `Context`. A run in flight keeps its snapshot; `refresh_components()` remains the whole-registry re-discovery |
 
@@ -558,15 +558,39 @@ run in the order the portal reports its steps:
 
 | Component | Requires | Provides | Local work |
 |-----------|----------|----------|------------|
-| `prepare` | `function` | `function_meta`, `disassembly` | the cached NASM listing, else `rebrew asm` |
-| `read-trace` | `disassembly` | `control_flow`, `call_trace` | parses the listing; names callees from stored rows |
-| `decompile` | `function`, `project` | `decompilation` | the stored source, else `rebrew decompile` and a stored row |
-| `search-functionality` | `function` | `similar_functions` | the recorded `matches` rows, never a live match |
-| `resolve-names` | `function` | `predicted_name` | a stored unstrip proposal, else the best match candidate |
-| `retrieve-knowledge` | `function` | `knowledge` | the binary's documents ranked against the function's name, VA and stored summary; read-only, journals nothing |
-| `name-variables` | `decompilation`, `llm` | `type_suggestions`, `inline_comments` | the LLM bridge, with the `knowledge` context in the prompt |
-| `summarize` | `decompilation`, `llm` | `summary` | the LLM bridge, with the `knowledge` context in the prompt |
-| `store` | none | none | persists the run's artifacts, journaling each write |
+| `prepare` | `function`, `conn`, `engine` | `function_meta`, `disassembly` | the cached NASM listing, else `rebrew asm` |
+| `read-trace` | `disassembly`, `function`, `conn` | `control_flow`, `call_trace` | parses the listing; names callees from stored rows |
+| `decompile` | `function`, `project`, `conn`, `engine` | `decompilation` | the stored source, else `rebrew decompile` and a stored row |
+| `search-functionality` | `function`, `conn` | `similar_functions` | the recorded `matches` rows, never a live match |
+| `resolve-names` | `function`, `conn` | `predicted_name` | a stored unstrip proposal, else the best match candidate |
+| `retrieve-knowledge` | `function`, `conn` | `knowledge` | the binary's documents ranked against the function's name, VA and stored summary; read-only, journals nothing |
+| `rewrite` | `decompilation`, `llm` | `rewrite` | the LLM bridge's whole-function rewrite, kept as an `ai-decompilation` artifact, with the workspace's known names and the knowledge block in the prompt |
+| `rename-variables` | `decompilation` | `renames`, `renamed_code` | the LLM bridge's identifier suggestions applied to the stored text through the journaled `renames.apply_renames`, with the known names in the prompt; with no endpoint, or when the model proposes nothing this text can use, it publishes the engine text as a pass-through |
+| `name-variables` | `renamed_code`, `llm` | `type_suggestions`, `inline_comments` | the LLM bridge over the renamed text, with the known names and the knowledge block in the prompt |
+| `summarize` | `renamed_code`, `llm` | `summary` | the LLM bridge over the renamed text, with the known names and the knowledge block in the prompt |
+| `store` | `function`, `conn` | none | persists the run's artifacts, journaling each write; it leaves a renamed decompilation alone rather than putting its own pre-rename copy back |
+
+The three LLM stages are the enrich chain, and its order is a real edge rather
+than declaration luck: `rewrite` precedes `rename-variables` so the naming
+prompt can cite the readable rendition, and `name-variables` and `summarize`
+require `renamed_code`, which is what makes "summarize the renamed result" a
+dependency.  The rename pass journals the text it replaces (through
+`renames.apply_renames`), so one function's renames are revertible on their own.
+What the model may reason from is the workspace's own evidence:
+`pipeline.known_names` renders the predicted name, the names the newest ingested
+debug symbol file carries (the symbol at the function's own VA and the one
+behind every `DAT_...`/`sub_...` placeholder its code names, bounded by
+`KNOWN_SYMBOL_LIMIT`) and the real names of the function's match candidates as
+an untrusted context block beside the knowledge citations, so a rename chooses
+among names the project already holds instead of inventing them.
+
+`pipeline.run_pipeline_batch` is the whole-binary form: it loops `run_pipeline`
+over a binary's functions (the *limit* largest by default, or the ids the caller
+names), one stored run per function, so one function failing leaves the others
+intact and any single run's artifacts stay separately revertible.  It is
+registered as the `ai-enrich` job kind, so the queue runs it through the same
+`POST /api/jobs`, `reportal job-submit` and `submit_job` surfaces as every other
+operation and reports the function count as its progress.
 
 A step that fails is recorded as `failed` with its reason rather than aborting
 the run, and a component's optional `revert(ctx)` runs when its effect raises.
@@ -1477,7 +1501,10 @@ the request. Its optional body accepts `{"disabled": [...]}`. `GET` on the same
 path serves the latest run with its steps and the function's durable artifacts
 and answers 404 `no-run` before the first run. `GET /api/pipeline/runs/<id>`
 serves one run (404 `run not found`) and `POST /api/pipeline/runs/<id>/revert`
-replays the run's undo plan newest-first, returning what it undid.
+replays the run's undo plan newest-first, returning what it undid. The
+whole-binary form is not a route of its own: it is the `ai-enrich` job kind, so
+`POST /api/jobs` queues it with `{"limit"}` or `{"function_ids"}` and the
+result lists one run id per function.
 
 The component routes read and reload the process-wide registry; neither touches
 the store. `GET /api/components` lists every entry's name, `requires`,
@@ -2826,8 +2853,10 @@ the `retrieve-knowledge` pipeline stage, described below.
 `as_context` is the seam every prompt builder uses. `conversations.py` appends
 the block of a conversation scope's binary to the stored context, and
 `pipeline.py`'s `retrieve-knowledge` component provides the same shape as its
-`knowledge` value, which `name-variables` and `summarize` pass as the
-`context` argument of the `llm` prompt builders. Because retrieved text is
+`knowledge` value, which `pipeline.naming_context` joins to the workspace's own
+known names and the enrich chain's stages (`rewrite`, `rename-variables`,
+`name-variables` and `summarize`) pass as the `context` argument of the `llm`
+prompt builders. Because retrieved text is
 untrusted, it is labelled as data in the user message and never treated as an
 instruction; the conversations system prompt says the same.
 

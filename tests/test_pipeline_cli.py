@@ -167,7 +167,7 @@ class TestComponentsCommands:
         entry = next(row for row in rows if row["name"] == "prepare")
         assert entry["origin"] == "builtin"
         assert entry["reloadable"] is True
-        assert entry["requires"] == ["function"]
+        assert entry["requires"] == ["conn", "engine", "function"]
 
     def test_components_human_prints_a_table(self) -> None:
         result = runner.invoke(cli.app, ["components"])

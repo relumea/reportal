@@ -20,7 +20,7 @@ surface.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +97,56 @@ def store_lineage(conn: sqlite3.Connection, comparison: dict[str, Any]) -> dict[
     return comparison
 
 
+def journaled_row_write(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    row_id: int,
+    description: str,
+    run: Callable[[], dict[str, Any]],
+    *,
+    table: str,
+    where: str,
+    key: str,
+    history_table: str,
+    history_where: str,
+    list_history: Callable[[sqlite3.Connection, int], Sequence[Mapping[str, Any]]],
+    label: str,
+) -> dict[str, Any]:
+    """Run a row write, journaling the row it replaced and the history it appended.
+
+    A revert of the action puts the previous row back and deletes the history
+    rows the write appended, the way ``journal.journaled_name_change`` covers a
+    rename.  *table*/*where* locate the row, *history_table*/*history_where*
+    its history, and *list_history* reads the history rows known beforehand.
+    """
+    before = journal.journaled_rows(
+        conn, log, table=table, where=where, params=(row_id,), description=description
+    )
+    known = [{"id": int(row["id"])} for row in list_history(conn, row_id)]
+    result = run()
+    journal.journaled_new_rows(
+        conn,
+        log,
+        table=table,
+        where=where,
+        params=(row_id,),
+        before=before,
+        key=(key,),
+        description=f"{label} {row_id}",
+    )
+    journal.journaled_new_rows(
+        conn,
+        log,
+        table=history_table,
+        where=history_where,
+        params=(row_id,),
+        before=known,
+        key=("id",),
+        description=f"{label} history of {row_id}",
+    )
+    return result
+
+
 def journaled_signature_write(
     conn: sqlite3.Connection,
     log: journal.Journal,
@@ -104,43 +154,21 @@ def journaled_signature_write(
     description: str,
     run: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
-    """Run a signature write, journaling the row it replaced and the history it appended.
-
-    A revert of the action puts the previous signature row back and deletes the
-    history rows the write appended, the way ``journal.journaled_name_change``
-    covers a rename.
-    """
-    before = journal.journaled_rows(
+    """Run a signature write, journaling the row it replaced and the history it appended."""
+    return journaled_row_write(
         conn,
         log,
+        function_id,
+        description,
+        run,
         table="function_signatures",
         where="function_id = ?",
-        params=(function_id,),
-        description=description,
+        key="function_id",
+        history_table="signature_history",
+        history_where="function_id = ?",
+        list_history=store.list_signature_history,
+        label="signature of function",
     )
-    known = [{"id": int(row["id"])} for row in store.list_signature_history(conn, function_id)]
-    result = run()
-    journal.journaled_new_rows(
-        conn,
-        log,
-        table="function_signatures",
-        where="function_id = ?",
-        params=(function_id,),
-        before=before,
-        key=("function_id",),
-        description=f"signature of function {function_id}",
-    )
-    journal.journaled_new_rows(
-        conn,
-        log,
-        table="signature_history",
-        where="function_id = ?",
-        params=(function_id,),
-        before=known,
-        key=("id",),
-        description=f"signature history of function {function_id}",
-    )
-    return result
 
 
 def bulk_data_type_definitions(
@@ -266,37 +294,19 @@ def journaled_data_type_write(
     """Run a data-type write, journaling the row it replaced and the history it appended.
 
     A revert of the action puts the previous type row back (or removes the one
-    a create added) and deletes the history rows the write appended, the way
-    :func:`journaled_signature_write` covers a signature edit.
+    a create added) and deletes the history rows the write appended.
     """
-    before = journal.journaled_rows(
+    return journaled_row_write(
         conn,
         log,
+        data_type_id,
+        description,
+        run,
         table="data_types",
         where="id = ?",
-        params=(data_type_id,),
-        description=description,
+        key="id",
+        history_table="data_type_history",
+        history_where="data_type_id = ?",
+        list_history=store.list_data_type_history,
+        label="data type",
     )
-    known = [{"id": int(row["id"])} for row in store.list_data_type_history(conn, data_type_id)]
-    result = run()
-    journal.journaled_new_rows(
-        conn,
-        log,
-        table="data_types",
-        where="id = ?",
-        params=(data_type_id,),
-        before=before,
-        key=("id",),
-        description=f"data type {data_type_id}",
-    )
-    journal.journaled_new_rows(
-        conn,
-        log,
-        table="data_type_history",
-        where="data_type_id = ?",
-        params=(data_type_id,),
-        before=known,
-        key=("id",),
-        description=f"history of data type {data_type_id}",
-    )
-    return result

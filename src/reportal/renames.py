@@ -115,10 +115,51 @@ def identifier_present(text: str, name: str) -> bool:
 def replace_identifier(text: str, old: str, new: str) -> tuple[str, int]:
     """Rewrite whole-token occurrences of *old* to *new*; returns (text, count).
 
-    The scan tracks string literals, so an occurrence inside one is left alone,
-    and the word-boundary pattern means a prefix or suffix of a longer token is
-    never rewritten.
+    Skip ranges come from the engine's C parser, so occurrences inside string
+    and character literals or in a macro's own definition are left alone; the
+    word-boundary pattern means a prefix or suffix of a longer token is never
+    rewritten.  Comments are still rewritten.  When tree-sitter is unavailable
+    or the text is not ASCII, the hand scanner below stands in.
     """
+    spans = _engine_protected_spans(text)
+    if spans is None:
+        return _replace_identifier_scan(text, old, new)
+    pattern = identifier_pattern(old)
+    pieces: list[str] = []
+    count = 0
+    cursor = 0
+    for start, end in [*spans, (len(text), len(text))]:
+        start = max(start, cursor)
+        chunk, made = pattern.subn(lambda _: new, text[cursor:start])
+        pieces.append(chunk)
+        count += made
+        if end > cursor:
+            pieces.append(text[max(cursor, start) : end])
+            cursor = end
+    return "".join(pieces), count
+
+
+def _engine_protected_spans(text: str) -> list[tuple[int, int]] | None:
+    """Byte spans a rename must not touch, or None to use the hand scanner.
+
+    The spans come from ``rebrew.c_parser.protected_spans`` (tree-sitter string
+    and character literals plus macro-definition names), imported lazily so a
+    missing tree-sitter is an ImportError rather than a startup failure.  Byte
+    offsets align with str indices only for ASCII text, so anything else also
+    falls back.
+    """
+    if not text.isascii():
+        return None
+    try:
+        from rebrew.c_parser import protected_spans
+
+        return protected_spans(text)
+    except ImportError:
+        return None
+
+
+def _replace_identifier_scan(text: str, old: str, new: str) -> tuple[str, int]:
+    """Rewrite whole-token occurrences of *old*, skipping string literals."""
     pattern = identifier_pattern(old)
     pieces: list[str] = []
     count = 0

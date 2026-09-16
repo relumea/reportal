@@ -247,6 +247,25 @@ class TestRegistry:
         assert "probe" in [source.name for source in external.sources()]
         assert "probe" not in [source.name for source in external.refresh_sources()]
 
+    def test_unregister_withdraws_one_entry(self) -> None:
+        external.register_source(
+            external.Source(
+                name="probe",
+                kind=external.KIND_OFFLINE,
+                description="a local probe",
+                retrieve=lambda context: {"found": True},
+            ),
+            origin="test",
+        )
+        external.unregister_source("probe")
+        names = [source.name for source in external.sources()]
+        assert "probe" not in names
+        assert external.LOCAL_SOURCE in names
+
+    def test_unregister_unknown_name_raises(self) -> None:
+        with pytest.raises(plugins.RegistryError):
+            external.unregister_source("nope")
+
     def test_entry_point_sources_are_registered(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_entry_points(
             monkeypatch, _EntryPoint("plugin-probe", "external_plugins:PROBE_SOURCE")

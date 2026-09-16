@@ -242,6 +242,18 @@ class LlmError(RuntimeError):
     """The LLM endpoint returned a transport error or an unusable response."""
 
 
+def _rejects_json_object(exc: Exception) -> bool:
+    """Whether *exc* is an endpoint refusing the ``response_format`` field.
+
+    Matched on the status and the message rather than the SDK's exception
+    type: a 400 naming the field is the refusal, and anything else (auth, rate
+    limits, a dead endpoint) must surface as the error it is rather than burn
+    a retry that fails the same way.
+    """
+    status = getattr(exc, "status_code", None)
+    return status == 400 and "response_format" in str(exc).lower()
+
+
 @dataclass(frozen=True)
 class LlmConfig:
     """Resolved endpoint, key and model of the chat-completions bridge."""
@@ -458,23 +470,35 @@ class LlmClient:
         return self.config is not None and bool(self.config.endpoint)
 
     def complete(
-        self, messages: list[dict[str, str]], *, temperature: float = DEFAULT_TEMPERATURE
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = DEFAULT_TEMPERATURE,
+        json_object: bool = False,
     ) -> str:
         """Send *messages* and return the assistant's text content.
 
-        Raises :class:`LlmUnavailable` without an endpoint and :class:`LlmError`
+        With *json_object* the request asks for ``{"type": "json_object"}``,
+        which an endpoint that honors it turns from a hope into a guarantee;
+        one that 400s on the unknown field is retried once without it, so the
+        flag never breaks an endpoint today's path already serves.  Raises
+        :class:`LlmUnavailable` without an endpoint and :class:`LlmError`
         for a transport failure or a response carrying no text.
         """
         config = self.config
         if config is None or not self.available():
             raise LlmUnavailable(UNAVAILABLE_DETAIL)
+        extra: dict[str, Any] = {"response_format": {"type": "json_object"}} if json_object else {}
         try:
             completion = self._sdk().chat.completions.create(
                 model=config.model,
                 messages=messages,  # type: ignore[arg-type]  # the SDK's typed message union
                 temperature=temperature,
+                **extra,  # passthrough field, like messages
             )
         except (OpenAIError, ValueError) as exc:
+            if json_object and _rejects_json_object(exc):
+                return self.complete(messages, temperature=temperature)
             raise LlmError(f"LLM request failed: {exc}") from exc
         _report_usage(completion, config.model)
         return _content_text(completion)
@@ -760,13 +784,18 @@ _THOUGHT_LINE = re.compile(
 )
 
 
-def _strip_fences(text: str) -> str:
+def strip_fences(text: str) -> str:
     """Return *text* without a surrounding markdown code fence, if any."""
     body = text.strip()
     if body.startswith("```"):
         body = _FENCE_OPEN.sub("", body, count=1)
         body = _FENCE_CLOSE.sub("", body, count=1)
     return body.strip()
+
+
+def _strip_fences(text: str) -> str:
+    """The private alias :func:`_parse_json` keeps; use :func:`strip_fences`."""
+    return strip_fences(text)
 
 
 def _strip_reasoning(text: str) -> str:
@@ -877,7 +906,7 @@ def _complete(messages: list[dict[str, str]], client: LlmClient | None, task: st
     active = client if client is not None else get_client()
     if not active.available():
         raise LlmUnavailable(UNAVAILABLE_DETAIL)
-    answer = active.complete(messages, temperature=DEFAULT_TEMPERATURE)
+    answer = active.complete(messages, temperature=DEFAULT_TEMPERATURE, json_object=True)
     if task:
         _report_charge(task, messages)
     return answer

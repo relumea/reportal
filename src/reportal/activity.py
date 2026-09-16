@@ -39,6 +39,7 @@ def _item_from_action(row: dict[str, Any]) -> dict[str, Any]:
     """One journaled action as a feed item."""
     return {
         "id": f"action:{row['action']}",
+        "seq": int(row["id"]),
         "kind": SOURCE_ACTION,
         "actor": str(row.get("actor") or ""),
         "at": str(row["created_at"]),
@@ -53,6 +54,7 @@ def _item_from_log(row: dict[str, Any]) -> dict[str, Any]:
     """One analysis-log entry as a feed item."""
     return {
         "id": f"log:{row['id']}",
+        "seq": int(row["id"]),
         "kind": SOURCE_LOG,
         "actor": "",
         "at": str(row["created_at"]),
@@ -87,10 +89,8 @@ def feed(
         raise ValueError(f"unknown source: {unknown[0]}")
     bounded = min(limit, MAX_ACTIVITY_LIMIT)
     items: list[dict[str, Any]] = []
-    total = 0
     if SOURCE_ACTION in sources:
         actions = journal.list_actions(conn, since=since, actor=actor, limit=journal.MAX_LIST_LIMIT)
-        total += len(actions)
         items.extend(_item_from_action(row) for row in actions)
     if SOURCE_LOG in sources and actor is None:
         # An analysis-log entry carries no actor: the log records what the
@@ -99,10 +99,10 @@ def feed(
             conn, limit=analysis_log.MAX_LOG_LIMIT, since=since, visible_to=visible_to
         )
         items.extend(_item_from_log(row) for row in entries)
-    items.sort(key=lambda item: (item["at"], item["id"]), reverse=True)
+    page = notifications.merge_page(items, bounded)
     return {
-        "items": items[:bounded],
-        "count": min(len(items), bounded),
+        "items": page,
+        "count": len(page),
         "total": len(items),
         "since": since,
         "actor": actor,

@@ -690,6 +690,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Sections",),
             ("IMAGE_SCN_CNT_CODE",),
             ("R-X",),
+            # Coverage map card: the defrag grid itself, which only renders
+            # once the section geometry and the function table are both in.
+            ("Coverage map",),
+            ("cells carry a stored function",),
             # Code signature card.
             ("Code signature",),
             ("not signed",),

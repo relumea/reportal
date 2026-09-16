@@ -291,7 +291,14 @@ export table with a filter over name, ordinal and forwarder, showing each
 export's name, absolute address, ordinal and forwarder target); sections (the
 stored section table with a filter and columns for name, virtual address, file
 offset, virtual size, raw size, an entropy meter, the R/W/X protection letters
-and the full `IMAGE_SCN_*` name list); code signature (Authenticode state,
+and the full `IMAGE_SCN_*` name list); coverage map (the defrag view of the same
+two reads: one cell per address range of every section with a virtual size,
+coloured by the status entity of the stored function covering the cell's start,
+with a legend, a per-section covered-of-cells line and a cell that opens the
+function, or the memory dump at that address when no function covers it; a
+section past 512 cells widens them rather than drawing more, and a binary with
+no stored functions says so instead of reading as uniformly empty); code
+signature (Authenticode state,
 signature count and signers); packer detection (auto-loads the stored file-type
 detection and never runs the engine on render; a `no-scan` response shows the
 nothing-stored message with a Run detector control, which posts and renders the

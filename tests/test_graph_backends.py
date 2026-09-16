@@ -78,6 +78,18 @@ class TestRegistry:
         graph_backends.register_graph_backend(backend, origin="test")
         assert "probe" in [entry.name for entry in graph_backends.graph_backends()]
 
+    def test_unregister_withdraws_one_entry(self) -> None:
+        backend, _ = recording_backend()
+        graph_backends.register_graph_backend(backend, origin="test")
+        graph_backends.unregister_graph_backend("probe")
+        names = [entry.name for entry in graph_backends.graph_backends()]
+        assert "probe" not in names
+        assert "sqlite" in names
+
+    def test_unregister_unknown_name_raises(self) -> None:
+        with pytest.raises(graph_backends.RegistryError):
+            graph_backends.unregister_graph_backend("nope")
+
     def test_duplicate_name_raises_naming_both_origins(self) -> None:
         backend, _ = recording_backend()
         graph_backends.register_graph_backend(backend, origin="probe-plugin")

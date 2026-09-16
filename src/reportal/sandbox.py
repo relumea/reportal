@@ -324,15 +324,39 @@ class BwrapRunner(Runner):
 # The runners reportal ships, in the order :func:`available_runner` tries them.
 RUNNERS: list[Runner] = [BwrapRunner()]
 
+# The in-tree runner name.  Withdrawing it is refused: a workspace with no
+# plugin still needs a runner, and the refresh path documents it as unremovable.
+BUILTIN_RUNNER = RUNNERS[0].name
+
 # A broken registration is skipped with a warning; a duplicate name is refused.
 _REGISTRY_ERRORS: list[str] = []
 
 
 def register_runner(runner: Runner) -> Runner:
-    """Register *runner*; a duplicate name replaces the earlier declaration."""
+    """Register *runner*; a duplicate name replaces the earlier declaration.
+
+    Replacement (rather than the :class:`RegistryError` the other registries
+    raise) keeps :func:`refresh_runners` idempotent across re-scans.
+    """
     RUNNERS[:] = [existing for existing in RUNNERS if existing.name != runner.name]
     RUNNERS.append(runner)
     return runner
+
+
+def unregister_runner(name: str) -> None:
+    """Withdraw the runner registered as *name*.
+
+    Raises :class:`RegistryError` for a name nothing holds and for the
+    built-in runner, which the refresh path documents as unremovable: a
+    workspace with no plugin still has `bwrap`.
+    """
+    from reportal.plugins import RegistryError
+
+    if name not in [runner.name for runner in RUNNERS]:
+        raise RegistryError(f"no runner registration {name!r} to withdraw")
+    if name == BUILTIN_RUNNER:
+        raise RegistryError(f"cannot withdraw the built-in runner {name!r}")
+    RUNNERS[:] = [runner for runner in RUNNERS if runner.name != name]
 
 
 def registered_runners() -> list[Runner]:
@@ -446,47 +470,54 @@ def execute(
     work = Path(tempfile.mkdtemp(dir=binaries_dir(), prefix=".sandbox-"))
     out_path = work.parent / f"{work.name}.stdout"
     err_path = work.parent / f"{work.name}.stderr"
-    argv = chosen.argv(sample, work, resolved_caps)
     notes: list[str] = []
     status = STATUS_FINISHED
     exit_code: int | None = None
     timed_out = False
     started = time.monotonic()
     try:
-        with out_path.open("wb") as out, err_path.open("wb") as err:
-            process = subprocess.Popen(
-                argv,
-                stdout=out,
-                stderr=err,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                env={"PATH": "/usr/bin:/bin"},
-            )
-            try:
-                exit_code = process.wait(timeout=resolved_caps.timeout_seconds)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                status = STATUS_TIMED_OUT
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    exit_code = process.wait(timeout=5)
-                notes.append(
-                    f"the sample outlived the {resolved_caps.timeout_seconds}s wall-clock timeout"
-                    " and was killed by process group"
+        # cordis-boundary: detonation is an emission, not a restorable effect.  What
+        # the sample did to the world outside this process group cannot be undone;
+        # the process-group kill and the cleanup below are the compensation, and the
+        # three paths reportal *does* own (the work directory and the two output
+        # files) are inverted in the `finally`, whatever the runner raised.
+        argv = chosen.argv(sample, work, resolved_caps)
+        try:
+            with out_path.open("wb") as out, err_path.open("wb") as err:
+                process = subprocess.Popen(
+                    argv,
+                    stdout=out,
+                    stderr=err,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    env={"PATH": "/usr/bin:/bin"},
                 )
-    except OSError as exc:
-        status = STATUS_FAILED
-        notes.append(f"the runner could not be started: {exc}")
-    duration_ms = int((time.monotonic() - started) * 1000)
-    stdout, stdout_cut = _read_tail(out_path, MAX_OUTPUT_BYTES)
-    stderr, stderr_cut = _read_tail(err_path, MAX_OUTPUT_BYTES)
-    files, files_cut = _list_work(work)
-    with contextlib.suppress(OSError):
-        shutil.rmtree(work, ignore_errors=True)
-    for leftover in (out_path, err_path):
+                try:
+                    exit_code = process.wait(timeout=resolved_caps.timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    timed_out = True
+                    status = STATUS_TIMED_OUT
+                    with contextlib.suppress(ProcessLookupError, PermissionError):
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        exit_code = process.wait(timeout=5)
+                    notes.append(
+                        f"the sample outlived the {resolved_caps.timeout_seconds}s"
+                        " wall-clock timeout and was killed by process group"
+                    )
+        except OSError as exc:
+            status = STATUS_FAILED
+            notes.append(f"the runner could not be started: {exc}")
+        duration_ms = int((time.monotonic() - started) * 1000)
+        stdout, stdout_cut = _read_tail(out_path, MAX_OUTPUT_BYTES)
+        stderr, stderr_cut = _read_tail(err_path, MAX_OUTPUT_BYTES)
+        files, files_cut = _list_work(work)
+    finally:
         with contextlib.suppress(OSError):
-            leftover.unlink(missing_ok=True)
+            shutil.rmtree(work, ignore_errors=True)
+        for leftover in (out_path, err_path):
+            with contextlib.suppress(OSError):
+                leftover.unlink(missing_ok=True)
     if stdout_cut:
         notes.append(f"stdout was truncated to its last {MAX_OUTPUT_BYTES} bytes")
     if stderr_cut:

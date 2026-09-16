@@ -237,6 +237,17 @@ class TestContext:
         ctx.revoke("a")
         assert seen == [("a", CHANGE_PROVIDE), ("a", CHANGE_REVOKE)]
 
+    def test_unsubscribe_stops_the_notifications(self) -> None:
+        ctx = Context()
+        seen: list[tuple[str, str]] = []
+        unsubscribe = ctx.subscribe(lambda name, kind: seen.append((name, kind)))
+        ctx.provide("a", 1)
+        unsubscribe()
+        unsubscribe()
+        ctx.provide("b", 2)
+        ctx.revert()
+        assert seen == [("a", CHANGE_PROVIDE)]
+
     def test_revert_notifies_subscribers_with_the_restored_direction(self) -> None:
         ctx = Context({"seed": 1})
         seen: list[tuple[str, str]] = []
@@ -258,6 +269,8 @@ class TestRegistry:
             pipeline.COMPONENT_SEARCH_FUNCTIONALITY,
             pipeline.COMPONENT_RESOLVE_NAMES,
             pipeline.COMPONENT_RETRIEVE_KNOWLEDGE,
+            pipeline.COMPONENT_REWRITE,
+            pipeline.COMPONENT_RENAME_VARIABLES,
             pipeline.COMPONENT_NAME_VARIABLES,
             pipeline.COMPONENT_SUMMARIZE,
             pipeline.COMPONENT_STORE,
@@ -279,6 +292,19 @@ class TestRegistry:
     def test_registering_a_non_component_raises(self) -> None:
         with pytest.raises(components.RegistryError):
             components.register_component("nope")  # type: ignore[arg-type]
+
+    def test_unregister_withdraws_only_that_component(self) -> None:
+        components.register_component(Component("probe", frozenset(), frozenset(), _noop))
+        components.register_component(Component("other", frozenset(), frozenset(), _noop))
+        components.unregister_component("probe")
+        names = [component.name for component in components.components()]
+        assert "probe" not in names
+        assert "other" in names
+        assert pipeline.COMPONENT_PREPARE in names
+
+    def test_unregister_an_unknown_component_raises(self) -> None:
+        with pytest.raises(components.RegistryError):
+            components.unregister_component("nope")
 
     def test_refresh_drops_a_registered_extra(self) -> None:
         components.register_component(Component("probe", frozenset(), frozenset(), _noop))

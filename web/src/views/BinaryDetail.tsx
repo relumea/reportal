@@ -10,6 +10,7 @@ import {
   CapabilitiesPanel,
   CodeSignaturePanel,
   CompositionPanel,
+  CoverageMapPanel,
   LibraryPanel,
   CryptoPanel,
   DetailCoveragePanel,
@@ -73,6 +74,7 @@ export function BinaryDetail({
           <ImportsPanel binaryId={binary.id} />
           <ExportsPanel binaryId={binary.id} />
           <SectionsPanel binaryId={binary.id} basePath={`/binaries/${binary.id}`} />
+          <CoverageMapPanel binaryId={binary.id} />
           <MemoryPanel binaryId={binary.id} focus={query.memory} />
           <CodeSignaturePanel binaryId={binary.id} />
           <DetailCoveragePanel binaryId={binary.id} />

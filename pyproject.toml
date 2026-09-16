@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 name = "reportal"
 dynamic = ["version"]
 description = "Self-hosted reverse-engineering portal over rebrew, resembl and recoverage"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
 keywords = ["reverse-engineering", "decompilation", "binary-matching", "portal"]
@@ -17,7 +17,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Disassemblers",
 ]
@@ -35,6 +34,10 @@ dependencies = [
     "rich>=13.0",
     "typer>=0.27.2",
     "uvicorn>=0.52",
+    # Needed in its own right, not just transitively through `rebrew`: this
+    # package imports `rebrew.workspace` directly, and that module decodes the
+    # section_cells_json cache with zstandard.
+    "zstandard>=0.22",
 ]
 
 [project.urls]
@@ -117,7 +120,7 @@ source = ["reportal"]
 fail_under = 92
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 # `.scratch/` holds agent scratch work; ruff's default excludes do not cover
 # it, and this tree is not a git checkout for `respect-gitignore` to use.
@@ -155,7 +158,7 @@ extend-immutable-calls = [
 # bare generic.  Plain `mypy` uses this config; the `--strict` tail it does not
 # cover is counted in AGENTS.md and is a documented follow-up, not a claim of
 # compliance.
-python_version = "3.12"
+python_version = "3.13"
 files = ["src/reportal", "tests"]
 # `tools/` is not part of the type-checked tree; `tests/test_smoke_seed.py`
 # imports `tools/smoke_spa.py`, and this keeps the errors in a module outside

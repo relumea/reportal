@@ -708,6 +708,26 @@ def list_binaries(
         ) AS comment_count
         FROM binaries b
     """
+    where, params = _binary_where(conn, search=search, tag=tag, fmt=fmt, visible_to=visible_to)
+    sql += where
+    sql += f" ORDER BY {BINARY_ORDERS[order]}"
+    return _rows(conn.execute(sql, params))
+
+
+def _binary_where(
+    conn: sqlite3.Connection,
+    *,
+    search: str | None,
+    tag: str | None,
+    fmt: str | None,
+    visible_to: Mapping[str, Any] | None,
+) -> tuple[str, list[Any]]:
+    """The shared WHERE of the register listing and its count.
+
+    Returned as the clause text (empty when nothing filters) plus its
+    parameters, so :func:`list_binaries` and :func:`count_binaries` cannot
+    drift: a page total has to count the same predicate the page was cut from.
+    """
     clauses: list[str] = []
     params: list[Any] = []
     scope = auth.visible_clause(conn, visible_to, prefix="b.")
@@ -727,10 +747,21 @@ def list_binaries(
     if fmt:
         clauses.append("b.format = ?")
         params.append(fmt)
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
-    sql += f" ORDER BY {BINARY_ORDERS[order]}"
-    return _rows(conn.execute(sql, params))
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
+def count_binaries(
+    conn: sqlite3.Connection,
+    *,
+    search: str | None = None,
+    tag: str | None = None,
+    fmt: str | None = None,
+    visible_to: Mapping[str, Any] | None = None,
+) -> int:
+    """How many binaries the same filters :func:`list_binaries` takes keep."""
+    where, params = _binary_where(conn, search=search, tag=tag, fmt=fmt, visible_to=visible_to)
+    row = conn.execute("SELECT COUNT(*) AS total FROM binaries b" + where, params).fetchone()
+    return int(row["total"]) if row is not None else 0
 
 
 def binary_filter_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
@@ -1743,51 +1774,34 @@ FUNCTION_MATCH_MATCHED = "matched"
 FUNCTION_MATCH_UNMATCHED = "unmatched"
 FUNCTION_MATCH_VALUES: tuple[str, ...] = (FUNCTION_MATCH_MATCHED, FUNCTION_MATCH_UNMATCHED)
 
+# The largest page the function listing route will serve.  The in-process
+# callers (auto mode, benchmarks, exports) pass no limit and still read every
+# row; the bound exists for the HTTP path, where an unpaged binary sent its
+# whole function table on every poll.
+MAX_FUNCTION_LIMIT = 1000
 
-def list_functions(
+
+def _function_where(
     conn: sqlite3.Connection,
     *,
-    analysis_id: int | None = None,
-    binary_id: int | None = None,
-    min_size: int | None = None,
-    max_size: int | None = None,
-    string: str | None = None,
-    strings: Sequence[str] = (),
-    regex: bool = False,
-    match: str | None = None,
-    name: str | None = None,
-    va: int | None = None,
-    sort: str = DEFAULT_FUNCTION_SORT,
-    order: str = DEFAULT_FUNCTION_ORDER,
-) -> list[dict[str, Any]]:
-    """Functions (optionally scoped and filtered), with analysis/binary ids.
+    analysis_id: int | None,
+    binary_id: int | None,
+    min_size: int | None,
+    max_size: int | None,
+    string: str | None,
+    strings: Sequence[str],
+    regex: bool,
+    match: str | None,
+    name: str | None,
+    va: int | None,
+) -> tuple[str, list[Any]]:
+    """The shared ``WHERE`` of the function listing and its count.
 
-    ``sort`` names one of :data:`FUNCTION_SORT_COLUMNS` and ``order`` one of
-    :data:`FUNCTION_ORDERS`; either being unknown raises :class:`ValueError`.
-    Ties break on ``f.id``, so a listing is deterministic.  ``min_size`` and
-    ``max_size`` are inclusive byte bounds, ``name`` is a case-insensitive
-    substring of the function's name (an escaped ``LIKE``, so a wildcard in the
-    needle stays literal), ``va`` is one exact address and ``string``/``strings``
-    match the function's stored decompilation text (a literal the reversed source
-    carries; a function with none never matches) and ``match`` is one of
-    :data:`FUNCTION_MATCH_VALUES`.
-
-    Several needles are combined as any-of, so a filter listing three strings
-    keeps a function that carries any one of them.  ``regex=True`` treats every
-    needle as a regular expression through the same bounded, cached compiler
-    :func:`compile_regex` provides, and raises ``SearchError("invalid regex",
-    ...)`` for one that does not compile.
+    Returned as the clause text (empty when nothing filters) plus its
+    parameters, so :func:`list_functions` and :func:`count_matching_functions`
+    cannot drift: a page's match total has to count the same predicate the page
+    was cut from.
     """
-    if sort not in FUNCTION_SORT_COLUMNS:
-        raise ValueError(f"unknown function sort: {sort}")
-    if order not in FUNCTION_ORDERS:
-        raise ValueError(f"unknown function order: {order}")
-    if match is not None and match not in FUNCTION_MATCH_VALUES:
-        raise ValueError(f"unknown match filter: {match}")
-    sql = (
-        "SELECT f.*, a.binary_id AS binary_id FROM functions f"
-        " JOIN analyses a ON f.analysis_id = a.id"
-    )
     clauses: list[str] = []
     params: list[Any] = []
     if analysis_id is not None:
@@ -1826,10 +1840,126 @@ def list_functions(
     if va is not None:
         clauses.append("f.va = ?")
         params.append(va)
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
+def count_matching_functions(
+    conn: sqlite3.Connection,
+    *,
+    analysis_id: int | None = None,
+    binary_id: int | None = None,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    string: str | None = None,
+    strings: Sequence[str] = (),
+    regex: bool = False,
+    match: str | None = None,
+    name: str | None = None,
+    va: int | None = None,
+) -> int:
+    """How many functions the same filters :func:`list_functions` takes keep.
+
+    This is what a paged listing reports as its match count: counting in
+    SQLite is what lets the page be a ``LIMIT`` instead of a whole-table read.
+    """
+    if match is not None and match not in FUNCTION_MATCH_VALUES:
+        raise ValueError(f"unknown match filter: {match}")
+    where, params = _function_where(
+        conn,
+        analysis_id=analysis_id,
+        binary_id=binary_id,
+        min_size=min_size,
+        max_size=max_size,
+        string=string,
+        strings=strings,
+        regex=regex,
+        match=match,
+        name=name,
+        va=va,
+    )
+    sql = (
+        "SELECT COUNT(*) AS total FROM functions f JOIN analyses a ON f.analysis_id = a.id" + where
+    )
+    row = conn.execute(sql, params).fetchone()
+    return int(row["total"]) if row is not None else 0
+
+
+def list_functions(
+    conn: sqlite3.Connection,
+    *,
+    analysis_id: int | None = None,
+    binary_id: int | None = None,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    string: str | None = None,
+    strings: Sequence[str] = (),
+    regex: bool = False,
+    match: str | None = None,
+    name: str | None = None,
+    va: int | None = None,
+    sort: str = DEFAULT_FUNCTION_SORT,
+    order: str = DEFAULT_FUNCTION_ORDER,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Functions (optionally scoped and filtered), with analysis/binary ids.
+
+    ``sort`` names one of :data:`FUNCTION_SORT_COLUMNS` and ``order`` one of
+    :data:`FUNCTION_ORDERS`; either being unknown raises :class:`ValueError`.
+    Ties break on ``f.id``, so a listing is deterministic.  ``min_size`` and
+    ``max_size`` are inclusive byte bounds, ``name`` is a case-insensitive
+    substring of the function's name (an escaped ``LIKE``, so a wildcard in the
+    needle stays literal), ``va`` is one exact address and ``string``/``strings``
+    match the function's stored decompilation text (a literal the reversed source
+    carries; a function with none never matches) and ``match`` is one of
+    :data:`FUNCTION_MATCH_VALUES`.
+
+    Several needles are combined as any-of, so a filter listing three strings
+    keeps a function that carries any one of them.  ``regex=True`` treats every
+    needle as a regular expression through the same bounded, cached compiler
+    :func:`compile_regex` provides, and raises ``SearchError("invalid regex",
+    ...)`` for one that does not compile.
+
+    ``limit`` bounds the page and ``offset`` skips that many rows of it; None
+    (the default) returns every match, which is what the in-process callers
+    reading a whole binary want.  A limit above :data:`MAX_FUNCTION_LIMIT` or
+    below 1, or a negative offset, raises :class:`ValueError`.
+    """
+    if sort not in FUNCTION_SORT_COLUMNS:
+        raise ValueError(f"unknown function sort: {sort}")
+    if order not in FUNCTION_ORDERS:
+        raise ValueError(f"unknown function order: {order}")
+    if match is not None and match not in FUNCTION_MATCH_VALUES:
+        raise ValueError(f"unknown match filter: {match}")
+    if limit is not None and not 1 <= limit <= MAX_FUNCTION_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_FUNCTION_LIMIT}")
+    if offset < 0:
+        raise ValueError("offset must not be negative")
+    where, params = _function_where(
+        conn,
+        analysis_id=analysis_id,
+        binary_id=binary_id,
+        min_size=min_size,
+        max_size=max_size,
+        string=string,
+        strings=strings,
+        regex=regex,
+        match=match,
+        name=name,
+        va=va,
+    )
+    sql = (
+        "SELECT f.*, a.binary_id AS binary_id FROM functions f"
+        " JOIN analyses a ON f.analysis_id = a.id" + where
+    )
     direction = "ASC" if order == DEFAULT_FUNCTION_ORDER else "DESC"
     sql += f" ORDER BY {FUNCTION_SORT_COLUMNS[sort]} {direction}, f.id ASC"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params += [limit, offset]
+    elif offset:
+        sql += " LIMIT -1 OFFSET ?"
+        params.append(offset)
     return _rows(conn.execute(sql, params))
 
 
@@ -1857,6 +1987,31 @@ def count_functions(
         sql += " WHERE " + " AND ".join(clauses)
     row = conn.execute(sql, params).fetchone()
     return int(row["total"]) if row else 0
+
+
+def function_rollup(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """A binary's function table as the three numbers a summary actually shows.
+
+    The dashboard used to read every function row per binary to derive exactly
+    this: the total, how many carry a matched status, and the per-status
+    breakdown.  Counting in SQLite answers the same question without moving the
+    rows, which is what keeps a 5,000-function binary off the landing path.
+    ``by_status`` is ordered by descending count, then by status, so the chips
+    render in a stable order.
+    """
+    rows = conn.execute(
+        "SELECT f.status AS status, COUNT(*) AS n FROM functions f"
+        " JOIN analyses a ON f.analysis_id = a.id WHERE a.binary_id = ?"
+        " GROUP BY f.status ORDER BY n DESC, f.status ASC",
+        (binary_id,),
+    ).fetchall()
+    by_status = {str(row["status"] or ""): int(row["n"]) for row in rows}
+    return {
+        "binary_id": binary_id,
+        "total": sum(by_status.values()),
+        "matched": sum(count for status, count in by_status.items() if status in MATCHED_STATUSES),
+        "by_status": by_status,
+    }
 
 
 def get_function(conn: sqlite3.Connection, function_id: int) -> dict[str, Any] | None:
@@ -2209,19 +2364,34 @@ def _json_list(raw: Any) -> list[Any]:
     return parsed if isinstance(parsed, list) else []
 
 
+# A row mapper is a field spec: ``(output key, column, converter)``.  Plain
+# columns convert with int/str/float; a ``*_json`` column converts with the
+# JSON helper beside it.  One spec table per row shape replaces a dozen
+# near-identical ``_*_row`` functions that differed only in these triples.
+_RowField = tuple[str, str, Any]
+
+
+def _map_row(row: sqlite3.Row, fields: tuple[_RowField, ...]) -> dict[str, Any]:
+    """Build one row dict from *fields*."""
+    return {key: convert(row[column]) for key, column, convert in fields}
+
+
+_PIPELINE_STEP_FIELDS: tuple[_RowField, ...] = (
+    ("id", "id", int),
+    ("run_id", "run_id", int),
+    ("name", "name", str),
+    ("status", "status", str),
+    ("reason", "reason", str),
+    ("started_at", "started_at", str),
+    ("finished_at", "finished_at", str),
+    ("duration_ms", "duration_ms", int),
+    ("provides", "provides_json", _json_list),
+)
+
+
 def _pipeline_step_row(row: sqlite3.Row) -> dict[str, Any]:
     """One ``pipeline_steps`` row with its provided names parsed from JSON."""
-    return {
-        "id": int(row["id"]),
-        "run_id": int(row["run_id"]),
-        "name": str(row["name"]),
-        "status": str(row["status"]),
-        "reason": str(row["reason"]),
-        "started_at": str(row["started_at"]),
-        "finished_at": str(row["finished_at"]),
-        "duration_ms": int(row["duration_ms"]),
-        "provides": _json_list(row["provides_json"]),
-    }
+    return _map_row(row, _PIPELINE_STEP_FIELDS)
 
 
 def _pipeline_run_row(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
@@ -3850,29 +4020,35 @@ def _json_dict(raw: Any) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+_GRAPH_NODE_FIELDS: tuple[_RowField, ...] = (
+    ("id", "id", str),
+    ("binary_id", "binary_id", int),
+    ("kind", "kind", str),
+    ("key", "key", str),
+    ("label", "label", str),
+    ("meta", "meta_json", _json_dict),
+)
+
+
 def _graph_node_row(row: sqlite3.Row) -> dict[str, Any]:
     """One ``graph_nodes`` row with its metadata parsed."""
-    return {
-        "id": str(row["id"]),
-        "binary_id": int(row["binary_id"]),
-        "kind": str(row["kind"]),
-        "key": str(row["key"]),
-        "label": str(row["label"]),
-        "meta": _json_dict(row["meta_json"]),
-    }
+    return _map_row(row, _GRAPH_NODE_FIELDS)
+
+
+_GRAPH_EDGE_FIELDS: tuple[_RowField, ...] = (
+    ("id", "id", str),
+    ("binary_id", "binary_id", int),
+    ("source", "source", str),
+    ("target", "target", str),
+    ("rel", "rel", str),
+    ("weight", "weight", float),
+    ("meta", "meta_json", _json_dict),
+)
 
 
 def _graph_edge_row(row: sqlite3.Row) -> dict[str, Any]:
     """One ``graph_edges`` row with its metadata parsed."""
-    return {
-        "id": str(row["id"]),
-        "binary_id": int(row["binary_id"]),
-        "source": str(row["source"]),
-        "target": str(row["target"]),
-        "rel": str(row["rel"]),
-        "weight": float(row["weight"]),
-        "meta": _json_dict(row["meta_json"]),
-    }
+    return _map_row(row, _GRAPH_EDGE_FIELDS)
 
 
 _NODE_COLUMNS = 'id, binary_id, kind, "key", label, meta_json'
@@ -4020,24 +4196,31 @@ _DATA_TYPE_COLUMNS = (
 )
 
 
+def _optional_int(value: Any) -> int | None:
+    """int(*value*), or None when the column is NULL."""
+    return None if value is None else int(value)
+
+
+_DATA_TYPE_FIELDS: tuple[_RowField, ...] = (
+    ("id", "id", int),
+    ("binary_id", "binary_id", int),
+    ("name", "name", str),
+    ("kind", "kind", str),
+    ("namespace", "namespace", str),
+    ("size", "size", int),
+    ("members", "members_json", _json_list),
+    ("values", "values_json", _json_list),
+    ("target", "target", str),
+    ("element_count", "element_count", _optional_int),
+    ("source", "source", str),
+    ("created_at", "created_at", str),
+    ("updated_at", "updated_at", str),
+)
+
+
 def _data_type_row(row: sqlite3.Row) -> dict[str, Any]:
     """One ``data_types`` row with its members and enum values parsed from JSON."""
-    element_count = row["element_count"]
-    return {
-        "id": int(row["id"]),
-        "binary_id": int(row["binary_id"]),
-        "name": str(row["name"]),
-        "kind": str(row["kind"]),
-        "namespace": str(row["namespace"]),
-        "size": int(row["size"]),
-        "members": _json_list(row["members_json"]),
-        "values": _json_list(row["values_json"]),
-        "target": str(row["target"]),
-        "element_count": None if element_count is None else int(element_count),
-        "source": str(row["source"]),
-        "created_at": str(row["created_at"]),
-        "updated_at": str(row["updated_at"]),
-    }
+    return _map_row(row, _DATA_TYPE_FIELDS)
 
 
 def add_data_type(
@@ -4314,18 +4497,26 @@ def get_data_type_history(conn: sqlite3.Connection, history_id: int) -> dict[str
 # ── Function signatures ────────────────────────────────────────────
 
 
+def _or_empty(value: Any) -> str:
+    """str(*value*), treating NULL as the empty string."""
+    return str(value or "")
+
+
+_FUNCTION_SIGNATURE_FIELDS: tuple[_RowField, ...] = (
+    ("function_id", "function_id", int),
+    ("name", "name", _or_empty),
+    ("return_type", "return_type", _or_empty),
+    ("calling_convention", "calling_convention", _or_empty),
+    ("parameters", "parameters_json", _json_list),
+    ("source", "source", _or_empty),
+    ("created_at", "created_at", _or_empty),
+    ("updated_at", "updated_at", _or_empty),
+)
+
+
 def _function_signature_row(row: sqlite3.Row) -> dict[str, Any]:
     """One ``function_signatures`` row with its parameters parsed from JSON."""
-    return {
-        "function_id": int(row["function_id"]),
-        "name": str(row["name"] or ""),
-        "return_type": str(row["return_type"] or ""),
-        "calling_convention": str(row["calling_convention"] or ""),
-        "parameters": _json_list(row["parameters_json"]),
-        "source": str(row["source"] or ""),
-        "created_at": str(row["created_at"] or ""),
-        "updated_at": str(row["updated_at"] or ""),
-    }
+    return _map_row(row, _FUNCTION_SIGNATURE_FIELDS)
 
 
 def upsert_signature(

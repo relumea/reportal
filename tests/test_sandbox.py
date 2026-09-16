@@ -130,6 +130,25 @@ class TestGuards:
         assert sandbox.available_runner() is fake
         assert sandbox.require_runner() is fake
 
+    def test_unregister_withdraws_one_entry(self) -> None:
+        fake = _FakeRunner()
+        sandbox.register_runner(fake)
+        sandbox.unregister_runner(fake.name)
+        assert sandbox.get_runner(fake.name) is None
+        assert sandbox.get_runner("bwrap") is not None
+
+    def test_unregister_unknown_name_raises(self) -> None:
+        from reportal.plugins import RegistryError
+
+        with pytest.raises(RegistryError):
+            sandbox.unregister_runner("nope")
+
+    def test_unregister_builtin_runner_raises(self) -> None:
+        from reportal.plugins import RegistryError
+
+        with pytest.raises(RegistryError):
+            sandbox.unregister_runner("bwrap")
+
     def test_refresh_reads_the_entry_point_group(self) -> None:
         from reportal import plugins
 
@@ -223,6 +242,29 @@ class TestReport:
         assert status.startswith("201")
         assert payload["status"] == sandbox.STATUS_FAILED
         assert payload["notes"], "why it failed is recorded"
+
+    def test_a_runner_that_raises_leaves_no_scratch_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The scratch paths are reportal's own effect, so they are undone whatever raised.
+
+        Detonation itself is an emission with no inverse, but the work directory
+        and the two output files are inside the boundary: a runner that raises
+        while building its command line must not leak them into ``binaries/``.
+        """
+        (tmp_path / "reportal.toml").write_text("")
+        monkeypatch.chdir(tmp_path)
+        binaries = tmp_path / "binaries"
+        binaries.mkdir()
+
+        class _Exploding(_FakeRunner):
+            def argv(self, sample: Path, work: Path, caps: sandbox.Caps) -> list[str]:
+                raise RuntimeError("cannot build a command line")
+
+        with pytest.raises(RuntimeError):
+            sandbox.execute(_script(tmp_path, "exit 0\n"), runner=_Exploding())
+
+        assert list(binaries.iterdir()) == []
 
     def test_the_report_reads_back_and_the_status_reports_the_last_run(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

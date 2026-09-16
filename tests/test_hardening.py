@@ -134,6 +134,77 @@ class TestAntiAnalysisClassify:
 
     @pytest.mark.parametrize(
         "text",
+        ["in al, 0x4f", "out 0xef, al", "in eax, dx", "out dx, al", "IN AX, 0x93"],
+    )
+    def test_io_port_probes_are_medium(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        finding = result["findings"][0]
+        assert finding["category"] == "io-port-probe"
+        assert finding["confidence"] == "medium"
+
+    @pytest.mark.parametrize(
+        "text",
+        ["joined in autumn", "point out the door", "login", "out of memory"],
+    )
+    def test_prose_is_not_a_port_probe(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        assert result["findings"] == []
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "sidt [eax]",
+            "SGDT [0x402000]",
+            "sldt ax",
+            "cpuid",
+            "fnstenv [esp-0x1c]",
+            "fstenv [ebx]",
+            "fxsave [eax]",
+            "fsave [ecx]",
+        ],
+    )
+    def test_cpu_state_probes_are_medium(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        finding = result["findings"][0]
+        assert finding["category"] == "cpu-state-probe"
+        assert finding["confidence"] == "medium"
+
+    @pytest.mark.parametrize(
+        "text",
+        ["consider it done", "residue", "acid test", "CPUIDLE", "obsidian"],
+    )
+    def test_prose_is_not_a_cpu_state_probe(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        assert result["findings"] == []
+
+    @pytest.mark.parametrize("text", ["int 3", "INT3", "int3"])
+    def test_breakpoint_traps_are_medium(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        finding = result["findings"][0]
+        assert finding["category"] == "int3-trap"
+        assert finding["confidence"] == "medium"
+
+    @pytest.mark.parametrize("text", ["point 3", "print 300", "hint 30", "internationalization"])
+    def test_prose_is_not_a_trap(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        assert result["findings"] == []
+
+    @pytest.mark.parametrize(
+        "text", ["lock inc [eax]", "LOCK XADD [ebx], ecx", "lock cmpxchg [edx], eax"]
+    )
+    def test_lock_canaries_are_medium(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        finding = result["findings"][0]
+        assert finding["category"] == "lock-canary"
+        assert finding["confidence"] == "medium"
+
+    @pytest.mark.parametrize("text", ["locksmith", "clockwork", "unlock the door"])
+    def test_prose_is_not_a_canary(self, text: str) -> None:
+        result = hardening.classify_anti_analysis([], [_string(text)])
+        assert result["findings"] == []
+
+    @pytest.mark.parametrize(
+        "text",
         ["VMware", "VBOX", "VirtualBox", "QEMU", "Xen", "Sandboxie", "SbieDll"],
     )
     def test_vm_or_sandbox_names_are_medium(self, text: str) -> None:

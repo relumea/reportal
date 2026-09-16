@@ -239,6 +239,9 @@ reportal conversation-events <conversation-id> [--run-id N]
                                            # follow the run's state as SSE frames
 reportal pipeline <function-id> [--json]   # run the component AI decompilation pipeline over one
                                            #   function, storing the run and its artifacts
+                                           #   (the whole-binary form is the ai-enrich job
+                                           #   kind: job-submit ai-enrich <binary-id>
+                                           #   --param limit=25 or --param 'function_ids=[1,2]')
 reportal pipeline-revert <run-id> [--json] # undo exactly what one stored run wrote
 reportal components [--json]               # list the component registry: name, requires,
                                            #   provides, origin, reloadable

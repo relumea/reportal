@@ -6,6 +6,7 @@ import contextlib
 import hashlib
 import json
 import sqlite3
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -106,6 +107,31 @@ class TestHelpAndVersion:
         result = runner.invoke(cli.app, ["--version"])
         assert result.exit_code == 0
         assert f"reportal {__version__}" in result.output
+
+
+class TestServe:
+    def test_a_failed_bind_cancels_the_browser_opener(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The opener is the command's own effect, so a failed serve undoes it."""
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        store.init_db(db)
+        opened: list[str] = []
+        monkeypatch.setattr(cli.webbrowser, "open", opened.append)
+
+        import reportal.webapp  # noqa: F401
+        from reportal import server as _server
+
+        def refuse(host: str, port: int) -> None:
+            raise OSError(98, "Address already in use")
+
+        monkeypatch.setattr(_server, "run", refuse)
+        result = runner.invoke(cli.app, ["serve", "--port", "8099"])
+
+        assert result.exit_code == 1
+        time.sleep(0.6)
+        assert opened == []
 
 
 class TestInit:

@@ -203,7 +203,7 @@ def _tool_parts() -> list[dict[str, Any]]:
             "origin": "",
             "destructive": bool(tool.annotations.destructive_hint),
         }
-        for tool in mcp_tools.builtin_tools()
+        for tool in mcp_tools.tools()
     ]
 
 

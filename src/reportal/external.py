@@ -580,6 +580,19 @@ def sources() -> tuple[Source, ...]:
     return tuple(_registry.values())
 
 
+def unregister_source(name: str) -> None:
+    """Withdraw the external source registered as *name*.
+
+    Raises :class:`RegistryError` for a name nothing holds.  Withdrawing a
+    built-in lasts until the next :func:`refresh_sources`.
+    """
+    _ensure_builtins()
+    _ensure_entry_points()
+    if name not in _registry:
+        raise plugins.RegistryError(f"no source registration {name!r} to withdraw")
+    del _registry[name]
+
+
 def refresh_sources() -> tuple[Source, ...]:
     """Discard discovered sources and re-run discovery.
 

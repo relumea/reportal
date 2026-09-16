@@ -54,6 +54,7 @@ from reportal.auto_workers import (
     is_address_placeholder,
     is_matching_status,
 )
+from reportal.llm import strip_fences
 
 # Disassembly format requested; the same format the disassembly route caches,
 # so the worker reuses a listing the portal already showed.
@@ -84,9 +85,6 @@ _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9_]")
 
 # Filename stem for a function with no usable symbol.
 _ADDRESS_SLUG_PREFIX = "func_"
-
-_FENCE_OPEN = re.compile(r"^```[a-zA-Z0-9_+-]*[ \t]*\r?\n")
-_FENCE_CLOSE = re.compile(r"\r?\n?[ \t]*```[ \t]*$")
 
 SYSTEM_PROMPT = (
     "You reconstruct the original C implementation of one function from its"
@@ -132,15 +130,6 @@ def source_slug(function: dict[str, Any]) -> str:
         if slug:
             return slug
     return f"{_ADDRESS_SLUG_PREFIX}{int(function['va']):x}"
-
-
-def strip_fences(text: str) -> str:
-    """Return *text* without a surrounding markdown code fence, if any."""
-    body = text.strip()
-    if body.startswith("```"):
-        body = _FENCE_OPEN.sub("", body, count=1)
-        body = _FENCE_CLOSE.sub("", body, count=1)
-    return body.strip()
 
 
 def ensure_marker(source: str, marker: str, va: int) -> str:

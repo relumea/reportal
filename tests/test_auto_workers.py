@@ -90,6 +90,16 @@ class TestRegistry:
         assert "probe" not in names
         assert auto_workers.WORKER_OFFLINE in names
 
+    def test_unregister_withdraws_one_entry(self) -> None:
+        auto_workers.register_worker(_worker("probe"), origin="test")
+        auto_workers.unregister_worker("probe")
+        assert auto_workers.get_worker("probe") is None
+        assert auto_workers.get_worker(auto_workers.WORKER_OFFLINE) is not None
+
+    def test_unregister_unknown_name_raises(self) -> None:
+        with pytest.raises(auto_workers.RegistryError):
+            auto_workers.unregister_worker("nope")
+
     def test_entry_point_factory_is_resolved(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_entry_points(monkeypatch, _EntryPoint("plugin", "test_auto_workers:_plugin_worker"))
         auto_workers.refresh_workers()

@@ -705,8 +705,16 @@ _RECONCILE_MAX_HITS = 3
 
 
 def reconcile_allowed(organisation_id: int) -> bool:
-    """Whether the organisation may reconcile again inside the window."""
+    """Whether the organisation may reconcile again inside the window.
+
+    An organisation whose window has emptied is dropped rather than left as a
+    permanent key, so the limiter's state is bounded by the organisations
+    reconciling *now* instead of by every organisation this process ever saw.
+    """
     now = time.monotonic()
+    for other, hits in list(_rate_states.items()):
+        if all(now - hit >= _RECONCILE_WINDOW_S for hit in hits):
+            del _rate_states[other]
     hits = [hit for hit in _rate_states.get(organisation_id, []) if now - hit < _RECONCILE_WINDOW_S]
     if len(hits) >= _RECONCILE_MAX_HITS:
         _rate_states[organisation_id] = hits

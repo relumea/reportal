@@ -135,8 +135,36 @@ class TestClassify:
         assert finding["detail"] == "port"
         assert finding["confidence"] == "medium"
 
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Content-Length: 10485760",
+            "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n",
+            "M-SEARCH * HTTP/1.1",
+        ],
+    )
+    def test_ddos_templates_are_medium_confidence(self, text: str) -> None:
+        result = behavior.classify("networking", [], [_string(text)])
+        finding = result["findings"][0]
+        assert finding["detail"] == "ddos-template"
+        assert finding["confidence"] == "medium"
+
     def test_invalid_ipv4_octet_is_not_a_finding(self) -> None:
         assert behavior.classify("networking", [], [_string("version 1.2.3.999")])["findings"] == []
+
+    @pytest.mark.parametrize(
+        "text",
+        ["renamed httpd", "/root/dvr_gui/", "busybox tftp", "main_arm7", "main_mipsel"],
+    )
+    def test_iot_dropper_markers_are_medium_confidence(self, text: str) -> None:
+        result = behavior.classify("execution", [], [_string(text)])
+        finding = result["findings"][0]
+        assert finding["detail"] == "iot-dropper"
+        assert finding["confidence"] == "medium"
+
+    @pytest.mark.parametrize("text", ["C:\\Temp\\out.log", "wget is useful", "/tmp"])
+    def test_generic_paths_are_not_iot_droppers(self, text: str) -> None:
+        assert behavior.classify("execution", [], [_string(text)])["findings"] == []
 
     def test_drive_path_string_is_medium_confidence(self) -> None:
         path = "C:\\Windows\\Temp\\payload"

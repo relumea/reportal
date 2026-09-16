@@ -405,6 +405,20 @@ def effect_handlers() -> dict[str, EffectHandler]:
     return dict(_registry)
 
 
+def unregister_effect_handler(kind: str) -> None:
+    """Withdraw the handler registered for descriptor *kind*.
+
+    Raises :class:`RegistryError` for a kind nothing holds.  Withdrawing a
+    built-in lasts until the next :func:`refresh_effect_handlers`.
+    """
+    _ensure_builtins()
+    _ensure_entry_points()
+    if kind not in _registry:
+        raise RegistryError(f"no effect handler registration {kind!r} to withdraw")
+    del _registry[kind]
+    _origins.pop(kind, None)
+
+
 def refresh_effect_handlers() -> dict[str, EffectHandler]:
     """Discard discovered handlers and re-run discovery.
 

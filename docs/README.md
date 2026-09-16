@@ -15,6 +15,8 @@
 | [PARITY.md](PARITY.md) | portal.reveng.ai capability map, status, and the local engine behind each |
 | [TODO.md](TODO.md) | the running backlog: the gaps a live crawl of the hosted UI found, with evidence and the local shape to build |
 | [REVENGAI.md](REVENGAI.md) | survey of the RevEng.AI open-source repositories and what is reusable here |
+| [RESEARCH_ROADMAP.md](RESEARCH_ROADMAP.md) | vendor research techniques (Zenyard, RevEng.AI, independent writeups), reportal coverage per technique, and what is left to build |
+| [FUNDING.md](FUNDING.md) | funding targets for the private SaaS project: SG grants, US SBIR, accelerators, pre-seed investors, and the application sequence |
 
 The user-facing entry point is the [project README](../README.md); `AGENTS.md`
 holds the working guide for this tree: its structure, gate, commands and

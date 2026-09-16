@@ -176,6 +176,7 @@ from reportal import (
     signatures,
     similarity,
     store,
+    surface,
     symbols,
     threat,
     unpack,
@@ -327,6 +328,23 @@ def _fail(message: str, json_output: bool) -> NoReturn:
     else:
         console.print(f"[red]{escape(message)}[/red]")
     raise typer.Exit(1)
+
+
+def _cli_fail(status: int, error: str, detail: str, json_output: bool) -> NoReturn:
+    """Raise a command failure the way a surface helper needs: status is dropped.
+
+    A CLI failure is an exit code plus one message, so the surface's
+    ``(status, error, detail)`` triple collapses to ``"error: detail"`` here,
+    the shape ``_fail(f"{exc.code}: {exc.detail}")`` already used everywhere.
+    """
+    _fail(f"{error}: {detail}" if detail else error, json_output)
+
+
+def _cli_require_binary(
+    conn: sqlite3.Connection, binary_id: int, json_output: bool
+) -> dict[str, Any]:
+    """Return the binary row of *binary_id*, failing the command without one."""
+    return surface.require_binary(conn, binary_id, fail=partial(_cli_fail, json_output=json_output))
 
 
 def _db_path(json_output: bool) -> Path:
@@ -638,8 +656,9 @@ def serve(
     console.print(f"  DB: {path}")
     console.print("  Stop: Ctrl+C")
 
-    if not no_open:
-        threading.Timer(0.5, webbrowser.open, args=(url,)).start()
+    opener = threading.Timer(0.5, webbrowser.open, args=(url,)) if not no_open else None
+    if opener is not None:
+        opener.start()
 
     try:
         _server.run(host, port)
@@ -647,6 +666,12 @@ def serve(
         pass
     except OSError as exc:
         _fail(f"Failed to start server on {url}: {exc.strerror or exc}", json_output=False)
+    finally:
+        # The timer is the command's own effect, so the command undoes it: a bind
+        # that fails inside 0.5s would otherwise still open a browser on a URL
+        # nothing serves, and the thread would outlive the failed command.
+        if opener is not None:
+            opener.cancel()
 
 
 # ── sandbox ────────────────────────────────────────────────────────
@@ -676,8 +701,7 @@ def sandbox_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id) or 0
         if status:
             payload = sandbox.status_payload(conn, analysis_id)
@@ -2778,8 +2802,7 @@ def scans_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         scans = [] if analysis_id is None else store.list_scans(conn, analysis_id)
     payload = {
@@ -3384,8 +3407,7 @@ def tag(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             if remove:
@@ -3674,8 +3696,7 @@ def collections_of(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         rows = store.collections_of_binary(conn, binary_id)
     if json_output:
         typer.echo(json.dumps({"binary_id": binary_id, "collections": rows, "count": len(rows)}))
@@ -4996,8 +5017,7 @@ def functions(
         except ValueError:
             _fail("invalid va: va must be an integer or 0x-prefixed hex", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             rows = store.list_functions(
                 conn,
@@ -5542,8 +5562,7 @@ def match(
     if not engine.available():
         _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         if store.get_rebrew_context(conn, binary_id) is None:
             _fail(
                 f"binary {binary_id} has no rebrew project context"
@@ -7091,8 +7110,7 @@ def symbols_ingest(
     except symbols.UnreadableSymbolError as exc:
         _fail(f"{exc.code}: {exc.detail}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         directory = symbols.stored_path(symbols.digest(data)).parent
         directory.mkdir(parents=True, exist_ok=True)
         target = directory / symbols.digest(data)
@@ -7135,8 +7153,7 @@ def symbols_status(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             if file_id is None:
                 rows = symbols.list_files(conn, binary_id)
@@ -7218,8 +7235,7 @@ def symbols_export(
     if kind not in ("c", "json"):
         _fail("format must be c or json", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             row = symbols.get_file(conn, binary_id=binary_id, file_id=file_id)
         except symbols.UnknownSymbolFileError as exc:
@@ -7405,8 +7421,7 @@ def list_ratings_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         payload = ratings.describe(conn, binary_id)
     if json_output:
         typer.echo(json.dumps(payload))
@@ -7867,8 +7882,7 @@ def ingest(
             json_output,
         )
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
@@ -7961,8 +7975,7 @@ def documents(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         rows = store.list_documents(
             conn, scope_kind=knowledge.SCOPE_KIND_BINARY, scope_id=binary_id
         )
@@ -8006,8 +8019,7 @@ def knowledge_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         results = knowledge.search_knowledge(
             conn,
             query=query,
@@ -8074,8 +8086,7 @@ def graph_build(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             result = journal.journaled_graph_rebuild(
@@ -8111,8 +8122,7 @@ def graph_command(
     detail: dict[str, Any] | None = None
     payload: dict[str, Any] | None = None
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         if node is not None:
             try:
                 detail = graph.neighbors(conn, node_id=node)
@@ -8210,8 +8220,7 @@ def graph_sync_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             result = graph_backends.sync_graph(conn, binary_id=binary_id, backend_name=backend)
         except graph_backends.UnknownBackendError as exc:
@@ -8473,8 +8482,7 @@ def fingerprint(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         stored = store.get_fingerprint(conn, binary_id)
     if stored is None:
         engine = engines.get_engine()
@@ -8647,8 +8655,7 @@ def structs(
     if not engine.available():
         _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
@@ -8726,8 +8733,7 @@ def types(
             json_output,
         )
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         all_types = data_types.list_types(conn, binary_id=binary_id)
     try:
         model = data_types.sort_types(
@@ -8821,8 +8827,7 @@ def types_import(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.journaled_rows(
@@ -9253,8 +9258,7 @@ def types_export(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         target = path.expanduser()
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -9387,8 +9391,7 @@ def signatures_list(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         model = signatures.list_signatures(conn, binary_id=binary_id)
 
     if json_output:
@@ -9417,8 +9420,7 @@ def signatures_import(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.journaled_rows(
@@ -9717,8 +9719,7 @@ def signatures_export(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         target = path.expanduser()
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -9957,8 +9958,7 @@ def section_coverage(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         coverage = store.section_byte_coverage(conn, binary_id)
 
     if coverage is None:
@@ -10078,8 +10078,7 @@ def die_info(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         payload = details.die_info(conn, binary_id)
     if not payload["available"]:
         _fail(f"binary {binary_id} has no stored filetype or pe-info scan", json_output)
@@ -10118,8 +10117,7 @@ def additional_details(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         if status:
             payload = details.status(conn, binary_id)
         else:
@@ -10170,8 +10168,7 @@ def attack_surface_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             payload = attack_surface.attack_surface(conn, binary_id)
         except KeyError as exc:
@@ -10846,8 +10843,7 @@ def security_scan(
     if not engine.available():
         _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
@@ -10923,8 +10919,7 @@ def exploitability_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             payload = exploitability.rank(conn, binary_id)
         except KeyError as exc:
@@ -11341,8 +11336,7 @@ def function_triage_command(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             log, result = _run_scan_command(
                 conn,
@@ -11402,8 +11396,7 @@ def report(
     if not engine.available():
         _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
@@ -11447,8 +11440,7 @@ def report_pdf(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         if status:
             job = jobs.latest_job(conn, kind="report-pdf", binary_id=binary_id)
             try:
@@ -11524,8 +11516,7 @@ def library_command(
     if not engine.available():
         _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         try:
             log, result = _run_scan_command(
                 conn,
@@ -11739,8 +11730,7 @@ def unstrip_command(
     if not engine.available():
         _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        if store.get_binary(conn, binary_id) is None:
-            _fail(f"no binary with id {binary_id}", json_output)
+        _cli_require_binary(conn, binary_id, json_output)
         if store.get_rebrew_context(conn, binary_id) is None:
             _fail(
                 f"binary {binary_id} has no rebrew project context"

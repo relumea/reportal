@@ -283,6 +283,19 @@ def models() -> tuple[Model, ...]:
     return tuple(_registry.values())
 
 
+def unregister_model(name: str) -> None:
+    """Withdraw the model registered as *name*.
+
+    Raises :class:`RegistryError` for a name nothing holds.  Withdrawing a
+    built-in lasts until the next :func:`refresh_models`.
+    """
+    _ensure_builtins()
+    _ensure_entry_points()
+    if name not in _registry:
+        raise RegistryError(f"no model registration {name!r} to withdraw")
+    del _registry[name]
+
+
 def refresh_models() -> tuple[Model, ...]:
     """Discard discovered models and re-run discovery.
 

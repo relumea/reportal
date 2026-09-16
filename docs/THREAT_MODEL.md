@@ -128,7 +128,8 @@ full below.
    `sandbox.BwrapRunner` runs `bwrap` with `--unshare-all` (network, PID, mount,
    IPC and UTS namespaces), `--die-with-parent`, `--new-session`, `--clearenv`,
    the host root bound read-only, fresh `/proc` and `/dev`, and exactly one
-   writable path (a directory reportal created and removes).  The sample is
+   writable path (a directory reportal created and removes on every exit path,
+   including one where the runner itself raised).  The sample is
    bind-mounted read-only inside that directory and executed from there, never
    from its stored path; the caps are applied by the shell's `ulimit` inside the
    sandbox rather than by `preexec_fn`, which Python documents as unsafe in a

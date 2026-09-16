@@ -26,71 +26,152 @@ from reportal import credits as credits_mod
 # absorbing a burst.
 CACHE_CONTROL = "public, max-age=300"
 
+# Palette and type match the SPA dark workbench tokens in web/src/styles.css so
+# /pricing reads as the same product with the logo removed, not a second skin.
 _STYLE = """
 :root {
   color-scheme: dark;
-  --bg: #0b0d10;
-  --panel: #14181d;
-  --line: #262d35;
-  --text: #e6edf3;
-  --muted: #9aa7b4;
-  --accent: #4c9aff;
-  --accent-ink: #04121f;
+  --bg: #0e1219;
+  --surface: #151b26;
+  --surface-2: #1b2331;
+  --border: #263044;
+  --border-strong: #35435d;
+  --text: #e6ecf5;
+  --muted: #97a5bd;
+  --faint: #8ea0ba;
+  --accent: #86b4ff;
+  --accent-hover: #9dc5ff;
+  --accent-ink: #071122;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 6px;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font: 14px/1.55 var(--font-sans);
 }
 a { color: var(--accent); }
-.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
-header { border-bottom: 1px solid var(--line); }
-header .wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; }
-.brand { font-weight: 700; letter-spacing: -0.02em; font-size: 1.15rem; }
-.brand span { color: var(--muted); font-weight: 400; font-size: 0.8rem; margin-left: 8px; }
-nav a { margin-left: 20px; text-decoration: none; color: var(--muted); }
-nav a:hover, nav a:focus { color: var(--text); }
-.hero { padding: 72px 0 48px; text-align: center; }
-.hero h1 { font-size: clamp(2rem, 5vw, 3.1rem); line-height: 1.1; margin: 0 0 16px;
-  letter-spacing: -0.03em; }
-.hero p { font-size: 1.15rem; color: var(--muted); max-width: 62ch; margin: 0 auto 28px; }
-.cta { display: inline-block; background: var(--accent); color: var(--accent-ink);
-  padding: 12px 22px; border-radius: 8px; text-decoration: none; font-weight: 600; }
-.cta.secondary { background: transparent; color: var(--text);
-  border: 1px solid var(--line); margin-left: 10px; }
-section { padding: 48px 0; border-top: 1px solid var(--line); }
-h2 { font-size: 1.6rem; letter-spacing: -0.02em; margin: 0 0 8px; }
-.lede { color: var(--muted); margin: 0 0 28px; max-width: 70ch; }
-.grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  padding: 20px; }
-.card h3 { margin: 0 0 8px; font-size: 1.05rem; }
-.card p { margin: 0; color: var(--muted); font-size: 0.95rem; }
-.plans { display: grid; gap: 18px;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); align-items: start; }
-.plan { background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-  padding: 22px; display: flex; flex-direction: column; height: 100%; }
-.plan.featured { border-color: var(--accent); }
-.badge { display: inline-block; font-size: 0.72rem; text-transform: uppercase;
-  letter-spacing: 0.08em; color: var(--accent); margin-bottom: 8px; }
-.plan h3 { margin: 0 0 4px; font-size: 1.2rem; }
-.price { font-size: 2.1rem; font-weight: 700; letter-spacing: -0.03em; margin: 10px 0 2px; }
-.price small { font-size: 0.85rem; font-weight: 400; color: var(--muted); }
-.tagline { color: var(--muted); font-size: 0.92rem; margin: 0 0 14px; min-height: 2.8em; }
-.plan ul { list-style: none; padding: 0; margin: 0 0 18px; }
-.plan li { padding: 6px 0; border-top: 1px solid var(--line); font-size: 0.92rem; }
+a:hover, a:focus-visible { color: var(--accent-hover); }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+header { border-bottom: 1px solid var(--border); background: var(--surface); }
+header .wrap {
+  display: flex; align-items: center; justify-content: space-between;
+  min-height: 52px; gap: 16px; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px;
+}
+.brand {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  font-weight: 700; font-size: 16px; letter-spacing: 0.01em; color: var(--text);
+  text-decoration: none;
+}
+.brand-dot {
+  width: 8px; height: 8px; border-radius: 999px; background: var(--accent);
+  flex: none; align-self: center;
+}
+.brand-tag {
+  font-size: 11px; font-weight: 500; color: var(--faint);
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+.brand-ver {
+  font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted);
+}
+nav { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+nav a { text-decoration: none; color: var(--muted); font-size: 13px; }
+nav a:hover, nav a:focus-visible { color: var(--text); }
+.hero {
+  padding: 56px 0 40px;
+  display: grid; gap: 28px;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.7fr);
+  align-items: end;
+}
+.hero h1 {
+  font-size: clamp(1.75rem, 3.6vw, 2.35rem); line-height: 1.15;
+  margin: 0 0 14px; font-weight: 700; letter-spacing: 0.005em; max-width: 18ch;
+}
+.hero p { font-size: 15px; color: var(--muted); max-width: 58ch; margin: 0 0 22px; }
+.hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; }
+.cta {
+  display: inline-block; background: var(--accent); color: var(--accent-ink);
+  padding: 10px 16px; border-radius: var(--radius); text-decoration: none;
+  font-weight: 600; font-size: 13px; border: 1px solid var(--accent);
+}
+.cta:hover, .cta:focus-visible { background: var(--accent-hover); border-color: var(--accent-hover);
+  color: var(--accent-ink); }
+.cta.secondary {
+  background: transparent; color: var(--text); border-color: var(--border-strong);
+}
+.cta.secondary:hover, .cta.secondary:focus-visible {
+  border-color: var(--accent); color: var(--accent); background: transparent;
+}
+.link-quiet { color: var(--muted); text-decoration: none; font-size: 13px; }
+.link-quiet:hover, .link-quiet:focus-visible { color: var(--text); }
+.hero-aside {
+  border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius);
+  padding: 14px 16px; font-family: var(--font-mono); font-size: 12px; color: var(--muted);
+  line-height: 1.7;
+}
+.hero-aside strong { color: var(--text); font-weight: 600; display: block; margin-bottom: 4px;
+  font-family: var(--font-sans); font-size: 13px; }
+section { padding: 40px 0; border-top: 1px solid var(--border); }
+h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; letter-spacing: 0.01em; }
+.lede { color: var(--muted); margin: 0 0 22px; max-width: 70ch; font-size: 14px; }
+.features {
+  display: grid; gap: 0; grid-template-columns: repeat(2, minmax(0, 1fr));
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+  overflow: hidden;
+}
+.feature {
+  padding: 16px 18px; border-top: 1px solid var(--border);
+}
+.feature:nth-child(-n+2) { border-top: 0; }
+.feature:nth-child(odd) { border-right: 1px solid var(--border); }
+.feature h3 {
+  margin: 0 0 6px; font-size: 13px; font-family: var(--font-mono); font-weight: 600;
+  color: var(--text);
+}
+.feature p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.plans { display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); align-items: start; }
+.plan {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 18px; display: flex; flex-direction: column; height: 100%;
+}
+.plan.featured { border-color: var(--accent); background: var(--surface-2); }
+.badge {
+  display: inline-block; font-size: 12px; color: var(--accent); margin-bottom: 8px;
+  font-family: var(--font-mono);
+}
+.plan h3 { margin: 0 0 2px; font-size: 15px; }
+.price {
+  font-size: 28px; font-weight: 700; margin: 10px 0 2px;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+}
+.price small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.tagline { color: var(--muted); font-size: 13px; margin: 0 0 14px; min-height: 2.8em; }
+.plan ul { list-style: none; padding: 0; margin: 0 0 16px; }
+.plan li { padding: 6px 0; border-top: 1px solid var(--border); font-size: 13px; }
 .plan li:first-child { border-top: 0; }
 .plan .cta { margin-top: auto; text-align: center; }
-table { width: 100%; border-collapse: collapse; font-size: 0.93rem; }
-th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 600; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.faq h3 { margin: 22px 0 6px; font-size: 1.02rem; }
-.faq p { margin: 0; color: var(--muted); }
-footer { border-top: 1px solid var(--line); padding: 28px 0 56px; color: var(--muted);
-  font-size: 0.88rem; }
+td.num, th.num {
+  text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono);
+}
+.faq h3 { margin: 20px 0 6px; font-size: 14px; }
+.faq p { margin: 0; color: var(--muted); max-width: 72ch; }
+footer {
+  border-top: 1px solid var(--border); padding: 24px 0 48px; color: var(--muted);
+  font-size: 12px; font-family: var(--font-mono);
+}
+@media (max-width: 720px) {
+  .hero { grid-template-columns: 1fr; }
+  .features { grid-template-columns: 1fr; }
+  .feature:nth-child(odd) { border-right: 0; }
+  .feature:nth-child(2) { border-top: 1px solid var(--border); }
+}
 """
 
 _FEATURES: tuple[tuple[str, str], ...] = (
@@ -166,13 +247,13 @@ def _price(plan: plans.Plan) -> str:
 def _plan_card(plan: plans.Plan, *, featured: bool) -> str:
     """One pricing card, every figure taken from the catalog."""
     items = "".join(f"<li>{escape(line)}</li>" for line in plan.features)
-    badge = '<span class="badge">Most popular</span>' if featured else ""
+    badge = '<span class="badge">Recommended</span>' if featured else ""
     if plan.self_serve:
         label = "Start free trial" if plan.trial_days else f"Choose {plan.name}"
         href = f"/#/billing?plan={escape(plan.id)}"
         action = f'<a class="cta" href="{href}">{escape(label)}</a>'
     else:
-        action = '<a class="cta secondary" href="/#/billing">Get started</a>'
+        action = '<a class="cta secondary" href="/#/billing">Open billing</a>'
     suffix = "" if plan.price_cents == 0 else f"<small>/{escape(plan.interval)}</small>"
     return (
         f'<article class="plan{" featured" if featured else ""}">'
@@ -317,7 +398,7 @@ def render() -> str:
     featured = purchasable[len(purchasable) // 2].id if purchasable else ""
     cards = "".join(_plan_card(plan, featured=plan.id == featured) for plan in catalog)
     features = "".join(
-        f'<article class="card"><h3>{escape(title)}</h3><p>{escape(body)}</p></article>'
+        f'<article class="feature"><h3>{escape(title)}</h3><p>{escape(body)}</p></article>'
         for title, body in _FEATURES
     )
     return f"""<!doctype html>
@@ -333,32 +414,46 @@ def render() -> str:
 </head>
 <body>
 <header><div class="wrap">
-  <div class="brand">reportal <span>v{escape(__version__)}</span></div>
+  <a class="brand" href="/">
+    <span class="brand-dot" aria-hidden="true"></span>
+    <span>reportal</span>
+    <span class="brand-tag">workbench</span>
+    <span class="brand-ver">v{escape(__version__)}</span>
+  </a>
   <nav>
-    <a href="#features">Features</a>
-    <a href="#pricing">Pricing</a>
+    <a href="#features">Capabilities</a>
+    <a href="#pricing">Plans</a>
     <a href="#credits">Credits</a>
-    <a href="#faq">FAQ</a>
-    <a href="/">Open the app</a>
+    <a href="#faq">Questions</a>
+    <a href="/">Open workbench</a>
   </nav>
 </div></header>
 
 <main>
 <div class="wrap">
   <div class="hero">
-    <h1>Reverse engineering, end to end.</h1>
-    <p>Decompile a binary, match its functions against everything you have seen before,
-       triage what matters and let an agent drive the sweep. Self-hosted, scriptable,
-       and metered only where it actually spends inference.</p>
-    <a class="cta" href="/#/billing">Start free</a>
-    <a class="cta secondary" href="#pricing">See pricing</a>
+    <div>
+      <h1>reportal</h1>
+      <p>A self-hosted reverse-engineering workbench: decompile a binary, match its
+         functions against everything you have seen before, triage what matters, and
+         let an agent drive the sweep. Metered only where inference actually runs.</p>
+      <div class="hero-actions">
+        <a class="cta" href="/">Open the workbench</a>
+        <a class="link-quiet" href="#pricing">Plans and credits</a>
+      </div>
+    </div>
+    <aside class="hero-aside" aria-label="What is metered">
+      <strong>Static analysis is free</strong>
+      Disasm, decomp, xrefs, matching and scans: unmetered on every plan.<br>
+      Credits cover AI tasks and auto runs only.
+    </aside>
   </div>
 </div>
 
 <section id="features"><div class="wrap">
-  <h2>What it does</h2>
+  <h2>Capabilities</h2>
   <p class="lede">One portal over the whole workflow, from the first byte to the report.</p>
-  <div class="grid">{features}</div>
+  <div class="features">{features}</div>
 </div></section>
 
 <section id="pricing"><div class="wrap">
@@ -391,8 +486,8 @@ def render() -> str:
 </main>
 
 <footer><div class="wrap">
-  reportal v{escape(__version__)}. Self-hosted reverse-engineering portal.
-  <a href="/">Open the app</a>.
+  reportal v{escape(__version__)} · self-hosted reverse-engineering workbench ·
+  <a href="/">open workbench</a>
 </div></footer>
 </body>
 </html>

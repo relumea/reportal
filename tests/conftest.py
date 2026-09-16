@@ -466,6 +466,15 @@ AI_TYPES_RESPONSE = (
     '[{"name": "path", "kind": "parameter", "type": "const char *", "confidence": 0.9},'
     ' {"name": "result", "kind": "return", "type": "int", "confidence": 0.6}]'
 )
+AI_REWRITE_RESPONSE = '{"code": "int read_file(const char *path)\\n{\\n  return 0;\\n}\\n"}'
+# Two renames over the decompilation the pipeline seeds, so an apply has
+# something it can actually rewrite: `sub_1000` is the stored function name.
+AI_RENAMES_RESPONSE = (
+    '[{"from": "sub_1000", "to": "read_file", "kind": "function",'
+    ' "reason": "reads a file", "confidence": 0.9},'
+    ' {"from": "v1", "to": "length", "kind": "variable",'
+    ' "reason": "holds a length", "confidence": 0.7}]'
+)
 
 
 class FakeLlmClient(llm.LlmClient):
@@ -482,6 +491,7 @@ class FakeLlmClient(llm.LlmClient):
         messages: list[dict[str, str]],
         *,
         temperature: float = llm.DEFAULT_TEMPERATURE,
+        json_object: bool = False,
     ) -> str:
         self.calls.append(messages)
         self.temperatures.append(temperature)
@@ -500,6 +510,7 @@ class FailingLlmClient(llm.LlmClient):
         messages: list[dict[str, str]],
         *,
         temperature: float = llm.DEFAULT_TEMPERATURE,
+        json_object: bool = False,
     ) -> str:
         raise llm.LlmError(self.message)
 

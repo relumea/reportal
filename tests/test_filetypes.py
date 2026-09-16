@@ -84,6 +84,7 @@ class TestSignatureTable:
                 or match.strings
                 or match.imports
                 or match.entry_prefixes
+                or match.constants
                 or match.rich_header
                 or match.executable_entropy is not None
             )
@@ -202,6 +203,47 @@ class TestInstallerSignatures:
         result = filetypes.detect(_evidence(strings=[_string("Nullsoft Install System")]))
         assert _match(result, "NSIS")["category"] == CATEGORY_INSTALLER
         assert _match(result, "NSIS")["confidence"] == CONFIDENCE_LOW
+
+    def test_nsis_crypter_markers(self) -> None:
+        result = filetypes.detect(
+            _evidence(strings=[_string("$PLUGINSDIR"), _string("InitPluginsDir")])
+        )
+        assert _match(result, "NSIS")["category"] == CATEGORY_INSTALLER
+
+    def test_boxedapp_string_markers(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("BoxedApp SDK")]))
+        match = _match(result, "BoxedApp")
+        assert match["category"] == CATEGORY_PACKER
+        assert match["confidence"] == CONFIDENCE_LOW
+
+    def test_paranoiac_rat_constants_need_three_hits(self) -> None:
+        three = bytes.fromhex("EA45F620") + bytes.fromhex("C2CA997F") + bytes.fromhex("97938F8B")
+        result = filetypes.detect(_evidence(section_bytes=three))
+        match = _match(result, "Paranoiac-RAT-family")
+        assert match["category"] == CATEGORY_PACKER
+        assert match["confidence"] == CONFIDENCE_LOW
+        assert _kinds(match) == {"constant"}
+
+    def test_two_constants_are_not_enough(self) -> None:
+        two = bytes.fromhex("EA45F620") + bytes.fromhex("C2CA997F")
+        result = filetypes.detect(_evidence(section_bytes=two))
+        assert "Paranoiac-RAT-family" not in _names(result)
+
+    def test_no_section_bytes_fires_nothing_constant(self) -> None:
+        result = filetypes.detect(_evidence())
+        assert "Paranoiac-RAT-family" not in _names(result)
+
+    def test_netis_gafgyt_constants_need_two_hits(self) -> None:
+        two = bytes.fromhex("730B6F0B") + bytes.fromhex("C073")
+        result = filetypes.detect(_evidence(section_bytes=two))
+        match = _match(result, "NeTiS-Gafgyt-family")
+        assert match["category"] == CATEGORY_PACKER
+        assert match["confidence"] == CONFIDENCE_LOW
+        assert _kinds(match) == {"constant"}
+
+    def test_one_netis_constant_is_not_enough(self) -> None:
+        result = filetypes.detect(_evidence(section_bytes=bytes.fromhex("C073")))
+        assert "NeTiS-Gafgyt-family" not in _names(result)
 
     def test_inno_setup_string(self) -> None:
         result = filetypes.detect(_evidence(strings=[_string("Inno Setup Setup Data")]))
@@ -543,6 +585,19 @@ class TestRunFiletype:
             conn, binary_id=binary_id, engine=engine, evidence=_evidence(strings=[_UPX_STRING])
         )
         assert engine.calls == []
+
+    def test_read_section_bytes_reads_only_executable_sections(self, tmp_path: Path) -> None:
+        target = tmp_path / "code.bin"
+        target.write_bytes(b"\x00" * 64 + b"EXEC" + b"\x00" * 64 + b"DATA")
+        sections = [
+            {"name": ".text", "execute": True, "raw_offset": 64, "raw_size": 4},
+            {"name": ".data", "execute": False, "raw_offset": 132, "raw_size": 4},
+            {"name": ".bad", "execute": True, "raw_offset": 9999, "raw_size": 4},
+        ]
+        assert filetypes.read_section_bytes(target, sections) == b"EXEC"
+
+    def test_read_section_bytes_of_missing_file_is_empty(self, tmp_path: Path) -> None:
+        assert filetypes.read_section_bytes(tmp_path / "gone", []) == b""
 
     def test_missing_piece_degrades_with_a_note(
         self, conn: sqlite3.Connection, tmp_path: Path

@@ -512,6 +512,21 @@ def graph_backends() -> tuple[GraphBackend, ...]:
     return tuple(_registry.values())
 
 
+def unregister_graph_backend(name: str) -> None:
+    """Withdraw the graph backend registered as *name*.
+
+    Raises :class:`RegistryError` for a name nothing holds, and
+    :class:`UnknownBackendError` is left to lookups.  Withdrawing a built-in
+    lasts until the next :func:`refresh_graph_backends`.
+    """
+    _ensure_builtins()
+    _ensure_entry_points()
+    if name not in _registry:
+        raise RegistryError(f"no graph backend registration {name!r} to withdraw")
+    del _registry[name]
+    _origins.pop(name, None)
+
+
 def refresh_graph_backends() -> tuple[GraphBackend, ...]:
     """Discard discovered backends and re-run discovery.
 

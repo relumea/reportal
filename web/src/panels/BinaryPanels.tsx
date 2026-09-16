@@ -33,7 +33,7 @@ import {
   cellText,
   hex,
 } from "../components";
-import { ENTROPY_MAX, PACKED_ENTROPY_THRESHOLD, qualityHue } from "../design";
+import { ENTROPY_MAX, PACKED_ENTROPY_THRESHOLD, qualityHue, statusEntity } from "../design";
 import type { HueFamily } from "../design";
 import { panelKey, refreshPanel, useLazyPanel, usePanel } from "../panelCache";
 import { useAsync } from "../useAsync";
@@ -91,6 +91,8 @@ import type {
   FirmwareExtraction,
   FirmwareRegion,
   FirmwareScan,
+  FunctionListPage,
+  FunctionRow,
   FunctionTriageResult,
   HardeningScan,
   ImportTable,
@@ -737,6 +739,174 @@ function SectionEntropyCell({ section }: { section: PeSection }): ReactNode {
       readout={entropy === null ? NA : entropy.toFixed(4)}
       title={entropy === null ? "entropy unavailable" : `${entropy.toFixed(4)} bits/byte`}
     />
+  );
+}
+
+// Coverage map geometry: the smallest cell, and the most cells one section may
+// draw.  A section past the cap widens its cells instead of adding nodes, so
+// the whole map stays a bounded number of elements whatever the binary's size.
+// ponytail: one cap for every viewport, size the cell from the measured width
+// if a section ever crowds a narrow screen.
+const COVERAGE_CELL_BYTES_MIN = 16;
+const COVERAGE_CELLS_MAX = 512;
+
+/** One coverage-map cell: an address range and the function whose extent covers it. */
+interface CoverageCell {
+  va: number;
+  bytes: number;
+  /** The stored function covering the cell's start, or null when none does. */
+  fn: FunctionRow | null;
+}
+
+/**
+ * Split one section into cells, each carrying the function that covers its
+ * start address.  *functions* is sorted by VA by the caller; the cell walk is
+ * one pass over it, so a section with thousands of cells stays linear.
+ */
+function coverageCells(
+  section: PeSection,
+  imageBase: number,
+  functions: FunctionRow[],
+): CoverageCell[] {
+  const start = imageBase + section.virtual_address;
+  const size = section.virtual_size;
+  if (size <= 0) return [];
+  const bytes = Math.max(COVERAGE_CELL_BYTES_MIN, Math.ceil(size / COVERAGE_CELLS_MAX));
+  const cells: CoverageCell[] = [];
+  let index = 0;
+  for (let offset = 0; offset < size; offset += bytes) {
+    const va = start + offset;
+    while (
+      index < functions.length &&
+      functions[index].va + Math.max(functions[index].size, 1) <= va
+    ) {
+      index += 1;
+    }
+    const covering = index < functions.length ? functions[index] : undefined;
+    cells.push({
+      va,
+      bytes: Math.min(bytes, size - offset),
+      fn: covering !== undefined && covering.va <= va ? covering : null,
+    });
+  }
+  return cells;
+}
+
+export function CoverageMapPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const peKey = panelKey("binary", binaryId, "pe-info");
+  const pe = usePanel(peKey, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const functionKey = panelKey("binary", binaryId, "functions");
+  const functions = usePanel(functionKey, () =>
+    api<FunctionListPage>(`/binaries/${binaryId}/functions`),
+  );
+  return (
+    <Panel
+      title="Coverage map"
+      subtitle="Every stored section as one cell per address range, coloured by the status of the function covering it: where this binary is reversed, and where it is still a stub."
+    >
+      <PanelBody entry={pe} hint="Loading the section geometry" noScanHint={NO_SCAN_MESSAGES.peInfo}>
+        {(info) => (
+          <PanelBody entry={functions} hint="Loading the stored functions">
+            {(page) => <CoverageMapBody info={info} functions={page.functions} binaryId={binaryId} />}
+          </PanelBody>
+        )}
+      </PanelBody>
+    </Panel>
+  );
+}
+
+/** The status entities the map paints, in the order its legend lists them. */
+const COVERAGE_LEGEND: ReadonlyArray<{ state: string; label: string }> = [
+  { state: "exact", label: "exact" },
+  { state: "reloc", label: "reloc" },
+  { state: "proven", label: "proven" },
+  { state: "thunk", label: "thunk" },
+  { state: "near", label: "near-match" },
+  { state: "stub", label: "stub" },
+  { state: "idle", label: "other" },
+  { state: "empty", label: "no function" },
+];
+
+function CoverageMapBody({
+  info,
+  functions,
+  binaryId,
+}: {
+  info: PeInfo;
+  functions: FunctionRow[];
+  binaryId: number;
+}): ReactNode {
+  const sections = (Array.isArray(info.sections) ? info.sections : []).filter(
+    (section) => section.virtual_size > 0,
+  );
+  if (sections.length === 0) {
+    return <EmptyState>The stored PE details carry no section with a virtual size.</EmptyState>;
+  }
+  const imageBase = info.image_base ?? 0;
+  // The cell walk below advances one pointer through the functions, so the
+  // order is a precondition of the derivation rather than the route's default.
+  const ordered = [...functions].sort((left, right) => left.va - right.va);
+  // A section cell's state comes from the function table, so the map is
+  // undefined without one rather than a uniformly empty grid.
+  const zeroFunctions = functions.length === 0;
+  return (
+    <>
+      {zeroFunctions ? (
+        <Note tone="warn">
+          This binary has no stored functions, so every cell reads as no function. Run
+          import-rebrew on its project.
+        </Note>
+      ) : null}
+      <div className="covmap-legend">
+        {COVERAGE_LEGEND.map((entry) => (
+          <span className="covmap-key" key={entry.state}>
+            <span className="covmap-cell" data-state={entry.state} aria-hidden="true" />
+            {entry.label}
+          </span>
+        ))}
+      </div>
+      <div className="covmap">
+        {sections.map((section) => {
+          const cells = coverageCells(section, imageBase, ordered);
+          const covered = cells.filter((cell) => cell.fn !== null).length;
+          return (
+            <div className="covmap-section" key={section.name}>
+              <div className="covmap-head">
+                <span className="covmap-name">{section.name}</span>
+                <Muted>
+                  {`${hex(imageBase + section.virtual_address)} ${section.virtual_size} bytes, ${covered} of ${cells.length} cells carry a stored function`}
+                </Muted>
+              </div>
+              <div className="covmap-grid" role="group" aria-label={`${section.name} coverage map`}>
+                {cells.map((cell) => {
+                  const state = cell.fn === null ? "empty" : (statusEntity(cell.fn.status) ?? "idle");
+                  const end = cell.va + cell.bytes;
+                  const name = cell.fn === null ? "no stored function" : cell.fn.name || "unnamed";
+                  return (
+                    <Link
+                      className="covmap-cell"
+                      data-state={state}
+                      key={cell.va}
+                      // The grid is a map, not a list of tab stops: a section
+                      // can carry hundreds of cells and the Sections table
+                      // above is the keyboard path through the same addresses.
+                      tabIndex={-1}
+                      aria-label={`${name} at ${hex(cell.va)}`}
+                      title={`${hex(cell.va)}..${hex(end)} ${name} (${state})`}
+                      to={
+                        cell.fn === null
+                          ? `/binaries/${binaryId}?memory=${hex(cell.va)}`
+                          : `/functions/${cell.fn.id}`
+                      }
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
 

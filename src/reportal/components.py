@@ -145,14 +145,25 @@ class Context:
         self._effects: list[Effect] = []
         self._subscribers: list[ChangeCallback] = []
 
-    def subscribe(self, callback: ChangeCallback) -> None:
+    def subscribe(self, callback: ChangeCallback) -> Callable[[], None]:
         """Register *callback*, called with ``(name, kind)`` on every change.
 
         A change is a :meth:`provide`, a :meth:`revoke`, or either's inverse
         applied by :meth:`revert`.  This is the surface a loader re-evaluates
         component activation from while a run is in progress.
+
+        Returns the subscription's inverse: calling it removes *callback*, and
+        calling it twice is a no-op.  A subscriber that outlives the loader that
+        made it would otherwise be re-entered by a later revert of the same
+        context, which is a change arriving at a loader whose run is over.
         """
         self._subscribers.append(callback)
+
+        def unsubscribe() -> None:
+            if callback in self._subscribers:
+                self._subscribers.remove(callback)
+
+        return unsubscribe
 
     def names(self) -> frozenset[str]:
         """Every name currently bound, which is what a requirement is checked against."""
@@ -438,6 +449,22 @@ def registrations() -> tuple[Registration, ...]:
     _ensure_builtins()
     _ensure_entry_points()
     return tuple(_registry.values())
+
+
+def unregister_component(name: str) -> None:
+    """Withdraw the component registered as *name*, the inverse of a registration.
+
+    Every other plugin seam carries this; without it a registration's only undo
+    was :func:`refresh_components`, which rebuilds the whole registry and so
+    drops every *other* in-process registration too.  Raises
+    :class:`RegistryError` for a name nothing holds.  Withdrawing a built-in
+    lasts until the next :func:`refresh_components`.
+    """
+    _ensure_builtins()
+    _ensure_entry_points()
+    if name not in _registry:
+        raise RegistryError(f"no component registration {name!r} to withdraw")
+    del _registry[name]
 
 
 def refresh_components() -> tuple[Component, ...]:

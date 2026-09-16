@@ -76,58 +76,65 @@ def _counts(conn: sqlite3.Connection, sql: str, *, since: str) -> dict[str, int]
     return {_day(str(row["day"])): int(row["n"]) for row in rows}
 
 
-def _analyses(
-    conn: sqlite3.Connection, since: str, visible_to: Mapping[str, Any] | None = None
+def _scoped_daily_counts(
+    conn: sqlite3.Connection,
+    *,
+    table: str,
+    alias: str,
+    binary_id_column: str,
+    since: str,
+    visible_to: Mapping[str, Any] | None,
 ) -> dict[str, int]:
-    """Analyses created per day since *since*, on binaries the caller may see."""
+    """Per-day row counts of *table* since *since*, on binaries the caller may see."""
     from reportal import auth
 
     scope = auth.visible_clause(conn, visible_to, prefix="b.")
     if scope is None:
         return _counts(
             conn,
-            "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM analyses"
+            f"SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM {table}"
             " WHERE created_at >= ? GROUP BY day",
             since=since,
         )
     clause, params = scope
     try:
         rows = conn.execute(
-            "SELECT substr(a.created_at, 1, 10) AS day, COUNT(*) AS n FROM analyses a"
-            f" JOIN binaries b ON b.id = a.binary_id WHERE a.created_at >= ? AND {clause}"
-            " GROUP BY day",
+            f"SELECT substr({alias}.created_at, 1, 10) AS day, COUNT(*) AS n"
+            f" FROM {table} {alias} JOIN binaries b ON b.id = {alias}.{binary_id_column}"
+            f" WHERE {alias}.created_at >= ? AND {clause} GROUP BY day",
             [since, *params],
         ).fetchall()
     except sqlite3.OperationalError:
         return {}
     return {_day(str(row["day"])): int(row["n"]) for row in rows}
+
+
+def _analyses(
+    conn: sqlite3.Connection, since: str, visible_to: Mapping[str, Any] | None = None
+) -> dict[str, int]:
+    """Analyses created per day since *since*, on binaries the caller may see."""
+    return _scoped_daily_counts(
+        conn,
+        table="analyses",
+        alias="a",
+        binary_id_column="binary_id",
+        since=since,
+        visible_to=visible_to,
+    )
 
 
 def _auto_runs(
     conn: sqlite3.Connection, since: str, visible_to: Mapping[str, Any] | None = None
 ) -> dict[str, int]:
     """Auto runs started per day since *since*, on binaries the caller may see."""
-    from reportal import auth
-
-    scope = auth.visible_clause(conn, visible_to, prefix="b.")
-    if scope is None:
-        return _counts(
-            conn,
-            "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS n FROM auto_runs"
-            " WHERE created_at >= ? GROUP BY day",
-            since=since,
-        )
-    clause, params = scope
-    try:
-        rows = conn.execute(
-            "SELECT substr(r.created_at, 1, 10) AS day, COUNT(*) AS n FROM auto_runs r"
-            f" JOIN binaries b ON b.id = r.binary_id WHERE r.created_at >= ? AND {clause}"
-            " GROUP BY day",
-            [since, *params],
-        ).fetchall()
-    except sqlite3.OperationalError:
-        return {}
-    return {_day(str(row["day"])): int(row["n"]) for row in rows}
+    return _scoped_daily_counts(
+        conn,
+        table="auto_runs",
+        alias="r",
+        binary_id_column="binary_id",
+        since=since,
+        visible_to=visible_to,
+    )
 
 
 def _actions(conn: sqlite3.Connection, since: str) -> dict[str, int]:

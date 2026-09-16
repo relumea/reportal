@@ -12,7 +12,18 @@ import pytest
 from conftest import AI_SUMMARY_RESPONSE, FailingLlmClient, FakeEngine
 from pipeline_helpers import LISTING, ScriptedLlmClient, seed_portal, seed_unstrip_proposal, spy
 
-from reportal import components, effects, engines, journal, llm, pipeline, similarity, store
+from reportal import (
+    ai_decomp,
+    components,
+    effects,
+    engines,
+    journal,
+    llm,
+    pipeline,
+    similarity,
+    store,
+    symbols,
+)
 from reportal.components import Component, Context
 
 
@@ -60,6 +71,16 @@ def _run(
     )
 
 
+def _ingest_symbols(
+    conn: sqlite3.Connection, *, binary_id: int, data: bytes, parsed: dict[str, Any]
+) -> None:
+    """Store a hand-built symbol parse for one binary, without applying it."""
+    with journal.journaled(conn, journal.new_action()) as log:
+        symbols.import_symbols(
+            conn, log, binary_id=binary_id, data=data, parsed=parsed, apply=False
+        )
+
+
 def _steps(run: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """The run's steps keyed by component name."""
     return {str(step["name"]): step for step in run["steps"]}
@@ -85,6 +106,11 @@ class TestDependencyOrder:
         order = [
             component.name for component in pipeline.dependency_order(pipeline.builtin_components())
         ]
+        # The enrich chain is ordered by real edges, not by luck:
+        # `name-variables` and `summarize` require `renamed_code`, so they cannot
+        # run before the rename pass, and `store` persists what the whole chain
+        # produced so it comes last.  A declaration shuffle that broke any of
+        # that would show up here.
         assert order == [
             "prepare",
             "read-trace",
@@ -92,10 +118,16 @@ class TestDependencyOrder:
             "search-functionality",
             "resolve-names",
             "retrieve-knowledge",
+            "rewrite",
+            "rename-variables",
             "name-variables",
             "summarize",
             "store",
         ]
+        assert order.index("rewrite") < order.index("rename-variables")
+        assert order.index("rename-variables") < order.index("name-variables")
+        assert order.index("rename-variables") < order.index("summarize")
+        assert order.index("summarize") < order.index("store")
 
 
 class TestRun:
@@ -119,6 +151,8 @@ class TestRun:
             "search-functionality",
             "resolve-names",
             "retrieve-knowledge",
+            "rewrite",
+            "rename-variables",
             "name-variables",
             "summarize",
             "store",
@@ -174,9 +208,15 @@ class TestRun:
         steps = _steps(run)
         assert steps["decompile"]["status"] == pipeline.STEP_SKIPPED
         assert steps["decompile"]["reason"] == pipeline.REASON_NO_ENGINE_CONTEXT
-        for name in ("name-variables", "summarize"):
+        # Each step names the requirement that went, so the reason reads as a
+        # chain back to the root: summarize waits on the rename pass, which
+        # waits on the decompilation, which had no project to read.
+        for name in ("rewrite", "rename-variables"):
             assert steps[name]["status"] == pipeline.STEP_SKIPPED
             assert steps[name]["reason"] == "dependency-skipped:decompile"
+        for name in ("name-variables", "summarize"):
+            assert steps[name]["status"] == pipeline.STEP_SKIPPED
+            assert steps[name]["reason"] == "dependency-skipped:rename-variables"
 
     def test_without_llm_skips_the_llm_stages(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -662,7 +702,336 @@ class TestBuiltinStages:
         assert store.get_ai_artifact(conn, ids["function"], pipeline.PREDICTED_NAME_KIND) is None
 
 
+class _EmptyRenameClient(ScriptedLlmClient):
+    """A scripted client whose rename answer carries no usable suggestion."""
+
+    def complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        temperature: float = llm.DEFAULT_TEMPERATURE,
+        json_object: bool = False,
+    ) -> str:
+        prompt = messages[-1]["content"] if messages else ""
+        if "unclear identifiers" in prompt:
+            self.calls.append(messages)
+            return '{"suggestions": []}'
+        return super().complete(messages, temperature=temperature, json_object=json_object)
+
+
+class TestEnrichChain:
+    """The composed chain: rewrite, then rename, then summarize the renamed text."""
+
+    def test_the_chain_renames_the_stored_text_and_the_store_stage_keeps_it(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The regression the store stage's guard exists for.
+
+        `_persist_decompilation` holds the pre-rename text in the run's context.
+        Comparing it against the stored row after the rename pass always reads
+        as "changed", so without the guard the store stage would put the
+        identifiers back and silently undo the whole rename.
+        """
+        ids = seed_portal(tmp_path, monkeypatch)
+        run = _run(conn, ids, engine=FakeEngine(), llm_client=ScriptedLlmClient())
+        assert _steps(run)["rename-variables"]["status"] == pipeline.STEP_DONE
+        stored = store.get_decompilation(conn, ids["function"])
+        assert stored is not None
+        assert "read_file" in stored["code"]
+        assert "sub_1000" not in stored["code"]
+        assert run["artifacts"]["decompilation"]["code"] == stored["code"]
+        # The rewrite the chain asked for is a stored artifact of its own.
+        rewrite = store.get_ai_artifact(conn, ids["function"], ai_decomp.KIND)
+        assert rewrite is not None
+        assert rewrite["model"] == "scripted-model"
+        assert "read_file" in run["artifacts"]["rewrite"]["rewritten_code"]
+
+    def test_the_summary_reads_the_renamed_text(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        client = ScriptedLlmClient()
+        _run(conn, ids, engine=FakeEngine(), llm_client=client)
+        summary_prompts = [
+            call[-1]["content"] for call in client.calls if "Summarize" in call[-1]["content"]
+        ]
+        assert summary_prompts, "the summary stage must have asked the model"
+        assert "read_file" in summary_prompts[0]
+        assert "sub_1000" not in summary_prompts[0]
+
+    def test_the_naming_prompt_carries_the_workspace_names(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The evidence is the workspace's, not the model's: a real match name."""
+        ids = seed_portal(tmp_path, monkeypatch)
+        store.record_match(
+            conn,
+            function_id=ids["function"],
+            candidate_function_id=ids["second"],
+            similarity=91.5,
+            confidence=0.8,
+        )
+        client = ScriptedLlmClient()
+        _run(conn, ids, engine=FakeEngine(), llm_client=client)
+        rename_prompts = [
+            call[-1]["content"]
+            for call in client.calls
+            if "unclear identifiers" in call[-1]["content"]
+        ]
+        assert rename_prompts, "the rename stage must have asked the model"
+        assert "Names this workspace already knows" in rename_prompts[0]
+        assert "DoThing" in rename_prompts[0]
+        # Both the resolved prediction and the recorded match reach the prompt:
+        # the match list is a named block, not a bare list of rows.
+        assert "DoThing (match at 91.50 similarity)" in rename_prompts[0]
+
+    def test_the_naming_prompt_carries_the_symbol_names(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A debug symbol file is the one source of names nothing can derive."""
+        ids = seed_portal(tmp_path, monkeypatch)
+        store.set_decompilation(
+            conn,
+            ids["function"],
+            "void sub_1000(void)\n{\n  count = DAT_0040a1c;\n  return;\n}\n",
+            "kuna",
+        )
+        _ingest_symbols(
+            conn,
+            binary_id=ids["binary"],
+            data=b"pipeline-symbol-file",
+            parsed={
+                "kind": "elf",
+                "symbols": [
+                    {"name": "read_file", "va": 0x1000, "kind": "function", "source": "elf"},
+                    {"name": "g_count", "va": 0x40A1C, "kind": "object", "source": "elf"},
+                ],
+                "types": [],
+            },
+        )
+        client = ScriptedLlmClient()
+        _run(conn, ids, engine=FakeEngine(), llm_client=client)
+        rename_prompts = [
+            call[-1]["content"]
+            for call in client.calls
+            if "unclear identifiers" in call[-1]["content"]
+        ]
+        assert rename_prompts, "the rename stage must have asked the model"
+        # The symbol at the function's own VA and the one behind the DAT_
+        # placeholder in its code, so a global can be named too.
+        assert "read_file (ingested symbols)" in rename_prompts[0]
+        assert "g_count (ingested symbols at 0x40a1c)" in rename_prompts[0]
+
+    def test_symbol_names_are_bounded_and_skip_an_unusable_index(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The block is bounded, and a symbol file with nothing usable adds none."""
+        ids = seed_portal(tmp_path, monkeypatch)
+        _ingest_symbols(
+            conn,
+            binary_id=ids["binary"],
+            data=b"pipeline-unusable-symbols",
+            parsed={
+                "kind": "elf",
+                "symbols": ["junk", {"name": "", "va": 0x1000}, {"name": "no-va", "va": None}],
+                "types": [],
+            },
+        )
+        function = store.get_function(conn, ids["function"])
+        assert function is not None
+        ctx = Context(
+            {
+                pipeline.SEED_CONN: conn,
+                pipeline.SEED_FUNCTION: function,
+                pipeline.NAME_DECOMPILATION: {"code": "void sub_1000(void) {}"},
+            }
+        )
+        assert pipeline.symbol_names(ctx) == []
+        # A caller with no run seeds at all gets no names rather than an error.
+        assert pipeline.symbol_names(Context({})) == []
+
+        _ingest_symbols(
+            conn,
+            binary_id=ids["binary"],
+            data=b"pipeline-many-symbols",
+            parsed={
+                "kind": "elf",
+                "symbols": [
+                    {"name": f"g_{index}", "va": 0x4000 + index, "kind": "object", "source": "elf"}
+                    for index in range(30)
+                ],
+                "types": [],
+            },
+        )
+        code = (
+            "void sub_1000(void)\n{\n"
+            + "\n".join(f"  x = DAT_{0x4000 + i:x};" for i in range(30))
+            + "\n}\n"
+        )
+        ctx.provide(pipeline.NAME_DECOMPILATION, {"code": code})
+        names = pipeline.symbol_names(ctx)
+        assert len(names) == pipeline.KNOWN_SYMBOL_LIMIT
+
+        # The index cache is bounded, so a long-lived server cannot pin every
+        # symbol file it ever ingested.
+        for index in range(pipeline.MAX_SYMBOL_INDEXES + 1):
+            pipeline._symbol_index(f"hash-{index}", {"symbols": []})
+        assert len(pipeline._symbol_indexes) <= pipeline.MAX_SYMBOL_INDEXES
+
+    def test_a_model_with_nothing_to_rename_does_not_cancel_the_chain(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No applicable suggestion is a pass-through, not a failed step.
+
+        A whole-binary batch would otherwise report a failure for every function
+        whose identifiers the model left alone, and the stages after the rename
+        pass would be skipped with the text they need already bound.
+        """
+        ids = seed_portal(tmp_path, monkeypatch)
+        run = _run(conn, ids, engine=FakeEngine(), llm_client=_EmptyRenameClient())
+        steps = _steps(run)
+        assert steps["rename-variables"]["status"] == pipeline.STEP_DONE
+        assert steps["summarize"]["status"] == pipeline.STEP_DONE
+        assert run["status"] == pipeline.RUN_DONE
+        stored = store.get_decompilation(conn, ids["function"])
+        assert stored is not None and "sub_1000" in stored["code"]
+
+
+class TestBatch:
+    """The whole-binary form: one composition per function, one run each."""
+
+    def _seed(self, conn: sqlite3.Connection, ids: dict[str, Any]) -> list[int]:
+        """Three extra functions of distinct sizes, largest last."""
+        return [
+            store.add_function(
+                conn,
+                analysis_id=ids["analysis"],
+                va=0x3000 + index * 0x10,
+                name=f"extra_{index}",
+                size=size,
+            )
+            for index, size in enumerate((0x40, 0x80, 0x20))
+        ]
+
+    def test_the_batch_takes_the_largest_functions_by_default(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        extra = self._seed(conn, ids)
+        payload = pipeline.run_pipeline_batch(
+            conn,
+            binary_id=ids["binary"],
+            limit=2,
+            engine=FakeEngine(),
+            llm_client=ScriptedLlmClient(),
+        )
+        assert payload["total"] == 2
+        # The seeded sub_1000 is 0x20 and extra_0 is 0x40, extra_1 0x80, so the
+        # two largest are the ones a model call returns something for.
+        assert [row["function_id"] for row in payload["runs"]] == [extra[1], extra[0]]
+        assert payload["done"] == 2
+        assert payload["failed"] == 0
+
+    def test_named_function_ids_are_run_whatever_their_size(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        payload = pipeline.run_pipeline_batch(
+            conn,
+            binary_id=ids["binary"],
+            function_ids=[ids["second"]],
+            engine=FakeEngine(),
+            llm_client=ScriptedLlmClient(),
+        )
+        assert [row["function_id"] for row in payload["runs"]] == [ids["second"]]
+        assert payload["total"] == 1
+        assert store.get_pipeline_run(conn, int(payload["runs"][0]["run_id"])) is not None
+
+    def test_each_function_gets_its_own_run_and_the_progress_sink_sees_each_one(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        seen: list[tuple[int, int]] = []
+        payload = pipeline.run_pipeline_batch(
+            conn,
+            binary_id=ids["binary"],
+            function_ids=[ids["function"], ids["second"]],
+            engine=FakeEngine(),
+            llm_client=ScriptedLlmClient(),
+            progress=lambda done, total: seen.append((done, total)),
+        )
+        assert seen == [(1, 2), (2, 2)]
+        assert len({row["run_id"] for row in payload["runs"]}) == 2
+        # One run per function is what makes one function's artifacts separately
+        # revertible; a batch sharing a run would be all-or-nothing.
+        assert store.latest_pipeline_run(conn, ids["function"]) is not None
+        assert store.latest_pipeline_run(conn, ids["second"]) is not None
+
+    def test_one_function_failing_leaves_the_others_run(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        real = pipeline.run_pipeline
+
+        def flaky(conn: sqlite3.Connection, *, function_id: int, **kwargs: Any) -> dict[str, Any]:
+            if function_id == ids["function"]:
+                raise KeyError(f"no function with id {function_id}")
+            return real(conn, function_id=function_id, **kwargs)
+
+        monkeypatch.setattr(pipeline, "run_pipeline", flaky)
+        payload = pipeline.run_pipeline_batch(
+            conn,
+            binary_id=ids["binary"],
+            function_ids=[ids["function"], ids["second"]],
+            engine=FakeEngine(),
+            llm_client=ScriptedLlmClient(),
+        )
+        assert payload["failed"] == 1
+        assert payload["done"] == 1
+        assert payload["runs"][0]["status"] == pipeline.RUN_FAILED
+        assert payload["runs"][0]["error"]
+        assert payload["runs"][1]["function_id"] == ids["second"]
+
+    def test_an_out_of_range_limit_is_refused(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        for limit in (0, pipeline.MAX_BATCH_LIMIT + 1):
+            with pytest.raises(ValueError):
+                pipeline.run_pipeline_batch(conn, binary_id=ids["binary"], limit=limit)
+
+    def test_an_unknown_function_id_is_refused_before_any_run(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        with pytest.raises(KeyError):
+            pipeline.run_pipeline_batch(conn, binary_id=ids["binary"], function_ids=[4242])
+
+    def test_a_binary_with_no_functions_is_an_empty_batch(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        other = store.add_binary(conn, sha256="ef" * 32, name="empty.exe", path="/nonexistent")
+        payload = pipeline.run_pipeline_batch(conn, binary_id=other)
+        assert payload == {"binary_id": other, "runs": [], "done": 0, "failed": 0, "total": 0}
+        assert ids["binary"] != other
+
+
 class TestRevert:
+    def test_a_finished_run_leaves_no_subscriber_on_its_context(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The loader's subscription is undone when the run ends.
+
+        A revert notifies the context's subscribers, and a run's context outlives
+        the run in ``_run_contexts``; a watcher still attached would re-decide a
+        composition whose run is over.
+        """
+        ids = seed_portal(tmp_path, monkeypatch)
+        run = _run(conn, ids, engine=FakeEngine(), llm_client=ScriptedLlmClient())
+        ctx = pipeline._run_contexts[int(run["id"])]
+        assert ctx._subscribers == []
+
     def test_revert_removes_the_artifacts_the_run_stored(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -388,18 +388,27 @@ def write_artifact(
 # ── Mutations ──────────────────────────────────────────────────────
 
 
-def rewrite(conn: sqlite3.Connection, function_id: int, *, client: llm.LlmClient) -> dict[str, Any]:
+def rewrite(
+    conn: sqlite3.Connection,
+    function_id: int,
+    *,
+    client: llm.LlmClient,
+    context: str = "",
+) -> dict[str, Any]:
     """Ask the model for a rewritten function and return the new payload.
 
     The model's input is the function's stored decompilation and never a
     generated one, so a function without one raises
-    :class:`reportal.renames.NoDecompilationError`.
+    :class:`reportal.renames.NoDecompilationError`.  *context* is what the
+    workspace already knows about this code (its predicted name, the real names
+    of its match candidates, retrieved documents); the rewrite is the stage that
+    benefits most from it, since a rewrite is mostly a naming decision.
     """
     stored = store.get_decompilation(conn, function_id)
     if stored is None:
         raise renames.NoDecompilationError(f"function {function_id} has no stored decompilation")
     source = str(stored["code"])
-    result = llm.rewrite_decompilation(source, client=client)
+    result = llm.rewrite_decompilation(source, client=client, context=context)
     return _payload(str(result["code"]), source, client.model)
 
 

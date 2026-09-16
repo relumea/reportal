@@ -325,7 +325,7 @@ class TestComponentsRoutes:
         )
         assert entry == {
             "name": "prepare",
-            "requires": ["function"],
+            "requires": ["conn", "engine", "function"],
             "provides": ["disassembly", "function_meta"],
             "origin": "builtin",
             "reloadable": True,

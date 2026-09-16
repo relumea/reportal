@@ -12,7 +12,7 @@ operational facts that matter afterwards.
 
 | Requirement | Why |
 |-------------|-----|
-| Python 3.12 or newer | the package's `requires-python` |
+| Python 3.13 or newer | the package's `requires-python` (matched to `rebrew`, a base dependency) |
 | A directory that holds the workspace | everything reportal owns lives under the `reportal.toml` marker; nothing is written outside it except the temporary files its own tools place there |
 | The `rebrew` engine, installed with the package | it is a base dependency; without it the engine routes answer 503 and the fingerprint, disassembly, decompilation and struct paths are unavailable |
 | A writable database and workspace | the database is opened read-write; a scan, an upload or a rename writes |
@@ -31,8 +31,10 @@ sudo useradd --system --create-home --home-dir /srv/reportal --shell /usr/sbin/n
 sudo -u reportal mkdir -p /srv/reportal
 cd /srv/reportal
 
-# 2. The package, in a virtual environment the unit file points at.
-sudo -u reportal /usr/bin/python3 -m venv .venv
+# 2. The package, in a virtual environment the unit file points at.  Name the
+#    interpreter: `python3` is 3.12 or older on a current Debian or Ubuntu host,
+#    and the install refuses an interpreter below the package's floor.
+sudo -u reportal python3.13 -m venv .venv
 sudo -u reportal .venv/bin/pip install reportal            # or the built wheel
 # From a source checkout:  sudo -u reportal .venv/bin/pip install -e ".[dev]"
 

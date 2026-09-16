@@ -128,9 +128,43 @@ def _regex(*patterns: str) -> tuple[re.Pattern[str], ...]:
     return tuple(re.compile(pattern, re.IGNORECASE) for pattern in patterns)
 
 
-# String evidence: a disassembly mnemonic, an exception-handling keyword, the
+# String evidence: disassembly mnemonics, an exception-handling keyword, the
 # SIGTRAP signal form, and the debugger literals a binary prints or checks.
 _RDTSC = _regex(r"\brdtsc\b")
+# I/O port probing: `in`/`out` mnemonics with an immediate port operand, the
+# anti-emulation trick of reading non-standard ports (the SIDT-keyed RAT
+# probed 0x4F, 0xEF, 0x93, 0x19, 0x3D, 0xA8 and 0xFD).  Ordinary user-space
+# code never touches ports directly, so any hit is medium confidence.
+_IO_PORT_PROBE = _regex(
+    r"\b(?:in|out)\s+(?:al|ax|eax|dx)\s*,\s*(?:0x)?[0-9a-f]{1,4}\b",
+    r"\b(?:in|out)\s+(?:0x)?[0-9a-f]{1,4}\s*,\s*(?:al|ax|eax)\b",
+    r"\b(?:in|out)\s+(?:al|ax|eax)\s*,\s*dx\b",
+    r"\bout\s+dx\s*,\s*(?:al|ax|eax)\b",
+)
+# Deliberate breakpoint and single-step traps: `int 3` with pushf/popf
+# flag juggling, the fault-boundary trick where execution continues natively
+# but diverges under a debugger.  Ordinary code never plants its own traps.
+_INT3_TRAP = _regex(
+    r"\bint\s+3\b",
+    r"\bint3\b",
+)
+# CPU-state inspection: descriptor-table reads, the hypervisor leaf and
+# FPU-state capture, the environment-sensitive key-derivation shape (SIDT
+# feeding key material, FPU context saved around decrypt loops).  Ordinary
+# user-space code reads none of these, so any hit is medium confidence.
+_CPU_STATE_PROBE = _regex(
+    r"\bsidt\b",
+    r"\bsgdt\b",
+    r"\bsldt\b",
+    r"\bcpuid\b",
+    r"\bfnstenv\b",
+    r"\bfstenv\b",
+    r"\bfxsave\b",
+    r"\bfsave\b",
+)
+# LOCK-prefixed integrity probes: atomic write/check pairs around transient
+# globals that abort when instrumentation alters read-back behavior.
+_LOCK_CANARY = _regex(r"\block\s+(?:inc|dec|add|sub|xadd|xchg|cmpxchg)\b")
 _VM_OR_SANDBOX = _regex(
     r"\b(?:VMware|VBOX|VirtualBox|QEMU|Xen|Sandboxie|SbieDll|wine|Wireshark|Procmon|Cuckoo)\b"
 )
@@ -190,6 +224,26 @@ ANTI_ANALYSIS_RULES: tuple[AntiAnalysisRule, ...] = (
         category="debugger-detection-string",
         description="Carries a debugger-detection literal",
         strings=_DEBUGGER_STRING,
+    ),
+    AntiAnalysisRule(
+        category="io-port-probe",
+        description="Reads or writes an I/O port directly, an anti-emulation probe",
+        strings=_IO_PORT_PROBE,
+    ),
+    AntiAnalysisRule(
+        category="cpu-state-probe",
+        description="Reads CPU or FPU state user-space code never needs, an environment probe",
+        strings=_CPU_STATE_PROBE,
+    ),
+    AntiAnalysisRule(
+        category="int3-trap",
+        description="Plants a breakpoint exception that diverges under a debugger",
+        strings=_INT3_TRAP,
+    ),
+    AntiAnalysisRule(
+        category="lock-canary",
+        description="Guards globals with LOCK-prefixed writes that abort under instrumentation",
+        strings=_LOCK_CANARY,
     ),
 )
 

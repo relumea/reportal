@@ -77,19 +77,19 @@ loud with its install hint, never a silent skip. `shellcheck` and `vnu` are the
 two external tools (`vnu` also needs Java 17+).
 
 **mypy.** `[tool.mypy]` holds the package and the suite to a graduated flag
-set: `python_version = "3.12"`, `disallow_untyped_defs`, `check_untyped_defs`,
+set: `python_version = "3.13"`, `disallow_untyped_defs`, `check_untyped_defs`,
 `warn_unused_ignores`, `no_implicit_optional`, `strict_equality`,
 `warn_return_any` and `disallow_any_generics`. The suite runs at the same
 level as the package rather than under a per-module relaxation: `tests/` has
 no `__init__.py`, so mypy names its modules by basename and the only pattern
 that matches the directory (`*.*`) also matches every package module, which
 would silently weaken `src/reportal`. Plain `mypy` reads the config;
-`Success: no issues found in 253 source files` is the finish line.
+`Success: no issues found in 257 source files` is the finish line.
 
 `--strict` is a documented follow-up, not a claim of compliance.
-`.venv/bin/python -m mypy --strict --python-version 3.12 src/reportal` reports
+`.venv/bin/python -m mypy --strict --python-version 3.13 src/reportal` reports
 5 errors, none of them about the HTTP layer: `journal.py:933` and
-`journal.py:934` plus `pdf.py:619` and `pdf.py:620` are module-attribute
+`journal.py:934` plus `pdf.py:629` and `pdf.py:630` are module-attribute
 errors (a name another module imports without re-exporting it), and
 `engines.py:302` is a return-value error on the engine's decorator.
 
@@ -98,7 +98,7 @@ errors (a name another module imports without re-exporting it), and
 equal to `[tool.coverage.report] fail_under`): pytest-cov reads the config key
 to *report* a shortfall but still exits 0 on it, so the flag is what makes the
 gate fail.  `.venv/bin/python -m pytest --cov` (or `make test`) measured
-92.17%, 32562 statements with 2548 missed. `[tool.coverage.report] fail_under`
+92.18%, 34652 statements with 2711 missed. `[tool.coverage.report] fail_under`
 is the whole percent below that, 92. The floor only ever moves up; raise it in
 the commit that raises coverage.
 
@@ -777,14 +777,16 @@ the floor proves nothing.
 
 ## Conventions
 
-- Python 3.12+, `src/` layout, setuptools, `dynamic = ["version"]` from `reportal.__version__`.
+- Python 3.13+ (matched to `rebrew`, a base dependency), `src/` layout, setuptools, `dynamic = ["version"]` from `reportal.__version__`.
 - Runtime deps: `fastapi`, `uvicorn` (the ASGI application),
   `python-multipart` (its multipart reader), `reportlab` (the PDF export's
   writer), `openai` (the optional LLM bridge, `llm.py`), `httpx2` (the one HTTP
   client line: the bridge, the `mcp` SDK and guarded URL ingestion in
   `remote_ingest.py`), `rebrew`
   (sibling path dep via `[tool.uv.sources]`; the in-process engine and the
-  shared `rebrew-project.toml` + coverage.db resolver), `rich`, `typer`.  No
+  shared `rebrew-project.toml` + coverage.db resolver), `rich`, `typer`,
+  `zstandard` (imported by `rebrew.workspace`, which decodes the
+  `section_cells_json` cache).  No
   network call happens until an LLM endpoint is configured or a URL is
   ingested.  Dev extra: `pytest`, `pytest-cov`, `ruff`, `mypy`.  Optional `similarity` extra:
   `resembl` (sibling path dep via `[tool.uv.sources]`), `rapidfuzz` (pygments

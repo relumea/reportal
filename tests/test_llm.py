@@ -167,6 +167,34 @@ class TestComplete:
         assert body["model"] == "m"
         assert body["temperature"] == 0.25
         assert body["messages"] == [{"role": "user", "content": "hi"}]
+        assert "response_format" not in body, "plain complete() sends no format hint"
+
+    def test_json_object_is_requested_then_retried_without_it(self) -> None:
+        calls: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request)
+            body = json.loads(request.content)
+            if "response_format" in body:
+                error = {"message": "Unrecognized request argument: response_format"}
+                return httpx.Response(400, json={"error": error})
+            return httpx.Response(200, json=_chat_response("hello"))
+
+        http = httpx.Client(transport=httpx.MockTransport(handler))
+        client = LlmClient(LlmConfig(endpoint="http://llm.local/v1", model="m"), http=http)
+        assert (
+            client.complete([{"role": "user", "content": "hi"}], temperature=0.0, json_object=True)
+            == "hello"
+        )
+        first, second = (json.loads(call.content) for call in calls)
+        assert first["response_format"] == {"type": "json_object"}
+        assert "response_format" not in second, "the retry is today's request shape"
+
+    def test_a_non_format_400_is_not_retried(self) -> None:
+        http = _mock_http(httpx.Response(400, json={"error": {"message": "nope"}}), [])
+        client = LlmClient(LlmConfig(endpoint="http://llm.local/v1"), http=http)
+        with pytest.raises(LlmError):
+            client.complete([{"role": "user", "content": "hi"}], temperature=0.0, json_object=True)
 
     def test_endpoint_already_carrying_chat_path_is_not_doubled(self) -> None:
         capture: list[httpx.Request] = []

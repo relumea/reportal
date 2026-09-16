@@ -7,6 +7,124 @@ view renders it from here.
 
 ## Unreleased
 
+- **`requires-python` is now `>=3.13`** (was `>=3.12`).  The 3.12 claim was never
+  true: `rebrew` is a base dependency and requires 3.13, so the project could not
+  be installed on 3.12 — and `uv lock` could not regenerate at all, because it
+  resolves the whole `requires-python` range.  The lock now regenerates, the 3.12
+  classifier is gone, and the mypy target follows.  Consequence of the same
+  regeneration: `lief` moves to 1.0.0 (also required by `rebrew`) and `resembl`
+  to 2.0.0 — the two stale pins the un-regenerable lock had been holding back.
+  The rest of the toolchain follows the same version: the ruff target is `py313`,
+  a `.python-version` (3.13, as in the sibling `rebrew`) pins the interpreter so
+  `uv venv`, `uv sync` and CI resolve the same one rather than the newest
+  compatible release, and the README's install section and the deployment
+  sequence state the floor instead of assuming a `python3` on PATH is new enough.
+- **`zstandard` is declared directly.**  `rebrew.workspace` decodes the
+  `section_cells_json` cache with it, and this package imports that module — so
+  it needs the dependency rather than inheriting it silently.  Previously
+  `uv sync --frozen` exited 0 while omitting it, and `import rebrew.workspace`
+  then failed at runtime.
+- The binary detail gained a coverage map, the defrag grid the sibling
+  `recoverage` dashboard is built around: one cell per address range of every
+  stored section with a virtual size, coloured by the status entity of the
+  stored function covering the cell's start, with a legend, a per-section
+  covered-of-cells line, and a cell that opens the covering function or the
+  memory dump at that address.  It reads the two requests the sections card
+  already makes (`/binaries/<id>/pe-info` and `/binaries/<id>/functions`), so no
+  route or table is new.  A section past 512 cells widens its cells rather than
+  drawing more, which keeps the whole map a bounded number of elements whatever
+  the binary's size, and a binary with no stored functions says so rather than
+  reading as a uniformly empty grid.
+
+- The AI decompilation pipeline gained the per-function enrichment chain, and a
+  binary can be enriched a queue at a time.  Two stages join the composition:
+  `rewrite` asks the bridge for a whole-function rewrite (stored as the
+  `ai-decompilation` artifact) and `rename-variables` asks for identifier renames
+  and applies them to the stored text through the journaled
+  `renames.apply_renames`; `name-variables` and `summarize` now read
+  `renamed_code`, which is what makes "rewrite, rename, then summarize the
+  renamed result" a real dependency edge rather than declaration order.  The
+  `store` stage no longer clobbers the renames: it holds the run's pre-rename
+  text in its context, so comparing that against the post-rename stored row
+  always read as "changed"; it now leaves an already-renamed decompilation
+  alone.  A rename pass that finds nothing to do (no endpoint, or a model that
+  proposed no applicable name) publishes the engine text as a pass-through and
+  no longer cancels the summary behind it.  The prompt of every naming stage
+  carries the workspace's own evidence beside the knowledge block:
+  `pipeline.known_names` renders the function's predicted name, the names the
+  newest ingested debug symbol file carries (the symbol at the function's own VA
+  and the one behind every `DAT_...`/`sub_...` placeholder its code names,
+  bounded by `KNOWN_SYMBOL_LIMIT`, indexed once per file by content hash) and
+  the real names of its match candidates, so the model chooses among names the
+  project already holds instead of inventing them.
+  `pipeline.run_pipeline_batch` is
+  the whole-binary form (the *limit* largest functions, or a named id list, one
+  stored run each, so one function failing leaves the rest intact and any one
+  function's artifacts stay separately revertible), and it is registered as the
+  `ai-enrich` job kind: `POST /api/jobs`, `reportal job-submit ai-enrich
+  <binary-id> --param limit=25` and the `submit_job` MCP tool all queue it, with
+  `limit`/`function_ids` validated at submit and the function count reported as
+  progress.
+
+- The dashboard reads counts, not rows.  `GET /api/binaries/<id>/functions`
+  takes `limit` (bounded by `store.MAX_FUNCTION_LIMIT`) and `offset` and
+  answers with `matched` beside `count` and `total`, and a new `GET
+  /api/binaries/<id>/function-rollup` counts a binary's function totals and
+  per-status breakdown in SQLite.  The dashboard's per-binary summary fetches
+  the rollup plus the existing `/section-coverage` route instead of the whole
+  function table: a 5,000-function binary drops off the landing path (33.08 to
+  17.35 ms p50, 50,887 to 3,539 bytes), a `limit=100` read drops from 20.26 to
+  1.93 ms p50 with 36x fewer bytes, and gzip moves from level 9 to 6 (3.6x
+  less CPU for 2.9% more bytes on an 874 KB listing).
+- The sandbox undoes its own scratch whatever the runner did.  The work
+  directory and the two output files are reportal's effect, not the sample's,
+  so they are removed in a `finally` rather than on the success path: a runner
+  raising while it builds its command line no longer leaks a `.sandbox-`
+  directory into `binaries/`.  The detonation itself stays an emission with no
+  inverse, and the comment now says so where the classification is made.
+- Two module-level bindings became what they are.  `settings.BY_TABLE_KEY` is
+  built by a function instead of a loop that leaked its variable and then
+  deleted it, and the reconcile rate limiter drops an organisation whose window
+  has emptied, so its state is bounded by who is reconciling now rather than by
+  every organisation the process ever saw.
+- The SPA's theme installation returns its own uninstall.  `installTheme` hands
+  back the function that removes the OS media-query listener, the one listener
+  in the shell that had no inverse; the entry point still installs once per page
+  load, but mounting the shell twice no longer stacks a second listener.
+- Four effects gained the inverse they were missing.  `Context.subscribe`
+  returns the unsubscribe that detaches the callback, and `run_pipeline`
+  applies it when the run ends, so a revert of the stored context no longer
+  notifies a loader whose run is over; the component registry gained
+  `unregister_component`, the withdrawal every other seam already had, so one
+  registration can be taken back without `refresh_components` dropping the
+  rest; the served application stops the background job pool on shutdown, the
+  inverse of the pool the first submit starts; and `reportal serve` cancels its
+  browser-opening timer when the bind fails, instead of opening a URL nothing
+  serves.
+- Every pipeline component declares the seeds its effect reads.  `prepare`,
+  `decompile`, `read-trace`, `search-functionality`, `resolve-names`,
+  `retrieve-knowledge` and `store` reached `conn` and `engine` through
+  `ctx.require` without naming them in `requires`, so a withheld seed raised
+  inside the effect and was recorded as a failed step rather than leaving the
+  component inactive with that seed's own reason.  The declarations now match
+  what the effects read, which is what the loader activates against.
+- Every plugin registry withdraws one entry.  `unregister_tool`,
+  `unregister_worker`, `unregister_graph_backend`, `unregister_effect_handler`,
+  `unregister_source`, `unregister_model` and `unregister_runner` drop a single
+  registration by name (unknown names raise `RegistryError`), so a broken
+  third-party plugin leaves without a whole-registry refresh dropping the
+  healthy ones; withdrawing a built-in lasts until the next refresh, and the
+  built-in sandbox runner refuses withdrawal.  Sandbox runners also record
+  their origin now, matching the other six registries.
+- Family byte-constants join filetype detection.  A `constants` evidence kind
+  searches executable section bytes for raw markers, with a `min_constants`
+  coincidence threshold so a lone 4-byte value never fires; rows are the
+  `Paranoiac-RAT-family` packer signature (3-of-4 tag/key/canary constants)
+  and the `NeTiS-Gafgyt-family` signature (session magic, connect header
+  and key, 2-of-3), at low confidence like the other single-kind evidence.
+  Independent writeups feed the same table: Check Point's NSIXloader markers
+  strengthen NSIS and their BoxedApp research adds a packer row.  Same scan,
+  same pipeline, no new surfaces.
 - The credit prices are measured, and the measurement is a command.
   `tools/bench_credits.py` runs the real task functions over real decompiled C,
   through the same sink the server meters with, and records the token counts

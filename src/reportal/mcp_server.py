@@ -24,7 +24,7 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
 from mcp.shared.exceptions import MCPError
-from mcp_types import INVALID_PARAMS
+from mcp.types import INVALID_PARAMS
 
 from reportal import __version__, mcp_tools
 from reportal.mcp_tools import Tool, ToolError

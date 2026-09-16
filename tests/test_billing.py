@@ -431,6 +431,20 @@ class TestReconcileRateLimit:
         assert allowed[: billing._RECONCILE_MAX_HITS] == [True] * billing._RECONCILE_MAX_HITS
         assert allowed[-1] is False
 
+    def test_an_expired_window_drops_the_organisation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The limiter holds the organisations reconciling now, not every one ever seen."""
+        clock = [1000.0]
+        monkeypatch.setattr(billing.time, "monotonic", lambda: clock[0])
+
+        assert billing.reconcile_allowed(111111) is True
+        assert 111111 in billing._rate_states
+
+        clock[0] += billing._RECONCILE_WINDOW_S + 1
+        assert billing.reconcile_allowed(222222) is True
+        assert 111111 not in billing._rate_states, "the stale window is dropped"
+
     def test_reconcile_needs_the_stripe_provider(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:

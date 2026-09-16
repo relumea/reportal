@@ -225,6 +225,76 @@ class TestFunctions:
         binary_id = store.list_binaries(conn)[0]["id"]
         assert len(store.list_functions(conn, binary_id=binary_id)) == 1
 
+    def test_limit_and_offset_page_the_listing(self, conn: sqlite3.Connection) -> None:
+        """The page is a window over the same order, and the bounds are checked."""
+        binary_id = store.add_binary(conn, sha256="77" * 32, name="paged")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        for index in range(5):
+            store.add_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000 + index * 0x10,
+                name=f"fn_{index}",
+                size=8,
+                status="STUB",
+            )
+        every = [row["id"] for row in store.list_functions(conn, binary_id=binary_id)]
+
+        page = store.list_functions(conn, binary_id=binary_id, limit=2, offset=1)
+
+        assert [row["id"] for row in page] == every[1:3]
+        assert len(store.list_functions(conn, binary_id=binary_id)) == 5, "no limit means every row"
+        assert [row["id"] for row in store.list_functions(conn, binary_id=binary_id, offset=3)] == (
+            every[3:]
+        )
+        for bad in ({"limit": 0}, {"limit": store.MAX_FUNCTION_LIMIT + 1}, {"offset": -1}):
+            with pytest.raises(ValueError):
+                store.list_functions(conn, binary_id=binary_id, **bad)  # type: ignore[arg-type]
+
+    def test_rollup_counts_what_the_rows_would_say(self, conn: sqlite3.Connection) -> None:
+        """The rollup is the same answer as counting the listing, without reading it."""
+        binary_id = store.add_binary(conn, sha256="88" * 32, name="rolled")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        for index, status in enumerate(("STUB", "EXACT", "EXACT", "RELOC")):
+            store.add_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x2000 + index * 0x10,
+                name=f"fn_{index}",
+                size=8,
+                status=status,
+            )
+        rows = store.list_functions(conn, binary_id=binary_id)
+
+        rollup = store.function_rollup(conn, binary_id)
+
+        assert rollup["total"] == len(rows)
+        assert rollup["matched"] == sum(
+            1 for row in rows if row["status"] in store.MATCHED_STATUSES
+        )
+        assert rollup["by_status"] == {"EXACT": 2, "RELOC": 1, "STUB": 1}
+        assert list(rollup["by_status"]) == ["EXACT", "RELOC", "STUB"], "ordered by count then name"
+
+    def test_matching_count_agrees_with_the_listing(self, conn: sqlite3.Connection) -> None:
+        """A page's match count is the count of the rows the same filters keep."""
+        binary_id = store.add_binary(conn, sha256="99" * 32, name="counted")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        for index, name in enumerate(("alpha", "alpine", "beta")):
+            store.add_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x3000 + index * 0x10,
+                name=name,
+                size=8,
+                status="STUB",
+            )
+
+        assert store.count_matching_functions(conn, binary_id=binary_id, name="alp") == 2
+        assert store.count_matching_functions(conn, binary_id=binary_id) == 3
+        assert store.count_matching_functions(conn, binary_id=binary_id, name="alp") == len(
+            store.list_functions(conn, binary_id=binary_id, name="alp")
+        )
+
 
 class TestAddFunctionIfAbsent:
     def test_inserts_when_absent(self, conn: sqlite3.Connection) -> None:

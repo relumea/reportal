@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 from conftest import (
     AI_COMMENTS_RESPONSE,
+    AI_RENAMES_RESPONSE,
+    AI_REWRITE_RESPONSE,
     AI_SUMMARY_RESPONSE,
     AI_TYPES_RESPONSE,
     FakeLlmClient,
@@ -49,14 +51,23 @@ class ScriptedLlmClient(FakeLlmClient):
         messages: list[dict[str, str]],
         *,
         temperature: float = llm.DEFAULT_TEMPERATURE,
+        json_object: bool = False,
     ) -> str:
         self.calls.append(messages)
         self.temperatures.append(temperature)
         prompt = messages[-1]["content"] if messages else ""
+        # Dispatch on a phrase only one prompt builder emits.  The order does
+        # not matter for these, but the substrings must stay unique: the rename
+        # prompt also says "parameters", so it is keyed on "unclear
+        # identifiers" rather than on a word it shares with the type prompt.
+        if "Rewrite this function" in prompt:
+            return AI_REWRITE_RESPONSE
         if "Summarize" in prompt:
             return AI_SUMMARY_RESPONSE
         if "inline comment" in prompt:
             return AI_COMMENTS_RESPONSE
+        if "unclear identifiers" in prompt:
+            return AI_RENAMES_RESPONSE
         return AI_TYPES_RESPONSE
 
 

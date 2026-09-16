@@ -291,6 +291,16 @@ class TestRegistry:
         effects.register_effect_handler("probe", _custom_handler)
         assert effects.effect_handlers()["probe"] is _custom_handler
 
+    def test_unregister_withdraws_one_entry(self) -> None:
+        effects.register_effect_handler("probe", _custom_handler)
+        effects.unregister_effect_handler("probe")
+        assert "probe" not in effects.effect_handlers()
+        assert effects.EFFECT_DISASM in effects.effect_handlers()
+
+    def test_unregister_unknown_kind_raises(self) -> None:
+        with pytest.raises(effects.RegistryError):
+            effects.unregister_effect_handler("nope")
+
     def test_duplicate_kind_raises_naming_both_origins(self) -> None:
         effects.register_effect_handler("probe", _custom_handler, origin="probe-plugin")
         with pytest.raises(effects.RegistryError) as excinfo:

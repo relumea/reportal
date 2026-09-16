@@ -330,13 +330,19 @@ SETTINGS: tuple[Setting, ...] = (
 
 BY_NAME: dict[str, Setting] = {setting.name: setting for setting in SETTINGS}
 
+
+def _by_table_key() -> dict[str, dict[str, Setting]]:
+    """Index :data:`SETTINGS` as table -> key -> setting."""
+    index: dict[str, dict[str, Setting]] = {}
+    for setting in SETTINGS:
+        if setting.table:
+            index.setdefault(setting.table, {})[setting.key] = setting
+    return index
+
+
 # table -> key -> setting, for validating a hand-edited file.  A key a setting
 # does not own is one reportal ignores, which is exactly what a typo looks like.
-BY_TABLE_KEY: dict[str, dict[str, Setting]] = {}
-for _setting in SETTINGS:
-    if _setting.table:
-        BY_TABLE_KEY.setdefault(_setting.table, {})[_setting.key] = _setting
-del _setting
+BY_TABLE_KEY: dict[str, dict[str, Setting]] = _by_table_key()
 
 
 def workspace_tables() -> dict[str, dict[str, Any]]:

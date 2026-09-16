@@ -170,6 +170,17 @@ class TestRegistry:
         assert "probe" in [model.name for model in models.models()]
         assert "probe" not in [model.name for model in models.refresh_models()]
 
+    def test_unregister_withdraws_one_entry(self) -> None:
+        models.register_model(models.Model(name="probe", kind=models.KIND_LLM), origin="test")
+        models.unregister_model("probe")
+        names = [model.name for model in models.models()]
+        assert "probe" not in names
+        assert models.ENGINE_PACKAGE in names
+
+    def test_unregister_unknown_name_raises(self) -> None:
+        with pytest.raises(plugins.RegistryError):
+            models.unregister_model("nope")
+
     def test_an_unknown_kind_is_a_registry_error(self) -> None:
         with pytest.raises(plugins.RegistryError):
             models.register_model(models.Model(name="probe", kind="nonsense"), origin="test")
@@ -370,6 +381,7 @@ class TestUpgrade:
                 messages: list[dict[str, str]],
                 *,
                 temperature: float = llm.DEFAULT_TEMPERATURE,
+                json_object: bool = False,
             ) -> str:
                 self.calls.append(messages)
                 prompt = messages[-1]["content"]

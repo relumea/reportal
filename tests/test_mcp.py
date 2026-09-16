@@ -539,6 +539,17 @@ class TestRegistry:
         assert "probe" not in names
         assert "list_binaries" in names
 
+    def test_unregister_withdraws_one_entry(self) -> None:
+        mcp_tools.register_tool(_tool("probe"), origin="test")
+        mcp_tools.unregister_tool("probe")
+        names = [tool.name for tool in mcp_tools.tools()]
+        assert "probe" not in names
+        assert "list_binaries" in names
+
+    def test_unregister_unknown_name_raises(self) -> None:
+        with pytest.raises(mcp_tools.RegistryError):
+            mcp_tools.unregister_tool("nope")
+
     def test_entry_point_tool_is_registered(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _patch_entry_points(monkeypatch, _EntryPoint("probe", "mcp_plugins:PROBE_TOOL"))
         names = [tool.name for tool in mcp_tools.refresh_tools()]
@@ -2643,7 +2654,7 @@ class TestComponentTools:
         entry = next(item for item in payload["components"] if item["name"] == "prepare")
         assert entry["origin"] == "builtin"
         assert entry["reloadable"] is True
-        assert entry["requires"] == ["function"]
+        assert entry["requires"] == ["conn", "engine", "function"]
         assert entry["withdrawable"] is True
         store_entry = next(item for item in payload["components"] if item["name"] == "store")
         assert store_entry["withdrawable"] is False

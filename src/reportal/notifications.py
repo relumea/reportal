@@ -100,6 +100,20 @@ def latest(conn: sqlite3.Connection) -> str | None:
     return max(times) if times else None
 
 
+def merge_page(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Newest first, bounded: the merge both feeds share.
+
+    The notification feed and the activity feed read the same two sources
+    (journaled actions, analysis-log entries) and differ in the item shape and
+    the totals beside the page, so the sort-and-cut lives here once.  Every
+    item carries ``at`` (an ISO timestamp, compared as text the way the rows
+    are written) and ``seq`` (its source row's id, which breaks a same-second
+    tie and keeps the order stable between reads).
+    """
+    items.sort(key=lambda item: (str(item["at"]), int(item["seq"])), reverse=True)
+    return items[:limit]
+
+
 def feed(
     conn: sqlite3.Connection,
     *,
@@ -138,11 +152,7 @@ def feed(
             )
         )
         total += analysis_log.count_recent(conn, since=since, visible_to=visible_to)
-    # Newest first.  Timestamps have second resolution, so the source row's own
-    # id breaks a tie and keeps two items written in the same second in a
-    # stable order between reads.
-    items.sort(key=lambda item: (str(item["at"]), int(item["seq"])), reverse=True)
-    page = items[:limit]
+    page = merge_page(items, limit)
     return {
         "notifications": page,
         "count": len(page),

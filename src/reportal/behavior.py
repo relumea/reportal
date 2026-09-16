@@ -132,6 +132,16 @@ BEHAVIOR_RULES: dict[str, tuple[BehaviorRule, ...]] = {
                 "RegisterServiceCtrlHandler",
             ),
         ),
+        BehaviorRule(
+            name="iot-dropper",
+            description="Carries IoT botnet staging markers",
+            strings=_regex(
+                r"\b(?:httpd|telnetd|dropbear)\b",
+                r"/(?:data/local/tmp|root/dvr_gui|root/dvr_app|anko-app)/?",
+                r"\b(?:ftpget|tftp|busybox)\b",
+                r"main_(?:mipsel|mips|arm[567]?|x86(?:_64)?|ppc|m68k|sh4|spc)\b",
+            ),
+        ),
     ),
     DOMAIN_NETWORKING: (
         BehaviorRule(
@@ -179,6 +189,17 @@ BEHAVIOR_RULES: dict[str, tuple[BehaviorRule, ...]] = {
             name="port",
             description="Carries a labeled port literal",
             strings=(_PORT,),
+        ),
+        BehaviorRule(
+            name="ddos-template",
+            description="Carries a DDoS flood or amplification template literal",
+            strings=_regex(
+                r"Content-Length:\s*10485760",
+                r"PRI \* HTTP/2\.0",
+                r"M-SEARCH \* HTTP/1\.1",
+                r"\bstats\r\n",
+                r"port\s*11211\b",
+            ),
         ),
     ),
     DOMAIN_FILESYSTEM: (

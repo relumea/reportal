@@ -975,6 +975,21 @@ def list_files(conn: sqlite3.Connection, binary_id: int) -> list[dict[str, Any]]
     return [_row(row) for row in rows]
 
 
+def newest_sha256(conn: sqlite3.Connection, binary_id: int) -> str | None:
+    """The content hash of the newest ingested symbol file, or None.
+
+    A caller that caches something by content hash reads this rather than
+    :func:`get_file`, whose row carries the whole parse (bounded, but up to
+    ``MAX_SYMBOLS`` entries) whether or not the caller needs it decoded.
+    """
+    ensure_schema(conn)
+    row = conn.execute(
+        f"SELECT sha256 FROM {TABLE} WHERE binary_id = ? ORDER BY id DESC LIMIT 1",
+        (int(binary_id),),
+    ).fetchone()
+    return str(row["sha256"]) if row is not None else None
+
+
 def get_file(
     conn: sqlite3.Connection, *, binary_id: int, file_id: int | None = None
 ) -> dict[str, Any]:

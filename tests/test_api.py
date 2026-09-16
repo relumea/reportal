@@ -220,6 +220,87 @@ class TestBinaries:
         _, headers, body = wsgi_request("GET", f"/api/binaries/{ids['binary']}/functions")
         assert len(json_body(body, headers)["functions"]) == 2
 
+    def test_functions_page_is_a_window_over_the_same_order(self, conn: sqlite3.Connection) -> None:
+        """A page carries its slice and still reports what the filters kept."""
+        ids = _seed(conn)
+        binary = ids["binary"]
+        _, headers, body = wsgi_request("GET", f"/api/binaries/{binary}/functions")
+        every = [row["id"] for row in json_body(body, headers)["functions"]]
+
+        _, headers, body = wsgi_request("GET", f"/api/binaries/{binary}/functions?limit=1")
+        first = json_body(body, headers)
+        _, headers, body = wsgi_request("GET", f"/api/binaries/{binary}/functions?limit=1&offset=1")
+        second = json_body(body, headers)
+
+        assert [row["id"] for row in first["functions"]] == every[:1]
+        assert [row["id"] for row in second["functions"]] == every[1:2]
+        assert first["count"] == second["count"] == 1
+        assert first["matched"] == second["matched"] == 2, "the page never shrinks the match count"
+        assert first["total"] == 2
+
+    def test_functions_page_counts_matches_behind_a_filter(self, conn: sqlite3.Connection) -> None:
+        """`matched` counts the filter's whole result, not the page it was cut to."""
+        ids = _seed(conn)
+        path = f"/api/binaries/{ids['binary']}/functions?name=sub_&limit=1"
+        _, headers, body = wsgi_request("GET", path)
+        payload = json_body(body, headers)
+
+        assert payload["count"] == 1
+        assert payload["matched"] == 2
+        assert payload["total"] == 2
+
+    def test_functions_page_applies_after_a_python_filter(self, conn: sqlite3.Connection) -> None:
+        """A filter this handler evaluates in Python still sees every row first."""
+        ids = _seed(conn)
+        # Both seeded names are decompiler placeholders, which is the label the
+        # handler derives in Python rather than one SQLite could filter on.
+        path = f"/api/binaries/{ids['binary']}/functions?name_source=No%20Debug%20Info"
+        _, headers, body = wsgi_request("GET", path)
+        unpaged = json_body(body, headers)
+        _, headers, body = wsgi_request("GET", f"{path}&limit=1")
+        paged = json_body(body, headers)
+
+        assert unpaged["count"] == 2, "both seeded rows read as No Debug Info"
+        assert paged["count"] == 1
+        assert paged["matched"] == unpaged["matched"] == 2
+        assert [row["id"] for row in paged["functions"]] == [
+            row["id"] for row in unpaged["functions"]
+        ][:1]
+
+    def test_functions_refuse_an_out_of_range_page(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        binary = ids["binary"]
+        over = store.MAX_FUNCTION_LIMIT + 1
+
+        status, headers, body = wsgi_request(
+            "GET", f"/api/binaries/{binary}/functions?limit={over}"
+        )
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid limit"
+
+        status, headers, body = wsgi_request("GET", f"/api/binaries/{binary}/functions?offset=-1")
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid offset"
+
+    def test_function_rollup_counts_without_the_rows(self, conn: sqlite3.Connection) -> None:
+        """The summary numbers come back without the function list they replace."""
+        ids = _seed(conn)
+        _, headers, body = wsgi_request("GET", f"/api/binaries/{ids['binary']}/function-rollup")
+        payload = json_body(body, headers)
+
+        assert payload == {
+            "binary_id": ids["binary"],
+            "total": 2,
+            "matched": 1,
+            "by_status": {"EXACT": 1, "STUB": 1},
+        }
+        assert "functions" not in payload
+
+    def test_function_rollup_for_a_missing_binary_is_404(self, portal_db: Path) -> None:
+        status, headers, body = wsgi_request("GET", "/api/binaries/999/function-rollup")
+        assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "binary not found"
+
     def test_functions_list_includes_thunk_rows(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
         store.add_function(

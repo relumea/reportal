@@ -13,7 +13,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, engines, jobs, journal, mcp_tools, similarity, store
+from reportal import auth, cli, engines, jobs, journal, mcp_tools, pipeline, similarity, store
 
 HAS_SIMILARITY = similarity.available()
 requires_similarity = pytest.mark.skipif(
@@ -48,6 +48,7 @@ def _post(path: str, payload: dict[str, Any] | None = None) -> tuple[str, Any]:
 class TestRegistry:
     def test_the_registry_holds_the_documented_kinds(self) -> None:
         assert set(jobs.JOB_KINDS) == {
+            "ai-enrich",
             "behavior",
             "capabilities",
             "composition",
@@ -381,6 +382,93 @@ class TestMatchJob:
         assert [
             int(row["candidate_function_id"]) for row in store.list_matches(conn, function_id)
         ] == [candidate]
+
+
+class TestAiEnrichJob:
+    """The whole-binary form of the pipeline: one run per function, queued."""
+
+    def _seed(self, conn: sqlite3.Connection, tmp_path: Path) -> tuple[int, list[int]]:
+        """A binary with a project context and two functions of distinct sizes."""
+        binary_id = _binary(conn, tmp_path, "enrich.exe")
+        store.set_rebrew_context(conn, binary_id, str(tmp_path))
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        ids = [
+            store.add_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000 + index * 0x100,
+                name=f"sub_{index}",
+                size=size,
+            )
+            for index, size in enumerate((0x20, 0x40))
+        ]
+        return binary_id, ids
+
+    def test_a_queued_run_enriches_each_named_function(
+        self, conn: sqlite3.Connection, tmp_path: Path, fake_engine: Any
+    ) -> None:
+        binary_id, ids = self._seed(conn, tmp_path)
+        job = jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params={"function_ids": ids})
+
+        finished = jobs.run_pending(conn, limit=1)[0]
+
+        assert finished["status"] == jobs.STATUS_DONE, finished["error"]
+        result = finished["result"]
+        assert result["total"] == 2
+        assert [row["function_id"] for row in result["runs"]] == ids
+        assert result["done"] == 2
+        assert [row["status"] for row in result["runs"]] == [pipeline.RUN_DONE] * 2
+        # Every function's run is a stored row of its own, so one can be
+        # reverted without touching the other's artifacts.
+        for row in result["runs"]:
+            assert store.get_pipeline_run(conn, int(row["run_id"])) is not None
+        assert finished["progress"] == 100
+        assert finished["steps_total"] == 2
+        assert jobs.get_job(conn, int(job["id"])) is not None
+
+    def test_the_default_limit_is_used_when_none_is_given(
+        self, conn: sqlite3.Connection, tmp_path: Path, fake_engine: Any
+    ) -> None:
+        binary_id, ids = self._seed(conn, tmp_path)
+        jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params={})
+
+        finished = jobs.run_pending(conn, limit=1)[0]
+
+        assert finished["status"] == jobs.STATUS_DONE, finished["error"]
+        assert finished["result"]["total"] == len(ids)
+
+    def test_an_out_of_range_limit_is_refused_at_submit(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id, _ = self._seed(conn, tmp_path)
+        for limit in (0, pipeline.MAX_BATCH_LIMIT + 1):
+            with pytest.raises(ValueError):
+                jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params={"limit": limit})
+        with pytest.raises(ValueError):
+            jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params={"limit": "many"})
+        with pytest.raises(ValueError):
+            jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params={"function_ids": "1"})
+        with pytest.raises(ValueError):
+            jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params={"function_ids": ["1"]})
+
+    def test_a_parameter_the_kind_does_not_take_is_refused(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id, _ = self._seed(conn, tmp_path)
+        with pytest.raises(ValueError):
+            jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params={"domain": "execution"})
+
+    def test_the_route_queues_it(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        binary_id, ids = self._seed(conn, tmp_path)
+
+        status, payload = _post(
+            "/api/jobs",
+            {"kind": "ai-enrich", "binary_id": binary_id, "params": {"function_ids": ids}},
+        )
+
+        assert status.startswith("202")
+        assert payload["kind"] == "ai-enrich"
+        assert payload["params"] == {"function_ids": ids}
 
 
 class TestCancel:
@@ -886,6 +974,22 @@ class TestPool:
         monkeypatch.setenv(jobs.POOL_ENV, "0")
         assert jobs.pool_disabled() is True
         assert jobs.ensure_worker() is None
+
+    def test_the_application_shutdown_stops_the_pool(self, monkeypatch: Any) -> None:
+        """A served process that started the pool must not leave it running."""
+        import asyncio
+
+        from reportal.webapp import app
+
+        monkeypatch.setenv(jobs.POOL_ENV, "1")
+        assert jobs.ensure_worker() is not None
+
+        async def cycle() -> None:
+            async with app.router.lifespan_context(app):
+                pass
+
+        asyncio.run(cycle())
+        assert jobs._worker is None
 
 
 class TestOffline:
