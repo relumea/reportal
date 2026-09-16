@@ -831,6 +831,23 @@ class TestCli:
         assert "composition" in human.stderr
         assert '"binary_id"' in human.stderr
 
+    def test_job_run_exits_nonzero_when_a_job_fails(self, tmp_path: Path, monkeypatch: Any) -> None:
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv("REPORTAL_DB", str(db))
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            binary_id = _binary(conn, tmp_path)
+
+        queued = runner.invoke(cli.app, ["job-submit", "secrets", str(binary_id), "--json"])
+        assert queued.exit_code == 0
+        ran = runner.invoke(cli.app, ["job-run", "--json"])
+        assert ran.exit_code == 1
+        assert json.loads(ran.stdout)["jobs"][0]["status"] == jobs.STATUS_FAILED
+
+        again = runner.invoke(cli.app, ["job-submit", "secrets", str(binary_id), "--run", "--json"])
+        assert again.exit_code == 1
+        assert json.loads(again.stdout)["status"] == jobs.STATUS_FAILED
+
     def test_job_submit_runs_it_when_asked(self, tmp_path: Path, monkeypatch: Any) -> None:
         db = tmp_path / "portal.db"
         monkeypatch.setenv("REPORTAL_DB", str(db))

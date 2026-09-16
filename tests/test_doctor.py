@@ -289,6 +289,14 @@ class TestCli:
         assert payload["port"] == 0
         assert _check(payload, "port")["detail"] == "not checked"
 
+    def test_an_out_of_range_port_is_a_usage_error(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        for value in ("-1", "65536"):
+            result = runner.invoke(cli.app, ["doctor", "--port", value, "--json"])
+            assert result.exit_code == 2, value
+
 
 class TestHealthRouteAgrees:
     def test_a_healthy_workspace_is_ok_on_both_reads(

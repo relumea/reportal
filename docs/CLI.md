@@ -60,7 +60,7 @@ reportal config [--json]                  # what this install can do, and every
                                            #   origin that answered; names the keys
                                            #   and values reportal does not read and
                                            #   exits 1 on a file it cannot parse
-reportal doctor [--port N] [--json]        # readiness before a start: workspace,
+reportal doctor [--port|-p N] [--json]     # readiness before a start: workspace,
                                            #   database, schema, auth, engine, SPA
                                            #   build, optional paths, free port; exits
                                            #   1 on a failure, 0 on a warning

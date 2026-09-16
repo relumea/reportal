@@ -649,7 +649,12 @@ def _require_lan_auth(portal_db: Path) -> None:
 @app.command("doctor")
 def doctor_command(
     port: int = typer.Option(
-        doctor.DEFAULT_PORT, "--port", help="Port 'reportal serve' would bind"
+        doctor.DEFAULT_PORT,
+        "--port",
+        "-p",
+        min=0,
+        max=65535,
+        help="Port 'reportal serve' would bind",
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
@@ -1004,7 +1009,7 @@ def team_add(
 @app.command("team-rm")
 def team_rm(
     team_id: int = typer.Argument(..., help="Team id to delete"),
-    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Delete a team; the objects it owned return to the whole workspace."""
@@ -1588,7 +1593,7 @@ def user_edit(
 @app.command("user-rm")
 def user_rm(
     user_id: int = typer.Argument(..., help="User id to delete"),
-    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Delete one user; journaled, so a revert puts the row back."""
@@ -1627,7 +1632,11 @@ def user_rm(
 
 @app.command()
 def mcp(
-    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="On failure, emit a JSON error object on stdout (success stays stdio JSON-RPC)",
+    ),
 ) -> None:
     """Run the stdio MCP server for a local MCP client."""
     from reportal import mcp_server, mcp_tools
@@ -2543,7 +2552,9 @@ def secrets_list_command(
 @app.command("secrets-set")
 def secrets_set_command(
     name: str = typer.Argument(..., help="Secret name, e.g. virustotal.api_key"),
-    value: str = typer.Argument("", help="The value; omit it to read one line from stdin"),
+    value: str = typer.Argument(
+        "", help="The value; omit and pass --stdin to read one line from stdin"
+    ),
     scope: str = typer.Option("", "--scope", help="local (default) or team"),
     team_id: int = typer.Option(0, "--team-id", help="Team id for a team scope"),
     stdin: bool = typer.Option(
@@ -2561,6 +2572,8 @@ def secrets_set_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     if stdin:
         value = sys.stdin.readline().rstrip("\n")
+    elif not value:
+        _fail("pass a value or --stdin", json_output)
     try:
         with contextlib.closing(store.connect(portal_db)) as conn:
             resolved_scope, resolved_team = secret_store.normalize_scope(
@@ -3237,8 +3250,10 @@ def job_submit_command(
             job = jobs.run_pending(conn, limit=1)[0]
     if json_output:
         typer.echo(json.dumps(job))
-        return
-    console.print(f"job {job['id']}: {job['status']}")
+    else:
+        console.print(f"job {job['id']}: {job['status']}")
+    if run and job.get("status") == jobs.STATUS_FAILED:
+        raise typer.Exit(code=EXIT_ERROR)
 
 
 @app.command("job-run")
@@ -3256,12 +3271,13 @@ def job_run_command(
         finished = jobs.run_pending(conn, limit=limit)
     if json_output:
         typer.echo(json.dumps({"jobs": finished, "count": len(finished)}))
-        return
-    if not finished:
+    elif not finished:
         console.print("no job was waiting")
-        return
-    for job in finished:
-        console.print(f"job {job['id']}: {job['status']} {job['error']}".rstrip())
+    else:
+        for job in finished:
+            console.print(f"job {job['id']}: {job['status']} {job['error']}".rstrip())
+    if any(job.get("status") == jobs.STATUS_FAILED for job in finished):
+        raise typer.Exit(code=EXIT_ERROR)
 
 
 @app.command("job-cancel")
@@ -4269,7 +4285,7 @@ def bulk_tag(
 @app.command("bulk-delete")
 def bulk_delete(
     binary_ids: list[int] = typer.Argument(..., help="Binary ids to delete"),
-    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Delete many binaries and everything scoped to them."""
@@ -4323,7 +4339,7 @@ def analysis_bulk_tag(
 @app.command("analysis-bulk-delete")
 def analysis_bulk_delete(
     analysis_ids: list[int] = typer.Argument(..., help="Analysis ids to delete"),
-    yes: bool = typer.Option(False, "--yes", help="Skip the confirmation prompt"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Delete many analyses with the rows scoped to them.

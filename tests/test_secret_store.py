@@ -496,6 +496,16 @@ class TestCli:
         with contextlib.closing(store.connect(db)) as conn:
             assert secret_store.value_of(conn, "llm.api_key") == API_KEY
 
+    def test_omitting_the_value_without_stdin_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        store.init_db(db)
+        result = runner.invoke(cli.app, ["secrets-set", "llm.api_key", "--json"])
+        assert result.exit_code == 1
+        assert json.loads(result.stdout)["error"] == "pass a value or --stdin"
+
     def test_the_human_output_lists_the_rows(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
