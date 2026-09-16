@@ -10,6 +10,7 @@ import {
   ConfirmButton,
   DataTable,
   EmptyState,
+  EngineNote,
   ErrorNote,
   Field,
   Loading,
@@ -845,7 +846,7 @@ export function AiSummaryPanel({ functionId }: { functionId: number }): ReactNod
       absentHint="No AI summary stored for this function. Generate one to have a model describe it."
       ready={(payload, artifact) => (
         <>
-          <Muted>model: {artifact.model}</Muted>
+          <EngineNote model={artifact.model} />
           <p>{payload.summary}</p>
         </>
       )}
@@ -867,7 +868,7 @@ export function AiCommentsPanel({ functionId }: { functionId: number }): ReactNo
         if (!comments.length) return <Muted>No inline comments.</Muted>;
         return (
           <>
-            <Muted>model: {artifact.model}</Muted>
+            <EngineNote model={artifact.model} />
             <DataTable
               columns={[
                 { label: "Line", numeric: true, render: (row) => String(row.line) },
@@ -897,7 +898,7 @@ export function AiTypeSuggestionsPanel({ functionId }: { functionId: number }): 
         if (!suggestions.length) return <Muted>No type suggestions.</Muted>;
         return (
           <>
-            <Muted>model: {artifact.model}</Muted>
+            <EngineNote model={artifact.model} />
             <DataTable
               columns={[
                 { label: "Name", key: "name", mono: true },
@@ -1022,7 +1023,7 @@ export function AiRenamesPanel({
   else {
     body = (
       <>
-        <Muted>model: {entry.data.model}</Muted>
+        <EngineNote model={entry.data.model} />
         <DataTable
           columns={[
             {
@@ -1191,10 +1192,13 @@ export function AiDecompilationPanel({ functionId }: { functionId: number }): Re
     const commentByLine = new Map(data.line_comments.map((row) => [row.line, row]));
     body = (
       <>
-        <Muted>
-          model: {data.model}, {lines.length} lines, {data.tokens.length} placeholder tokens,{" "}
-          {data.line_comments.length} line comments
-        </Muted>
+        <>
+          <EngineNote model={data.model} />
+          <Muted>
+            {lines.length} lines, {data.tokens.length} placeholder tokens,{" "}
+            {data.line_comments.length} line comments
+          </Muted>
+        </>
         <p className="muted">{data.derivation}</p>
         <Toolbar>
           <Field label="Rating">

@@ -31,6 +31,8 @@ reportal/
 │   │                         #   registry; the one module that executes a sample
 │   ├── auth.py               # local identity: users, teams, roles, bearer tokens, the gate
 │   │                         #   and the object-visibility rule (visible_clause/may_write)
+│   ├── disclosure.py         # what a tenant may see: model, tokens and
+│   │                         #   reasoning are redacted at the response seam
 │   ├── credits.py            # the per-task price list, derived from measured
 │   │                         #   token profiles (what a tenant actually spends)
 │   ├── plans.py              # the subscription catalog and the cost model it is
@@ -154,7 +156,7 @@ reportal/
 │   ├── pdf.py                # PDF report writer: layout here, serialized by reportlab
 │   │                         #   (PdfLayout, wrap_text, render_report, write_report)
 │   ├── _paths.py             # workspace resolution (reportal.toml walk-up)
-│   ├── mcp_tools.py          # MCP tool registry (Tool, register_tool/tools/refresh_tools)
+│   ├── mcp_tools.py          # MCP tool registry (Tool, register_tool/tools/unregister_tool/refresh_tools)
 │   ├── mcp_server.py         # stdio MCP server (newline-delimited JSON-RPC 2.0)
 │   └── assets/dist/          # generated Vite build (gitignored, served by ui.py)
 └── tools/
@@ -335,7 +337,10 @@ the default install still never does.  `sandbox.enabled()` reads
 from `REPORTAL_SANDBOX_RUNNER` / `[sandbox] runner` or the first installed entry
 in the in-tree `RUNNERS` list (bwrap, whose user namespaces must be enabled), and
 a third party adds one through the `reportal.sandbox_runners` entry-point group
-read by `plugins.load`.  `BwrapRunner.argv` is the whole safety story in one pure
+read by `plugins.load`.  `register_runner` replaces a same-named entry (keeping
+the earliest origin, so refresh re-scans stay idempotent) and
+`unregister_runner` withdraws one entry, refusing unknown names and the
+built-in runner.  `BwrapRunner.argv` is the whole safety story in one pure
 list: `--unshare-all`, `--die-with-parent`, `--new-session`, `--clearenv`, the
 host root bound read-only, fresh `/proc` and `/dev`, one writable directory bound
 at `/tmp`, the sample bound read-only inside it (the mount point has to live in a
@@ -542,8 +547,9 @@ to the code and states what is not implemented. In short:
 | Effects (what a component writes) | `Context.provide` and `Context.revoke` for bindings, `Context.record` for persistent writes; every one of them journals an inverse |
 | Temporal composability | `Context.revert` applies the journaled inverses newest-first in-process, and `pipeline.revert_run` journals a stored run's descriptors back onto a context to replay them from a later process |
 | Spatial composability | `Context.subscribe` reports each change to the loader, whose `_ActivationWatch` re-evaluates every pending component: a component activates when its last requirement is bound and is recorded `deactivated` when one is revoked before it ran. A never-ready component is skipped with `requires-<name>`, `dependency-skipped:<provider>`, `dependency-failed:<provider>` or `dependency-deactivated:<provider>` |
-| One effect dispatcher | `effects.apply_descriptor` resolves an undo descriptor kind through a registry (`register_effect_handler` / `effect_handlers` / `refresh_effect_handlers`); built-in kinds come from `effects.builtin_effect_handlers()` and third parties from the `reportal.effect_handlers` entry-point group, and `effects.apply_undo_plan` replays a plan newest-first. Auto mode's `revert_auto_run` uses it too |
+| One effect dispatcher | `effects.apply_descriptor` resolves an undo descriptor kind through a registry (`register_effect_handler` / `effect_handlers` / `unregister_effect_handler` / `refresh_effect_handlers`); built-in kinds come from `effects.builtin_effect_handlers()` and third parties from the `reportal.effect_handlers` entry-point group, and `effects.apply_undo_plan` replays a plan newest-first. Auto mode's `revert_auto_run` uses it too |
 | Loader reconciliation | `register_component` / `components()` / `refresh_components()`; built-ins come from `reportal.pipeline.builtin_components()`, third parties from the `reportal.components` entry-point group, and a duplicate name is a `RegistryError` |
+| Registry withdrawal | Every plugin registry exposes an `unregister_*` that withdraws one entry by name (`unregister_tool`, `unregister_worker`, `unregister_graph_backend`, `unregister_effect_handler`, `unregister_source`, `unregister_model`, `unregister_runner`): unknown names raise `RegistryError`, withdrawing a built-in lasts until the next refresh, and the built-in sandbox runner refuses withdrawal so a workspace always has a runner |
 | Hot module replacement | `registrations()` records each entry's declaring module and reloadability; `reload_component(name)` re-imports it and swaps the entry in place, `reload_all()` reports one result per entry, and `pipeline.ComponentHost` drives deactivate → reload → activate against a live `Context`. A run in flight keeps its snapshot; `refresh_components()` remains the whole-registry re-discovery |
 
 Ordering is a deterministic topological order over the `requires`/`provides`
@@ -677,7 +683,8 @@ a function row.  An executing run uses `rebrew test --json` (through
 can never mark work done by claiming it.
 
 Workers are plugins, in the same shape as components: `auto_workers.py` holds
-the registry (`register_worker` / `workers` / `refresh_workers`) and the
+the registry (`register_worker` / `workers` / `unregister_worker` /
+`refresh_workers`) and the
 `reportal.auto_workers` entry-point group, whose value is `module:attr` naming
 a `Worker` or a zero-argument factory returning one.  Built-ins:
 
@@ -812,7 +819,8 @@ available, when no endpoint is set), and the similarity entry asks
 `similarity.available()`, which is a `find_spec` probe.  The registry mirrors
 the graph-backend seam: built-ins from `builtin_models()`, a third party
 through the `reportal.models` entry-point group, a broken registration skipped
-with a warning and a duplicate name a `RegistryError`.
+with a warning and a duplicate name a `RegistryError`.  `unregister_model`
+withdraws one entry by name.
 
 `upgrade_analysis` is the one writer, and it is deliberately narrow.  The
 hosted upgrade re-analyses the binary on a newer model; reportal cannot
@@ -858,7 +866,8 @@ the suite drives it over an `httpx.MockTransport` and no test reaches the
 network.  `journaled_run` is the one write path the routes, the CLI and the MCP
 tools share: it snapshots the scan it replaces, stores the answer and journals
 the created row when there was none, so a pull is revertible like every other
-scan.
+scan.  `unregister_source` withdraws one entry by name (unknown names raise
+`RegistryError`).
 
 ## Function-level extras
 
@@ -1758,7 +1767,8 @@ never make an HTTP request back into reportal. Built-ins are declared in
 `reportal.mcp_tools` group (`module:attr` naming a `Tool` or a zero-argument
 factory), mirroring `reportal.components`: a broken registration is skipped
 with a warning and a duplicate name is a `RegistryError`. The sub-registry is
-`register_tool` / `tools` / `refresh_tools`.
+`register_tool` / `tools` / `unregister_tool` / `refresh_tools`
+(`unregister_tool` withdraws one entry; unknown names raise `RegistryError`).
 
 The read tools call the internal helpers of the `GET` routes, so the
 stored-only routes (triage, function triage, report, structs, crypto, security,
@@ -1823,7 +1833,7 @@ action's or one entry's stored inverses and is destructive. `get_auto_run`
 reads an auto run and is read-only; `run_auto`, `revert_auto_run` and
 `recover_auto_run` (which closes a stale run and merges what its unfinished
 tasks recorded) are destructive.  The registry
-declares 138 built-in tools, 64 read-only and 74 destructive.
+declares 252 built-in tools, 120 read-only and 132 destructive.
 
 Deliberately not emulated: OAuth/JWT and API keys. The hosted server
 authenticates each request; reportal is a loopback, single-user tool on a local
@@ -2433,6 +2443,42 @@ of these columns existed when identity first shipped, so all three are in
 to no organisation, and a user that predates the switch has no active team,
 which reads as "see every team".
 
+## What a tenant may see
+
+reportal sells the answer, not the machinery.  Which model produced a
+decompilation, how long it deliberated and what it called are operating
+details: a commercial position (the backend is a supplier choice that changes
+without notice) and a probing surface (a caller who knows the exact model and
+prompt shape can work against them).  `disclosure.py` is the one place that
+decides, and it applies at two seams rather than at each producer.
+
+`server.json_response` passes every payload through
+`disclosure.redact_payload`, so a field nobody remembered to strip is stripped
+anyway and a new AI route is private by construction.  `INTERNAL_KEYS` is what
+goes: the model name, the raw token counts (a tenant is billed in credits, and
+the token rows are the internal cost read), the reasoning fields and the prompt
+itself.  Redaction walks the whole payload, so a model name nested inside a
+suggestion list is removed with the rest.
+
+`disclosure.clean_text` removes reasoning and tool-call markup from free text.
+Every JSON artifact already passes through `llm._parse_json`, which strips it
+before parsing; the agent's final answer does not, because it is returned as
+prose, so `agent.py` cleans that one path explicitly.  An unterminated block
+loses only its tag, never the answer that follows it.
+
+Operators are exempt (`disclosure.is_operator`): an admin debugging a bad
+artifact needs the backend name, the ledger needs it to price a row, and
+`tools/bench_credits.py` needs it to compare models at all.  With auth off
+there is no tenant, so a self-hosted install sees everything exactly as before.
+The exemption is a role check inside the shared payload rather than a second
+route, so there is one implementation and only the audience differs.
+
+`PUBLIC_ENGINE_NAME` is the seam for later.  While the backend is a third
+party's the field is omitted rather than renamed, because a made-up engine name
+is a claim rather than a redaction; once the model is a decompilation-specific
+one of our own, setting that constant discloses it everywhere at once and it
+becomes a feature instead of a leak.
+
 ## Plans, credits, metering and billing
 
 Four modules, split by what each is allowed to know.  `credits.py` is the price
@@ -2932,7 +2978,8 @@ The registry is the same entry-point seam `components.py`, `effects.py`,
 `builtin_graph_backends()`, a third party declares a `reportal.graph_backends`
 entry point whose value is `module:attr` naming a `GraphBackend` or a
 zero-argument factory returning one, a broken registration is skipped with a
-warning, and a duplicate name is a `RegistryError`.  A registered backend that
+warning, and a duplicate name is a `RegistryError`.  `unregister_graph_backend`
+withdraws one entry by name (unknown names raise `RegistryError`).  A registered backend that
 is not installed raises `BackendUnavailableError`, which the API maps to 503
 `backend-unavailable` with the backend's install hint, the CLI reports as
 `backend-unavailable`, and the MCP tool returns as a tool error.

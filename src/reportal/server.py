@@ -29,7 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
-from reportal import __version__, auth, error_docs, journal, llm, metering, store
+from reportal import __version__, auth, disclosure, error_docs, journal, llm, metering, store
 from reportal._paths import WorkspaceNotFound, db_path
 
 app = FastAPI(
@@ -62,6 +62,13 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
 # is set per request by ``_reportal_headers``; outside a request it is empty and
 # nothing is compressed.
 _ACCEPT_ENCODING: ContextVar[str] = ContextVar("reportal_accept_encoding", default="")
+
+# The caller the current response is being serialized for, so `json_response`
+# can apply `disclosure.redact_payload` without every route passing the request
+# down to it.  Unset (outside a request, or before authentication) it reads as
+# None, which `disclosure.is_operator` treats as the local operator: a CLI or a
+# test sees the unredacted payload, exactly as it did before.
+_CALLER: ContextVar[Mapping[str, Any] | None] = ContextVar("reportal_caller", default=None)
 
 
 def configure_hosts(allowed_hosts: set[str] | None) -> None:
@@ -385,7 +392,15 @@ def _accepts_gzip(accept_encoding: str) -> bool:
 def json_response(
     data: dict[str, Any] | list[Any], *, status: int = 200, **headers: str
 ) -> Response:
-    """Serialize *data* as JSON, gzip-encoding it when the client allows."""
+    """Serialize *data* as JSON, gzip-encoding it when the client allows.
+
+    Every response passes through `disclosure.redact_payload` first, so the
+    machinery behind an answer (which model, how many tokens, what it thought)
+    never reaches a tenant.  Doing it here rather than in each producer is what
+    makes a new AI route private by construction: a field nobody remembered to
+    strip is stripped anyway.  An operator's payload is returned unchanged.
+    """
+    data = disclosure.redact_payload(data, caller=_CALLER.get())
     body = json.dumps(data).encode("utf-8")
     response_headers = {"Vary": "Accept-Encoding"}
     if status < 400 and _accepts_gzip(_ACCEPT_ENCODING.get()):
@@ -473,6 +488,7 @@ async def optional_json_body(request: Request) -> dict[str, Any]:
 async def _reportal_headers(request: Request, call_next: Any) -> Response:
     """Validate the Host header, carry the request to the helpers, add headers."""
     token: Token[str] = _ACCEPT_ENCODING.set(request.headers.get("accept-encoding", ""))
+    caller_token: Token[Mapping[str, Any] | None] = _CALLER.set(None)
     try:
         if ALLOWED_HOSTS is not None:
             host = request.headers.get("host", "")
@@ -484,6 +500,11 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
             actor, refusal = authenticate(request)
             if refusal is not None:
                 return refusal
+            # Set after authentication, because that is what resolves the role
+            # `disclosure` branches on.  A refusal returns before this, so an
+            # error body is serialized with no caller and is redacted.
+            user = getattr(request.state, "user", None)
+            _CALLER.set(user if isinstance(user, Mapping) else None)
         # The actor is set here, in the async middleware, so the worker thread
         # the route runs on inherits it; a value set inside a sync dependency
         # would not reach the handler.  Both meters ride the same scope: a
@@ -505,6 +526,7 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
             response: Response = await call_next(request)
     finally:
         _ACCEPT_ENCODING.reset(token)
+        _CALLER.reset(caller_token)
     for key, value in SECURITY_HEADERS:
         response.headers[key] = value
     return response

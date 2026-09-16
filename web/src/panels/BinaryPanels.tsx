@@ -1970,7 +1970,7 @@ function FunctionTriageBody({ result }: { result: FunctionTriageResult }): React
   return (
     <>
       <Muted>
-        model {result.model || "none"}: llm {byMethod.llm ?? 0}, heuristic {byMethod.heuristic ?? 0}
+        llm {byMethod.llm ?? 0}, heuristic {byMethod.heuristic ?? 0}
       </Muted>
       {entries.length === 0 ? (
         <Muted>No functions triaged.</Muted>

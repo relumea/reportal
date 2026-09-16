@@ -303,6 +303,19 @@ usage is still metered and readable.
 | Public base URL | `REPORTAL_PUBLIC_BASE_URL` | `http://127.0.0.1:8002` |
 | Per-plan price id | `REPORTAL_STRIPE_PRICE_<PLAN>` (e.g. `..._ANALYST`) | none; a plan without one is 503 at checkout |
 
+**A tenant sees the answer, never the machinery.**  `disclosure.py` decides:
+`server.json_response` runs every payload through `redact_payload`, so the
+model name, the raw token counts, the reasoning fields and the prompt are
+stripped for a tenant and a new AI route is private by construction.
+`clean_text` removes reasoning and tool-call markup from free text, which
+`agent.py` applies to the agent's prose answer (every JSON artifact is already
+cleaned by `llm._parse_json`).  Operators are exempt (`is_operator`: an admin,
+or any caller while auth is off), because the cost read, artifact debugging and
+`tools/bench_credits.py` all need the real model.  `PUBLIC_ENGINE_NAME` is
+empty while the backend is a supplier's, so the field is omitted rather than
+renamed; setting it discloses an own model everywhere at once.
+`tests/test_disclosure.py` pins both directions through a real request.
+
 **Tenants spend credits, not tokens.**  `credits.py` is the per-task price
 list: one credit is one *reference task* (whichever operation measures
 cheapest), and every other task's price is its measured cost divided by that,

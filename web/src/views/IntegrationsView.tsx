@@ -117,7 +117,12 @@ function InstanceCard(): ReactNode {
           ["version", data.version],
           ["engine", data.engine.available ? `available (${data.engine.origin ?? "?"})` : "unavailable"],
           ["decompilers", data.engine.backends.join(", ")],
-          ["LLM", data.llm.configured ? `configured (${data.llm.model})` : "not configured"],
+          [
+            "LLM",
+            data.llm.configured
+              ? `configured${data.llm.model ? ` (${data.llm.model})` : ""}`
+              : "not configured",
+          ],
           ["database", `${data.database.tables} tables at ${data.database.path}`],
           ["MCP tools", `${data.mcp.total} (${data.mcp.read_only} read-only, ${data.mcp.destructive} destructive)`],
           ...features,

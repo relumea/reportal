@@ -39,6 +39,19 @@ export function Muted({ children }: { children: ReactNode }): ReactNode {
   return <p className="muted">{children}</p>;
 }
 
+/**
+ * The engine credit for an AI artifact, or nothing at all.
+ *
+ * The server redacts the backend model for a tenant (`disclosure.py`), so the
+ * field is absent rather than empty for most callers: rendering "model:" with
+ * nothing after it would show the redaction instead of hiding it.  An operator,
+ * who does receive the name, still sees it.
+ */
+export function EngineNote({ model }: { model?: string | null }): ReactNode {
+  if (!model) return null;
+  return <Muted>engine: {model}</Muted>;
+}
+
 /** Monospace value with its own copy control; `NA` when the value is empty. */
 export function CopyValue({ value }: { value: string | null | undefined }): ReactNode {
   if (!value) return NA;

@@ -110,7 +110,7 @@ function RunBody({
       <div className="chips">
         <Badge mono>run #{run.id}</Badge>
         <StatusCell status={run.status} />
-        <Badge mono>model {run.model || "none"}</Badge>
+        {run.model ? <Badge mono>engine {run.model}</Badge> : null}
       </div>
       <StepsTable steps={run.steps} />
       <PredictedNameRow artifacts={artifacts} onApplyName={onApplyName} pending={pendingRename} />

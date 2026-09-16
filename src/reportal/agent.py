@@ -33,7 +33,7 @@ import time
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
-from reportal import conversations, journal, llm, store
+from reportal import conversations, disclosure, journal, llm, store
 
 # The table the runs live in (created on first use).
 RUN_TABLE = "conversation_runs"
@@ -607,7 +607,11 @@ def _drive(
             raise
         calls = reply.get("tool_calls") or []
         if not calls:
-            text = str(reply.get("content") or "")
+            # The agent's answer is prose, so it never passes through the JSON
+            # parser that strips reasoning from every other artifact; clean it
+            # here instead.  A model that narrates its thinking inline must not
+            # narrate it to a customer.
+            text = disclosure.clean_text(str(reply.get("content") or ""))
             if not text.strip():
                 empty = "the model returned no text"
                 state = _event(run, EVENT_FAILED, {"detail": empty})
