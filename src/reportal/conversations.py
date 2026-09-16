@@ -14,9 +14,11 @@ Retrieved document text is untrusted input.  It is quoted as context for the
 model to reason about, never executed, and never spliced into a command or a
 prompt instruction; the system prompt says so.
 
-This is not the hosted portal's tool-calling agent.  The model receives a
-fixed system prompt, a stored-context block and the message history, and can
-only answer from them.
+This module owns plain turns (`send_message`).  Those are not the hosted
+portal's tool-calling agent: the model receives a fixed system prompt, a
+stored-context block and the message history, and answers from them.  Agent
+runs live in :mod:`reportal.agent`; they reuse this module's context assembly
+and may call local MCP tools through a confirmation-gated loop.
 """
 
 from __future__ import annotations

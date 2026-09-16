@@ -182,7 +182,7 @@ target keeps working without it: the unit is data a test verifies with
 Every layer a library does better is a library. On the server: FastAPI on
 Starlette behind uvicorn, Starlette's `python-multipart` reader, the official
 `mcp` SDK for the MCP stdio server, the official `openai` SDK for the optional
-LLM bridge, `httpx` for guarded URL ingestion, Typer and Rich for the CLI, the
+LLM bridge, `httpx2` for guarded URL ingestion and the LLM HTTP client, Typer and Rich for the CLI, the
 standard library's `sqlite3`, `tomllib` and `difflib`, and reportlab for the PDF
 export. In `web/`: React with react-router for the route table and
 `@tanstack/react-query` for every fetch (the views' queries and the detail
@@ -220,7 +220,7 @@ reader would reach for first:
 | `disasm_cache` | function assembly listing, so matching does not re-spawn |
 | `decompilations` | stored decompiler output per function and backend |
 | `ai_artifacts` | optional LLM artifacts keyed by (function, kind), upserted; `function-triage` holds one score/summary row per function and `renames-applied` journals the text an apply replaced |
-| `conversations` | one chat per scope (function or binary), with title |
+| `conversations` | chat threads scoped to a function, binary, or docs (many per scope), with title |
 | `messages` | conversation turns, cascaded when the conversation is deleted |
 | `comments` | analyst comments: scope (binary or function), author, body, created/updated timestamps |
 | `pipeline_runs` | one AI decompilation run per invocation, with its undo plan |
@@ -292,7 +292,8 @@ binary and returns the same streamed response
 
 ## Identity and the API gate
 
-Token auth is off unless `REPORTAL_AUTH=required` or the workspace
+Token auth is off unless `REPORTAL_AUTH` is a truthy value (`1`, `true`,
+`yes`, `on`, `enabled`, or `required`) or the workspace
 `[auth] required = true` turns it on (`auth.required`, a pure configuration
 read), so a loopback install behaves exactly as before and no request pays for
 a check it does not need.  With it on, the `server._reportal_headers`
@@ -790,8 +791,11 @@ context and the last `HISTORY_TURN_LIMIT` turns, then writes the assistant
 turn; it returns the retrieved hits as `sources`, which the SPA renders as a
 disclosure under the reply. Retrieved text is untrusted: it is quoted as data
 to reason about, never executed or spliced into a command, and the system
-prompt says so. This is not a tool-calling agent: the model sees the stored
-context, the retrieved documents and the history, nothing more.
+prompt says so. Plain turns (`send_message`) are not tool-calling: the model
+sees the stored context, the retrieved documents and the history, nothing more.
+Agent runs (`agent.py`, `POST /api/conversations/<id>/runs`) reuse this context
+assembly and add a local MCP tool loop with a confirmation gate on destructive
+calls.
 
 ## AI decompilation artifact
 
@@ -1790,9 +1794,9 @@ over stdio: newline-delimited JSON-RPC 2.0 on stdin/stdout. `mcp_server.py`
 implements `initialize`, the `notifications/initialized` notification,
 `tools/list` and `tools/call`, reports protocol version `2025-06-18` and
 `serverInfo` `{"name", "title", "version"}`, and advertises a `tools`
-capability. There is no `mcp` SDK dependency: the protocol is small enough to
-implement over the standard library, which keeps the default install light and
-offline. Only protocol JSON reaches stdout; the readiness line goes to stderr.
+capability. The protocol is the official `mcp` SDK's stdio transport (framing,
+version negotiation and dispatch); reportal supplies the tool registry and
+handlers. Only protocol JSON reaches stdout; the readiness line goes to stderr.
 Startup resolves the workspace with the normal `reportal.toml` walk-up and
 fails loud outside one.
 
@@ -1963,7 +1967,7 @@ Vite + React + TypeScript in `web/`, built with bun into
   `file`, at most `engines.MEMORY_READ_MAX` bytes) and renders it as an
   addressed hex grid with an ASCII gutter; a read is never guessed, so an
   address without backing bytes is refused. Full-file mode pages the binary
-  through `GET /binaries/<id>/memory/page`, walking the engine's own section
+  through `GET /api/binaries/<id>/memory/page`, walking the engine's own section
   map: each page carries `bytes` rows (address, file offset, hex) and `gap`
   rows for every byte no section backs, so a header, a gap between sections or
   an uninitialized tail is stated rather than zero-filled. The mode offers a
@@ -1972,7 +1976,7 @@ Vite + React + TypeScript in `web/`, built with bun into
   being hidden, and a byte-range selection copied as space-separated hex or a
   C array initializer. The Sections card marks each section's share of bytes
   the stored function table accounts for, from the stored-only
-  `GET /section-coverage`.
+  `GET /api/binaries/<id>/section-coverage`.
 
 The dashboard reads only existing endpoints: `GET /api/health` for the row
 counts and the aggregate match meter, `GET /api/binaries` plus per-binary
@@ -2923,7 +2927,7 @@ request field.
 
 One race is not closed: a DNS answer can change between `validate_target` and
 the connection (TOCTOU), so a host that resolves publicly during validation and
-to a private address when `httpx` connects is not caught. Pinning the validated
+to a private address when `httpx2` connects is not caught. Pinning the validated
 address, or fetching from a network namespace with no private routes, would
 close it; this module does neither, which is one reason the feature defaults
 off.

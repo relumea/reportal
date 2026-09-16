@@ -4,7 +4,8 @@ reportal binds loopback for a single user and its API has no identity at all,
 which is the point of a loopback tool: anyone who can reach the port can
 already read the workspace.  Binding beyond loopback is a different promise, so
 `reportal serve --host` refuses a non-loopback host until token auth is switched
-on (`REPORTAL_AUTH=required` or the workspace `[auth] required = true`) and at
+on (`REPORTAL_AUTH` truthy: ``1``, ``true``, ``yes``, ``on``, ``enabled``,
+or ``required``; or the workspace ``[auth] required = true``) and at
 least one user exists; see `docs/THREAT_MODEL.md`.
 
 A user has a name, one of :data:`ROLES` and a token.  Only the token's SHA-256

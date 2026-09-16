@@ -14,7 +14,7 @@ the built-ins so a reader can tell a built-in from a third-party part by its
 absence from that module.
 
 Nothing here starts a part, changes one or touches a binary: the inventory is a
-read of five registries, and each part's own ``describe``-style fields
+read of eight plugin seams, and each part's own ``describe``-style fields
 (availability, reloadability, a write plan, an annotation) are what a reader
 sees.
 """

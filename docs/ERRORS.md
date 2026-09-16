@@ -750,8 +750,9 @@ request. Split it.
 
 ## Identity
 
-Token auth is off unless `REPORTAL_AUTH=required` (or the workspace
-`[auth] required = true`) turns it on, so a loopback install answers none of
+Token auth is off unless `REPORTAL_AUTH` is a truthy value (`1`, `true`,
+`yes`, `on`, `enabled`, or `required`) or the workspace
+`[auth] required = true` turns it on, so a loopback install answers none of
 these.  See `docs/THREAT_MODEL.md` for what the modes promise.
 
 ### unauthorized

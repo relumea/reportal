@@ -4,8 +4,9 @@
 
 ## Authentication
 
-Token auth is off unless `REPORTAL_AUTH=required` (or the workspace
-`[auth] required = true`) turns it on, so a loopback install is unchanged and
+Token auth is off unless `REPORTAL_AUTH` is a truthy value (`1`, `true`,
+`yes`, `on`, `enabled`, or `required`) or the workspace
+`[auth] required = true` turns it on, so a loopback install is unchanged and
 every route answers as it always did.  With it on, every `/api` request needs
 `Authorization: Bearer <token>` (the `server._reportal_headers` middleware, so
 no route can be added outside it): a missing, wrong or disabled user's token is

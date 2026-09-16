@@ -160,17 +160,20 @@ row per worker call (`task_id`, `attempt`, `worker`, `status`,
 `detail_json`), written as the attempt happens, so a run interrupted mid-batch
 is inspectable and `auto_store.planned_batches` returns exactly the batches
 that still need running.  Deleting a run cascades to its tasks and attempts.
-`conversations` holds one chat per `(scope_kind, scope_id)` reference (no
-foreign key: functions and binaries live in different tables, so the API is
+`conversations` holds chat threads scoped to a `(scope_kind, scope_id)`
+reference (many conversations may share one scope; no foreign key: functions
+and binaries live in different tables, so the API is
 what rejects an unknown scope id) with its title and creation time, and
 `messages` holds each turn as `(conversation_id, role, content, created_at)`
 with `ON DELETE CASCADE`, so deleting a conversation removes its history.
 `conversations.py` builds a bounded context (a named `MAX_CONTEXT_CHARS` cap)
-from stored rows only: a function's VA, name, size and status plus its stored
-disassembly and decompilation, or a binary's row plus its stored triage
-summary and capability scan.  `send_message` writes the user turn, sends the
-system prompt, context, the last `HISTORY_TURN_LIMIT` turns and the new
-message to the LLM bridge, then writes the assistant turn.
+from stored scope rows plus optional ranked document chunks
+(`knowledge.retrieve`); a `docs` scope grounds answers in the shipped manual.
+A function context carries VA, name, size and status plus its stored
+disassembly and decompilation; a binary context carries its row plus its
+stored triage summary and capability scan.  `send_message` writes the user
+turn, sends the system prompt, context, the last `HISTORY_TURN_LIMIT` turns
+and the new message to the LLM bridge, then writes the assistant turn.
 
 `documents` holds one row per ingested document (`scope_kind`, `scope_id`,
 `title`, `source`, `mime`, `sha256`, `size`, the extracted `text`) with a

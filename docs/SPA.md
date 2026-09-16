@@ -83,8 +83,8 @@ table pays for the payload and the fetch, and no longer for the DOM.
 `src/main.tsx` mounts `QueryClientProvider` and `HashRouter` around
 `src/App.tsx`, the shell: a grouped sidebar (`NAV_GROUPS` in `src/router.ts`:
 Overview, Targets, Analysis, Agent, System; the System group ends with Jobs,
-Journal, Components, Integrations, Users and Docs), a topbar title, the theme
-picker and the health line.
+Models, Journal, Components, Integrations, Users, Billing and Docs), a topbar
+title, the theme picker and the health line.
 Routing is react-router's: `App` holds one route table, `useRoutes` renders it,
 and the same table is matched against the location for the topbar title and the
 sidebar's active section, so no path is written down twice.  Every view is
