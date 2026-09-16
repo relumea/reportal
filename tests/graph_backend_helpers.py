@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Mapping
 from typing import Any
 
 from reportal.graph_backends import GraphBackend
@@ -45,7 +46,13 @@ def recording_backend(
             "pushed_edges": edges,
         }
 
-    def _query(conn: sqlite3.Connection, *, query: str, limit: int) -> dict[str, Any]:
+    def _query(
+        conn: sqlite3.Connection,
+        *,
+        query: str,
+        limit: int,
+        visible_to: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return {"backend": name, "query": query, "count": 0, "results": []}
 
     return (

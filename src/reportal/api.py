@@ -8362,7 +8362,11 @@ def graph_query(request: Request) -> Response:
                 detail=f"graph backend {backend.name!r} does not support query",
             )
         result = graph_backends.run_query(
-            backend, conn, query=text, limit=graph_backends.DEFAULT_QUERY_LIMIT
+            backend,
+            conn,
+            query=text,
+            limit=graph_backends.DEFAULT_QUERY_LIMIT,
+            visible_to=_caller(request),
         )
     return json_response(result)
 

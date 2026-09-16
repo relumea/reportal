@@ -41,7 +41,7 @@ import logging
 import os
 import sqlite3
 import tomllib
-from collections.abc import Callable, Coroutine, Iterable
+from collections.abc import Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass
 from importlib.util import find_spec
 from typing import Any, Protocol, cast
@@ -149,7 +149,14 @@ class SyncHandler(Protocol):
 class QueryHandler(Protocol):
     """The ``query`` call a backend supports, or None when it supports none."""
 
-    def __call__(self, conn: sqlite3.Connection, *, query: str, limit: int) -> dict[str, Any]: ...
+    def __call__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        query: str,
+        limit: int,
+        visible_to: Mapping[str, Any] | None = ...,
+    ) -> dict[str, Any]: ...
 
 
 def _no_unavailable_reason() -> str:
@@ -257,20 +264,39 @@ def _node_result(node: dict[str, Any], degree: int) -> dict[str, Any]:
     }
 
 
-def sqlite_query(conn: sqlite3.Connection, *, query: str, limit: int) -> dict[str, Any]:
+def sqlite_query(
+    conn: sqlite3.Connection,
+    *,
+    query: str,
+    limit: int,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Query the stored local graph: an exact node id, else a label/key search.
 
     An exact node id adds nothing to the graph the GET node route does not:
     the one-hit result carries its stored degree.  Any other query is a
     substring match over every binary's node labels, keys and ids, capped at
-    *limit*.
+    *limit*.  ``visible_to`` drops nodes on binaries the caller may not see,
+    like the other scoped reads; an exact hidden id answers no hits.
     """
+    from reportal import auth
+
     text = query.strip()
     bounded = min(max(limit, 1), MAX_QUERY_LIMIT)
     if not text:
         return {"backend": SQLITE_BACKEND_NAME, "query": text, "count": 0, "results": []}
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    visible: set[int] | None = None
+    if scope is not None:
+        clause, params = scope
+        visible = {
+            int(row["id"])
+            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+        }
     exact = store.get_graph_node(conn, text)
     if exact is not None:
+        if visible is not None and int(exact["binary_id"]) not in visible:
+            return {"backend": SQLITE_BACKEND_NAME, "query": text, "count": 0, "results": []}
         degree = len(store.list_graph_edges_for_node(conn, text))
         results = [_node_result(exact, degree)]
         return {
@@ -280,6 +306,8 @@ def sqlite_query(conn: sqlite3.Connection, *, query: str, limit: int) -> dict[st
             "results": results,
         }
     matches = store.search_graph_nodes(conn, needle=text, limit=bounded)
+    if visible is not None:
+        matches = [node for node in matches if int(node["binary_id"]) in visible]
     results = [
         _node_result(node, len(store.list_graph_edges_for_node(conn, str(node["id"]))))
         for node in matches
@@ -514,13 +542,26 @@ def backend_supports_query(backend: GraphBackend) -> bool:
 
 
 def run_query(
-    backend: GraphBackend, conn: sqlite3.Connection, *, query: str, limit: int
+    backend: GraphBackend,
+    conn: sqlite3.Connection,
+    *,
+    query: str,
+    limit: int,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run *query* against *backend*; raises :class:`QueryUnsupportedError`."""
+    """Run *query* against *backend*; raises :class:`QueryUnsupportedError`.
+
+    ``visible_to`` is forwarded to handlers that accept it (the built-in
+    sqlite one does); a third-party handler keeps its own signature and
+    receives only what it declares.
+    """
     handler = backend.query
     if handler is None:
         raise QueryUnsupportedError(backend.name)
-    return handler(conn, query=query, limit=limit)
+    try:
+        return handler(conn, query=query, limit=limit, visible_to=visible_to)
+    except TypeError:
+        return handler(conn, query=query, limit=limit)
 
 
 def sync_graph(

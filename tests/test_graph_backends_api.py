@@ -13,7 +13,7 @@ from conftest import json_body, wsgi_request
 from graph_backend_helpers import recording_backend
 from graph_helpers import FUNCTION_NAME, seed_corpus
 
-from reportal import graph, graph_backends, store
+from reportal import auth, graph, graph_backends, store
 from reportal.graph_backends import COGNEE_INSTALL_HINT
 
 
@@ -173,6 +173,35 @@ class TestQueryRoute:
         status, headers, raw = _query("", "sqlite")
         assert status.startswith("200")
         assert json_body(raw, headers)["count"] == 0
+
+    def test_a_non_member_queries_no_team_nodes(
+        self, conn: sqlite3.Connection, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = _build(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _member, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, outsider = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.set_binary_scope(conn, binary_id, visibility="team", owner_team_id=team_id)
+
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _status, headers, raw = wsgi_request(
+            "GET",
+            f"/api/graph/query?q={FUNCTION_NAME}&backend=sqlite",
+            headers={"Authorization": f"Bearer {outsider}"},
+        )
+        assert json_body(raw, headers)["count"] == 0
+
+        _status, headers, raw = wsgi_request(
+            "GET",
+            f"/api/graph/query?q={FUNCTION_NAME}&backend=sqlite",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert json_body(raw, headers)["count"] == 1
 
     def test_unknown_backend_is_404(self, portal_db: Path) -> None:
         status, headers, raw = _query("x", "nope")
