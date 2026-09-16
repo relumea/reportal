@@ -319,6 +319,13 @@ run (`--compare`) and exits non-zero when a task costs more than it charges.
     .venv/bin/python tools/bench_credits.py --sample 8 \
         --key-file ~/.secrets/deepseek.txt --json .scratch/bench-credits.json
 
+`--target label=model@endpoint[,key=path]`, repeated, measures several models
+side by side and works across providers; the comparison is per task because a
+model can be cheap on triage and ruinous on a whole-function rewrite, and the
+rewrite row is read against published per-function costs (DecBench's agent
+figures, $1.92 and $0.68).  A provider that refuses every call reports the
+refusal and exits 2 rather than reading as solvent.
+
 A profile is `visible_tokens` times `thinking_ratio`, because a reasoning model
 bills deliberation as completion tokens: measured at 2.7x the visible answer
 for triage and 22.3x for a whole-function rewrite, which is what makes
@@ -405,7 +412,7 @@ registers an entry point in the `reportal.mcp_tools` group whose value is
 `module:attr` naming a `Tool` or a zero-argument factory returning one
 (discovery mirrors `reportal.components`: a broken registration is skipped with
 a warning and a duplicate name is a `RegistryError`).  The sub-registry exposes
-`register_tool`, `tools` and `refresh_tools`.  Handlers call reportal's
+`register_tool`, `tools`, `unregister_tool` and `refresh_tools`.  Handlers call reportal's
 internal functions directly (store, engines, pipeline, llm) and never make an
 HTTP request back into reportal.
 

@@ -19,6 +19,21 @@ Usage
     .venv/bin/python tools/bench_credits.py --sample 20 --json out.json
     .venv/bin/python tools/bench_credits.py --compare .scratch/bench-credits.json
 
+Comparing models, including across providers, is ``--target`` repeated.  Each
+is ``label=model@endpoint[,key=path]``, and the label is what names the column,
+because the same model id is served by several providers at different prices::
+
+    .venv/bin/python tools/bench_credits.py --sample 8 \
+        --target "flash=deepseek-flash@https://api.deepseek.com,key=~/.secrets/deepseek.txt" \
+        --target "or-qwen=qwen/qwen3.8-27b@https://openrouter.ai/api/v1,key=~/.secrets/openrouter"
+
+The comparison is per task rather than per model, because the thinking ratio is
+task-dependent: a model can be cheap on triage and ruinous on a whole-function
+rewrite, and an average hides the case that decides whether it can be the bulk
+generator.  The rewrite is also read against published per-function costs
+(:data:`PUBLISHED_ANCHORS`), which is where the local numbers meet the outside
+ones.
+
 The endpoint is the normal bridge configuration (`REPORTAL_LLM_ENDPOINT`,
 `REPORTAL_LLM_API_KEY`, `REPORTAL_LLM_MODEL`), so this measures whatever the
 install is actually pointed at.  `--key-file` reads the key from a file instead
@@ -239,14 +254,21 @@ def run_task(task: str, sources: list[str], *, verbose: bool) -> TaskResult:
                 runner(code)
         except Exception as exc:  # a provider error is a data point
             result.failures += 1
-            if verbose:
-                _say(f"    [{index}] {task}: failed ({type(exc).__name__}: {exc})")
+            # The first failure is always reported, quiet or not: a provider
+            # that refuses every call (no credit, wrong model id, a rate limit)
+            # would otherwise show up only as an empty column.
+            if verbose or result.failures == 1:
+                detail = str(exc).replace("\n", " ")[:200]
+                _say(f"    [{index}] {task}: failed ({type(exc).__name__}: {detail})")
             continue
         elapsed = time.monotonic() - started
         if not captured:
             result.failures += 1
-            if verbose:
-                _say(f"    [{index}] {task}: no usage reported")
+            if verbose or result.failures == 1:
+                _say(
+                    f"    [{index}] {task}: the call returned no usage block,"
+                    " so it cannot be priced"
+                )
             continue
         prompt, completion, model = captured[-1]
         # The reasoning split is not on the sink (it is not billable separately),
@@ -263,16 +285,59 @@ def run_task(task: str, sources: list[str], *, verbose: bool) -> TaskResult:
             )
         )
         if verbose:
-            _say(f"    [{index}] {task}: {prompt} in, {completion} out, {elapsed:.1f}s")
+            thought = f" ({reasoning[-1]} thinking)" if reasoning and reasoning[-1] else ""
+            _say(f"    [{index}] {task}: {prompt} in, {completion} out{thought}, {elapsed:.1f}s")
     return result
 
 
-def _configure(key_file: Path | None, endpoint: str, model: str) -> None:
-    """Point the bridge at the endpoint this run measures."""
-    if key_file is not None:
-        os.environ["REPORTAL_LLM_API_KEY"] = key_file.read_text().strip()
-    os.environ.setdefault("REPORTAL_LLM_ENDPOINT", endpoint)
-    os.environ["REPORTAL_LLM_MODEL"] = model
+@dataclass(frozen=True)
+class Target:
+    """One model to measure: where it lives and what to call it."""
+
+    label: str
+    endpoint: str
+    model: str
+    key_file: Path | None = None
+
+    @classmethod
+    def parse(cls, spec: str) -> Target:
+        """Read a ``label=model@endpoint[,key=path]`` target specification.
+
+        A label rather than a bare model name because the same model id is
+        served by several providers at different prices, and the comparison is
+        only readable when each column says which one it was.
+        """
+        label, _, rest = spec.partition("=")
+        if not rest:
+            # No explicit label: name the column after the model rather than the
+            # whole spec, so an unlabelled target still reads in a table.
+            rest = spec
+            label = spec.partition("@")[0].partition(",key=")[0]
+        body, _, key = rest.partition(",key=")
+        model, _, endpoint = body.partition("@")
+        if not model or not endpoint:
+            raise SystemExit(
+                f"bad --target {spec!r}; expected label=model@https://host[,key=/path]"
+            )
+        return cls(
+            label=label.strip(),
+            endpoint=endpoint.strip(),
+            model=model.strip(),
+            key_file=Path(key).expanduser() if key else None,
+        )
+
+
+def _configure(target: Target) -> None:
+    """Point the bridge at one target, replacing whatever was set before.
+
+    Assignment rather than `setdefault`: a comparison run configures several
+    targets in one process, and a default that stuck would silently measure the
+    first endpoint under every later label.
+    """
+    if target.key_file is not None:
+        os.environ["REPORTAL_LLM_API_KEY"] = target.key_file.read_text().strip()
+    os.environ["REPORTAL_LLM_ENDPOINT"] = target.endpoint
+    os.environ["REPORTAL_LLM_MODEL"] = target.model
     llm.set_client(None)
 
 
@@ -307,6 +372,14 @@ def _print_verdict(results: list[TaskResult]) -> int:
         if result.observations and result.measured_cogs_usd() > result.charged_usd()
     ]
     _say("")
+    measured = [result for result in results if result.observations]
+    if not measured:
+        # Zero calls is not a pass.  Saying "every task is solvent" here would
+        # turn a provider outage into a green result, which is the one failure
+        # mode a pricing gate must not have.
+        failed = sum(result.failures for result in results)
+        _say(f"No task produced a usable call ({failed} failure(s)); nothing was measured.")
+        return 2
     if not underpriced:
         _say("Every measured task is charged at or above what it costs to serve.")
         return 0
@@ -348,6 +421,92 @@ def _compare(previous: Path, results: list[TaskResult]) -> None:
         )
 
 
+# Published per-function costs for a whole-function rewrite, as external
+# anchors a local run can be read against.  Source: DecBench's own economics
+# table (see ~/Desktop/ai-decomp `wiki/decomp/benchmarks.md`), where the two
+# coding agents are the only backends carrying a dollar figure.  They are
+# agent loops rather than one completion, which is exactly the point: the
+# same task costs two orders of magnitude more when it is driven as a
+# multi-turn agent than as a single prompt.
+PUBLISHED_ANCHORS: tuple[tuple[str, float, str], ...] = (
+    ("Claude Code (opus-4-8) agent loop", 1.92, "DecBench, 108 s median"),
+    ("Codex (gpt-5.6-sol) agent loop", 0.68, "DecBench, 135 s median"),
+)
+
+
+def _compare_targets(runs: list[tuple[Target, list[TaskResult]]]) -> None:
+    """Put every measured model side by side, per task, cheapest column first.
+
+    The comparison is per task rather than per model overall, because the
+    thinking ratio is task-dependent: a model can be cheap on triage and
+    ruinous on a rewrite, and an average would hide exactly the case that
+    decides whether it can be the bulk generator.
+    """
+    if len(runs) < 2:
+        return
+    labels = [target.label for target, _ in runs]
+    tasks = sorted({result.task for _, results in runs for result in results})
+    width = max(12, max(len(label) for label in labels) + 2)
+
+    _say("")
+    _say("Cost per call, by model (USD at the catalog's rates):")
+    _say("")
+    _say(f"{'task':18}" + "".join(f"{label:>{width}}" for label in labels) + f"{'spread':>9}")
+    _say("-" * (18 + width * len(labels) + 9))
+    for task in tasks:
+        cells: list[str] = []
+        costs: list[float] = []
+        for _, results in runs:
+            found = next((r for r in results if r.task == task and r.observations), None)
+            if found is None:
+                cells.append(f"{'-':>{width}}")
+                continue
+            cost = found.measured_cogs_usd()
+            costs.append(cost)
+            cells.append(f"{'$' + format(cost, '.5f'):>{width}}")
+        spread = f"{max(costs) / min(costs):.1f}x" if len(costs) > 1 and min(costs) else "-"
+        _say(f"{task:18}" + "".join(cells) + f"{spread:>9}")
+
+    _say("")
+    _say("Thinking ratio (billed output / visible answer), by model:")
+    _say("")
+    _say(f"{'task':18}" + "".join(f"{label:>{width}}" for label in labels))
+    _say("-" * (18 + width * len(labels)))
+    for task in tasks:
+        cells = []
+        for _, results in runs:
+            found = next((r for r in results if r.task == task and r.observations), None)
+            if found is None:
+                cells.append(f"{'-':>{width}}")
+                continue
+            total = found._median("completion_tokens")
+            think = found._median("reasoning_tokens")
+            visible = total - think
+            cells.append(f"{format(total / visible, '.1f') + 'x' if visible else 'n/a':>{width}}")
+        _say(f"{task:18}" + "".join(cells))
+
+
+def _print_anchors(runs: list[tuple[Target, list[TaskResult]]]) -> None:
+    """Read the measured rewrite cost against published per-function figures."""
+    measured: list[tuple[str, float]] = []
+    for target, results in runs:
+        found = next(
+            (r for r in results if r.task == credits_mod.TASK_DECOMPILE and r.observations),
+            None,
+        )
+        if found is not None:
+            measured.append((target.label, found.measured_cogs_usd()))
+    if not measured:
+        return
+    _say("")
+    _say("Whole-function rewrite against published per-function costs:")
+    for label, cost in sorted(measured, key=lambda pair: pair[1]):
+        _say(f"  {label:32} ${cost:>8.5f}  (measured here, one completion)")
+    for label, cost, note in PUBLISHED_ANCHORS:
+        cheapest = min(cost for _, cost in measured)
+        _say(f"  {label:32} ${cost:>8.5f}  ({note}; {cost / cheapest:,.0f}x)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sample", type=int, default=6, help="functions per task (default 6)")
@@ -357,6 +516,16 @@ def main() -> int:
         help="comma-separated task names (default: every task with a runner)",
     )
     parser.add_argument("--corpus", type=Path, default=DEFAULT_CORPUS)
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=[],
+        metavar="LABEL=MODEL@ENDPOINT[,key=PATH]",
+        help=(
+            "a model to measure; repeat to compare several across providers, "
+            "e.g. --target flash=deepseek-flash@https://api.deepseek.com,key=~/.secrets/deepseek.txt"
+        ),
+    )
     parser.add_argument(
         "--endpoint", default="https://api.deepseek.com", help="chat-completions base URL"
     )
@@ -376,10 +545,18 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true", help="suppress per-call lines")
     args = parser.parse_args()
 
-    _configure(args.key_file, args.endpoint, args.model)
-    if not llm.get_client().available():
-        _say("no LLM endpoint configured; set REPORTAL_LLM_ENDPOINT or pass --key-file")
-        return 2
+    targets = (
+        [Target.parse(spec) for spec in args.target]
+        if args.target
+        else [
+            Target(
+                label=args.model,
+                endpoint=args.endpoint,
+                model=args.model,
+                key_file=args.key_file,
+            )
+        ]
+    )
 
     names = [name.strip() for name in args.tasks.split(",") if name.strip()] or list(RUNNERS)
     unknown = [name for name in names if name not in RUNNERS]
@@ -389,30 +566,53 @@ def main() -> int:
         return 2
 
     sources = sample_sources(args.corpus, args.sample)
-    _say(
-        f"Measuring {len(names)} task(s) over {len(sources)} function(s) "
-        f"against {args.model} at {args.endpoint}"
-    )
+    runs: list[tuple[Target, list[TaskResult]]] = []
+    status = 0
+    for target in targets:
+        _configure(target)
+        if not llm.get_client().available():
+            _say(f"{target.label}: no endpoint configured (pass key= in --target)")
+            return 2
+        _say("")
+        _say(
+            f"Measuring {len(names)} task(s) over {len(sources)} function(s) "
+            f"against {target.model} at {target.endpoint}  [{target.label}]"
+        )
+        results = []
+        for task in names:
+            _say(f"  {task} ...")
+            results.append(run_task(task, sources, verbose=not args.quiet))
+        _print_table(results)
+        if args.compare is not None and len(targets) == 1:
+            _compare(args.compare, results)
+        # The verdict is per model: a task can be solvent on one and not another,
+        # and the exit status has to fail if any measured target is underwater.
+        status |= _print_verdict(results)
+        runs.append((target, results))
 
-    results: list[TaskResult] = []
-    for task in names:
-        _say(f"  {task} ...")
-        results.append(run_task(task, sources, verbose=not args.quiet))
-
-    _print_table(results)
-    if args.compare is not None:
-        _compare(args.compare, results)
-    status = _print_verdict(results)
+    _compare_targets(runs)
+    _print_anchors(runs)
 
     if args.json is not None:
         payload = {
             "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "model": args.model,
-            "endpoint": args.endpoint,
             "sample": len(sources),
             "corpus": str(args.corpus),
             "credit_cogs_usd": credits_mod.credit_cogs_usd(),
-            "tasks": [result.describe() for result in results],
+            "runs": [
+                {
+                    "label": target.label,
+                    "model": target.model,
+                    "endpoint": target.endpoint,
+                    "tasks": [result.describe() for result in results],
+                }
+                for target, results in runs
+            ],
+            # The single-target shape the earlier runs used, kept so `--compare`
+            # reads a file this version wrote as well as one the last did.
+            "model": runs[0][0].model,
+            "endpoint": runs[0][0].endpoint,
+            "tasks": [result.describe() for result in runs[0][1]],
         }
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(payload, indent=2) + "\n")
