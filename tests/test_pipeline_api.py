@@ -458,3 +458,30 @@ class TestDeactivateRoute:
         )
         assert status.startswith("200")
         assert conn.execute("SELECT COUNT(*) FROM scratch").fetchone()[0] == 1
+
+    def test_an_analyst_cannot_reload_or_deactivate_components(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        _analyst, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        conn.commit()
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        }
+        reload = wsgi_request(
+            "POST",
+            "/api/components/reload",
+            body=json.dumps({"name": pipeline.COMPONENT_PREPARE}),
+            headers=headers,
+        )
+        assert reload[0].startswith("403"), reload[2]
+        assert json_body(reload[2], reload[1])["error"] == auth.ERROR_FORBIDDEN
+
+        deactivate = wsgi_request(
+            "POST",
+            f"/api/components/{pipeline.COMPONENT_PREPARE}/deactivate",
+            headers=headers,
+        )
+        assert deactivate[0].startswith("403"), deactivate[2]
+        assert json_body(deactivate[2], deactivate[1])["error"] == auth.ERROR_FORBIDDEN

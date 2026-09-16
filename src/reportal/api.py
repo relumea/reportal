@@ -5819,13 +5819,19 @@ def list_integrations() -> Response:
 
 
 @router.post("/api/components/reload")
-def reload_components(body: dict[str, Any] = Depends(optional_json_body)) -> Response:
+def reload_components(
+    request: Request, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
     """Reload one component's declaration, or every reloadable one.
 
     The body is ``{"name": "..."}`` or ``{"all": true}``; the registry entry is
     swapped in place, so an already composed run keeps the snapshot it started
-    with.  Destructive to the process-wide registry.
+    with.  Destructive to the process-wide registry, so only a tenant admin
+    (or auth-off local operator) may reshape it.
     """
+    refused = _refuse_unless_tenant_admin(request)
+    if refused is not None:
+        return refused
     name = ""
     try:
         if _optional_bool(body, "all", False):
@@ -5846,15 +5852,19 @@ def reload_components(body: dict[str, Any] = Depends(optional_json_body)) -> Res
 
 
 @router.post("/api/components/{name}/deactivate")
-def deactivate_components(name: str) -> Response:
+def deactivate_components(name: str, request: Request) -> Response:
     """Withdraw one component's contribution from the live composition.
 
     The component's ``revert(ctx)`` runs where it declares one and the names it
     provided are revoked.  The response carries the ``deactivated`` entries and,
     when the withdrawal recorded a durable write, the action-journal id that
     reverts it; a withdrawal whose effect is a process-local binding reports
-    ``journaled: false``.
+    ``journaled: false``.  Only a tenant admin (or auth-off local operator)
+    may reshape the live composition.
     """
+    refused = _refuse_unless_tenant_admin(request)
+    if refused is not None:
+        return refused
     with contextlib.closing(_open()) as conn:
         try:
             report = pipeline.withdraw_component(conn, name)
@@ -10542,9 +10552,14 @@ def set_team_organisation(
 ) -> Response:
     """Move a team into an organisation, or out of every one; journaled.
 
-    The body is ``{"organisation_id": <id>|null}``.  Only a team owner or an
-    admin may move a team, so a plain member cannot file it away.
+    The body is ``{"organisation_id": <id>|null}``.  Filing a team under an
+    organisation grants its members that organisation's billing and usage
+    surface, so only a tenant admin may reshape the hierarchy; a team owner
+    alone cannot attach into another tenant by guessing an id.
     """
+    refused = _refuse_unless_tenant_admin(request)
+    if refused is not None:
+        return refused
     raw = body.get("organisation_id")
     if raw is not None and (isinstance(raw, bool) or not isinstance(raw, int)):
         return json_error(
@@ -10555,9 +10570,6 @@ def set_team_organisation(
             return json_error(
                 404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
             )
-        refused = _refuse_unless_team_manager(conn, request, team_id)
-        if refused is not None:
-            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             journal.journaled_rows(

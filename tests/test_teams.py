@@ -1229,3 +1229,34 @@ class TestOrganisationAccessGate:
         )
         assert planned[0].startswith("403")
         assert planned[1]["error"] == auth.ERROR_FORBIDDEN
+
+    def test_a_team_owner_cannot_attach_into_another_organisation(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Filing under an org grants billing access; only a tenant admin may do it."""
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        organisation = auth.create_organisation(conn, name="ACME")
+        owner, owner_token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        team = auth.create_team(conn, name="rogue")
+        auth.add_member(conn, int(team["id"]), int(owner["id"]))
+        auth.set_member_role(conn, int(team["id"]), int(owner["id"]), auth.TEAM_ROLE_OWNER)
+        conn.commit()
+
+        attached = _send(
+            "PUT",
+            f"/api/teams/{team['id']}/organisation",
+            token=owner_token,
+            body={"organisation_id": int(organisation["id"])},
+        )
+        assert attached[0].startswith("403"), attached[1]
+        assert attached[1]["error"] == auth.ERROR_FORBIDDEN
+        stored = auth.get_team(conn, int(team["id"]))
+        assert stored is not None and stored.get("organisation_id") is None
+
+        usage = _send(
+            "GET",
+            f"/api/organisations/{organisation['id']}/usage",
+            token=owner_token,
+        )
+        assert usage[0].startswith("403")
+        assert usage[1]["error"] == auth.ERROR_SCOPE_FORBIDDEN
