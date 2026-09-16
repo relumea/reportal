@@ -23,23 +23,29 @@ classifiers = [
     "Topic :: Software Development :: Disassemblers",
 ]
 dependencies = [
-    "fastapi>=0.141",
-    "httpx2>=2.12",
-    "mcp>=2.2",
+    # Imported directly by `mcp_server` (and the MCP tests); do not rely on the
+    # transitive pin through `mcp` / `starlette`.
+    "anyio==4.15.1",
+    "fastapi==0.141.1",
+    "httpx2==2.12.0",
+    "mcp==2.2.0",
     # `llm.py` imports the SDK at module scope, so the bridge is disabled by
     # configuration, not by a missing package: without this the wheel cannot be
     # imported at all in a clean environment.
-    "openai>=2.54",
-    "python-multipart>=0.0.9",
+    "openai==2.54.0",
+    "python-multipart==0.0.32",
     "rebrew",
-    "reportlab>=4.2",
+    "reportlab==5.0.1",
     "rich>=13.0",
-    "typer>=0.27.2",
-    "uvicorn>=0.52",
+    # Imported directly by `server`, `api`, and `ui`; do not rely on the
+    # transitive pin through `fastapi`.
+    "starlette==1.6.0",
+    "typer==0.27.2",
+    "uvicorn==0.52.4",
     # Needed in its own right, not just transitively through `rebrew`: this
     # package imports `rebrew.workspace` directly, and that module decodes the
     # section_cells_json cache with zstandard.
-    "zstandard>=0.22",
+    "zstandard==0.25.0",
 ]
 
 [project.urls]
@@ -48,10 +54,10 @@ Repository = "https://github.com/relumea/reportal"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.1.1",
-    "pytest-cov>=6.0",
-    "ruff>=0.16.5",
-    "mypy>=1.17",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.7",
+    "mypy==2.3.1",
 ]
 # Optional structural-similarity scoring for `reportal match`: reuses the
 # sibling `resembl` project's dependency-light token/MinHash core
@@ -60,7 +66,7 @@ dev = [
 # similarity feature as unavailable.
 similarity = [
     "resembl",
-    "rapidfuzz>=3.13",
+    "rapidfuzz==3.14.6",
 ]
 # Optional Cognee knowledge-graph backend.  The built-in `sqlite` backend is
 # the default and needs nothing; this extra makes the `cognee` backend report
@@ -71,7 +77,7 @@ similarity = [
 # pin is the release the backend's add/cognify calls were verified against; the
 # tests exercise its add API when the extra is installed and skip without it.
 cognee = [
-    "cognee>=1.5",
+    "cognee==1.5.4",
 ]
 
 # Third-party graph backends register through the `reportal.graph_backends`
