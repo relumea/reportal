@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from reportal import analysis_log, journal
@@ -77,15 +77,19 @@ def _item_from_log(row: dict[str, Any]) -> dict[str, Any]:
 def parse_since(value: str) -> str:
     """Validate an ISO timestamp a caller wants the feed since.
 
-    Returns it unchanged, which is the text form the rows are compared in, so a
-    caller can pass back what a previous response carried.  Anything another
-    format raises :class:`ValueError`, which the API answers as a 400.
+    Returns it as UTC in the store's ``+00:00`` form so lexicographic
+    ``created_at >= since`` comparisons stay correct when a client sends ``Z``,
+    a bare date, or a naive clock time.  Rows are always written that way
+    (:func:`reportal.store.now`), and a previous response's ``since`` already
+    matches.  Anything another format raises :class:`ValueError`, which the API
+    answers as a 400.
     """
     try:
-        datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"since must be an ISO timestamp: {value!r}") from exc
-    return value
+    parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+    return parsed.isoformat(timespec="seconds")
 
 
 def latest(conn: sqlite3.Connection) -> str | None:

@@ -214,7 +214,9 @@ def series(
     """
     days = normalize_days(days)
     dates = window(days)
-    since = dates[0]
+    # Full UTC midnight so the text compare matches store timestamps
+    # (``...+00:00``) rather than relying on a bare date being a prefix.
+    since = f"{dates[0]}T00:00:00+00:00"
     notes: list[str] = []
 
     per_day = {
@@ -228,8 +230,8 @@ def series(
         {"date": day, **{key: per_day[key].get(day, 0) for key in SERIES_KEYS}} for day in dates
     ]
     type_totals: dict[str, int] = {}
-    for counts in software.values():
-        for name, count in counts.items():
+    for day in dates:
+        for name, count in software.get(day, {}).items():
             type_totals[name] = type_totals.get(name, 0) + count
     return {
         "days": days,
@@ -241,7 +243,7 @@ def series(
             if software.get(day)
         ],
         "totals": {
-            **{key: sum(per_day[key].values()) for key in SERIES_KEYS},
+            **{key: sum(row[key] for row in series_rows) for key in SERIES_KEYS},
             "software_types": dict(sorted(type_totals.items())),
         },
         "notes": notes,

@@ -203,6 +203,12 @@ class TestFeed:
 
     def test_parse_since_accepts_iso_and_refuses_anything_else(self) -> None:
         assert notifications.parse_since("2026-09-13T12:00:00+00:00") == "2026-09-13T12:00:00+00:00"
+        # Z and a bare date must normalize to the store's +00:00 form so a
+        # lexicographic created_at >= since still keeps the inclusive second.
+        assert notifications.parse_since("2026-09-13T12:00:00Z") == "2026-09-13T12:00:00+00:00"
+        assert notifications.parse_since("2026-09-13") == "2026-09-13T00:00:00+00:00"
+        row = "2026-09-13T12:00:00+00:00"
+        assert row >= notifications.parse_since("2026-09-13T12:00:00Z")
 
         try:
             notifications.parse_since("yesterday")

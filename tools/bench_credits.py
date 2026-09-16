@@ -69,6 +69,7 @@ import sys
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -595,7 +596,7 @@ def main() -> int:
 
     if args.json is not None:
         payload = {
-            "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "recorded_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "sample": len(sources),
             "corpus": str(args.corpus),
             "credit_cogs_usd": credits_mod.credit_cogs_usd(),

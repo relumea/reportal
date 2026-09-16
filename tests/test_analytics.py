@@ -75,6 +75,25 @@ class TestSeries:
         assert payload["totals"]["auto_runs"] == 1
         assert all(row["actions"] >= 0 for row in payload["series"])
 
+    def test_totals_ignore_days_outside_the_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A row stamped after the window end (clock skew) must not inflate
+        # totals beyond what the chart rows sum to.
+        ids = _seed(tmp_path, monkeypatch)
+        future = (datetime.now(UTC) + timedelta(days=2)).isoformat(timespec="seconds")
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            store.create_analysis(conn, binary_id=ids["binary"], engine="manual")
+            conn.execute(
+                "UPDATE analyses SET created_at = ? WHERE id = (SELECT MAX(id) FROM analyses)",
+                (future,),
+            )
+            conn.commit()
+            payload = analytics.series(conn, days=7)
+        charted = sum(row["analyses"] for row in payload["series"])
+        assert payload["totals"]["analyses"] == charted
+        assert payload["totals"]["analyses"] == 2
+
     def test_a_journaled_action_is_counted(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
