@@ -823,13 +823,21 @@ def get_fingerprint(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] 
 
 
 def set_rebrew_context(conn: sqlite3.Connection, binary_id: int, project_dir: str) -> None:
-    """Store the rebrew project directory backing *binary_id*, replacing any earlier one."""
+    """Store the rebrew project directory backing *binary_id*, replacing any earlier one.
+
+    A changed project directory is a different engine input for every function of
+    the binary, so the disassembly cache for those functions is dropped; a
+    write that keeps the same path leaves the cache alone.
+    """
+    previous = get_rebrew_context(conn, binary_id)
     conn.execute(
         "INSERT INTO rebrew_contexts (binary_id, project_dir) VALUES (?, ?)"
         " ON CONFLICT(binary_id) DO UPDATE SET project_dir = excluded.project_dir",
         (binary_id, project_dir),
     )
     conn.commit()
+    if previous is not None and previous != project_dir:
+        clear_disasm_for_binary(conn, binary_id)
 
 
 def get_rebrew_context(conn: sqlite3.Connection, binary_id: int) -> str | None:
@@ -1619,19 +1627,25 @@ def upsert_function(
 
     Returns ``(id, created)``.  Re-importing a workspace refreshes existing
     rows instead of duplicating them, which is what makes ``import-rebrew``
-    idempotent.
+    idempotent.  A size change widens or shrinks the engine's disassembly
+    window, so the cached listing for that function is dropped; a refresh
+    that keeps the same size leaves the cache alone.
     """
     row = conn.execute(
-        "SELECT id FROM functions WHERE analysis_id = ? AND va = ?", (analysis_id, va)
+        "SELECT id, size FROM functions WHERE analysis_id = ? AND va = ?", (analysis_id, va)
     ).fetchone()
     if row is not None:
+        function_id = int(row["id"])
+        previous_size = int(row["size"])
         conn.execute(
             "UPDATE functions SET name = ?, size = ?, status = ?, name_source = ?,"
             " confidence = ?, source_path = ? WHERE id = ?",
-            (name, size, status, name_source, confidence, source_path, int(row["id"])),
+            (name, size, status, name_source, confidence, source_path, function_id),
         )
         conn.commit()
-        return int(row["id"]), False
+        if previous_size != size:
+            clear_disasm(conn, function_id)
+        return function_id, False
     return (
         add_function(
             conn,
@@ -2155,6 +2169,19 @@ def clear_disasm(conn: sqlite3.Connection, function_id: int) -> bool:
     cur = conn.execute("DELETE FROM disasm_cache WHERE function_id = ?", (function_id,))
     conn.commit()
     return cur.rowcount > 0
+
+
+def clear_disasm_for_binary(conn: sqlite3.Connection, binary_id: int) -> int:
+    """Drop every cached listing belonging to *binary_id*; returns how many went."""
+    cur = conn.execute(
+        "DELETE FROM disasm_cache WHERE function_id IN ("
+        " SELECT f.id FROM functions f"
+        " JOIN analyses a ON a.id = f.analysis_id"
+        " WHERE a.binary_id = ?)",
+        (binary_id,),
+    )
+    conn.commit()
+    return int(cur.rowcount)
 
 
 # ── Decompilations ─────────────────────────────────────────────────

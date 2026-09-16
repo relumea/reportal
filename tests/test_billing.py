@@ -437,6 +437,14 @@ class TestManualMode:
         billing.cancel_manual_subscription(conn, organisation_id)
         assert metering.organisation_plan(conn, organisation_id).id == plans.FALLBACK_PLAN_ID
 
+    def test_the_intent_map_is_bounded(self, conn: sqlite3.Connection, manual_env: None) -> None:
+        """Past the cap the oldest token is dropped so a burst cannot grow the map without bound."""
+        organisation_id = _organisation(conn)
+        billing._manual_intents.clear()
+        for _ in range(billing.MAX_MANUAL_INTENTS + 8):
+            billing.start_checkout(conn, {"id": organisation_id}, "analyst")
+        assert len(billing._manual_intents) == billing.MAX_MANUAL_INTENTS
+
 
 class TestReconcileRateLimit:
     """The reconcile path calls out, so it is bounded."""

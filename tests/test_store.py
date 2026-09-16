@@ -173,6 +173,18 @@ class TestRebrewContext:
         row = conn.execute("SELECT COUNT(*) FROM rebrew_contexts").fetchone()
         assert row is not None and row[0] == 1
 
+    def test_a_changed_project_drops_the_disasm_cache(self, conn: sqlite3.Connection) -> None:
+        """The project directory is the engine input, so a new path cannot keep old listings."""
+        binary_id = store.add_binary(conn, sha256="3a" * 32, name="demo.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        function_id = store.add_function(conn, analysis_id=analysis_id, va=0x1000, size=16)
+        store.set_rebrew_context(conn, binary_id, "/first")
+        store.set_disasm(conn, function_id, "bits 32\n")
+        store.set_rebrew_context(conn, binary_id, "/first")
+        assert store.get_disasm(conn, function_id) == "bits 32\n"
+        store.set_rebrew_context(conn, binary_id, "/second")
+        assert store.get_disasm(conn, function_id) is None
+
     def test_unknown_binary_returns_none(self, conn: sqlite3.Connection) -> None:
         assert store.get_rebrew_context(conn, 999) is None
 
@@ -219,6 +231,19 @@ class TestFunctions:
         assert len(functions) == 1
         assert functions[0]["name"] == "b"
         assert functions[0]["status"] == "RELOC"
+
+    def test_upsert_size_change_drops_the_disasm_cache(self, conn: sqlite3.Connection) -> None:
+        """A wider or narrower extent is a different listing; drop the old cache."""
+        binary_id = store.add_binary(conn, sha256="35" * 32, name="demo")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        function_id, _ = store.upsert_function(
+            conn, analysis_id=analysis_id, va=0x1000, name="a", size=16
+        )
+        store.set_disasm(conn, function_id, "bits 32\n")
+        store.upsert_function(conn, analysis_id=analysis_id, va=0x1000, name="a", size=16)
+        assert store.get_disasm(conn, function_id) == "bits 32\n"
+        store.upsert_function(conn, analysis_id=analysis_id, va=0x1000, name="a", size=32)
+        assert store.get_disasm(conn, function_id) is None
 
     def test_list_by_binary(self, conn: sqlite3.Connection) -> None:
         _seed_function(conn)
@@ -487,6 +512,20 @@ class TestDisasmCache:
         conn.execute("DELETE FROM functions WHERE id = ?", (function_id,))
         conn.commit()
         assert store.get_disasm(conn, function_id) is None
+
+    def test_clear_for_binary_drops_every_listing(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="3b" * 32, name="demo")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        first = store.add_function(conn, analysis_id=analysis_id, va=0x1000, size=8)
+        second = store.add_function(conn, analysis_id=analysis_id, va=0x2000, size=8)
+        other = _seed_function(conn)
+        store.set_disasm(conn, first, "one\n")
+        store.set_disasm(conn, second, "two\n")
+        store.set_disasm(conn, other, "other\n")
+        assert store.clear_disasm_for_binary(conn, binary_id) == 2
+        assert store.get_disasm(conn, first) is None
+        assert store.get_disasm(conn, second) is None
+        assert store.get_disasm(conn, other) == "other\n"
 
 
 class TestDecompilations:

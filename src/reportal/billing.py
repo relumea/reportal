@@ -264,8 +264,11 @@ def _stripe_checkout(organisation: dict[str, Any], plan: plans.Plan) -> Checkout
 
 # Manual checkout intents, in memory: a development mode grants a plan through
 # an operator confirmation and nothing is persisted, so a restart clears them.
+# Cap the map so a caller that opens many checkouts within the TTL cannot grow
+# it without bound; past the cap the oldest token is dropped (spent as expired).
 _manual_intents: dict[str, tuple[int, str, float]] = {}
 _MANUAL_INTENT_TTL_S = 900.0
+MAX_MANUAL_INTENTS = 256
 
 
 def _store_manual_intent(organisation_id: int, plan_id: str) -> str:
@@ -276,6 +279,8 @@ def _store_manual_intent(organisation_id: int, plan_id: str) -> str:
             _manual_intents.pop(token, None)
     token = secrets.token_urlsafe(24)
     _manual_intents[token] = (organisation_id, plan_id, now + _MANUAL_INTENT_TTL_S)
+    while len(_manual_intents) > MAX_MANUAL_INTENTS:
+        _manual_intents.pop(next(iter(_manual_intents)))
     return token
 
 
