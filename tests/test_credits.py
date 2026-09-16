@@ -35,6 +35,13 @@ class TestTheUnit:
         expected = credits_mod.TASK_PROFILES[credits_mod.REFERENCE_TASK].cogs_usd()
         assert credits_mod.credit_cogs_usd() == pytest.approx(expected)
 
+    def test_a_non_positive_budget_buys_no_credits(self) -> None:
+        """A negative budget must not invent a negative credit allowance."""
+        assert credits_mod.credits_for_budget(0.0) == 0
+        assert credits_mod.credits_for_budget(-1.0) == 0
+        assert credits_mod.credits_for_budget(float("nan")) == 0
+        assert credits_mod.credits_for_budget(float("inf")) == 0
+
     def test_every_task_costs_at_least_one_credit(self) -> None:
         for task in credits_mod.TASK_PROFILES:
             assert credits_mod.base_credits(task) >= 1

@@ -51,6 +51,23 @@ class TestLedger:
         cost = metering.period_cost_usd(conn, organisation_id)
         assert cost == pytest.approx(plans.blended_usd_per_mtok(), rel=1e-3)
 
+    def test_a_small_token_row_rounds_into_micro_usd_not_truncates(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """One Sonnet-blend token is 3.6 micro-USD; truncating would store 3."""
+        organisation_id = _organisation(conn)
+        metering.record_usage(
+            conn, organisation_id, metering.KIND_TOKENS, 1, model=plans.COST_MODEL
+        )
+        row = conn.execute(
+            f"SELECT cost_micro_usd FROM {metering.USAGE_TABLE} WHERE organisation_id = ?",
+            (organisation_id,),
+        ).fetchone()
+        expected_micro = round(plans.blended_usd_per_mtok())
+        assert int(row["cost_micro_usd"]) == expected_micro
+        assert expected_micro == 4
+        assert metering.period_cost_usd(conn, organisation_id) == expected_micro / 1_000_000
+
     def test_usage_accumulates(self, conn: sqlite3.Connection) -> None:
         organisation_id = _organisation(conn)
         for _ in range(3):

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import sqlite3
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -99,7 +100,10 @@ def _confidence(raw: Any) -> float:
     if isinstance(raw, bool):
         return 0.0
     if isinstance(raw, (int, float)):
-        return max(0.0, min(1.0, float(raw)))
+        value = float(raw)
+        if not math.isfinite(value):
+            return 0.0
+        return max(0.0, min(1.0, value))
     return 0.0
 
 

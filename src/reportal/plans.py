@@ -43,6 +43,7 @@ token row with, and they are not a customer-facing number.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from dataclasses import dataclass, field
@@ -113,6 +114,10 @@ def blended_usd_per_mtok(model: str = COST_MODEL) -> float:
 
 def tokens_for_budget(usd: float, model: str = COST_MODEL) -> int:
     """How many tokens *usd* buys at the blended rate, rounded down."""
+    if not isinstance(usd, (int, float)) or isinstance(usd, bool):
+        return 0
+    if not math.isfinite(usd) or usd <= 0:
+        return 0
     return int(usd * 1_000_000 / blended_usd_per_mtok(model))
 
 

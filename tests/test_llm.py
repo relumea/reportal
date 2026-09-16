@@ -305,6 +305,19 @@ class TestPromptBuilders:
         assert set(llm.AI_CLI_COMMANDS) == set(llm.AI_KINDS)
 
 
+class TestConfidence:
+    def test_finite_values_clamp_into_unit_interval(self) -> None:
+        assert llm.confidence(0.5) == 0.5
+        assert llm.confidence(2.0) == 1.0
+        assert llm.confidence(-1.0) == 0.0
+
+    def test_non_finite_values_fall_back_to_the_default(self) -> None:
+        assert llm.confidence(float("nan")) == llm.DEFAULT_TYPE_CONFIDENCE
+        assert llm.confidence(float("inf")) == llm.DEFAULT_TYPE_CONFIDENCE
+        assert llm.confidence(float("-inf")) == llm.DEFAULT_TYPE_CONFIDENCE
+        assert llm.confidence("nan") == llm.DEFAULT_TYPE_CONFIDENCE
+
+
 class TestArtifactParsing:
     CODE = "int f(void) { return 1; }"
 

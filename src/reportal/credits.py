@@ -225,6 +225,10 @@ def credit_cogs_usd() -> float:
 
 def credits_for_budget(usd: float) -> int:
     """How many credits *usd* of inference budget buys, rounded down."""
+    if not isinstance(usd, (int, float)) or isinstance(usd, bool):
+        return 0
+    if not math.isfinite(usd) or usd <= 0:
+        return 0
     return int(usd / credit_cogs_usd())
 
 

@@ -97,6 +97,10 @@ class TestProposals:
         found = library.proposals({"candidates": [{"va": 1, "confidence": 7.5}]}, [])
         assert found[0]["confidence"] == 1.0
 
+    def test_a_non_finite_confidence_reads_as_zero(self) -> None:
+        found = library.proposals({"candidates": [{"va": 1, "confidence": float("nan")}]}, [])
+        assert found[0]["confidence"] == 0.0
+
     def test_a_missing_candidate_list_reads_as_empty(self) -> None:
         assert library.proposals({}, []) == []
 

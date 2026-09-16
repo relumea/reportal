@@ -201,7 +201,10 @@ def record_usage(
     units = max(0, int(units))
     cost_micro = 0
     if kind == KIND_TOKENS and units:
-        cost_micro = int(plans.usd_for_tokens(units, model or plans.COST_MODEL) * 1_000_000)
+        # USD/MTok equals micro-USD per token; round into the ledger unit rather
+        # than truncating ``usd_for_tokens * 1e6``, which under-counts (1 token
+        # at the Sonnet blend stores 3 instead of 4).
+        cost_micro = round(units * plans.blended_usd_per_mtok(model or plans.COST_MODEL))
     conn.execute(
         f"INSERT INTO {USAGE_TABLE} "
         "(organisation_id, kind, units, model, cost_micro_usd, detail, occurred_at) "
@@ -360,7 +363,7 @@ def quota_check(
         "metered": True,
         "overage_units": over if billable else 0,
         "overage_usd": (
-            round(over * _credits_mod().OVERAGE_USD_PER_CREDIT, 4)
+            (over * round(_credits_mod().OVERAGE_USD_PER_CREDIT * 100)) / 100
             if billable and kind == KIND_CREDITS
             else 0.0
         ),

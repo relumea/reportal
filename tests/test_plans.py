@@ -41,6 +41,14 @@ class TestCostModel:
         """The two directions of the same rate agree."""
         assert plans.usd_for_tokens(plans.tokens_for_budget(10.0)) == pytest.approx(10.0, rel=1e-6)
 
+    def test_a_non_positive_budget_buys_no_tokens(self) -> None:
+        """A negative or non-finite budget must not invent a negative allowance."""
+        assert plans.tokens_for_budget(0.0) == 0
+        assert plans.tokens_for_budget(-1.0) == 0
+        assert plans.tokens_for_budget(float("nan")) == 0
+        assert plans.tokens_for_budget(float("-inf")) == 0
+        assert plans.tokens_for_budget(float("inf")) == 0
+
 
 class TestMargin:
     """Every priced tier has to cost less to serve than it charges."""

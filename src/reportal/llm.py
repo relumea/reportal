@@ -945,6 +945,9 @@ def confidence(value: Any) -> float:
             parsed = float(value)
         except ValueError:
             return DEFAULT_TYPE_CONFIDENCE
+        # NaN and inf survive ``min``/``max`` clamps and would persist as scores.
+        if not math.isfinite(parsed):
+            return DEFAULT_TYPE_CONFIDENCE
         return min(max(parsed, 0.0), 1.0)
     return DEFAULT_TYPE_CONFIDENCE
 
