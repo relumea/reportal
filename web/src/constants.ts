@@ -96,8 +96,7 @@ export const DEFAULT_FUNCTION_TRIAGE_LIMIT = 10;
 
 // AI artifact kinds exposed on the function detail view; mirrors the API's
 // llm.AI_KINDS (the stored artifact kind is also the payload's `kind`).
-export const AI_ARTIFACT_KINDS = ["summary", "comments", "type-suggestions"] as const;
-export type AiArtifactKind = (typeof AI_ARTIFACT_KINDS)[number];
+export type AiArtifactKind = "summary" | "comments" | "type-suggestions";
 
 // URL segment per AI artifact kind.  The inline-comments artifact keeps the
 // kind `comments`, but the analyst Comments panel owns `/comments`, so its
@@ -110,8 +109,7 @@ export const AI_ARTIFACT_PATHS: Record<AiArtifactKind, string> = {
 
 // Comment scope kinds the analyst Comments panel handles; mirrors the API's
 // comments.SCOPE_KINDS.
-export const COMMENT_SCOPE_KINDS = ["binary", "function"] as const;
-export type CommentScopeKind = (typeof COMMENT_SCOPE_KINDS)[number];
+export type CommentScopeKind = "binary" | "function";
 
 // Longest comment body the API accepts; mirrors comments.MAX_COMMENT_CHARS.
 export const COMMENT_MAX_CHARS = 4000;
@@ -148,7 +146,7 @@ export const SIGNATURE_NOT_FOUND = "signature-not-found";
 // Listing kinds the diff route accepts, decompilation first; mirrors
 // diffview.DIFF_KINDS and diffview.DEFAULT_KIND.
 export const DIFF_KINDS = ["decomp", "disasm"] as const;
-export type DiffKind = (typeof DIFF_KINDS)[number];
+type DiffKind = (typeof DIFF_KINDS)[number];
 export const DEFAULT_DIFF_KIND: DiffKind = DIFF_KINDS[0];
 
 // Whether the diff strips addresses, bytes and comments by default; mirrors
@@ -223,7 +221,7 @@ export const MAX_GRAPH_ROWS_SHOWN = 500;
 // and `id` is the insertion order it always used.  The names match the
 // analyses list's, where the two controls mean the same thing.
 export const BINARY_ORDERS = ["id", "newest", "name", "name-desc", "size", "size-desc"] as const;
-export type BinaryOrder = (typeof BINARY_ORDERS)[number];
+type BinaryOrder = (typeof BINARY_ORDERS)[number];
 // Mirrors store.DEFAULT_BINARY_ORDER.
 export const DEFAULT_BINARY_ORDER: BinaryOrder = "id";
 

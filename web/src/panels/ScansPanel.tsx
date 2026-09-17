@@ -6,7 +6,7 @@ import { panelKey, usePanel } from "../panelCache";
 import type { AnalysisScans, BinaryScan, BinaryScans } from "../types";
 
 /** The inputs a scan ran with, as one line; a scan that recorded none says so. */
-export function scanInputs(params: Record<string, unknown>): string {
+function scanInputs(params: Record<string, unknown>): string {
   const entries = Object.entries(params).filter(([, value]) => value !== null && value !== "");
   if (entries.length === 0) return "none recorded";
   return entries
@@ -15,7 +15,7 @@ export function scanInputs(params: Record<string, unknown>): string {
 }
 
 /** The stored scans of one analysis: what ran, with what, and when. */
-export function ScansTable({ scans }: { scans: BinaryScan[] }): ReactNode {
+function ScansTable({ scans }: { scans: BinaryScan[] }): ReactNode {
   if (scans.length === 0) {
     return <EmptyState>No scan is stored for this analysis yet.</EmptyState>;
   }

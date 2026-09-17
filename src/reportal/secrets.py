@@ -33,8 +33,7 @@ import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from reportal import capabilities, engines, store, threat
 
@@ -94,12 +93,6 @@ _HEX_CHARS = frozenset("0123456789abcdefABCDEF")
 # Base64 punctuation, including the URL-safe spelling.  A value needs a letter
 # plus one of these (or a digit) before its entropy is considered.
 _BASE64_PUNCTUATION = frozenset("+/=_-")
-
-
-class SecretsIO(Protocol):
-    """The engine surface a secrets run needs; ``rebrew strings`` is standalone."""
-
-    def strings(self, binary: str | Path) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -401,7 +394,7 @@ def run_secrets(
     conn: sqlite3.Connection,
     *,
     binary_id: int,
-    engine: SecretsIO | None = None,
+    engine: capabilities.StringsIO | None = None,
     strings: Sequence[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Scan a binary's strings for secrets and store the result.
@@ -418,7 +411,7 @@ def run_secrets(
     examined.  An empty ``findings`` is a valid result.
     """
     _binary, path = capabilities.require_binary_file(conn, binary_id)
-    source: SecretsIO = engine if engine is not None else engines.get_engine()
+    source: capabilities.StringsIO = engine if engine is not None else engines.get_engine()
     examined = capabilities.load_strings(path, source, strings=strings)
     payload = {"binary_id": binary_id, **scan_secrets(examined), "scanned": len(examined)}
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)

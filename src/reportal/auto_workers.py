@@ -21,7 +21,6 @@ that guesses cannot mark work done.
 from __future__ import annotations
 
 import importlib
-import logging
 import re
 import sqlite3
 import threading
@@ -75,8 +74,6 @@ REASON_ENGINE_UNAVAILABLE = "engine-unavailable"
 
 # Reason a worker reports when the binary has no stored rebrew project.
 REASON_NO_ENGINE_CONTEXT = "no-engine-context"
-
-_log = logging.getLogger(__name__)
 
 
 @dataclass

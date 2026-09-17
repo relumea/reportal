@@ -87,7 +87,7 @@ function loadDecompilation(functionId: number, backend: string): Promise<Decompi
 }
 
 /** Refresh the decompilation panel of every backend the view can show. */
-export function refreshDecompilation(functionId: number): void {
+function refreshDecompilation(functionId: number): void {
   for (const backend of DECOMPILER_BACKENDS) {
     refreshPanel(decompilationKey(functionId, backend), () =>
       loadDecompilation(functionId, backend),
@@ -95,7 +95,7 @@ export function refreshDecompilation(functionId: number): void {
   }
 }
 
-export function DisasmPanel({
+function DisasmPanel({
   functionId,
   toggle,
 }: {
@@ -300,7 +300,7 @@ function ReferencesAction({ busy, loaded, load }: { busy: boolean; loaded: boole
 }
 
 /** The Globals table: the data addresses the function reads, writes or loads. */
-export function GlobalsPanel({
+function GlobalsPanel({
   functionId,
   binaryId,
 }: {
@@ -358,7 +358,7 @@ export function GlobalsPanel({
 }
 
 /** The Callers table: one row per call site into the function. */
-export function CallersPanel({
+function CallersPanel({
   functionId,
   binaryId,
 }: {
@@ -493,7 +493,7 @@ export function ReferencesSection({
 }
 
 /** The engine's own scan of the instructions that point at one address. */
-export function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
+function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
   const key = panelKey("fn", functionId, "xrefs");
   const [entry, run] = useLazyPanel<Xrefs>(key);
   const [busy, setBusy] = useState(false);
@@ -828,7 +828,7 @@ function AiArtifactPanel<T>({
   );
 }
 
-export function AiSummaryPanel({ functionId }: { functionId: number }): ReactNode {
+function AiSummaryPanel({ functionId }: { functionId: number }): ReactNode {
   return (
     <AiArtifactPanel<AiSummaryPayload>
       functionId={functionId}
@@ -847,7 +847,7 @@ export function AiSummaryPanel({ functionId }: { functionId: number }): ReactNod
   );
 }
 
-export function AiCommentsPanel({ functionId }: { functionId: number }): ReactNode {
+function AiCommentsPanel({ functionId }: { functionId: number }): ReactNode {
   return (
     <AiArtifactPanel<AiCommentsPayload>
       functionId={functionId}
@@ -877,7 +877,7 @@ export function AiCommentsPanel({ functionId }: { functionId: number }): ReactNo
   );
 }
 
-export function AiTypeSuggestionsPanel({ functionId }: { functionId: number }): ReactNode {
+function AiTypeSuggestionsPanel({ functionId }: { functionId: number }): ReactNode {
   return (
     <AiArtifactPanel<AiTypeSuggestionsPayload>
       functionId={functionId}
@@ -914,7 +914,7 @@ export function AiTypeSuggestionsPanel({ functionId }: { functionId: number }): 
 }
 
 /** Stored identifier renames of one function, with apply and revert controls. */
-export function AiRenamesPanel({
+function AiRenamesPanel({
   functionId,
   onMutated,
 }: {
@@ -1092,7 +1092,7 @@ interface AiCodeRow {
 }
 
 /** One stored AI decompilation: the rewrite, its token overrides and the analyst's feedback. */
-export function AiDecompilationPanel({ functionId }: { functionId: number }): ReactNode {
+function AiDecompilationPanel({ functionId }: { functionId: number }): ReactNode {
   const key = panelKey("fn", functionId, "ai", "ai-decompilation");
   const loader = (): Promise<AiDecompilation> =>
     api<AiDecompilation>(`/functions/${functionId}/ai-decompilation`);

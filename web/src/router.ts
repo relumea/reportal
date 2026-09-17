@@ -26,7 +26,7 @@ export type NavView =
   | "billing"
   | "users";
 
-export interface NavGroup {
+interface NavGroup {
   label: string;
   views: readonly NavView[];
 }

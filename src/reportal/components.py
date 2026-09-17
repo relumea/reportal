@@ -35,7 +35,6 @@ already in flight: a caller holding a registry snapshot or a live
 from __future__ import annotations
 
 import importlib
-import logging
 import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -76,8 +75,6 @@ _NO_BINDING = object()
 # Sentinel for "the module has no such attribute", so a declaration whose value
 # is None still reads as present.
 _NO_DECLARATION = object()
-
-_log = logging.getLogger(__name__)
 
 
 class RequirementError(LookupError):

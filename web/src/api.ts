@@ -2,7 +2,7 @@
 // object; a non-2xx answer carries {"error", "detail"}, which becomes an
 // ApiError so callers can branch on the stable error name.
 
-export interface ApiErrorBody {
+interface ApiErrorBody {
   error?: string;
   detail?: string;
 }
@@ -28,7 +28,7 @@ export function isApiErrorCode(error: unknown, code: string): boolean {
   return error instanceof ApiError && error.message === code;
 }
 
-export interface RequestOptions {
+interface RequestOptions {
   method?: string;
   /** JSON request body; serialized with the JSON content type. */
   json?: unknown;
@@ -39,7 +39,7 @@ export interface RequestOptions {
 const API_PREFIX = "/api";
 
 /** Where the browser keeps the bearer token an authenticated install needs. */
-export const TOKEN_STORAGE_KEY = "reportal.token";
+const TOKEN_STORAGE_KEY = "reportal.token";
 
 /** The token the browser holds, or an empty string. */
 export function storedToken(): string {

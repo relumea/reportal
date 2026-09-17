@@ -29,7 +29,7 @@
 // through to the browser would make the same key mean two things.
 
 /** True when a focused element owns keyboard text, so a shortcut must not fire. */
-export function isTypingTarget(target: EventTarget | null): boolean {
+function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
   return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
@@ -48,7 +48,7 @@ export interface Shortcut {
 }
 
 /** How long a prefix stays armed after its first key. */
-export const PREFIX_TIMEOUT_MS = 1500;
+const PREFIX_TIMEOUT_MS = 1500;
 
 /** Modifiers a combo may name, in the order a canonical chord lists them. */
 const MODIFIER_ORDER = ["mod", "alt", "shift"] as const;
@@ -93,7 +93,7 @@ export function normalizeCombo(combo: string): string {
 }
 
 /** The combo an event carries, or null for a bare modifier. */
-export function comboOf(event: KeyboardEvent): string | null {
+function comboOf(event: KeyboardEvent): string | null {
   const key = event.key.toLowerCase();
   if (key === "shift" || key === "control" || key === "meta" || key === "alt") return null;
   const modifiers: string[] = [];

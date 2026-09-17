@@ -39,7 +39,7 @@ export function storedTheme(): Theme {
 }
 
 /** Put *theme* on `<html>`, resolving `system` against the OS preference. */
-export function applyTheme(theme: Theme): void {
+function applyTheme(theme: Theme): void {
   const resolved =
     theme === "system" ? (window.matchMedia(DARK_QUERY).matches ? "dark" : "light") : theme;
   document.documentElement.setAttribute("data-theme", resolved);

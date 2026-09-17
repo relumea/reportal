@@ -29,7 +29,7 @@ import type {
 import { historyKey, loadHistory } from "./FunctionPanels";
 
 /** Merge a run's inline comments into the lines of the decompilation they name. */
-export function commentedSource(code: string, comments: AiComment[]): string {
+function commentedSource(code: string, comments: AiComment[]): string {
   const byLine = new Map<number, string>();
   for (const comment of comments) {
     if (!byLine.has(comment.line)) byLine.set(comment.line, comment.comment);

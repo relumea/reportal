@@ -65,7 +65,7 @@ export function CopyValue({ value }: { value: string | null | undefined }): Reac
 
 // ── Buttons ────────────────────────────────────────────────────────
 
-export type ButtonTone = "default" | "primary" | "ghost" | "danger";
+type ButtonTone = "default" | "primary" | "ghost" | "danger";
 
 /** Tab-order controls inside *root*, skipping aria-hidden and visually empty nodes. */
 export function focusableElements(root: HTMLElement): HTMLElement[] {
@@ -148,7 +148,7 @@ export function Button({
   );
 }
 
-export function CopyButton({ text }: { text: string }): ReactNode {
+function CopyButton({ text }: { text: string }): ReactNode {
   const [copied, setCopied] = useState(false);
   const copy = async (): Promise<void> => {
     try {
@@ -239,7 +239,7 @@ export function ConfirmButton({
 export type BadgeTone = "neutral" | "ok" | "warn" | "danger" | "info" | "accent" | "insert" | "delete";
 
 /** Hue a badge may carry: a status family, or the confidence/severity scale. */
-export type BadgeHue = HueFamily | "confidence" | "severity";
+type BadgeHue = HueFamily | "confidence" | "severity";
 
 export function Badge({
   children,

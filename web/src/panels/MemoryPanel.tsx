@@ -107,12 +107,12 @@ function pageBytes(page: MemoryPage): PageByte[] {
 }
 
 /** Render a byte list as space-separated hex pairs (`4d 5a 90`). */
-export function hexCopy(bytes: number[]): string {
+function hexCopy(bytes: number[]): string {
   return bytes.map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
 }
 
 /** Render a byte list as a C array initializer (`0x4d, 0x5a, 0x90`). */
-export function cArrayCopy(bytes: number[]): string {
+function cArrayCopy(bytes: number[]): string {
   return bytes.map((byte) => `0x${byte.toString(16).padStart(2, "0")}`).join(", ");
 }
 
@@ -580,7 +580,7 @@ function storedColumnKind(): MemoryAddressKind {
   return "va";
 }
 
-export function ContinuousMode({
+function ContinuousMode({
   binaryId,
   focus,
 }: {

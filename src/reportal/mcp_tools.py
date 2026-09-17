@@ -18,7 +18,6 @@ the failure reaches the wire.
 from __future__ import annotations
 
 import contextlib
-import logging
 import os
 import sqlite3
 import tempfile
@@ -188,8 +187,6 @@ _SIGNATURE_TOOL_ERRORS: tuple[tuple[type[signatures.SignatureError], str], ...] 
     (signatures.ExportExistsError, "export exists"),
     (signatures.ExportParentMissingError, "invalid path"),
 )
-
-_log = logging.getLogger(__name__)
 
 
 class ToolError(Exception):

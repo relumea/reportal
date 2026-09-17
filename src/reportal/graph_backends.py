@@ -37,7 +37,6 @@ import asyncio
 import importlib
 import inspect
 import json
-import logging
 import os
 import sqlite3
 import tomllib
@@ -92,8 +91,6 @@ DEFAULT_QUERY_LIMIT = 20
 
 # Hard cap on a backend query, so a text search cannot scan a whole corpus.
 MAX_QUERY_LIMIT = 200
-
-_log = logging.getLogger(__name__)
 
 
 class UnknownBackendError(LookupError):
