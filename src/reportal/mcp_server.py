@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
@@ -52,6 +53,7 @@ SERVER_INSTRUCTIONS = (
 # HTTP path the Streamable HTTP transport is mounted at.  Auth is the same
 # bearer as ``/api`` (loopback operator while auth is off).
 HTTP_PATH = "/mcp"
+MAX_REPLAY_EVENTS = 1024
 
 _log = logging.getLogger(__name__)
 
@@ -154,20 +156,22 @@ def run_server() -> int:
 class MemoryEventStore(EventStore):
     """In-process event log so a GET stream can resume after ``Last-Event-ID``.
 
-    Process-local, unbounded.  A restart drops the log, which is the same
-    lifetime as the Streamable HTTP session manager.  Priming events
+    Process-local, retaining the newest ``max_events`` across all streams.
+    Evicted cursors are unknown; a restart drops the log.  Priming events
     (``message is None``) are stored for id continuity and skipped on
     replay: the SDK's live GET stream sends those as empty-data SSE, and
     ``EventMessage.message`` cannot be None.  Replay stays on the stream
     ``last_event_id`` belongs to.
     """
 
-    def __init__(self) -> None:
-        self._events: list[tuple[EventId, StreamId, JSONRPCMessage | None]] = []
+    def __init__(self, *, max_events: int = MAX_REPLAY_EVENTS) -> None:
+        if max_events <= 0:
+            raise ValueError("max_events must be positive")
+        self._events: deque[tuple[EventId, StreamId, JSONRPCMessage | None]] = deque(
+            maxlen=max_events
+        )
         self._next = 1
         self._lock = asyncio.Lock()
-        # ponytail: unbounded process-local log; ring-buffer if a long-lived
-        # process retains sessions.
 
     async def store_event(self, stream_id: StreamId, message: JSONRPCMessage | None) -> EventId:
         async with self._lock:

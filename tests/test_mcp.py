@@ -3002,6 +3002,35 @@ class TestHttp:
 
 
 class TestMemoryEventStore:
+    def test_history_evicts_old_events_across_streams(self) -> None:
+        store = mcp_server.MemoryEventStore(max_events=3)
+        note = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/message")
+
+        async def run() -> None:
+            expired = await store.store_event("a", note)
+            await store.store_event("b", note)
+            cursor = await store.store_event("a", None)
+            await store.store_event("b", None)
+            latest = await store.store_event("a", note)
+            replayed: list[EventMessage] = []
+
+            async def send(event: EventMessage) -> None:
+                replayed.append(event)
+
+            assert len(store._events) == 3
+            assert await store.replay_events_after(expired, send) is None
+            assert replayed == []
+            assert await store.replay_events_after(cursor, send) == "a"
+            assert [event.event_id for event in replayed] == [latest]
+            assert int(latest) > int(cursor) > int(expired)
+
+        anyio.run(run)
+
+    @pytest.mark.parametrize("max_events", [0, -1])
+    def test_history_requires_positive_capacity(self, max_events: int) -> None:
+        with pytest.raises(ValueError, match="max_events must be positive"):
+            mcp_server.MemoryEventStore(max_events=max_events)
+
     def test_replay_skips_priming_and_stays_on_one_stream(self) -> None:
         store = mcp_server.MemoryEventStore()
         note = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/message")
