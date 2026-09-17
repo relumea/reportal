@@ -197,12 +197,11 @@ def bulk_data_type_definitions(
         existing = None if not name else store.find_data_type_by_name(conn, binary_id, name)
         if existing is not None:
 
-            def _update(definition: Any = definition, hint: str = hint) -> dict[str, Any]:
+            def _update(definition: Any = definition) -> dict[str, Any]:
                 outcome, detail = data_types.apply_definition(
                     conn,
                     binary_id=binary_id,
                     definition=definition,
-                    name_hint=hint,
                     create=True,
                 )
                 return {"outcome": outcome, "detail": detail}
@@ -228,7 +227,6 @@ def bulk_data_type_definitions(
                 conn,
                 binary_id=binary_id,
                 definition=definition,
-                name_hint=hint,
                 create=create,
             )
         except data_types.DataTypeError as exc:

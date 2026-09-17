@@ -1693,7 +1693,6 @@ def apply_definition(
     *,
     binary_id: int,
     definition: Any,
-    name_hint: str = "",
     create: bool = True,
     source: str = SOURCE_MANUAL,
 ) -> tuple[str, str]:
@@ -1785,7 +1784,6 @@ def import_definitions(
             conn,
             binary_id=binary_id,
             definition=definition,
-            name_hint=hint,
             create=create,
             source=source,
         )
