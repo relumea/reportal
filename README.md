@@ -12,11 +12,11 @@ Python 3.13 or newer is required, the same floor the `rebrew` engine sets; the
 `.python-version` in the repository is what resolves the interpreter for `uv`.
 `rebrew` is a path dependency on a sibling checkout at `../rebrew` (see
 `[tool.uv.sources]` in `pyproject.toml`); clone it beside this repo before
-setup. The supported host OS is Linux (CI runs on `ubuntu-latest`); deployment
+setup. The supported host OS is Linux (CI runs on `ubuntu-24.04`); deployment
 uses systemd and the optional sandbox needs bubblewrap. System tools used by
-the gate: `uv`, `bun` (see `web/package.json` `packageManager`), and for
-`make lint` also `shellcheck`, Java 17+, and `vnu-jar` (same pin as
-`.github/workflows/check.yml`).
+the gate: `uv` (`>=0.8.22`, see `[tool.uv] required-version`), `bun` (see
+`web/package.json` `packageManager`), and for `make lint` also `shellcheck`,
+Java 17+, and `vnu-jar` (same pin as `.github/workflows/check.yml`).
 
 ```bash
 # Sibling engine (required). CI pins a commit in .github/workflows/check.yml.
@@ -27,28 +27,31 @@ make setup          # uv sync --extra dev + cd web && bun install
 #   git clone https://github.com/maci0/resembl ../resembl
 #   make setup SYNC_EXTRAS='--extra dev --extra similarity'
 
-# Build the web UI (Vite + React + TypeScript, bun). `reportal serve` answers
-# 503 ui-not-built until this has produced src/reportal/assets/dist.
-cd web && bun run build
+# Build the web UI (Vite + React + TypeScript, bun) and its .gz siblings.
+# `reportal serve` answers 503 ui-not-built until assets/dist exists.
+make spa
 # or: make run   # builds, then serves
 ```
+
+After `make setup` the CLI is `.venv/bin/reportal` (activate the venv, or call
+that path). Contributors: see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## First command
 
 ```bash
-reportal init
-reportal import-rebrew /path/to/rebrew-project
-reportal serve
+.venv/bin/reportal init
+.venv/bin/reportal import-rebrew /path/to/rebrew-project
+make run
 ```
 
-`reportal init` writes a `reportal.toml` marker (workspace root) and a `reportal.db` beside it. `reportal import-rebrew` reads the rebrew workspace's `db/coverage.db` and registers its target binaries, analyses and functions; it also ingests the target binary's import stubs as `THUNK` rows, best effort, so the import still succeeds when that engine call fails. `reportal serve` starts the portal on <http://127.0.0.1:8002>.
+`.venv/bin/reportal init` writes a `reportal.toml` marker (workspace root) and a `reportal.db` beside it. `.venv/bin/reportal import-rebrew` reads the rebrew workspace's `db/coverage.db` and registers its target binaries, analyses and functions; it also ingests the target binary's import stubs as `THUNK` rows, best effort, so the import still succeeds when that engine call fails. `make run` builds the SPA (including `.gz` siblings) and starts the portal on <http://127.0.0.1:8002>; `.venv/bin/reportal serve` serves an existing build without rebuilding.
 
 ## MCP server
 
 reportal ships a local MCP server over stdio, so an MCP client can drive the same capabilities as tools. It uses the official `mcp` SDK (a base dependency) over newline-delimited JSON-RPC 2.0 on stdin/stdout; reportal supplies the tool registry and handlers.
 
 ```bash
-reportal mcp        # foreground; protocol JSON on stdout, readiness line on stderr
+.venv/bin/reportal mcp        # after make setup; or `reportal mcp` when on PATH
 ```
 
 Run it from a workspace directory (it resolves `reportal.toml` the same way every other command does). Point an MCP client at the command:
@@ -57,7 +60,7 @@ Run it from a workspace directory (it resolves `reportal.toml` the same way ever
 {
   "mcpServers": {
     "reportal": {
-      "command": "reportal",
+      "command": "/absolute/path/to/reportal/.venv/bin/reportal",
       "args": ["mcp"],
       "cwd": "/path/to/your/reportal/workspace"
     }
@@ -65,7 +68,7 @@ Run it from a workspace directory (it resolves `reportal.toml` the same way ever
 }
 ```
 
-That is the shape Claude Desktop and other JSON-config clients use; a client that takes a shell command instead runs `cd /path/to/workspace && reportal mcp`. The server reports 252 tools: reads such as `list_binaries`, `get_function`, `get_disasm`, `diff_functions`, `get_lineage`, `get_related_binaries`, `get_composition`, `list_families`, `get_detect_scan`, `list_data_types`, `get_data_type_history`, `list_signatures`, `get_signature`, `get_signature_history`, `read_memory`, `get_pipeline`, `list_components`, `list_integrations`, `get_auto_run`, `list_documents`, `search`, `search_knowledge`, `retrieve_knowledge`, `get_graph`, `graph_neighbors`, `list_graph_backends`, `get_threat_report`, `get_remediation`, `get_secrets_scan`, `get_protocols_scan`, `get_behavior_scan`, `get_hardening_scan`, `get_function_triage`, `get_pe_info`, `get_die_info`, `get_additional_details`, `get_details_status`, `get_filetype`, `get_pdf_status`, `get_renames`, `list_journal`, `list_jobs`, `get_job`, `get_analysis`, `get_analysis_params`, `get_analysis_func_maps`, `get_imported_functions`, `list_notifications`, `list_comments`, `get_ai_decompilation`, `get_ai_decompilation_status`, `list_ai_decompilation_tokens`, `get_ai_line_attributions`, `list_ai_line_comments`, `list_models`, `list_secrets`, `get_signature_batch`, `get_data_type_functions`, `get_symbols`, `list_docs`, `get_doc`, `list_organisations`, `get_library`, `export_sbom`, `get_unpack`, `get_benchmark`, `get_rename_benchmark`, `list_scans`, `get_stats_series`, `list_artifact_ratings`, `list_analyses`, `list_conversation_runs`, `get_conversation_run`, `get_indirect_call_sites`, `get_function_capabilities`, `get_function_strings`, `list_analysis_strings`, `list_function_edges`, `get_functions_callees_callers`, `get_function_matches`, `list_external_sources`, `get_external_report` and `get_external_status`, and mutations such as `rename_function`, `run_triage`, `run_function_triage`, `run_lineage`, `run_related_binaries`, `run_composition`, `register_family`, `delete_family`, `run_detect`, `run_capabilities`, `run_pe_info`, `run_filetype`, `run_threat_report`, `run_remediation`, `run_secrets_scan`, `run_protocols_scan`, `run_behavior_scan`, `run_hardening_scan`, `import_data_types`, `edit_data_type`, `export_data_types`, `revert_data_type_history`, `run_signature_import`, `edit_signature`, `export_signatures`, `revert_signature_history`, `suggest_renames`, `apply_renames`, `revert_renames`, `run_pipeline`, `reload_components`, `deactivate_components`, `run_auto`, `revert_auto_run`, `recover_auto_run`, `build_graph`, `sync_graph_backend`, `generate_pdf_report`, `ingest_document`, `ingest_url`, `delete_document`, `extract_archive`, `add_comment`, `update_comment`, `delete_comment`, `run_ai_decompilation`, `set_ai_decompilation_overrides`, `rate_ai_decompilation`, `add_ai_line_comment`, `update_ai_line_comment`, `delete_ai_line_comment`, `upgrade_analysis_model`, `set_secret`, `delete_secret`, `run_external_source`, `copy_signature`, `import_type_definitions`, `import_symbols`, `export_symbols`, `rate_artifact`, `run_conversation_agent`, `confirm_conversation_run`, `cancel_conversation_run`, `run_library`, `run_unpack`, `run_benchmark`, `set_team_member_role`, `create_organisation`, `delete_organisation`, `set_team_organisation`, `add_function_string`, `delete_function_string`, `replace_analysis_strings`, `add_function_edge`, `delete_function_edge`, `canonicalize_function_names`, `bulk_binaries`, `bulk_functions`, `bulk_analyses`, `add_user`, `rotate_user_token`,
+That is the shape Claude Desktop and other JSON-config clients use; a client that takes a shell command instead runs `cd /path/to/workspace && .venv/bin/reportal mcp`. The server reports 252 tools: reads such as `list_binaries`, `get_function`, `get_disasm`, `diff_functions`, `get_lineage`, `get_related_binaries`, `get_composition`, `list_families`, `get_detect_scan`, `list_data_types`, `get_data_type_history`, `list_signatures`, `get_signature`, `get_signature_history`, `read_memory`, `get_pipeline`, `list_components`, `list_integrations`, `get_auto_run`, `list_documents`, `search`, `search_knowledge`, `retrieve_knowledge`, `get_graph`, `graph_neighbors`, `list_graph_backends`, `get_threat_report`, `get_remediation`, `get_secrets_scan`, `get_protocols_scan`, `get_behavior_scan`, `get_hardening_scan`, `get_function_triage`, `get_pe_info`, `get_die_info`, `get_additional_details`, `get_details_status`, `get_filetype`, `get_pdf_status`, `get_renames`, `list_journal`, `list_jobs`, `get_job`, `get_analysis`, `get_analysis_params`, `get_analysis_func_maps`, `get_imported_functions`, `list_notifications`, `list_comments`, `get_ai_decompilation`, `get_ai_decompilation_status`, `list_ai_decompilation_tokens`, `get_ai_line_attributions`, `list_ai_line_comments`, `list_models`, `list_secrets`, `get_signature_batch`, `get_data_type_functions`, `get_symbols`, `list_docs`, `get_doc`, `list_organisations`, `get_library`, `export_sbom`, `get_unpack`, `get_benchmark`, `get_rename_benchmark`, `list_scans`, `get_stats_series`, `list_artifact_ratings`, `list_analyses`, `list_conversation_runs`, `get_conversation_run`, `get_indirect_call_sites`, `get_function_capabilities`, `get_function_strings`, `list_analysis_strings`, `list_function_edges`, `get_functions_callees_callers`, `get_function_matches`, `list_external_sources`, `get_external_report` and `get_external_status`, and mutations such as `rename_function`, `run_triage`, `run_function_triage`, `run_lineage`, `run_related_binaries`, `run_composition`, `register_family`, `delete_family`, `run_detect`, `run_capabilities`, `run_pe_info`, `run_filetype`, `run_threat_report`, `run_remediation`, `run_secrets_scan`, `run_protocols_scan`, `run_behavior_scan`, `run_hardening_scan`, `import_data_types`, `edit_data_type`, `export_data_types`, `revert_data_type_history`, `run_signature_import`, `edit_signature`, `export_signatures`, `revert_signature_history`, `suggest_renames`, `apply_renames`, `revert_renames`, `run_pipeline`, `reload_components`, `deactivate_components`, `run_auto`, `revert_auto_run`, `recover_auto_run`, `build_graph`, `sync_graph_backend`, `generate_pdf_report`, `ingest_document`, `ingest_url`, `delete_document`, `extract_archive`, `add_comment`, `update_comment`, `delete_comment`, `run_ai_decompilation`, `set_ai_decompilation_overrides`, `rate_ai_decompilation`, `add_ai_line_comment`, `update_ai_line_comment`, `delete_ai_line_comment`, `upgrade_analysis_model`, `set_secret`, `delete_secret`, `run_external_source`, `copy_signature`, `import_type_definitions`, `import_symbols`, `export_symbols`, `rate_artifact`, `run_conversation_agent`, `confirm_conversation_run`, `cancel_conversation_run`, `run_library`, `run_unpack`, `run_benchmark`, `set_team_member_role`, `create_organisation`, `delete_organisation`, `set_team_organisation`, `add_function_string`, `delete_function_string`, `replace_analysis_strings`, `add_function_edge`, `delete_function_edge`, `canonicalize_function_names`, `bulk_binaries`, `bulk_functions`, `bulk_analyses`, `add_user`, `rotate_user_token`,
 `update_user`, `delete_user`, `create_team`, `delete_team`, `add_team_member`,
 `remove_team_member`, `set_binary_scope`, `set_collection_scope`, `run_firmware_scan`, `extract_firmware_regions`,
 `add_feedback`, `run_sandbox_detonation` and
@@ -504,11 +507,16 @@ make test-one ARGS='tests/test_disclosure.py'   # one file or node
 ```
 
 Individual targets: `make run` (build the SPA, then serve) and `make serve`
-(serve the current build, no rebuild), `make lint`, `make typecheck`, `make
-test` (with coverage), `make test-fast`, `make ui` (build the SPA, then the
-smoke and audit), `make package-check`. `shellcheck` and `vnu` are the two
-external tools the lint step requires; install `vnu` with
-`npm install -g vnu-jar@26.8.21` (Java 17+).
+(serve the current build, no rebuild), `make doctor` (preflight), `make lint`,
+`make typecheck`, `make test` (with coverage), `make test-fast`, `make ui`
+(build the SPA, then the smoke and audit), `make package-check`. `shellcheck`
+and `vnu` are the two external tools the lint step requires; install `vnu` the
+same way CI does (user-local, no root):
+
+```bash
+npm install --prefix "$HOME/.local" -g vnu-jar@26.8.21
+export PATH="$HOME/.local/bin:$PATH"   # needs Java 17+
+```
 
 ## Docs
 

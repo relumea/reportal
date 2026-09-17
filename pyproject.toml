@@ -109,6 +109,9 @@ reportal = [
 
 [tool.uv]
 package = true
+# Floor matches CI setup-uv (`version: "0.8.22"` in .github/workflows/check.yml).
+# A bare pin is ==; use >= so newer local uv still syncs.
+required-version = ">=0.8.22"
 
 [tool.uv.sources]
 # Sibling-checkout path deps, resolved relative to this pyproject.toml so the

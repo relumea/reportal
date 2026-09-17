@@ -1,8 +1,10 @@
 # Command reference
 
-Every `reportal` command, its options and what it writes.  `reportal --help`
-and `reportal <command> --help` are generated from the same Typer app and are
-the authority when the two disagree; README.md carries worked examples.
+Every `reportal` command, its options and what it writes.  After `make setup`
+the binary is `.venv/bin/reportal` (activate the venv, or call that path);
+`reportal --help` and `reportal <command> --help` are generated from the same
+Typer app and are the authority when the two disagree; README.md carries
+worked examples.
 
 ```bash
 reportal init [--dir PATH]                 # write reportal.toml + reportal.db

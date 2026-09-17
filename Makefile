@@ -6,7 +6,7 @@
 # Every target uses the project venv's python (`PY`, default .venv/bin/python).
 # A missing tool fails loud with its install hint; nothing is silently skipped.
 
-.PHONY: help setup run serve spa check check-ci check-fast lint typecheck test test-fast test-one ui package-check package-wheel clean venv-check bun-check uv-check rebrew-check
+.PHONY: help setup run serve spa check check-ci check-fast lint typecheck test test-fast test-one ui package-check package-wheel clean doctor venv-check bun-check uv-check rebrew-check
 
 .DEFAULT_GOAL := help
 
@@ -15,6 +15,10 @@ PY   ?= .venv/bin/python
 BUN  ?= bun
 # Keep in sync with web/package.json `packageManager` and CI setup-bun.
 BUN_VERSION ?= 1.4.0
+# Floor matches CI setup-uv and `[tool.uv] required-version` in pyproject.toml.
+UV_VERSION ?= 0.8.22
+# Keep in sync with CI `vnu-jar@…` and scripts/vnu-html.sh.
+VNU_JAR_VERSION ?= 26.8.21
 PORT ?= 8002
 # Extras for `make setup`.  CI also syncs `--extra similarity` when the sibling
 # resembl checkout is present; add it locally with:
@@ -43,7 +47,10 @@ bun-check:
 	fi
 
 uv-check:
-	@command -v "$(UV)" >/dev/null 2>&1 || { echo "$(UV) is required; install with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; }
+	@command -v "$(UV)" >/dev/null 2>&1 || { \
+	  echo "$(UV) >=$(UV_VERSION) is required; install with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; \
+	  exit 1; \
+	}
 
 # rebrew is a path source on the sibling checkout (`[tool.uv.sources]`).
 rebrew-check:
@@ -58,7 +65,7 @@ rebrew-check:
 setup: uv-check bun-check rebrew-check ## Create .venv (uv sync --frozen) and install web packages
 	$(UV) sync --frozen $(SYNC_EXTRAS)
 	cd web && $(BUN) install --frozen-lockfile
-	@echo "setup ok. Next: make run  |  make check-fast  |  make check-ci" >&2
+	@echo "setup ok. CLI: .venv/bin/reportal  |  make doctor  |  make run  |  make check-fast  |  make check-ci" >&2
 
 # ── run ──────────────────────────────────────────────────────────────
 spa: venv-check bun-check ## Build the SPA and write .gz siblings
@@ -71,6 +78,9 @@ run: spa ## Build the SPA, then serve the portal on PORT (default 8002)
 serve: venv-check ## Serve the portal from the current SPA build, without rebuilding
 	$(PY) -m reportal serve --port $(PORT)
 
+doctor: venv-check ## Preflight readiness (workspace, engine, SPA, port)
+	$(PY) -m reportal doctor --port $(PORT)
+
 # ── quality gates ────────────────────────────────────────────────────
 # spa once, then browsers and the wheel, so Vite is not paid twice.
 check: lint typecheck test spa ## The whole gate
@@ -80,7 +90,9 @@ check: lint typecheck test spa ## The whole gate
 
 # What CI runs on every PR (see .github/workflows/check.yml).  Skips the
 # headless-Chrome `ui` target, which needs the local notepad-rebrew fixture.
-check-ci: lint typecheck test package-check ## CI gate without browsers
+# REPRO_ENV matches the workflow exports so local wheels and SPA gzip agree.
+check-ci: ## CI gate without browsers
+	$(REPRO_ENV) $(MAKE) --no-print-directory lint typecheck test package-check
 
 # Drops the slow parts for iteration: `test` becomes `test-fast` (no coverage
 # trace), and the browser runs (`ui`) and the wheel build (`package-check`) are
@@ -94,7 +106,7 @@ lint: venv-check bun-check ## ruff + ruff format check + oxlint + shellcheck + V
 	cd web && $(BUN) run lint
 	@command -v shellcheck >/dev/null 2>&1 || { echo "shellcheck is required; install with: apt-get install shellcheck (Debian) or brew install shellcheck (macOS)" >&2; exit 1; }
 	shellcheck scripts/*.sh
-	@./scripts/vnu-html.sh
+	@VNU_JAR_VERSION=$(VNU_JAR_VERSION) ./scripts/vnu-html.sh
 
 typecheck: venv-check bun-check ## mypy (the flag set in pyproject.toml) + tsc --noEmit
 	$(PY) -m mypy

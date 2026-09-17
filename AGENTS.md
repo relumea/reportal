@@ -75,7 +75,7 @@ make setup
 # Optional: make setup SYNC_EXTRAS='--extra dev --extra similarity'
 # Optional Cognee graph backend: uv sync --extra cognee
 
-cd web && bun run build      # into src/reportal/assets/dist (generated, gitignored)
+make spa                     # Vite build + .gz siblings into assets/dist
 cd web && bun run dev
 cd web && bun run lint       # oxlint
 cd web && bun run typecheck
@@ -83,8 +83,9 @@ cd web && bun run test:ui    # Playwright; seeds .scratch/e2e-web
 
 make run                     # build SPA, serve (PORT=8002)
 make serve                   # serve current build
-reportal config
-reportal doctor              # exits 1 on failure; docs/DEPLOY.md
+make doctor                  # preflight; exits 1 on failure; docs/DEPLOY.md
+.venv/bin/reportal config
+.venv/bin/reportal doctor
 
 make check
 make check-ci
@@ -102,7 +103,7 @@ vnu --format text web/index.html
 vnu --css --format text web/src/styles.css
 ```
 
-CLI surface: `docs/CLI.md` / `reportal --help`.
+CLI surface: `docs/CLI.md` / `.venv/bin/reportal --help` (after `make setup`).
 
 ## Configuration (defaults off)
 
