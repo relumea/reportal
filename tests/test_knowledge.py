@@ -102,6 +102,20 @@ class TestExtractText:
         assert text.startswith("caf")
         assert text.endswith("ok")
 
+    def test_utf8_signature_is_consumed(self) -> None:
+        body = "# Café 東京 👩‍💻\n\nNotes"
+        text = knowledge.extract_text(body.encode("utf-8-sig"), filename="notes.md")
+        assert text == body
+        assert knowledge.chunk_text(text) == [body]
+
+    def test_utf8_signature_without_content_is_empty(self) -> None:
+        assert knowledge.extract_text(b"\xef\xbb\xbf \n\t", filename="notes.md") is None
+        assert knowledge.looks_binary(b"\xef\xbb\xbf \n\t") is False
+
+    def test_embedded_bom_is_preserved(self) -> None:
+        body = "Café\ufeff東京"
+        assert knowledge.extract_text(body.encode("utf-8-sig"), filename="notes.txt") == body
+
     def test_binary_bytes_are_rejected(self) -> None:
         assert knowledge.extract_text(b"MZ\x00\x00\x01\x02\x00\x00", filename="a.txt") is None
         assert knowledge.looks_binary(b"MZ\x00\x00\x01\x02\x00\x00") is True

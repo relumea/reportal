@@ -239,7 +239,7 @@ def is_supported_name(filename: str) -> bool:
 
 def _decode(data: bytes) -> str:
     """Decode *data* as UTF-8, replacing invalid sequences."""
-    return data.decode("utf-8", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
 
 
 def _control_ratio(text: str) -> float:
