@@ -972,6 +972,39 @@ class TestBuildStixBundle:
         meta = remediation._fingerprint_meta({"name": "demo.exe"}, {})
         assert meta["date"] == "2026-05-20"
 
+    @pytest.mark.parametrize(
+        "date",
+        [
+            "2026-02-29",
+            "2100-02-29",
+            "2026-04-31",
+            "01/02/03",
+            "not-a-date",
+            "2026-02-29T12:00:00Z",
+        ],
+    )
+    def test_invalid_dates_fall_back_to_today_utc(
+        self, date: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(store, "now", lambda: "2026-05-20T18:00:00+00:00")
+        bundle = remediation.build_stix_bundle(
+            name="demo.exe",
+            indicators=_iocs(urls=[_ioc("http://evil.example.com/x", "url")]),
+            meta={"date": date},
+        )
+        for obj in bundle["objects"]:
+            assert obj["created"] == "2026-05-20T00:00:00Z"
+            assert obj["modified"] == "2026-05-20T00:00:00Z"
+            if obj["type"] == "indicator":
+                assert obj["valid_from"] == "2026-05-20T00:00:00Z"
+
+    @pytest.mark.parametrize("date", ["2000-02-29", "2024-02-29"])
+    def test_valid_leap_days_are_preserved(self, date: str) -> None:
+        bundle = remediation.build_stix_bundle(name="demo.exe", indicators={}, meta={"date": date})
+        for obj in bundle["objects"]:
+            assert obj["created"] == f"{date}T00:00:00Z"
+            assert obj["modified"] == f"{date}T00:00:00Z"
+
     def test_the_bundle_wrapper_is_stix_21(self) -> None:
         bundle = remediation.build_stix_bundle(
             name="demo.exe",

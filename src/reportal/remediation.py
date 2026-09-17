@@ -996,13 +996,7 @@ def _stix_timestamp(meta: Mapping[str, Any]) -> str:
     try:
         parsed = datetime.fromisoformat(raw)
     except ValueError:
-        # Keep the prior best-effort for non-ISO YARA meta that still looks like
-        # a calendar day; anything else falls back to today rather than emitting
-        # a timezone-less or garbage timestamp.
-        if "T" not in raw:
-            return f"{raw}T00:00:00Z"
-        raw = store.now()[:10]
-        parsed = datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(store.now()[:10])
     parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
     return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
