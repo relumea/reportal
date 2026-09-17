@@ -41,6 +41,30 @@ class TestCostModel:
         """The two directions of the same rate agree."""
         assert plans.usd_for_tokens(plans.tokens_for_budget(10.0)) == pytest.approx(10.0, rel=1e-6)
 
+    @pytest.mark.parametrize(
+        ("model", "budget", "expected"),
+        [
+            ("claude-opus-5", 0.001017, 113),
+            ("claude-opus-5", 0.001016999999, 112),
+            ("claude-sonnet-5", 0.0004068, 113),
+            ("claude-sonnet-5", 0.000406799999, 112),
+            ("claude-haiku-4.5", 0.0002034, 113),
+            ("claude-haiku-4.5", 0.000203399999, 112),
+            ("unknown-model", 0.001017, 113),
+        ],
+    )
+    def test_budget_rounds_down_only_after_decimal_pricing(
+        self, model: str, budget: float, expected: int
+    ) -> None:
+        assert plans.tokens_for_budget(budget, model) == expected
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [("claude-opus-5", 9.0), ("claude-sonnet-5", 3.6), ("claude-haiku-4.5", 1.8)],
+    )
+    def test_blended_rate_preserves_decimal_prices(self, model: str, expected: float) -> None:
+        assert plans.blended_usd_per_mtok(model) == expected
+
     def test_a_non_positive_budget_buys_no_tokens(self) -> None:
         """A negative or non-finite budget must not invent a negative allowance."""
         assert plans.tokens_for_budget(0.0) == 0

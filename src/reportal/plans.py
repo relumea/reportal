@@ -47,6 +47,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 
 # A limit that does not apply.  Negative rather than None so a comparison
 # against a count is always a number-to-number check.
@@ -99,11 +100,16 @@ def blended_usd_per_mtok(model: str = COST_MODEL) -> float:
     catalog rather than falling back to something cheap, because an unpriced
     model must never read as free.
     """
+    return float(_blended_rate(model))
+
+
+def _blended_rate(model: str) -> Decimal:
     if model in MODEL_RATES:
         input_rate, output_rate = MODEL_RATES[model]
     else:
         input_rate, output_rate = max(MODEL_RATES.values(), key=lambda pair: pair[1])
-    return input_rate * INPUT_SHARE + output_rate * (1.0 - INPUT_SHARE)
+    share = Decimal(str(INPUT_SHARE))
+    return Decimal(str(input_rate)) * share + Decimal(str(output_rate)) * (1 - share)
 
 
 def tokens_for_budget(usd: float, model: str = COST_MODEL) -> int:
@@ -112,7 +118,7 @@ def tokens_for_budget(usd: float, model: str = COST_MODEL) -> int:
         return 0
     if not math.isfinite(usd) or usd <= 0:
         return 0
-    return int(usd * 1_000_000 / blended_usd_per_mtok(model))
+    return int(Decimal(str(usd)) * 1_000_000 / _blended_rate(model))
 
 
 def usd_for_tokens(tokens: int, model: str = COST_MODEL) -> float:
