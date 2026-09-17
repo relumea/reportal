@@ -16,7 +16,9 @@ This module is the one place that decides.  Two rules, applied at the edge:
 * :func:`clean_text` removes reasoning and tool-call markup from free text.
   The JSON artifacts already pass through :func:`reportal.llm._parse_json`,
   which strips it before parsing; the agent's final answer does not, because it
-  is returned as prose, so that path is cleaned here.
+  is returned as prose, so that path is cleaned here.  Only keys in
+  :data:`PROSE_KEYS` are cleaned: stored source, paths and similar artifact
+  strings must stay byte-for-byte.
 
 Operators are exempt.  An admin debugging a bad artifact needs to know which
 backend produced it, the usage ledger needs the model to price a row, and
@@ -68,6 +70,24 @@ INTERNAL_KEYS: frozenset[str] = frozenset(
 # default while the backend is a third-party model: a made-up name would be a
 # claim rather than a redaction.
 PUBLIC_ENGINE_NAME = ""
+
+# Free-text keys an agent or summary may put prose in.  ``clean_text`` runs on
+# these only: applying it to every string would rewrite stored source, paths,
+# and binary string literals that happen to contain the same markup shapes.
+PROSE_KEYS: frozenset[str] = frozenset(
+    {
+        "answer",
+        "summary",
+        "content",
+        "message",
+        "explanation",
+        "comment",
+        "notes",
+        "description",
+        "body",
+        "note",
+    }
+)
 
 # Reasoning and tool-call markup a model may emit inline.  The same literals
 # `llm._strip_reasoning` removes before parsing JSON, applied here to the free
@@ -133,10 +153,11 @@ def _redact(value: Any) -> Any:
                 if key == "model" and PUBLIC_ENGINE_NAME:
                     result[key] = PUBLIC_ENGINE_NAME
                 continue
-            result[key] = _redact(item)
+            if key in PROSE_KEYS and isinstance(item, str):
+                result[key] = clean_text(item)
+            else:
+                result[key] = _redact(item)
         return result
     if isinstance(value, list):
         return [_redact(item) for item in value]
-    if isinstance(value, str):
-        return clean_text(value)
     return value

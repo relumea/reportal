@@ -256,6 +256,9 @@ export function CollectionsView({
     const search = new URLSearchParams();
     search.set("order", next.order);
     if (next.workspace) search.set("workspace", next.workspace);
+    // Keep a deep-linked selection across filter changes; dropping `id` made
+    // the detail panel vanish on reload after an order or workspace change.
+    if (selected !== null) search.set("id", String(selected));
     navigate({
       pathname: COLLECTIONS_PATH,
       search: createSearchParams(Object.fromEntries(search)).toString(),

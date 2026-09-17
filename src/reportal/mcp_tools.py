@@ -667,9 +667,24 @@ def _tool_get_imports(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_get_strings(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
+    sort = _arg_optional_str(arguments, "sort", store.DEFAULT_STRING_SORT)
+    if sort not in store.STRING_SORTS:
+        raise ToolError("invalid sort", f"unsupported string sort: {sort}")
+    order = _arg_optional_str(arguments, "order", store.DEFAULT_FUNCTION_ORDER)
+    if order not in store.FUNCTION_ORDERS:
+        raise ToolError("invalid order", f"unsupported string order: {order}")
     with contextlib.closing(_open()) as conn:
         path = _binary_file(conn, binary_id)
-    return _run_engine(lambda: _engine().strings(path))
+    payload = _run_engine(lambda: _engine().strings(path))
+    entries = store.normalize_string_entries(payload)
+    return {
+        "binary": payload.get("binary"),
+        "count": len(entries),
+        "strings": store.sort_string_entries(entries, sort=sort, order=order),
+        "binary_id": binary_id,
+        "sort": sort,
+        "order": order,
+    }
 
 
 def _tool_get_tags(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1795,7 +1810,7 @@ def _tool_get_decompilation(arguments: dict[str, Any]) -> dict[str, Any]:
             return {
                 "va": int(function["va"]),
                 "backend": str(stored["backend"]),
-                "named": named,
+                "named": bool(stored["named"]),
                 "code": str(stored["code"]),
             }
         binary_id = int(function["binary_id"])
@@ -5736,8 +5751,22 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_strings",
-            "Return a binary's live extracted strings from rebrew (never stored).",
-            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            "Return a binary's live extracted strings from rebrew (never stored),"
+            " normalized and sorted like the HTTP strings route.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "sort": _enum(
+                        f"Order by text value or length (default {store.DEFAULT_STRING_SORT}).",
+                        store.STRING_SORTS,
+                    ),
+                    "order": _enum(
+                        f"Sort direction (default {store.DEFAULT_FUNCTION_ORDER}).",
+                        store.FUNCTION_ORDERS,
+                    ),
+                },
+                ("binary_id",),
+            ),
             _READ,
             _tool_get_strings,
         ),

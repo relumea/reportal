@@ -332,6 +332,7 @@ def apply_renames(
         raise NoDecompilationError(f"function {function_id} has no stored decompilation")
     source = str(stored["code"])
     backend = str(stored["backend"])
+    named = bool(stored.get("named"))
     entries = _apply_entries(conn, function_id, applied)
     working = source
     applied_list: list[dict[str, Any]] = []
@@ -359,12 +360,13 @@ def apply_renames(
             {
                 "previous_code": source,
                 "previous_backend": backend,
+                "previous_named": named,
                 "applied": applied_list,
                 "actor": actor,
             },
             "",
         )
-        store.set_decompilation(conn, function_id, working, backend)
+        store.set_decompilation(conn, function_id, working, backend, named=named)
         if rename_function:
             for suggestion in applied_list:
                 if suggestion["kind"] == "function":
@@ -397,8 +399,13 @@ def revert_renames(conn: sqlite3.Connection, *, function_id: int) -> dict[str, A
     if not isinstance(previous, str):
         raise NoRevertError(f"function {function_id} has no applied renames to revert")
     backend = payload.get("previous_backend") if isinstance(payload, dict) else None
+    named = bool(payload.get("previous_named")) if isinstance(payload, dict) else False
     store.set_decompilation(
-        conn, function_id, previous, backend if isinstance(backend, str) else ""
+        conn,
+        function_id,
+        previous,
+        backend if isinstance(backend, str) else "",
+        named=named,
     )
     store.clear_ai_artifact(conn, function_id, RENAMES_APPLIED_KIND)
     return {"function_id": function_id, "reverted": True, "code": previous}

@@ -1192,7 +1192,13 @@ def _persist_decompilation(ctx: Context, conn: sqlite3.Connection, function_id: 
     previous = store.get_decompilation(conn, function_id)
     if previous is not None and str(previous["code"]) == code:
         return
-    store.set_decompilation(conn, function_id, code, str(provided.get("backend") or ""))
+    store.set_decompilation(
+        conn,
+        function_id,
+        code,
+        str(provided.get("backend") or ""),
+        named=bool(provided.get("named")),
+    )
     _record_effect(
         ctx,
         conn,
@@ -1200,7 +1206,11 @@ def _persist_decompilation(ctx: Context, conn: sqlite3.Connection, function_id: 
             "kind": EFFECT_DECOMPILATION,
             "function_id": function_id,
             "previous": (
-                {"code": str(previous["code"]), "backend": str(previous["backend"])}
+                {
+                    "code": str(previous["code"]),
+                    "backend": str(previous["backend"]),
+                    "named": bool(previous.get("named")),
+                }
                 if previous is not None
                 else None
             ),

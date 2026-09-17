@@ -614,7 +614,15 @@ class TestDecompilations:
         assert stored is not None
         assert stored["code"] == "int f(void) { return 0; }"
         assert stored["backend"] == "kuna"
+        assert stored["named"] is False
         assert stored["created_at"]
+
+    def test_named_flag_round_trips(self, conn: sqlite3.Connection) -> None:
+        function_id = _seed_function(conn)
+        store.set_decompilation(conn, function_id, "int f(void);", "kuna", named=True)
+        stored = store.get_decompilation(conn, function_id)
+        assert stored is not None
+        assert stored["named"] is True
 
     def test_set_overwrites(self, conn: sqlite3.Connection) -> None:
         function_id = _seed_function(conn)

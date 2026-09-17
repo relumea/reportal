@@ -4701,7 +4701,7 @@ def function_decompilation(request: Request, function_id: int) -> Response:
                 {
                     "va": int(function["va"]),
                     "backend": str(stored["backend"]),
-                    "named": named,
+                    "named": bool(stored["named"]),
                     "code": str(stored["code"]),
                 }
             )
@@ -4750,7 +4750,7 @@ def store_function_decompilation(
             result = _run_decompiler(project_dir, va, backend, named)
             code = str(result.get("code") or "")
             resolved = str(result.get("backend") or backend)
-            store.set_decompilation(conn, function_id, code, resolved)
+            store.set_decompilation(conn, function_id, code, resolved, named=named)
             if not before:
                 journal.journaled_create(
                     log,

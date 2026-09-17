@@ -306,8 +306,13 @@ def _rewrite_paths(db: Path, *, old_root: Path, new_root: Path) -> list[dict[str
             if not stored:
                 continue
             candidate = Path(stored)
+            # A relative path was stored against the archived workspace, not
+            # against the process cwd; resolve it under old_root so restore
+            # still rewrites it when the operator used a relative add-binary.
+            if not candidate.is_absolute():
+                candidate = old_root / candidate
             try:
-                relative = candidate.resolve().relative_to(old_root)
+                relative = candidate.resolve().relative_to(old_root.resolve())
             except (OSError, ValueError):
                 moved.append({"binary_id": int(row["id"]), "path": stored, "rewritten": False})
                 continue

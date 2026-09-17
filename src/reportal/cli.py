@@ -6037,7 +6037,7 @@ def decompile(
                 params=(function_id,),
                 description=f"replaced the decompilation of function {function_id}",
             )
-            store.set_decompilation(conn, function_id, code, resolved)
+            store.set_decompilation(conn, function_id, code, resolved, named=named)
             if not before:
                 journal.journaled_create(
                     log,

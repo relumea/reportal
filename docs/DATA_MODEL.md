@@ -66,9 +66,11 @@ Each row also records the `extent_size` and `project_dir` the listing was
 produced from; a read whose live function size or rebrew context no longer
 matches drops the row instead of serving it.
 `decompilations` stores one decompiled source per function, keyed by function
-id and carrying the backend that produced it, written by `reportal decompile`
-and `POST /api/functions/<id>/decompilation`; `GET` on that route recomputes
-live without storing when no row exists.
+id and carrying the backend that produced it plus whether symbol names were
+applied (`named`), written by `reportal decompile` and
+`POST /api/functions/<id>/decompilation`; `GET` on that route recomputes
+live without storing when no row exists, and answers the stored `named` flag
+rather than echoing the request query.
 `ai_artifacts` stores the optional LLM results, one row per
 `(function_id, kind)` with `kind` in `summary`, `comments` and
 `type-suggestions` (plus `renames`, the identifier rename suggestions,

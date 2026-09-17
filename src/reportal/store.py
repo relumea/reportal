@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS decompilations (
     function_id INTEGER PRIMARY KEY REFERENCES functions(id) ON DELETE CASCADE,
     code        TEXT NOT NULL,
     backend     TEXT NOT NULL,
+    named       INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL
 );
 
@@ -573,6 +574,10 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # changed.  A row that predates the column takes its creation time below,
     # so the sort never puts an untouched collection before a touched one.
     ("collections", "updated_at", "TEXT NOT NULL DEFAULT ''"),
+    # Whether the stored decompilation was produced with symbol names applied.
+    # A row that predates the column was written before the flag was kept, so
+    # the default is false rather than inventing that names were applied.
+    ("decompilations", "named", "INTEGER NOT NULL DEFAULT 0"),
     # Which team owns a binary or a collection, and whether the rest of the
     # workspace may see it.  A row that predates the columns is public and
     # ownerless, which is what every pre-team install meant.
@@ -2503,14 +2508,22 @@ def clear_disasm_for_binary(conn: sqlite3.Connection, binary_id: int) -> int:
 # ── Decompilations ─────────────────────────────────────────────────
 
 
-def set_decompilation(conn: sqlite3.Connection, function_id: int, code: str, backend: str) -> None:
+def set_decompilation(
+    conn: sqlite3.Connection,
+    function_id: int,
+    code: str,
+    backend: str,
+    *,
+    named: bool = False,
+) -> None:
     """Store the decompiled source of *function_id*, replacing any earlier one."""
     conn.execute(
-        "INSERT INTO decompilations (function_id, code, backend, created_at)"
-        " VALUES (?, ?, ?, ?)"
+        "INSERT INTO decompilations (function_id, code, backend, named, created_at)"
+        " VALUES (?, ?, ?, ?, ?)"
         " ON CONFLICT(function_id) DO UPDATE SET code = excluded.code,"
-        " backend = excluded.backend, created_at = excluded.created_at",
-        (function_id, code, backend, now()),
+        " backend = excluded.backend, named = excluded.named,"
+        " created_at = excluded.created_at",
+        (function_id, code, backend, 1 if named else 0, now()),
     )
     conn.commit()
 
@@ -2518,7 +2531,7 @@ def set_decompilation(conn: sqlite3.Connection, function_id: int, code: str, bac
 def get_decompilation(conn: sqlite3.Connection, function_id: int) -> dict[str, Any] | None:
     """Return the stored decompilation of *function_id*, or None.
 
-    The row is ``{"code", "backend", "created_at"}``; the backend that
+    The row is ``{"code", "backend", "named", "created_at"}``; the backend that
     produced the source is kept so a caller can report it.
     """
     return decompilations_for_functions(conn, [function_id]).get(int(function_id))
@@ -2536,7 +2549,7 @@ def decompilations_for_functions(
     ids = [int(function_id) for function_id in function_ids]
     placeholders = ", ".join("?" for _ in ids)
     cur = conn.execute(
-        "SELECT function_id, code, backend, created_at FROM decompilations"
+        "SELECT function_id, code, backend, named, created_at FROM decompilations"
         f" WHERE function_id IN ({placeholders})",
         ids,
     )
@@ -2544,6 +2557,7 @@ def decompilations_for_functions(
         int(row["function_id"]): {
             "code": row["code"],
             "backend": row["backend"],
+            "named": bool(row["named"]),
             "created_at": row["created_at"],
         }
         for row in cur.fetchall()
@@ -2557,7 +2571,7 @@ def decompilations_for_binary(
     cur = conn.execute(
         """
         SELECT d.function_id AS function_id, d.code AS code, d.backend AS backend,
-               d.created_at AS created_at
+               d.named AS named, d.created_at AS created_at
         FROM decompilations d
         JOIN functions f ON d.function_id = f.id
         JOIN analyses a ON a.id = f.analysis_id
@@ -2569,6 +2583,7 @@ def decompilations_for_binary(
         int(row["function_id"]): {
             "code": row["code"],
             "backend": row["backend"],
+            "named": bool(row["named"]),
             "created_at": row["created_at"],
         }
         for row in cur.fetchall()

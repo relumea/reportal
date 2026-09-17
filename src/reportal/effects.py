@@ -124,6 +124,7 @@ def _undo_decompilation(conn: sqlite3.Connection, descriptor: dict[str, Any]) ->
             function_id,
             str(previous.get("code") or ""),
             str(previous.get("backend") or ""),
+            named=bool(previous.get("named")),
         )
     else:
         store.clear_decompilation(conn, function_id)

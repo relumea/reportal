@@ -141,6 +141,12 @@ class TestReasoningNeverReachesText:
             "summary": "It frees the buffer."
         }
 
+    def test_artifact_code_is_not_rewritten(self) -> None:
+        """Stored source may contain the same markup shapes as model prose."""
+        code = 'char *s = "<thinking>x</thinking>";'
+        payload = {"code": code, "model": "deepseek-flash"}
+        assert disclosure.redact_payload(payload, caller=TENANT) == {"code": code}
+
 
 class TestTheRouteSurface:
     """The seam is the response, so a route cannot opt out by forgetting."""
