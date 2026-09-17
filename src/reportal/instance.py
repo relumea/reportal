@@ -13,6 +13,7 @@ import checks, so the payload is cheap enough for a client to fetch on start.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from typing import Any
 
@@ -83,7 +84,7 @@ def _table_count() -> int:
     path = db_path()
     if not path.is_file():
         return 0
-    with sqlite3.connect(path) as conn:
+    with contextlib.closing(sqlite3.connect(path)) as conn:
         row = conn.execute(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
         ).fetchone()

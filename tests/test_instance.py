@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
@@ -23,6 +25,7 @@ from reportal import (
     journal,
     knowledge,
     mcp_tools,
+    profiles,
     sandbox,
     store,
 )
@@ -127,6 +130,67 @@ class TestPayload:
 
         assert payload["database"]["exists"] is True
         assert payload["database"]["tables"] > 0
+
+    @pytest.mark.parametrize("query_fails", [False, True])
+    def test_table_count_closes_connection(
+        self, portal_db: Path, monkeypatch: pytest.MonkeyPatch, query_fails: bool
+    ) -> None:
+        conn = sqlite3.connect(portal_db)
+        if query_fails:
+            conn.set_authorizer(lambda *_args: sqlite3.SQLITE_DENY)
+        monkeypatch.setattr(instance.sqlite3, "connect", lambda _path: conn)
+        try:
+            if query_fails:
+                with pytest.raises(sqlite3.DatabaseError):
+                    instance.describe()
+            else:
+                assert instance.describe()["database"]["tables"] > 0
+            with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+                conn.execute("SELECT 1")
+        finally:
+            conn.close()
+
+
+class TestProfiles:
+    @pytest.mark.parametrize(
+        ("environment", "workspace", "expected"),
+        [
+            (None, "", profiles.PROFILE_PERSONAL),
+            (None, '[deployment]\nprofile = "saas"', profiles.PROFILE_SAAS),
+            ("personal", '[deployment]\nprofile = "saas"', profiles.PROFILE_PERSONAL),
+            (" SAAS ", "", profiles.PROFILE_SAAS),
+            (" ", '[deployment]\nprofile = "saas"', profiles.PROFILE_SAAS),
+            ("unknown", '[deployment]\nprofile = "saas"', profiles.PROFILE_PERSONAL),
+            (None, '[deployment]\nprofile = "unknown"', profiles.PROFILE_PERSONAL),
+            (None, "[deployment]\nprofile = 1", profiles.PROFILE_PERSONAL),
+            (None, 'deployment = "saas"', profiles.PROFILE_PERSONAL),
+            (None, "[broken", profiles.PROFILE_PERSONAL),
+        ],
+    )
+    def test_resolution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        environment: str | None,
+        workspace: str,
+        expected: str,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        if environment is None:
+            monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+        else:
+            monkeypatch.setenv(profiles.PROFILE_ENV, environment)
+        (tmp_path / "reportal.toml").write_text(workspace)
+
+        assert profiles.current() == expected
+        assert profiles.is_saas() is (expected == profiles.PROFILE_SAAS)
+
+    def test_without_workspace(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+
+        assert profiles.current() == profiles.PROFILE_PERSONAL
+        assert profiles.is_saas() is False
 
 
 class TestRoute:
