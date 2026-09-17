@@ -8,6 +8,7 @@
 | [DR_RUNBOOK.md](DR_RUNBOOK.md) | state inventory, RPO/RTO, backup/restore procedures, and the restore drill |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | trust boundaries, untrusted inputs and where they are validated, secrets, out-of-scope surfaces, and residual risks |
 | [SECURITY.md](../SECURITY.md) | supported versions statement, how to report a vulnerability, and security claims checked against the code |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | bootstrap, gate, PR checklist, and how a release bumps `__version__` with `CHANGELOG.md` |
 | [API.md](API.md) | every HTTP route: path, method, body, response and the codes it answers |
 | [CLI.md](CLI.md) | every `reportal` command, its options and what it writes |
 | [SPA.md](SPA.md) | the built React app: views, panels, the keyboard layer and the design language |

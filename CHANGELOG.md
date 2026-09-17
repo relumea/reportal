@@ -7,6 +7,8 @@ view renders it from here.
 
 ## Unreleased
 
+### Breaking changes
+
 - **`requires-python` is now `>=3.13`** (was `>=3.12`).  The 3.12 claim was never
   true: `rebrew` is a base dependency and requires 3.13, so the project could not
   be installed on 3.12 — and `uv lock` could not regenerate at all, because it
@@ -34,11 +36,42 @@ view renders it from here.
   period advances, so mid-period usage is kept rather than wiped on an
   unrelated sync, and the open-ended oversize credit band is published beside
   the named size bands.
+- **Measured credit prices replace the estimated catalog.**  `ai-decompilation`
+  is 16 credits (was 2), `function-triage` is the 1-credit reference task, and
+  plan allowances re-derive to 2,000 / 7,700 / 39,000.  Clients or operators that
+  budgeted against the old table will see higher charges for the same tasks; the
+  long notes under Fixes and additions record how the measurement was taken.
+- **Create and conflict HTTP statuses are aligned with the rest of the API.**
+  `POST /api/binaries/<id>/extract` and `POST /api/binaries/<id>/unpack` answer
+  `201` on success (were `200`).  A duplicate family name answers `409`
+  `duplicate-family` (was `400`).  A firmware region index that is not in the
+  stored carve answers `404` `region not found` (was `400`).  Clients that treat
+  only `200` as success, or that key retries on `400` for duplicates or missing
+  regions, need to accept `201`/`409`/`404` the same way other create and
+  conflict routes already do (`docs/API.md`, `docs/ERRORS.md`).
+- **Data-type member and enum-value selectors are exclusive.**  Edits that name
+  both `name` and `index`, or neither, are refused as a validation error instead
+  of silently preferring `index` or answering a missing-member/value 404.  Send
+  exactly one selector on the API, CLI and MCP edit paths.
+- **Billing fails closed on unpaid and incomplete subscriptions.**  Provider
+  statuses other than an entitled active plan or a canceled (free-tier) plan,
+  including `unpaid` and `incomplete`, map to past-due so quota does not stay
+  open while payment is not good.  Orgs that stayed entitled under those statuses
+  before will hit quota refusal until the subscription is active again.
+
+### Fixes and additions
+
 - **`zstandard` is declared directly.**  `rebrew.workspace` decodes the
   `section_cells_json` cache with it, and this package imports that module — so
   it needs the dependency rather than inheriting it silently.  Previously
   `uv sync --frozen` exited 0 while omitting it, and `import rebrew.workspace`
   then failed at runtime.
+- Request correlation and operator counters: every `/api` response echoes
+  `X-Request-Id` (accepted when well-formed, otherwise minted), `GET /api/health`
+  exposes process-local HTTP RED counters and finished-job counters, and
+  `dependencies.jobs` is the live queue depth plus whether the process pool is
+  on.  Cancel still applies only to a queued job; a cancel that loses a race to
+  the worker's claim is refused cleanly instead of overwriting running state.
 - The binary detail gained a coverage map, the defrag grid the sibling
   `recoverage` dashboard is built around: one cell per address range of every
   stored section with a virtual size, coloured by the status entity of the
