@@ -179,6 +179,8 @@ class TestValidateTargetAddresses:
         "url",
         [
             "http://10.0.0.5/notes.md",
+            "http://100.64.0.1/notes.md",
+            "http://100.127.255.254/notes.md",
             "http://127.0.0.1/notes.md",
             "http://169.254.10.10/notes.md",
             "http://224.0.0.1/notes.md",

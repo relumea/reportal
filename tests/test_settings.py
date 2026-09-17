@@ -37,6 +37,57 @@ def _row(name: str, tables: dict[str, dict[str, Any]] | None = None) -> dict[str
     raise AssertionError(f"no setting named {name}")
 
 
+class TestProfiles:
+    @pytest.mark.parametrize(
+        ("configured", "environment", "expected"),
+        [
+            ("", "", "personal"),
+            ("saas", "", "saas"),
+            ("saas", "personal", "personal"),
+            ("personal", " SAAS ", "saas"),
+        ],
+    )
+    def test_resolution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        configured: str,
+        environment: str,
+        expected: str,
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, f'[deployment]\nprofile = "{configured}"\n')
+        monkeypatch.setenv(profiles.PROFILE_ENV, environment)
+        monkeypatch.delenv(auth.REQUIRED_ENV, raising=False)
+        assert profiles.current() == expected
+        assert profiles.is_saas() is (expected == "saas")
+        assert auth.required() is (expected == "saas")
+        assert _row("deployment.profile")["value"] == expected
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            'deployment = "saas"',
+            "[deployment]\nprofile = true",
+            '[deployment]\nprofile = "unknown"',
+        ],
+    )
+    def test_invalid_config_does_not_disable_auth(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, body)
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+        with pytest.raises(ValueError):
+            auth.required()
+
+    def test_unknown_environment_profile_is_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(profiles.PROFILE_ENV, "unknown")
+        with pytest.raises(ValueError, match="profile"):
+            profiles.current()
+
+
 class TestSurface:
     def test_every_setting_names_a_reader_and_a_place_it_comes_from(self) -> None:
         for setting in settings.SETTINGS:

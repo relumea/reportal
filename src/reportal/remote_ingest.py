@@ -190,8 +190,8 @@ def _is_mapped(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 def _blocked_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     """True when *address* is in a range a remote target may not reach."""
     return (
-        address.is_loopback
-        or address.is_private
+        not address.is_global
+        or address.is_loopback
         or address.is_link_local
         or address.is_multicast
         or address.is_unspecified
