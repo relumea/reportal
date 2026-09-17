@@ -18,13 +18,6 @@ import { SEARCH_DEBOUNCE_MS, SEARCH_KIND_LABELS, SEARCH_KINDS } from "../constan
 import type { SearchKind, SearchResults } from "../types";
 import { SearchHitRow, hitHref, searchHits } from "./SearchResults";
 
-/** True when a focused element owns keyboard text, so a shortcut must not fire. */
-export function isTypingTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false;
-  if (target.isContentEditable) return true;
-  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
-}
-
 function cycleKind(current: SearchKind, step: number): SearchKind {
   const index = SEARCH_KINDS.indexOf(current);
   const next = (index + step + SEARCH_KINDS.length) % SEARCH_KINDS.length;

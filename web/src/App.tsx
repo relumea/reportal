@@ -28,10 +28,7 @@ import type { NavView } from "./router";
 import { THEMES, THEME_LABELS, setTheme, storedTheme } from "./theme";
 import type { Theme } from "./theme";
 import type { Health } from "./types";
-import { CheatsheetDialog } from "./views/CheatsheetDialog";
 import { DashboardView } from "./views/DashboardView";
-import { NotificationsBell } from "./views/NotificationsDialog";
-import { SearchModal } from "./views/SearchModal";
 
 // Every view but the dashboard is loaded when its route is first opened, so
 // the initial bundle carries the shell, the dashboard and the shortcut layer
@@ -39,7 +36,9 @@ import { SearchModal } from "./views/SearchModal";
 // the memory dump and the data type editor) is a third of the source.  The
 // dashboard stays eager because it is the landing route.  The shell's `Space`
 // binding only imports `codeViewSwitch`, so FunctionPanels stays out of the
-// entry chunk and loads with the function detail route.
+// entry chunk and loads with the function detail route.  Search, the cheatsheet
+// and the notification centre load on first open so their fetch and render
+// code stay off the critical path.
 const AutoView = lazy(() => import("./views/AutoView").then((m) => ({ default: m.AutoView })));
 const AnalysesView = lazy(() =>
   import("./views/AnalysesView").then((m) => ({ default: m.AnalysesView })),
@@ -101,6 +100,15 @@ const SearchView = lazy(() =>
 const UsersView = lazy(() => import("./views/UsersView").then((m) => ({ default: m.UsersView })));
 const BillingView = lazy(() =>
   import("./views/BillingView").then((m) => ({ default: m.BillingView })),
+);
+const SearchModal = lazy(() =>
+  import("./views/SearchModal").then((m) => ({ default: m.SearchModal })),
+);
+const CheatsheetDialog = lazy(() =>
+  import("./views/CheatsheetDialog").then((m) => ({ default: m.CheatsheetDialog })),
+);
+const NotificationsBell = lazy(() =>
+  import("./views/NotificationsDialog").then((m) => ({ default: m.NotificationsBell })),
 );
 
 /** Catch a failed lazy chunk so a missing or broken view says so instead of
@@ -656,7 +664,9 @@ export function App(): ReactNode {
         <header className="topbar">
           <h1 id="title">{title}</h1>
           <ThemePicker />
-          <NotificationsBell />
+          <Suspense fallback={null}>
+            <NotificationsBell />
+          </Suspense>
           <span className="health" id="health">
             {health ? (
               <>
@@ -672,8 +682,20 @@ export function App(): ReactNode {
           </ViewLoadBoundary>
         </div>
       </main>
-      <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
-      <CheatsheetDialog open={cheatsheetOpen} onClose={() => setCheatsheetOpen(false)} />
+      {searchOpen ? (
+        <ViewLoadBoundary>
+          <Suspense fallback={null}>
+            <SearchModal open onClose={() => setSearchOpen(false)} />
+          </Suspense>
+        </ViewLoadBoundary>
+      ) : null}
+      {cheatsheetOpen ? (
+        <ViewLoadBoundary>
+          <Suspense fallback={null}>
+            <CheatsheetDialog open onClose={() => setCheatsheetOpen(false)} />
+          </Suspense>
+        </ViewLoadBoundary>
+      ) : null}
     </div>
   );
 }

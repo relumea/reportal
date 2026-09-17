@@ -1619,6 +1619,20 @@ VIEW_MARKERS: tuple[str, ...] = (
     "Rename proposals",
 )
 
+# Shell dialogs that load on first open.  They used to ride in the entry chunk
+# because the shortcut layer imported through them; keeping them out of the
+# entry is what shortens the first paint after a cold cache.
+SHELL_LAZY_MARKERS: tuple[str, ...] = (
+    "search-dialog-body",
+    "Everywhere",
+    "reportal.notifications.dismissed",
+)
+
+# Transferred-size budget for the entry JS chunk (raw, before compression).
+# Measured after the shell-dialog split: ~52 KiB.  The floor only moves up when
+# a change that grows the entry is intentional and documented in docs/SPA.md.
+ENTRY_JS_MAX_BYTES = 64 * 1024
+
 
 def check_code_split() -> bool:
     """The initial bundle carries the shell, and each view is its own chunk.
@@ -1633,10 +1647,25 @@ def check_code_split() -> bool:
     if not entry or len(chunks) < 2:
         emit(f"[FAIL] the SPA is one bundle ({len(chunks)} chunk(s)); no view is loaded on demand")
         return False
-    entry_text = "".join(path.read_text(encoding="utf-8", errors="replace") for path in entry)
+    entry_path = entry[0]
+    entry_text = entry_path.read_text(encoding="utf-8", errors="replace")
+    entry_size = entry_path.stat().st_size
+    if entry_size > ENTRY_JS_MAX_BYTES:
+        emit(
+            f"[FAIL] entry chunk {entry_path.name} is {entry_size} bytes "
+            f"(budget {ENTRY_JS_MAX_BYTES}); defer more of the shell"
+        )
+        return False
     carried = [marker for marker in VIEW_MARKERS if marker in entry_text]
     if carried:
         emit(f"[FAIL] the initial bundle carries {carried[0]!r}, a view it should load on demand")
+        return False
+    shell_carried = [marker for marker in SHELL_LAZY_MARKERS if marker in entry_text]
+    if shell_carried:
+        emit(
+            f"[FAIL] the initial bundle carries {shell_carried[0]!r}, "
+            "a shell dialog that should load on demand"
+        )
         return False
     eager_text = "".join(
         path.read_text(encoding="utf-8", errors="replace") for path in chunks if path not in entry
@@ -1644,7 +1673,7 @@ def check_code_split() -> bool:
     if not any(marker in eager_text for marker in VIEW_MARKERS):
         emit("[FAIL] no chunk carries the binary detail view; the markers moved")
         return False
-    emit(f"code split: {len(chunks)} chunks, entry {entry[0].name}")
+    emit(f"code split: {len(chunks)} chunks, entry {entry_path.name} ({entry_size} bytes)")
     return True
 
 

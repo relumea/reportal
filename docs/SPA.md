@@ -25,30 +25,37 @@ route pays for.  React and the router are one `vendor` chunk
 keeps across a deploy while the per-view chunks change.  The dashboard stays
 eager because it is the landing route.  The shell's `Space` binding imports only
 `panels/codeViewSwitch.ts` (a few lines of module state); `FunctionPanels`
-loads with the function-detail route.  A `<Suspense>` boundary around the route
-content shows the shell's `Loading` line while a view's chunk arrives, and a
-`ViewLoadBoundary` reports a failed chunk instead of leaving the pane blank.
+loads with the function-detail route.  Search (`⌘K`), the keyboard cheatsheet
+and the notification centre load on first open, so their fetch and render code
+stay out of the entry chunk.  `isTypingTarget` lives in `keys.ts` so the
+shortcut layer does not pull `SearchModal` into the entry.  A `<Suspense>`
+boundary around the route content shows the shell's `Loading` line while a
+view's chunk arrives, and a `ViewLoadBoundary` reports a failed chunk instead
+of leaving the pane blank.
 
 `GET /` answers the entry page `no-cache` (so a deploy is picked up on the
 next load) and the hashed bundles under `/static/assets/` `immutable` with a
 one-year `max-age`: their names carry their content hash, so a repeat load makes
 no request for them at all.  A file without a hash (the favicon) is answered
 `no-cache` like the shell.  Compressible assets (JS, CSS, HTML, SVG, …) are
-gzip-encoded when the client sends `Accept-Encoding: gzip`: a sibling `.gz`
-written by `scripts/precompress_spa.py` at build time (zlib level 9) is
-preferred, otherwise `ui.py` compresses at the request-time level and caches
-the result in process.  Responses carry `Vary: Accept-Encoding` so a cache
-never serves a gzip body to a client that cannot decode it.
+compressed when the client sends `Accept-Encoding`: a sibling `.br` written by
+`scripts/precompress_spa.py` at build time (brotli quality 11, when the `brotli`
+CLI is on PATH) is preferred, then a sibling `.gz` (zlib level 9), otherwise
+`ui.py` gzip-compresses at the request-time level and caches the result in
+process.  Responses carry `Vary: Accept-Encoding` so a cache never serves a
+compressed body to a client that cannot decode it.
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-56 kB (18 kB gzip) and the vendor chunk 289 kB (91 kB gzip), with the view
-chunks behind them.  On the wire that is what `ui.py` actually sends when gzip
-is accepted; without it the browser downloads the raw sizes.  `make run`,
-`make ui` and `make package-check` run the precompress step after `vite build`
-(CI runs the same step before the wheel check).  `tools/smoke_spa.py`
-asserts the split rather than trusting it: the entry chunk must not carry a
-marker only the binary detail view renders, and some other chunk must, so a
+about 45 kB (under a 64 kB smoke budget) and the vendor chunk about 289 kB
+(91 kB gzip, ~78 kB brotli), with the view and shell-dialog chunks behind them.
+On the wire that is what `ui.py` actually sends when compression is accepted;
+without it the browser downloads the raw sizes.  `make run`, `make ui` and
+`make package-check` run the precompress step after `vite build` (CI runs the
+same step before the wheel check).  `tools/smoke_spa.py` asserts the split
+rather than trusting it: the entry chunk must not carry a marker only the
+binary detail view or a deferred shell dialog renders, must stay under the
+entry size budget, and some other chunk must carry the detail markers, so a
 view import that goes back to being static fails the gate.
 
 ### Long tables
@@ -123,7 +130,7 @@ twice in one scope, a `view`-scoped binding outranks a `global` one, `mod` is
 Command on a Mac and Control elsewhere, and a sequence combo (`g d`) keeps its
 prefix armed for `PREFIX_TIMEOUT_MS`.  Two rules are unconditional: a binding
 never fires while the focus owns text (`isTypingTarget` in
-`src/views/SearchModal.tsx`) and none fires while a modal dialog owns the
+`src/keys.ts`) and none fires while a modal dialog owns the
 keyboard.  `focusViewFilter` focuses the view's filter box (the first
 `input[type="search"]` in the content area) and `moveTableRow` walks the
 tabbable rows of the view's first data table; `displayCombo` spells a combo for

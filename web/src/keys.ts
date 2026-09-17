@@ -28,7 +28,12 @@
 // handler could act on the current view: a shortcut that sometimes falls
 // through to the browser would make the same key mean two things.
 
-import { isTypingTarget } from "./views/SearchModal";
+/** True when a focused element owns keyboard text, so a shortcut must not fire. */
+export function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
 
 /** Where a binding is live: the whole shell, or the view that registered it. */
 export type ShortcutScope = "global" | "view";

@@ -2015,6 +2015,53 @@ class TestUi:
         assert headers.get("Content-Encoding") == "gzip"
         assert decode(body, headers) == b"console.log('precompressed');"
 
+    def test_static_asset_prefers_brotli_over_gzip(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gzip as gzip_mod
+
+        dist = self._dist(
+            tmp_path,
+            monkeypatch,
+            {"index.html": "reportal", "assets/index-abc.js": "console.log('source');"},
+        )
+        (dist / "assets" / "index-abc.js.gz").write_bytes(
+            gzip_mod.compress(b"console.log('gzip');", 9)
+        )
+        (dist / "assets" / "index-abc.js.br").write_bytes(b"brotli-payload")
+        status, headers, body = wsgi_request(
+            "GET",
+            "/static/assets/index-abc.js",
+            headers={"Accept-Encoding": "gzip, br"},
+        )
+        assert status.startswith("200")
+        assert headers.get("Content-Encoding") == "br"
+        assert headers.get("Vary") == "Accept-Encoding"
+        assert body == b"brotli-payload"
+
+    def test_static_asset_skips_brotli_when_refused(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import gzip as gzip_mod
+
+        dist = self._dist(
+            tmp_path,
+            monkeypatch,
+            {"index.html": "reportal", "assets/index-abc.js": "console.log('source');"},
+        )
+        (dist / "assets" / "index-abc.js.gz").write_bytes(
+            gzip_mod.compress(b"console.log('gzip');", 9)
+        )
+        (dist / "assets" / "index-abc.js.br").write_bytes(b"brotli-payload")
+        status, headers, body = wsgi_request(
+            "GET",
+            "/static/assets/index-abc.js",
+            headers={"Accept-Encoding": "br;q=0, gzip"},
+        )
+        assert status.startswith("200")
+        assert headers.get("Content-Encoding") == "gzip"
+        assert decode(body, headers) == b"console.log('gzip');"
+
     def test_static_favicon_served_from_public(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

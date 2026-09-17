@@ -9,10 +9,10 @@ workspace's ``reports/<id>`` tree, so the site a report run generated is
 browsable without leaving the portal.  Every request is resolved under its own
 root and refused when it escapes it, so a traversal cannot read elsewhere.
 
-Hashed JS/CSS are answered gzip when the client asks for it: a sibling ``.gz``
-written at build time (``scripts/precompress_spa.py``) is preferred, otherwise
-the response is compressed at the request-time level.  Already-compressed
-formats and tiny bodies are left alone.
+Hashed JS/CSS are answered compressed when the client asks for it: a sibling
+``.br`` (brotli) or ``.gz`` written at build time (``scripts/precompress_spa.py``)
+is preferred in that order, otherwise the response is gzip-compressed at the
+request-time level.  Already-compressed formats and tiny bodies are left alone.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from reportal._paths import reports_dir
 from reportal.server import (
     _ACCEPT_ENCODING,
     GZIP_LEVEL,
+    _accepts_br,
     _accepts_gzip,
     json_error,
 )
@@ -55,8 +56,8 @@ ASSET_CACHE_CONTROL = "public, max-age=31536000, immutable"
 # the next load rather than a year later.
 SHELL_CACHE_CONTROL = "no-cache"
 
-# Textual assets worth gzipping.  Images, fonts and archives are already
-# compressed; gzipping them again wastes CPU and can grow the body.
+# Textual assets worth compressing.  Images, fonts and archives are already
+# compressed; compressing them again wastes CPU and can grow the body.
 COMPRESSIBLE_SUFFIXES = frozenset(
     {".css", ".html", ".js", ".json", ".map", ".mjs", ".svg", ".txt", ".xml"}
 )
@@ -127,35 +128,52 @@ def _gzip_cached(path_str: str, mtime_ns: int, size: int) -> bytes:
     return gzip.compress(Path(path_str).read_bytes(), GZIP_LEVEL)
 
 
-def _gzip_response(path: Path, *, cache_control: str) -> Response | None:
-    """A gzip-encoded response for *path*, or None when the client or body cannot use it.
-
-    Prefers a sibling ``.gz`` written by ``scripts/precompress_spa.py`` (build-time
-    effort 9).  Without one, compresses in process at :data:`GZIP_LEVEL` and
-    caches the result keyed by path identity and mtime.  A precompressed sibling
-    is served even when the source is small: the build step already decided it
-    was worth keeping.
-    """
-    if not _accepts_gzip(_ACCEPT_ENCODING.get()):
-        return None
-    if path.suffix.lower() not in COMPRESSIBLE_SUFFIXES:
-        return None
-    headers = {
-        "Cache-Control": cache_control,
-        "Content-Encoding": "gzip",
-        "Vary": "Accept-Encoding",
-    }
-    media_type = _media_type(path)
-    gz_path = Path(f"{path}.gz")
+def _precompressed_sibling(path: Path, suffix: str) -> Path | None:
+    """Return a fresh precompressed sibling, or None when missing or stale."""
+    sibling = Path(f"{path}{suffix}")
     try:
         if (
-            gz_path.is_file()
-            and gz_path.stat().st_mtime_ns >= path.stat().st_mtime_ns
-            and gz_path.stat().st_size > 0
+            sibling.is_file()
+            and sibling.stat().st_mtime_ns >= path.stat().st_mtime_ns
+            and sibling.stat().st_size > 0
         ):
-            return FileResponse(gz_path, media_type=media_type, headers=headers)
+            return sibling
     except OSError:
-        pass
+        return None
+    return None
+
+
+def _compressed_response(path: Path, *, cache_control: str) -> Response | None:
+    """A compressed response for *path*, or None when the client or body cannot use it.
+
+    Prefers a sibling ``.br`` written by ``scripts/precompress_spa.py`` when the
+    client accepts brotli, then a sibling ``.gz`` (build-time effort 9).  Without
+    either, compresses in process at :data:`GZIP_LEVEL` and caches the result
+    keyed by path identity and mtime.  A precompressed sibling is served even
+    when the source is small: the build step already decided it was worth keeping.
+    """
+    if path.suffix.lower() not in COMPRESSIBLE_SUFFIXES:
+        return None
+    accept = _ACCEPT_ENCODING.get()
+    headers_base = {"Cache-Control": cache_control, "Vary": "Accept-Encoding"}
+    media_type = _media_type(path)
+    if _accepts_br(accept):
+        br_path = _precompressed_sibling(path, ".br")
+        if br_path is not None:
+            return FileResponse(
+                br_path,
+                media_type=media_type,
+                headers={**headers_base, "Content-Encoding": "br"},
+            )
+    if not _accepts_gzip(accept):
+        return None
+    gz_path = _precompressed_sibling(path, ".gz")
+    if gz_path is not None:
+        return FileResponse(
+            gz_path,
+            media_type=media_type,
+            headers={**headers_base, "Content-Encoding": "gzip"},
+        )
     try:
         size = path.stat().st_size
     except OSError:
@@ -166,14 +184,18 @@ def _gzip_response(path: Path, *, cache_control: str) -> Response | None:
         body = _gzip_cached(str(path), path.stat().st_mtime_ns, size)
     except OSError:
         return None
-    return Response(content=body, media_type=media_type, headers=headers)
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={**headers_base, "Content-Encoding": "gzip"},
+    )
 
 
 def _file_under(root: Path, relative: str, *, cache_control: str | None = None) -> Response:
-    """Serve *relative* under *root*, gzip-encoded when that pays off."""
+    """Serve *relative* under *root*, compressed when that pays off."""
     candidate = _resolve_under(root, relative)
     control = cache_control if cache_control is not None else SHELL_CACHE_CONTROL
-    compressed = _gzip_response(candidate, cache_control=control)
+    compressed = _compressed_response(candidate, cache_control=control)
     if compressed is not None:
         return compressed
     response = FileResponse(candidate)

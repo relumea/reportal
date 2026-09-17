@@ -68,7 +68,7 @@ setup: uv-check bun-check rebrew-check ## Create .venv (uv sync --frozen) and in
 	@echo "setup ok. CLI: .venv/bin/reportal  |  make doctor  |  make run  |  make check-fast  |  make check-ci" >&2
 
 # ── run ──────────────────────────────────────────────────────────────
-spa: venv-check bun-check ## Build the SPA and write .gz siblings
+spa: venv-check bun-check ## Build the SPA and write .gz/.br siblings
 	cd web && $(REPRO_ENV) $(BUN) run build
 	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
 

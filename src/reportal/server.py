@@ -422,11 +422,12 @@ def _charge_credits(organisation_id: int, path: str) -> Callable[[str, int], Non
     return sink
 
 
-def _accepts_gzip(accept_encoding: str) -> bool:
-    """True when the client accepts gzip and has not refused it via q=0."""
+def _accepts_encoding(accept_encoding: str, encoding: str) -> bool:
+    """True when the client accepts *encoding* and has not refused it via q=0."""
+    wanted = encoding.lower()
     for token in accept_encoding.split(","):
         parts = [p.strip().lower() for p in token.split(";")]
-        if not parts or parts[0] != "gzip":
+        if not parts or parts[0] != wanted:
             continue
         for param in parts[1:]:
             if param.startswith("q="):
@@ -436,6 +437,16 @@ def _accepts_gzip(accept_encoding: str) -> bool:
                     return False
         return True
     return False
+
+
+def _accepts_gzip(accept_encoding: str) -> bool:
+    """True when the client accepts gzip and has not refused it via q=0."""
+    return _accepts_encoding(accept_encoding, "gzip")
+
+
+def _accepts_br(accept_encoding: str) -> bool:
+    """True when the client accepts brotli and has not refused it via q=0."""
+    return _accepts_encoding(accept_encoding, "br")
 
 
 def json_response(
