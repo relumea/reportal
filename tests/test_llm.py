@@ -627,6 +627,15 @@ class TestEmbeddings:
         with pytest.raises(LlmError):
             client.embeddings(["one"])
 
+    @pytest.mark.parametrize("coordinate", ["NaN", "Infinity", "-Infinity", "1e400"])
+    def test_non_finite_embedding_is_an_llm_error(self, coordinate: str) -> None:
+        capture: list[httpx.Request] = []
+        body = '{"data": [{"embedding": [0.5, ' + coordinate + '], "index": 0}]}'
+        http = _mock_http(httpx.Response(200, text=body), capture)
+        client = LlmClient(LlmConfig(endpoint="http://llm.local/v1"), http=http)
+        with pytest.raises(LlmError, match="non-finite"):
+            client.embeddings(["one"])
+
     def test_transport_failure_is_an_llm_error(self) -> None:
         capture: list[httpx.Request] = []
         http = _mock_http(httpx.Response(500, text="boom"), capture)

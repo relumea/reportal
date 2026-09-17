@@ -397,7 +397,10 @@ def _embedding_vectors(data: Any, *, expected: int) -> list[list[float]]:
         for value in vector:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise LlmError("LLM embeddings response carried a non-numeric vector")
-            values.append(float(value))
+            coordinate = float(value)
+            if not math.isfinite(coordinate):
+                raise LlmError("LLM embeddings response carried a non-finite vector")
+            values.append(coordinate)
         vectors.append(values)
     if len(vectors) != expected:
         raise LlmError(
