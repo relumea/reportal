@@ -3617,7 +3617,8 @@ export function DetectPanel({ binaryId }: { binaryId: number }): ReactNode {
   );
 }
 
-function DetectNotes({ notes }: { notes: string[] }): ReactNode {
+/** The notes any stored scan carries, joined for one dim line. */
+function ScanNotes({ notes }: { notes: string[] }): ReactNode {
   if (!Array.isArray(notes) || notes.length === 0) return null;
   return <Muted>{notes.join(" · ")}</Muted>;
 }
@@ -3630,7 +3631,7 @@ function DetectBody({ result }: { result: DetectResult }): ReactNode {
         <Muted>
           No registered family matched this binary ({result.families_checked} checked).
         </Muted>
-        <DetectNotes notes={result.notes} />
+        <ScanNotes notes={result.notes} />
       </>
     );
   }
@@ -3667,7 +3668,7 @@ function DetectBody({ result }: { result: DetectResult }): ReactNode {
         rows={matches}
         rowKey={(row) => row.family_id}
       />
-      <DetectNotes notes={result.notes} />
+      <ScanNotes notes={result.notes} />
     </>
   );
 }
@@ -3705,12 +3706,6 @@ export function RelatedPanel({ binaryId }: { binaryId: number }): ReactNode {
       </PanelBody>
     </Panel>
   );
-}
-
-/** The notes any stored scan carries, joined for one dim line. */
-function ScanNotes({ notes }: { notes: string[] }): ReactNode {
-  if (!Array.isArray(notes) || notes.length === 0) return null;
-  return <Muted>{notes.join(" · ")}</Muted>;
 }
 
 function RelatedBody({ result }: { result: RelatedResult }): ReactNode {

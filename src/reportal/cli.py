@@ -622,7 +622,7 @@ def backup_info_command(
     )
 
 
-# ── serve ──────────────────────────────────────────────────────────
+# ── doctor and serve ───────────────────────────────────────────────
 
 
 def _require_lan_auth(portal_db: Path) -> None:
@@ -3149,7 +3149,7 @@ def analysis_delete(
     console.print(f"[green]Deleted[/green] analysis {analysis_id} of binary {binary_id}")
 
 
-# ── journal ────────────────────────────────────────────────────────
+# ── jobs ───────────────────────────────────────────────────────────
 
 
 def _journal_error_text(exc: Exception) -> str:
@@ -3383,6 +3383,9 @@ def notifications_command(
     console.print(table)
     if payload["latest"]:
         console.print(f"\n[bold cyan]latest[/bold cyan] {payload['latest']}")
+
+
+# ── journal ────────────────────────────────────────────────────────
 
 
 @app.command("journal")
@@ -10030,9 +10033,6 @@ def memory(
     console.print(payload["bytes"])
 
 
-# ── section-coverage ───────────────────────────────────────────────
-
-
 @app.command("memory-page")
 def memory_page(
     binary_id: int = typer.Argument(..., help="Binary id whose bytes to page"),
@@ -10099,6 +10099,9 @@ def memory_page(
             console.print(f"[dim]{row['address']} gap ({row['length']} bytes)[/dim]")
         else:
             console.print(f"{row['address']} {row['offset']} {row['hex']}")
+
+
+# ── section-coverage ───────────────────────────────────────────────
 
 
 @app.command("section-coverage")
@@ -10190,7 +10193,7 @@ def crypto_scan(
     )
 
 
-# ── pe-info ────────────────────────────────────────────────────────
+# ── die-info and pe-info ───────────────────────────────────────────
 
 # Section flags `_print_pe_info` renders, in display order; an absent flag
 # renders as a dash.
