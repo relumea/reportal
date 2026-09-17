@@ -8,8 +8,10 @@ read back into another, which is what a movable install means.
 from __future__ import annotations
 
 import contextlib
+import errno
 import io
 import json
+import os
 import sqlite3
 import tarfile
 from pathlib import Path
@@ -107,6 +109,55 @@ class TestCreate:
         result = backup.create(output=target, workspace=root)
         assert Path(result["path"]) == target
         assert target.is_file()
+
+    def test_publication_stays_on_the_output_filesystem(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _workspace(tmp_path / "one")
+        target = tmp_path / "backups" / "snapshot.tar.gz"
+        target.parent.mkdir()
+        target.write_bytes(b"previous backup")
+        real_replace = os.replace
+        publications: list[Path] = []
+
+        def replace(source: str | Path, destination: str | Path) -> None:
+            staged = Path(source)
+            assert staged.parent.parent == target.parent
+            assert Path(destination) == target
+            assert target.read_bytes() == b"previous backup"
+            assert "reportal.db" in _names(staged)
+            publications.append(staged)
+            real_replace(source, destination)
+
+        monkeypatch.setattr(os, "replace", replace)
+        result = backup.create(workspace=root, output=target)
+        assert len(publications) == 1
+        assert backup.read_manifest(target) == result["manifest"]
+        assert list(target.parent.iterdir()) == [target]
+
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_failed_publication_leaves_the_destination_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
+    ) -> None:
+        root = _workspace(tmp_path / "one")
+        target = tmp_path / "backups" / "snapshot.tar.gz"
+        target.parent.mkdir()
+        if existing:
+            target.write_bytes(b"previous backup")
+
+        def replace(source: str | Path, destination: str | Path) -> None:
+            assert "reportal.db" in _names(Path(source))
+            raise OSError(errno.ENOSPC, "disk full")
+
+        monkeypatch.setattr(os, "replace", replace)
+        with pytest.raises(backup.BackupError) as failure:
+            backup.create(workspace=root, output=target)
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+        if existing:
+            assert target.read_bytes() == b"previous backup"
+        else:
+            assert not target.exists()
+        assert list(target.parent.iterdir()) == ([target] if existing else [])
 
     def test_the_default_output_lands_outside_the_workspace(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path / "one")
