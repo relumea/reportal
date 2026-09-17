@@ -441,6 +441,36 @@ class TestUnit:
 
 
 class TestSaasProfileCheck:
+    @pytest.mark.parametrize(
+        ("configured", "override", "expected"),
+        [
+            ("personal", None, "personal"),
+            ("saas", None, "saas"),
+            ("saas", "personal", "personal"),
+            ("personal", " SAAS ", "saas"),
+            ("saas", "", "saas"),
+        ],
+    )
+    def test_profile_resolution(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        configured: str,
+        override: str | None,
+        expected: str,
+    ) -> None:
+        from reportal import profiles
+
+        (tmp_path / "reportal.toml").write_text(
+            f'[deployment]\nprofile = "{configured}"\n', encoding="utf-8"
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+        if override is not None:
+            monkeypatch.setenv(profiles.PROFILE_ENV, override)
+        assert profiles.current() == expected
+        assert profiles.is_saas() == (expected == profiles.PROFILE_SAAS)
+
     def test_saas_without_billing_warns(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

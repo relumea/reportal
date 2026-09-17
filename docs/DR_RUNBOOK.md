@@ -30,6 +30,8 @@ kept.
 | Auto runs and attempts | `auto_runs`, `auto_tasks`, `auto_attempts` | `auto_store` | Yes | The undo plan is the recoverable part |
 | Secret store | tables in the portal database | `secret_store` | Yes (plaintext in the archive) | No |
 | Uploaded binaries | `<workspace>/binaries/<sha256><suffix>` | `api.upload_binary` | Yes | Re-upload (content-addressed) |
+| Uploaded debug symbols | `<workspace>/symbols/<prefix>/<sha256>` and `symbol_files` | symbol import via API, CLI or MCP | Yes; local file paths are relocated on restore | No: original symbol bytes cannot be derived from the binary |
+| Job backlog | `jobs` in the portal database | `jobs` | Yes | In-process workers are not backed up; do not start workers during a restore drill |
 | Engine reports and PDF | `<workspace>/reports/<binary_id>/` | report route / `pdf` | Yes | Re-run the report |
 | Workspace marker | `reportal.toml` | `reportal init` / operators | Yes | Re-create; secrets in env are not in the file |
 | Imported binary bytes | rebrew project (`binaries.path`, `rebrew_contexts.project_dir`) | `reportal import-rebrew` | No (path left external on restore) | Outside reportal: re-run the import |
@@ -45,7 +47,7 @@ the live files still must include those sidecars or stop the server first.
 ## What is protected
 
 - `reportal backup` writes one gzip tar of the live database (configured path
-  included), `reportal.toml`, `binaries/`, and `reports/`, with a manifest that
+  included), `reportal.toml`, `binaries/`, `symbols/`, and `reports/`, with a manifest that
   `reportal restore` checks before touching the workspace (`backup.create`,
   `backup.restore`).  Round-trip coverage is `tests/test_backup.py`.
 - The default archive path is a dated file under `../reportal-backups/` beside
@@ -191,17 +193,25 @@ the tables, not the rows.  Prefer `reportal restore`.
 A backup that has never been restored is a hypothesis.  After enabling the
 timer (or any schedule), and periodically afterwards:
 
-1. Copy a recent archive to a scratch host or directory (do not overwrite
-   production).
-2. `mkdir /tmp/reportal-drill && cd /tmp/reportal-drill && reportal init`
-3. `reportal restore /path/to/archive.tar.gz --overwrite --yes`
-4. `REPORTAL_DB=$(reportal config 2>/dev/null | true); reportal stats` and
-   compare counts to `GET /api/health` on production (or the manifest
-   `counts`).
-5. Spot-check one binary: `reportal report <binary_id> --output /tmp/drill-out`.
-6. Record the date, archive name, wall-clock restore time (your RTO sample),
-   and pass/fail next to the backup destination.
-7. Delete the scratch workspace.
+1. Copy a recent archive to an isolated scratch host with the archived reportal
+   version installed. Do not mount production paths or supply production credentials.
+   `reportal backup-info /path/to/archive.tar.gz --json` gives the version and members.
+2. In a fresh shell, create a private workspace with `umask 077`,
+   `mkdir /tmp/reportal-drill`, then `cd /tmp/reportal-drill`.
+   Set `export REPORTAL_DB=/tmp/reportal-drill/reportal.db` before `reportal init`.
+   Keep this override for every drill command: the archived marker may name an
+   absolute production database path.
+3. `time reportal restore /path/to/archive.tar.gz --overwrite --yes`
+4. `sqlite3 "$REPORTAL_DB" 'PRAGMA integrity_check;'` must return `ok`.
+   Run `reportal stats` and compare against statistics recorded at backup time,
+   not against a changing production database. Manifest `counts` are file counts,
+   not database row counts.
+5. Compare restored binaries, symbols and reports against the manifest members;
+   spot-check their bytes. Do not start the server, job workers or engine reports:
+   restored jobs and external project paths can still refer to production work.
+6. Record date, archive name, byte size, wall-clock restore time (your RTO sample),
+   integrity result and pass/fail next to the backup destination.
+7. Delete only the scratch workspace and unset `REPORTAL_DB`.
 
 Automated proof in CI is the round trip in `tests/test_backup.py`; the drill
 above is what proves the operator path and the off-box archive still load.

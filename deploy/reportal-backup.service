@@ -1,0 +1,43 @@
+[Unit]
+Description=reportal workspace backup
+Documentation=https://github.com/relumea/reportal/blob/main/docs/DR_RUNBOOK.md
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=reportal
+Group=reportal
+WorkingDirectory=/srv/reportal
+UMask=0077
+ExecStart=/bin/sh -c 'out=/srv/backups/reportal-$(date -u +%%F).tar.gz; /srv/reportal/.venv/bin/reportal backup --output "$out" && test -s "$out"'
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+MemoryMax=1G
+TasksMax=64
+TimeoutStartSec=30min
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictAddressFamilies=AF_UNIX
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/srv/reportal /srv/backups
+KeyringMode=private
+RemoveIPC=true

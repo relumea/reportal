@@ -2680,8 +2680,9 @@ marketing numbers and the billing numbers are the same numbers;
 copies the live database (the path `_paths.db_path` / `database_path` resolve,
 not a hard-coded `reportal.db` beside the marker) through SQLite's own backup
 API after a `wal_checkpoint(TRUNCATE)`, then adds the marker, the stored
-binaries and the generated reports to a gzip-compressed tar with a manifest.
-The checkpoint is what makes the archive one consistent snapshot: a plain file
+binaries, uploaded debug symbols and generated reports to a gzip-compressed tar
+with a manifest. SQLite's backup API makes the database snapshot consistent; the
+checkpoint alone is not a lock over file writes. A plain file
 copy would ship the database without its `-wal` sidecar, silently dropping the
 writes that had not been folded in yet.  The database member is always named
 `reportal.db` inside the archive so a restore can place it at whatever path the

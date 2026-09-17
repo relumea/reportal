@@ -41,7 +41,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from reportal import __version__, store
+from reportal import __version__, store, symbols
 from reportal._paths import (
     BINARIES_DIR,
     DB_NAME,
@@ -154,7 +154,7 @@ def _members(root: Path) -> list[tuple[str, Path]]:
     absent rather than an error.
     """
     found: list[tuple[str, Path]] = []
-    for directory in (BINARIES_DIR, REPORTS_DIR):
+    for directory in (BINARIES_DIR, REPORTS_DIR, symbols.SYMBOLS_DIR):
         base = root / directory
         if not base.is_dir():
             continue
@@ -271,8 +271,16 @@ def read_manifest(archive: Path) -> dict[str, Any]:
             ERROR_INVALID_ARCHIVE,
             f"backup format {manifest.get('format_version')!r} is not version {FORMAT_VERSION}",
         )
-    declared = {str(name) for name in manifest.get("members") or []}
+    members = manifest.get("members")
+    if not isinstance(members, list) or not all(isinstance(name, str) for name in members):
+        raise BackupError(ERROR_INVALID_ARCHIVE, "the manifest has no valid member list")
+    declared = set(members)
     present = {name for name in names if name != MANIFEST_NAME}
+    if len(names) != len(set(names)) or len(members) != len(declared):
+        raise BackupError(ERROR_INVALID_ARCHIVE, "the archive carries duplicate members")
+    missing = declared - present
+    if missing:
+        raise BackupError(ERROR_INVALID_ARCHIVE, f"archive is missing members: {sorted(missing)}")
     extra = present - declared
     if extra:
         raise BackupError(
@@ -290,7 +298,9 @@ def _safe_member(name: str) -> bool:
     return name not in {"", "."}
 
 
-def _rewrite_paths(db: Path, *, old_root: Path, new_root: Path) -> list[dict[str, Any]]:
+def _rewrite_paths(
+    db: Path, *, old_root: Path, new_root: Path, table: str = "binaries"
+) -> list[dict[str, Any]]:
     """Point every stored path that lived under *old_root* at *new_root*.
 
     A path outside the old root is left alone and returned as a note: it belongs
@@ -301,7 +311,16 @@ def _rewrite_paths(db: Path, *, old_root: Path, new_root: Path) -> list[dict[str
     connection = sqlite3.connect(db)
     connection.row_factory = sqlite3.Row
     try:
-        for row in connection.execute("SELECT id, path FROM binaries").fetchall():
+        if table not in {"binaries", symbols.TABLE}:
+            raise ValueError(f"unsupported path table: {table}")
+        if (
+            table == symbols.TABLE
+            and not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()
+        ):
+            return moved
+        for row in connection.execute(f"SELECT id, path FROM {table}").fetchall():
             stored = str(row["path"] or "")
             if not stored:
                 continue
@@ -320,7 +339,7 @@ def _rewrite_paths(db: Path, *, old_root: Path, new_root: Path) -> list[dict[str
             if updated == stored:
                 continue
             connection.execute(
-                "UPDATE binaries SET path = ? WHERE id = ?", (updated, int(row["id"]))
+                f"UPDATE {table} SET path = ? WHERE id = ?", (updated, int(row["id"]))
             )
             moved.append({"binary_id": int(row["id"]), "path": updated, "rewritten": True})
         connection.commit()
@@ -373,7 +392,8 @@ def restore(
         if not staged_db.is_file():
             raise BackupError(ERROR_INVALID_ARCHIVE, "the archive carries no database")
         moved = _rewrite_paths(staged_db, old_root=old_root, new_root=root.resolve())
-        for directory in (BINARIES_DIR, REPORTS_DIR):
+        _rewrite_paths(staged_db, old_root=old_root, new_root=root.resolve(), table=symbols.TABLE)
+        for directory in (BINARIES_DIR, REPORTS_DIR, symbols.SYMBOLS_DIR):
             source = staged / directory
             if source.is_dir():
                 destination = root / directory

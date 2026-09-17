@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily reportal workspace backup
+Documentation=https://github.com/relumea/reportal/blob/main/docs/DR_RUNBOOK.md
+
+[Timer]
+OnCalendar=*-*-* 00:00:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=reportal-backup.service
+
+[Install]
+WantedBy=timers.target

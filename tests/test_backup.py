@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from reportal import backup, cli, store
+from reportal import backup, cli, journal, store, symbols
 
 runner = CliRunner()
 
@@ -246,6 +246,30 @@ class TestCreate:
 
 
 class TestRestore:
+    @pytest.mark.parametrize("relative", [False, True])
+    def test_symbol_files_survive_workspace_loss(self, tmp_path: Path, relative: bool) -> None:
+        source = _workspace(tmp_path / "one")
+        data = b"debug symbols"
+        digest = symbols.digest(data)
+        stored = source / symbols.SYMBOLS_DIR / digest[:2] / digest
+        stored.parent.mkdir(parents=True)
+        stored.write_bytes(data)
+        path = str(stored.relative_to(source) if relative else stored)
+        with contextlib.closing(store.connect(source / "reportal.db")) as conn:
+            log = journal.Journal(conn, "symbol-import")
+            symbols.import_symbols(
+                conn, log, binary_id=1, data=data, parsed={"kind": "pdb"}, path=path, apply=False
+            )
+        archive = Path(backup.create(workspace=source, output=tmp_path / "symbols.tar.gz")["path"])
+        assert str(stored.relative_to(source)) in _names(archive)
+        stored.unlink()
+        target = tmp_path / "two"
+        backup.restore(archive, workspace=target)
+        with contextlib.closing(store.connect(target / "reportal.db")) as conn:
+            restored = symbols.get_file(conn, binary_id=1)
+        assert restored["path"] == str(target / stored.relative_to(source))
+        assert Path(restored["path"]).read_bytes() == data
+
     def test_a_round_trip_into_another_directory(self, tmp_path: Path) -> None:
         source = _workspace(tmp_path / "one")
         archive = Path(backup.create(workspace=source, output=tmp_path / "round.tar.gz")["path"])
@@ -335,6 +359,23 @@ class TestRestore:
 
 
 class TestManifest:
+    @pytest.mark.parametrize("missing", ["reportal.db", "reportal.toml", "reports/1/report.html"])
+    def test_missing_declared_files_leave_existing_state_untouched(
+        self, tmp_path: Path, missing: str
+    ) -> None:
+        source = _workspace(tmp_path / "one")
+        archive = Path(backup.create(workspace=source, output=tmp_path / "base.tar.gz")["path"])
+        broken = _rewrite(
+            archive,
+            lambda member, payload: None if member.name == missing else (member.name, payload),
+        )
+        target = _workspace(tmp_path / "two")
+        before = (target / "reportal.db").read_bytes()
+        with pytest.raises(backup.BackupError, match="missing"):
+            backup.restore(broken, workspace=target, overwrite=True)
+        assert (target / "reportal.db").read_bytes() == before
+        assert (target / "reports/1/report.html").read_text() == "<html></html>"
+
     def test_a_plain_tar_is_refused(self, tmp_path: Path) -> None:
         target = tmp_path / "not-a-backup.tar.gz"
         with tarfile.open(target, "w:gz") as tar:
