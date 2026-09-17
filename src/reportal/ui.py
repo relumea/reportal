@@ -18,12 +18,15 @@ request-time level.  Already-compressed formats and tiny bodies are left alone.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import mimetypes
+from email.utils import formatdate, parsedate
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from starlette.responses import FileResponse, Response
+from starlette.staticfiles import NotModifiedResponse
 
 from reportal import landing
 from reportal._paths import reports_dir
@@ -187,26 +190,52 @@ def _compressed_response(path: Path, *, cache_control: str) -> Response | None:
     return Response(
         content=body,
         media_type=media_type,
-        headers={**headers_base, "Content-Encoding": "gzip"},
+        headers={
+            **headers_base,
+            "Content-Encoding": "gzip",
+            "ETag": f'"{hashlib.sha256(body).hexdigest()}"',
+            "Last-Modified": formatdate(path.stat().st_mtime, usegmt=True),
+        },
     )
 
 
-def _file_under(root: Path, relative: str, *, cache_control: str | None = None) -> Response:
+def _revalidate(response: Response, request: Request) -> Response:
+    if isinstance(response, FileResponse):
+        response.set_stat_headers(Path(response.path).stat())
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match is not None:
+        etag = response.headers["etag"]
+        matched = if_none_match.strip() == "*" or etag in (
+            tag.strip().removeprefix("W/") for tag in if_none_match.split(",")
+        )
+    else:
+        modified_since = parsedate(request.headers.get("if-modified-since", ""))
+        last_modified = parsedate(response.headers.get("last-modified", ""))
+        matched = (
+            modified_since is not None
+            and last_modified is not None
+            and modified_since >= last_modified
+        )
+    return NotModifiedResponse(response.headers) if matched else response
+
+
+def _file_under(
+    root: Path, relative: str, request: Request, *, cache_control: str | None = None
+) -> Response:
     """Serve *relative* under *root*, compressed when that pays off."""
     candidate = _resolve_under(root, relative)
     control = cache_control if cache_control is not None else SHELL_CACHE_CONTROL
-    compressed = _compressed_response(candidate, cache_control=control)
-    if compressed is not None:
-        return compressed
-    response = FileResponse(candidate)
-    response.headers["Cache-Control"] = control
-    if candidate.suffix.lower() in COMPRESSIBLE_SUFFIXES:
-        response.headers["Vary"] = "Accept-Encoding"
-    return response
+    response = _compressed_response(candidate, cache_control=control)
+    if response is None:
+        response = FileResponse(candidate)
+        response.headers["Cache-Control"] = control
+        if candidate.suffix.lower() in COMPRESSIBLE_SUFFIXES:
+            response.headers["Vary"] = "Accept-Encoding"
+    return _revalidate(response, request)
 
 
 @router.get("/")
-def index() -> Response:
+def index(request: Request) -> Response:
     """Serve the built SPA shell, or a 503 when the frontend was never built.
 
     The entry page names the deploy's own asset hashes, so it is answered
@@ -216,7 +245,7 @@ def index() -> Response:
     root = dist_dir()
     if not (root / APP_INDEX).is_file():
         raise json_error(503, error="ui-not-built", detail=UI_NOT_BUILT_DETAIL)
-    return _file_under(root, APP_INDEX, cache_control=SHELL_CACHE_CONTROL)
+    return _file_under(root, APP_INDEX, request, cache_control=SHELL_CACHE_CONTROL)
 
 
 @router.get("/pricing")
@@ -239,7 +268,7 @@ def pricing() -> Response:
 
 
 @router.get("/static/{path:path}")
-def asset(path: str) -> Response:
+def asset(path: str, request: Request) -> Response:
     """Serve one built SPA asset, cached by content address when it has one.
 
     Vite writes each bundle under a name carrying its content hash, so the
@@ -248,16 +277,16 @@ def asset(path: str) -> Response:
     """
     hashed = Path(path).parent.as_posix() == ASSET_DIRECTORY
     control = ASSET_CACHE_CONTROL if hashed else SHELL_CACHE_CONTROL
-    return _file_under(dist_dir(), path, cache_control=control)
+    return _file_under(dist_dir(), path, request, cache_control=control)
 
 
 @router.get("/reports/{binary_id}/")
-def report_index(binary_id: int) -> Response:
+def report_index(binary_id: int, request: Request) -> Response:
     """Serve the entry page of a binary's generated report site."""
-    return _file_under(_report_root(binary_id), REPORT_INDEX)
+    return _file_under(_report_root(binary_id), REPORT_INDEX, request)
 
 
 @router.get("/reports/{binary_id}/{path:path}")
-def report_file(binary_id: int, path: str) -> Response:
+def report_file(binary_id: int, path: str, request: Request) -> Response:
     """Serve one file of a binary's generated report site."""
-    return _file_under(_report_root(binary_id), path)
+    return _file_under(_report_root(binary_id), path, request)

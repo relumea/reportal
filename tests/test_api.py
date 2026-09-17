@@ -2155,6 +2155,106 @@ class TestUi:
         # revalidated rather than pinned for a year.
         assert headers["Cache-Control"] == ui.SHELL_CACHE_CONTROL
 
+    def test_revalidatable_files_carry_validators(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._dist(
+            tmp_path,
+            monkeypatch,
+            {"index.html": "reportal", "favicon.svg": "<svg xmlns='x'/>"},
+        )
+        for path in ("/", "/static/favicon.svg"):
+            status, headers, _ = wsgi_request("GET", path)
+            assert status.startswith("200")
+            assert headers.get("ETag")
+            assert headers.get("Last-Modified")
+
+    def test_unchanged_shell_and_favicon_answer_304(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._dist(
+            tmp_path,
+            monkeypatch,
+            {"index.html": "reportal", "favicon.svg": "<svg xmlns='x'/>"},
+        )
+        for path in ("/", "/static/favicon.svg"):
+            _, headers, _ = wsgi_request("GET", path)
+            etag = headers["ETag"]
+            status, headers_304, body = wsgi_request("GET", path, headers={"If-None-Match": etag})
+            assert status.startswith("304")
+            assert headers_304["Cache-Control"] == ui.SHELL_CACHE_CONTROL
+            assert headers_304.get("ETag") == etag
+            assert body == b""
+
+    def test_changed_shell_revalidates_to_200(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        dist = self._dist(tmp_path, monkeypatch, {"index.html": "deploy one"})
+        _, headers, _ = wsgi_request("GET", "/")
+        (dist / "index.html").write_text("deploy two", encoding="utf-8")
+        status, headers_2, body = wsgi_request(
+            "GET", "/", headers={"If-None-Match": headers["ETag"]}
+        )
+        assert status.startswith("200")
+        assert body == b"deploy two"
+        assert headers_2["ETag"] != headers["ETag"]
+
+    def test_weak_validator_is_still_compared(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._dist(tmp_path, monkeypatch, {"index.html": "reportal"})
+        _, headers, _ = wsgi_request("GET", "/")
+        weak = f"W/{headers['ETag']}"
+        status, _, _ = wsgi_request("GET", "/", headers={"If-None-Match": weak})
+        assert status.startswith("304")
+
+    @pytest.mark.parametrize("encoding", ["identity", "gzip", "br"])
+    def test_encoded_shell_revalidation(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encoding: str
+    ) -> None:
+        payload = "<p>reportal</p>" * 100
+        dist = self._dist(tmp_path, monkeypatch, {"index.html": payload})
+        if encoding == "br":
+            (dist / "index.html.br").write_bytes(b"brotli-payload")
+        _, headers, original = wsgi_request("GET", "/", headers={"Accept-Encoding": encoding})
+        assert len(original) == int(headers["Content-Length"])
+        if encoding != "identity":
+            assert headers["Content-Encoding"] == encoding
+        status, revalidated, body = wsgi_request(
+            "GET",
+            "/",
+            headers={"Accept-Encoding": encoding, "If-None-Match": headers["ETag"]},
+        )
+        assert status.startswith("304")
+        assert body == b""
+        assert "Content-Length" not in revalidated
+        assert "Content-Encoding" not in revalidated
+        assert revalidated["Vary"] == "Accept-Encoding"
+        assert revalidated["ETag"] == headers["ETag"]
+        if encoding != "identity":
+            status, _, body = wsgi_request("GET", "/", headers={"If-None-Match": headers["ETag"]})
+            assert status.startswith("200")
+            assert body == payload.encode()
+
+    def test_date_revalidation_and_etag_precedence(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._dist(tmp_path, monkeypatch, {"index.html": "reportal"})
+        _, headers, _ = wsgi_request("GET", "/")
+        for date, expected in [(headers["Last-Modified"], "304"), ("invalid", "200")]:
+            status, _, _ = wsgi_request("GET", "/", headers={"If-Modified-Since": date})
+            assert status.startswith(expected)
+        status, _, body = wsgi_request(
+            "GET",
+            "/",
+            headers={"If-Modified-Since": headers["Last-Modified"], "If-None-Match": '"stale"'},
+        )
+        assert status.startswith("200")
+        assert body == b"reportal"
+        status, _, body = wsgi_request("GET", "/", headers={"If-None-Match": "*"})
+        assert status.startswith("304")
+        assert body == b""
+
     def test_static_traversal_blocked(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
