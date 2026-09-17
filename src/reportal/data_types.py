@@ -451,10 +451,8 @@ def _size_of_type_text(type_text: str) -> int:
     """Return the byte size of a target type text, 0 when it is not a known primitive."""
     body, count = _split_array((type_text or "").strip())
     body, stars = _split_stars(body)
-    if stars:
-        return POINTER_SIZE
-    element = PRIMITIVE_SIZES.get(body, 0)
-    return element * count if count is not None else element
+    size, _ = _resolve(body, pointer=stars > 0, count=count)
+    return size
 
 
 def _parse_member_line(line: str) -> tuple[str, str, bool, int | None, int | None]:

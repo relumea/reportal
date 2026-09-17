@@ -94,6 +94,24 @@ class TestParseKinds:
         assert parsed["element_count"] == 4
         assert parsed["size"] == 16
 
+    @pytest.mark.parametrize(
+        ("target", "expected_size"),
+        [
+            ("char", 1),
+            ("char[3]", 3),
+            ("char *", 4),
+            ("char *[0]", 0),
+            ("char *[1]", 4),
+            ("char *[3]", 12),
+            ("Unknown *[3]", 12),
+            ("Unknown[3]", 0),
+        ],
+    )
+    def test_recompute_target_size(self, target: str, expected_size: int) -> None:
+        members, size = data_types.recompute(data_types.KIND_TYPEDEF, [], target, None)
+        assert members == []
+        assert size == expected_size
+
     def test_function_type(self) -> None:
         parsed = data_types.parse_definition(FUNCTION_DEFINITION)
         assert parsed["kind"] == data_types.KIND_FUNCTION
