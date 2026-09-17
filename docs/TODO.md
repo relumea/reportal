@@ -302,7 +302,8 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   renderer is a small subset converter or a build-time step.
 - Size: M.
 - **Status:** Closed.  `docs.py` resolves the documents (`REPORTAL_DOCS`, then
-  the workspace's `docs/`, then the checkout beside the package) and answers a
+  the workspace's `docs/`, then the checkout beside the package, then the
+  wheel's packaged `manual/`) and answers a
   page as blocks rather than markup: `GET /api/docs` for the index,
   `GET /api/docs/<slug>` for one page's title, its on-this-page headings and its
   blocks (headings, paragraphs, lists with each item's depth, fenced code,
@@ -313,8 +314,11 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   document text is injected as HTML and no markdown dependency is added.  The
   subset is the deliberate ceiling: a construct outside it becomes a paragraph,
   which is readable rather than lost.  `CHANGELOG.md` is new and holds 1.2.0
-  (this backlog, closed) and 1.1.0.  A wheel with neither a workspace nor a
-  checkout answers 404 `no-docs` rather than an empty page.  The hosted
+  (this backlog, closed) and 1.1.0.  A wheel without workspace or checkout docs
+  serves its packaged manual and changelog; 404 `no-docs` applies when no
+  directory resolves, including an invalid explicit `REPORTAL_DOCS` override.
+  `tests/test_docs.py::TestDirectory` covers the resolution order and packaged
+  fallback.  The hosted
   portal's per-page previous/next navigation shipped later: `docs.neighbours`
   reads the same `_page_files` order the index numbers, `docs.page` answers the
   pair beside the blocks (null at either end), and the view renders it as a
