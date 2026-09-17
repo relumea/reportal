@@ -139,7 +139,7 @@ def proposals(result: dict[str, Any], functions: Sequence[dict[str, Any]]) -> li
                 "name": _text(candidate.get("name"), f"sub_{va:x}"),
                 "module": _text(candidate.get("module"), UNKNOWN_MODULE),
                 "kind": _text(candidate.get("kind"), "unknown"),
-                "confidence": round(_confidence(candidate.get("confidence")), 2),
+                "confidence": _confidence(candidate.get("confidence")),
                 "function_id": None if function is None else int(function["id"]),
                 "size": 0 if function is None else int(function["size"]),
             }

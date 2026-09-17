@@ -144,6 +144,32 @@ class TestRunLibrary:
         assert payload["candidates"] == 2
         assert any("dropped" in note for note in payload["notes"])
 
+    @pytest.mark.parametrize(
+        ("confidence", "minimum", "expected"),
+        [(0.699, 0.7, 0), (0.701, 0.7005, 1), (0.7, 0.7, 1)],
+    )
+    def test_the_threshold_uses_unrounded_confidence(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        confidence: float,
+        minimum: float,
+        expected: int,
+    ) -> None:
+        binary_id = _seed(conn, tmp_path)
+
+        def identify(_project: str | Path) -> dict[str, Any]:
+            return {"candidates": [{**CANDIDATES[0], "confidence": confidence}]}
+
+        payload = library.run_library(
+            conn, binary_id=binary_id, engine=None, ident=identify, min_confidence=minimum
+        )
+        assert payload["candidates"] == expected
+        assert len(payload["components"]) == expected
+        assert library.describe(conn, binary_id)["candidates"] == expected
+        if expected:
+            assert payload["functions"][0]["confidence"] == confidence
+
     def test_a_missing_context_is_refused(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         binary_id = _seed(conn, tmp_path, context=False)
         with pytest.raises(library.LibraryError) as failure:
