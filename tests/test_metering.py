@@ -82,24 +82,34 @@ class TestLedger:
         assert metering.period_usage(conn, organisation_id, metering.KIND_TOKENS) == 1000
 
     def test_a_new_period_moves_the_window_without_deleting_history(
-        self, conn: sqlite3.Connection
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The invoice that already covered those rows still has them."""
+        old_start = "2026-01-01T00:00:00+00:00"
+        new_start = "2026-02-01T00:00:00+00:00"
+        monkeypatch.setattr(auth, "now", lambda: old_start)
         organisation_id = _organisation(conn)
         metering.record_usage(conn, organisation_id, metering.KIND_TOKENS, 4000)
-        conn.execute(
-            f"UPDATE {metering.USAGE_TABLE} SET occurred_at = '2000-01-01T00:00:00+00:00' "
-            "WHERE organisation_id = ?",
+        assert metering.period_started_at(conn, organisation_id) == old_start
+        assert metering.period_usage(conn, organisation_id, metering.KIND_TOKENS) == 4000
+        history = conn.execute(
+            f"SELECT * FROM {metering.USAGE_TABLE} WHERE organisation_id = ? ORDER BY id",
             (organisation_id,),
-        )
-        conn.commit()
+        ).fetchall()
+        assert len(history) == 1
+
+        monkeypatch.setattr(auth, "now", lambda: new_start)
         metering.start_period(conn, organisation_id)
+
+        assert metering.period_started_at(conn, organisation_id) == new_start
         assert metering.period_usage(conn, organisation_id, metering.KIND_TOKENS) == 0
-        total = conn.execute(
-            f"SELECT COUNT(*) AS n FROM {metering.USAGE_TABLE} WHERE organisation_id = ?",
+        remaining = conn.execute(
+            f"SELECT * FROM {metering.USAGE_TABLE} WHERE organisation_id = ? ORDER BY id",
             (organisation_id,),
-        ).fetchone()
-        assert int(total["n"]) == 1
+        ).fetchall()
+        assert remaining == history
+        metering.record_usage(conn, organisation_id, metering.KIND_TOKENS, 1000)
+        assert metering.period_usage(conn, organisation_id, metering.KIND_TOKENS) == 1000
 
     def test_the_ledger_separates_dimensions(self, conn: sqlite3.Connection) -> None:
         organisation_id = _organisation(conn)

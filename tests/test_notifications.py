@@ -153,15 +153,25 @@ class TestFeed:
         assert [item["message"] for item in payload["notifications"]] == ["new"]
         assert payload["since"] == cutoff
 
-    def test_the_latest_time_covers_both_sources(self, conn: sqlite3.Connection) -> None:
+    def test_the_latest_time_covers_both_sources(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         assert notifications.latest(conn) is None
+        logged = "2026-01-01T00:00:00+00:00"
+        written = "2026-01-01T00:00:01+00:00"
+        logged_again = "2026-01-01T00:00:02+00:00"
+        monkeypatch.setattr(store, "now", lambda: logged)
         _, analysis_id = _analysis(conn)
         analysis_log.append_entry(conn, analysis_id, message="a", severity="info")
-        logged = notifications.latest(conn)
-        assert logged is not None
-        _action(conn, "b")
+        assert notifications.latest(conn) == logged
 
-        assert str(notifications.latest(conn)) >= str(logged)
+        monkeypatch.setattr(store, "now", lambda: written)
+        _action(conn, "b")
+        assert notifications.latest(conn) == written
+
+        monkeypatch.setattr(store, "now", lambda: logged_again)
+        analysis_log.append_entry(conn, analysis_id, message="c", severity="info")
+        assert notifications.latest(conn) == logged_again
 
     def test_limit_bounds_the_page_and_says_so(self, conn: sqlite3.Connection) -> None:
         for index in range(4):

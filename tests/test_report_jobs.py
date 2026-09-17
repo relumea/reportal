@@ -93,13 +93,18 @@ class TestPdfJob:
         self, conn: sqlite3.Connection, tmp_path: Path, workspace: Path
     ) -> None:
         binary_id = _binary(conn, tmp_path)
-        jobs.submit(conn, kind="report-pdf", binary_id=binary_id)
-        jobs.run_pending(conn, limit=1)
+        first = jobs.submit(conn, kind="report-pdf", binary_id=binary_id)
+        finished = jobs.run_pending(conn, limit=1)[0]
+        assert finished["id"] == first["id"]
+        assert finished["status"] == jobs.STATUS_DONE
+        second = jobs.submit(conn, kind="report-pdf", binary_id=binary_id)
+        assert second["id"] != first["id"]
 
         latest = jobs.latest_job(conn, kind="report-pdf", binary_id=binary_id)
 
         assert latest is not None
-        assert latest["status"] == jobs.STATUS_DONE
+        assert latest["id"] == second["id"]
+        assert latest["status"] == jobs.STATUS_QUEUED
         assert jobs.latest_job(conn, kind="report-pdf", binary_id=4242) is None
 
     def test_an_unknown_kind_is_refused_by_the_reader(self, conn: sqlite3.Connection) -> None:
