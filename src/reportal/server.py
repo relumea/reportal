@@ -675,6 +675,8 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
         request.headers.get(observability.REQUEST_ID_HEADER)
     )
     request_id_token = observability.set_request_id(request_id)
+    request.state.request_id = request_id
+    failed = False
     started = time.perf_counter()
     actor = journal.LOCAL_ACTOR
     actor_user_id: int | None = None
@@ -725,29 +727,32 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
                 )
             response = await call_next(request)
             return response
+    except Exception:
+        failed = True
+        raise
     finally:
         duration_ms = int((time.perf_counter() - started) * 1000)
-        if response is not None and (
+        if (response is not None or failed) and (
             request.url.path.startswith("/api") or _is_mcp_path(request.url.path)
         ):
-            observability.record_request(status=response.status_code, duration_ms=duration_ms)
-            response.headers[observability.REQUEST_ID_HEADER] = request_id
+            status = response.status_code if response is not None else 500
+            observability.record_request(status=status, duration_ms=duration_ms)
+            if response is not None:
+                response.headers[observability.REQUEST_ID_HEADER] = request_id
             if observability.should_log_completion(
                 path=request.url.path,
-                status=response.status_code,
+                status=status,
                 duration_ms=duration_ms,
             ):
                 _log_api_completion(
                     method=request.method,
                     path=request.url.path,
-                    status=response.status_code,
+                    status=status,
                     duration_ms=duration_ms,
                     request_id=request_id,
                     actor=actor,
                 )
-            for key, value in SECURITY_HEADERS:
-                response.headers[key] = value
-        elif response is not None:
+        if response is not None:
             for key, value in SECURITY_HEADERS:
                 response.headers[key] = value
         _ACCEPT_ENCODING.reset(token)
@@ -804,20 +809,27 @@ async def _handle_http_exception(request: Request, exc: StarletteHTTPException) 
 @app.exception_handler(Exception)
 async def _handle_error(request: Request, exc: Exception) -> Response:
     """Log unhandled errors and keep the JSON contract for API routes."""
+    request_id = getattr(request.state, "request_id", observability.current_request_id())
     _log.error(
         "Unhandled error serving %s %s request_id=%s",
         request.method,
         request.url.path,
-        observability.current_request_id(),
+        request_id,
         exc_info=exc,
     )
     if request.url.path.startswith("/api/") or _is_mcp_path(request.url.path):
-        return json_error(500, error="internal server error")
-    return Response(
-        content=b"<html><body><h1>500 Internal Server Error</h1></body></html>",
-        status_code=500,
-        media_type="text/html",
-    )
+        response: Response = json_error(500, error="internal server error")
+    else:
+        response = Response(
+            content=b"<html><body><h1>500 Internal Server Error</h1></body></html>",
+            status_code=500,
+            media_type="text/html",
+        )
+    if request_id:
+        response.headers[observability.REQUEST_ID_HEADER] = request_id
+    for key, value in SECURITY_HEADERS:
+        response.headers[key] = value
+    return response
 
 
 def run(host: str, port: int) -> None:

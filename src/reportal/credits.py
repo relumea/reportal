@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from decimal import Decimal
 
 from reportal import llm
 
@@ -96,6 +97,9 @@ class TaskProfile:
 
     def cogs_usd(self) -> float:
         """What one call of this task costs in inference, at the current rates."""
+        return float(self._cogs_usd())
+
+    def _cogs_usd(self) -> Decimal:
         # Imported lazily: plans reads this module for credit cogs, so a
         # top-level import would close a cycle.
         from reportal import plans
@@ -103,7 +107,10 @@ class TaskProfile:
         input_rate, output_rate = plans.MODEL_RATES.get(
             plans.COST_MODEL, max(plans.MODEL_RATES.values(), key=lambda pair: pair[1])
         )
-        return self.input_tokens * input_rate / 1e6 + self.output_tokens * output_rate / 1e6
+        return (
+            self.input_tokens * Decimal(str(input_rate))
+            + self.output_tokens * Decimal(str(output_rate))
+        ) / 1_000_000
 
 
 # Every billable AI task, keyed by the name the API, CLI and MCP all use.
@@ -229,7 +236,7 @@ def credits_for_budget(usd: float) -> int:
         return 0
     if not math.isfinite(usd) or usd <= 0:
         return 0
-    return int(usd / credit_cogs_usd())
+    return int(Decimal(str(usd)) / TASK_PROFILES[REFERENCE_TASK]._cogs_usd())
 
 
 def band_for(input_tokens: int) -> tuple[str, int]:
@@ -251,8 +258,8 @@ def base_credits(task: str) -> int:
     """
     profile = TASK_PROFILES.get(task)
     if profile is None:
-        profile = max(TASK_PROFILES.values(), key=lambda entry: entry.cogs_usd())
-    return max(1, math.ceil(profile.cogs_usd() / credit_cogs_usd()))
+        profile = max(TASK_PROFILES.values(), key=lambda entry: entry._cogs_usd())
+    return max(1, math.ceil(profile._cogs_usd() / TASK_PROFILES[REFERENCE_TASK]._cogs_usd()))
 
 
 def cost_of(task: str, input_tokens: int = 0) -> int:

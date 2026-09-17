@@ -11,6 +11,10 @@ price supports is not.
 
 from __future__ import annotations
 
+import math
+from dataclasses import replace
+from decimal import Decimal
+
 import pytest
 
 from reportal import credits as credits_mod
@@ -64,6 +68,28 @@ class TestCostModel:
     )
     def test_blended_rate_preserves_decimal_prices(self, model: str, expected: float) -> None:
         assert plans.blended_usd_per_mtok(model) == expected
+
+    @pytest.mark.parametrize("multiple", [1, 9, 18, 29])
+    @pytest.mark.parametrize("extra_tokens", [0, 1])
+    def test_profile_credit_rounding(
+        self, monkeypatch: pytest.MonkeyPatch, multiple: int, extra_tokens: int
+    ) -> None:
+        reference = credits_mod.TASK_PROFILES[credits_mod.REFERENCE_TASK]
+        profile = replace(
+            reference,
+            name="scaled-profile",
+            input_tokens=reference.input_tokens * multiple + extra_tokens,
+            visible_tokens=reference.output_tokens * multiple,
+            thinking_ratio=1.0,
+        )
+        monkeypatch.setitem(credits_mod.TASK_PROFILES, profile.name, profile)
+        assert credits_mod.base_credits(profile.name) == multiple + extra_tokens
+
+    @pytest.mark.parametrize("count", [1, 9, 18, 29])
+    def test_credit_budget_boundary(self, count: int) -> None:
+        budget = float(Decimal("0.003832") * count)
+        assert credits_mod.credits_for_budget(budget) == count
+        assert credits_mod.credits_for_budget(math.nextafter(budget, 0.0)) == count - 1
 
     def test_a_non_positive_budget_buys_no_tokens(self) -> None:
         """A negative or non-finite budget must not invent a negative allowance."""

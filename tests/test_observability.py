@@ -80,6 +80,46 @@ class TestHttpCounters:
         assert snapshot["errors_4xx"] >= 1
         assert snapshot["errors_5xx"] == 0
 
+    @pytest.mark.parametrize("failure_site", ["route", "authentication"])
+    def test_unhandled_failure_is_counted_and_correlated(
+        self,
+        failure_site: str,
+        portal_db: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from reportal import server
+
+        failure = sqlite3.OperationalError("database unavailable")
+        if failure_site == "route":
+            monkeypatch.setattr(store, "list_binaries", mock.Mock(side_effect=failure))
+        else:
+            monkeypatch.setattr(server, "authenticate", mock.Mock(side_effect=failure))
+        observability.reset_http_stats()
+        with caplog.at_level(logging.INFO, logger="reportal"):
+            status, headers, body = wsgi_request(
+                "GET", "/api/binaries", headers={REQUEST_ID_HEADER: "failed-request"}
+            )
+        assert status.startswith("500")
+        assert headers[REQUEST_ID_HEADER] == "failed-request"
+        assert json_body(body, headers)["error"] == "internal server error"
+        snapshot = observability.http_snapshot()
+        assert snapshot["requests"] == 1
+        assert snapshot["errors_5xx"] == 1
+        assert snapshot["errors_4xx"] == 0
+        completions = [r for r in caplog.records if r.getMessage().startswith("request method=")]
+        assert len(completions) == 1
+        assert completions[0].levelno == logging.ERROR
+        assert "status=500" in completions[0].getMessage()
+        assert "duration_ms=" in completions[0].getMessage()
+        assert "request_id=failed-request" in completions[0].getMessage()
+        errors = [r for r in caplog.records if r.exc_info]
+        assert len(errors) == 1
+        assert errors[0].exc_info is not None
+        assert errors[0].exc_info[1] is failure
+        assert "request_id=failed-request" in errors[0].getMessage()
+        assert observability.current_request_id() == ""
+
     def test_a_binary_list_emits_a_completion_line(
         self, portal_db: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
