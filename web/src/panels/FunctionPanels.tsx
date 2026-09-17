@@ -632,6 +632,17 @@ export function MatchesPanel({
                 render: (row) => Number(row.confidence).toFixed(3),
               },
               {
+                label: "Arch",
+                render: (row) =>
+                  row.source_arch || row.candidate_arch ? (
+                    <Badge hue={row.cross_arch ? "near" : undefined}>
+                      {row.source_arch || NA} / {row.candidate_arch || NA}
+                    </Badge>
+                  ) : (
+                    NA
+                  ),
+              },
+              {
                 label: "Transfer",
                 render: (row) => (
                   <div className="actions-cell">

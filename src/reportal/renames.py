@@ -307,7 +307,8 @@ def apply_renames(
     *,
     function_id: int,
     applied: Sequence[Any] | None = None,
-    actor: str = DEFAULT_ACTOR,
+    actor: str | None = None,
+    actor_user_id: int | None = None,
     rename_function: bool = False,
 ) -> dict[str, Any]:
     """Apply rename suggestions to the function's stored decompilation.
@@ -332,6 +333,12 @@ def apply_renames(
         raise NoDecompilationError(f"function {function_id} has no stored decompilation")
     source = str(stored["code"])
     backend = str(stored["backend"])
+    from reportal import journal
+
+    resolved_actor = actor if actor is not None else journal.current_actor() or DEFAULT_ACTOR
+    resolved_user_id = (
+        actor_user_id if actor_user_id is not None else journal.current_actor_user_id()
+    )
     named = bool(stored.get("named"))
     entries = _apply_entries(conn, function_id, applied)
     working = source
@@ -362,7 +369,7 @@ def apply_renames(
                 "previous_backend": backend,
                 "previous_named": named,
                 "applied": applied_list,
-                "actor": actor,
+                "actor": resolved_actor,
             },
             "",
         )
@@ -374,8 +381,9 @@ def apply_renames(
                         conn,
                         function_id,
                         new_name=suggestion["to"],
-                        actor=actor,
+                        actor=resolved_actor,
                         source=RENAME_SOURCE,
+                        actor_user_id=resolved_user_id,
                     )
     return {
         "function_id": function_id,

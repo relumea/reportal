@@ -33,18 +33,169 @@ import { ROLES } from "../constants";
 import type {
   ActivityItem,
   ActivityPayload,
+  ApiKeyCreated,
+  ApiKeysPayload,
   FeedbackPayload,
   Me,
   OrganisationRow,
   OrganisationsPayload,
   SecretRow,
   SecretsPayload,
+  TeamInviteCreated,
+  TeamInvitesPayload,
   TeamRow,
   TeamsPayload,
   UserRow,
   UsersPayload,
 } from "../types";
 import { useAsync } from "../useAsync";
+
+function ApiKeysPanel(): ReactNode {
+  const keys = useAsync(() => api<ApiKeysPayload>("/iam/keys"), []);
+  const [name, setName] = useState("");
+  const [minted, setMinted] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const rows = keys.data?.keys ?? [];
+  const used = keys.data?.used ?? 0;
+  const limit = keys.data?.limit;
+
+  const mint = (): void => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setError(null);
+    setBusy(true);
+    api<ApiKeyCreated>("/iam/keys", { method: "POST", json: { name: trimmed } })
+      .then((created) => {
+        setMinted(created.token);
+        setName("");
+        keys.reload();
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <Panel
+      title="API keys"
+      subtitle="Named extra keys beside the login token. The token is shown once."
+    >
+      {error ? <ErrorNote error={error} /> : null}
+      <Toolbar>
+        <Field label="Name">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") mint();
+            }}
+          />
+        </Field>
+        <Button tone="primary" pending={busy} disabled={!name.trim()} onClick={mint}>
+          Mint key
+        </Button>
+        <Muted>
+          {used} of {limit === null || limit === undefined ? "unlimited" : String(limit)} used
+        </Muted>
+      </Toolbar>
+      {minted ? (
+        <>
+          <Muted>This token is shown once; only its digest is stored.</Muted>
+          <CodeBlock text={minted} title="API key" />
+        </>
+      ) : null}
+      {keys.data === undefined ? (
+        <Loading label="Loading API keys" />
+      ) : (
+        <DataTable
+          rows={rows}
+          rowKey={(row) => row.id}
+          empty={<Muted>No named keys. The login token still authenticates.</Muted>}
+          columns={[
+            { label: "ID", key: "id", numeric: true },
+            { label: "Name", key: "name" },
+            { label: "Created", key: "created_at", mono: true },
+            {
+              label: "Last used",
+              render: (row) => row.last_used_at || "never",
+              mono: true,
+            },
+            {
+              label: "",
+              render: (row) => (
+                <ConfirmButton
+                  label="Revoke"
+                  message={`Revoke API key ${row.name}?`}
+                  pending={busy}
+                  onConfirm={() => {
+                    setError(null);
+                    setBusy(true);
+                    api(`/iam/keys/${row.id}`, { method: "DELETE" })
+                      .then(() => keys.reload())
+                      .catch((failure: unknown) => setError(failure))
+                      .finally(() => setBusy(false));
+                  }}
+                />
+              ),
+            },
+          ]}
+        />
+      )}
+    </Panel>
+  );
+}
+
+function SignupPanel({ onSignedUp }: { onSignedUp: () => void }): ReactNode {
+  const [name, setName] = useState("");
+  const [token, setToken] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <Panel
+      title="Create a workspace"
+      subtitle="SaaS signup: one user, one organisation, one owned team on the free plan. The token is shown once."
+    >
+      <Toolbar>
+        <Field label="Name">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Button
+          tone="primary"
+          pending={busy}
+          disabled={!name.trim()}
+          onClick={() => {
+            setError(null);
+            setBusy(true);
+            api<UserRow & { token: string }>("/signup", {
+              method: "POST",
+              json: { name: name.trim() },
+            })
+              .then((created) => {
+                storeToken(created.token);
+                setToken(created.token);
+                setName("");
+                onSignedUp();
+              })
+              .catch((failure: unknown) => setError(failure))
+              .finally(() => setBusy(false));
+          }}
+        >
+          Create workspace
+        </Button>
+      </Toolbar>
+      {error ? <ErrorNote error={error} /> : null}
+      {token ? (
+        <>
+          <Muted>Saved in this browser. This token is shown once; only its digest is stored.</Muted>
+          <CodeBlock text={token} title="bearer token" />
+        </>
+      ) : null}
+    </Panel>
+  );
+}
 
 /** The token this browser sends, with the control that sets or clears it. */
 function TokenField({ onSaved }: { onSaved: () => void }): ReactNode {
@@ -425,6 +576,145 @@ function TeamMembers({
   );
 }
 
+/** Invite codes: mint one per team, redeem one code to join. */
+function InvitesPanel(): ReactNode {
+  const teams = useAsync(() => api<TeamsPayload>("/teams"), []);
+  const [teamId, setTeamId] = useState("");
+  const [code, setCode] = useState("");
+  const [minted, setMinted] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+  const invites = useAsync(
+    () => api<TeamInvitesPayload>(`/teams/${teamId}/invites`),
+    [teamId],
+    teamId !== "",
+  );
+  const teamRows = teams.data?.teams ?? [];
+
+  const mint = (): void => {
+    if (!teamId) return;
+    setError(null);
+    setNote("");
+    setBusy(true);
+    api<TeamInviteCreated>(`/teams/${teamId}/invites`, { method: "POST" })
+      .then((created) => {
+        setMinted(created.code);
+        invites.reload();
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+
+  const join = (): void => {
+    if (!code.trim()) return;
+    setError(null);
+    setNote("");
+    setBusy(true);
+    api("/teams/join", { method: "POST", json: { code: code.trim() } })
+      .then(() => {
+        setNote("Joined the team.");
+        setCode("");
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <Panel
+      title="Invites"
+      subtitle="A team owner mints a single-use code; anyone with a user redeems it to join."
+    >
+      {error ? <ErrorNote error={error} /> : null}
+      {note ? <Note>{note}</Note> : null}
+      <Toolbar>
+        <Field label="Team id">
+          <select
+            aria-label="Team id"
+            value={teamId}
+            onChange={(event) => {
+              setTeamId(event.target.value);
+              setMinted("");
+            }}
+          >
+            <option value="">pick a team</option>
+            {teamRows.map((team) => (
+              <option key={team.id} value={String(team.id)}>
+                {team.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Button tone="primary" pending={busy} disabled={!teamId} onClick={mint}>
+          Mint invite
+        </Button>
+        <Field label="Invite code">
+          <input
+            placeholder="invite_..."
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") join();
+            }}
+          />
+        </Field>
+        <Button pending={busy} disabled={!code.trim()} onClick={join}>
+          Join team
+        </Button>
+      </Toolbar>
+      {minted ? (
+        <>
+          <Muted>This code is shown once; only its digest is stored.</Muted>
+          <CodeBlock text={minted} title="invite code" />
+        </>
+      ) : null}
+      {teamId && invites.data ? (
+        <DataTable
+          rows={invites.data.invites}
+          rowKey={(row) => row.id}
+          empty={<Muted>No invites minted for this team.</Muted>}
+          columns={[
+            { label: "ID", key: "id", numeric: true },
+            { label: "Minted by", render: (row) => row.created_by ?? "n/a" },
+            { label: "Minted", key: "created_at", mono: true },
+            { label: "Expires", key: "expires_at", mono: true },
+            {
+              label: "Status",
+              render: (row) =>
+                row.used_by ? (
+                  <Badge tone="warn">used</Badge>
+                ) : row.expired ? (
+                  <Badge tone="warn">expired</Badge>
+                ) : (
+                  <Badge tone="ok">open</Badge>
+                ),
+            },
+            {
+              label: "",
+              render: (row) =>
+                row.used_by ? null : (
+                  <ConfirmButton
+                    label="Revoke"
+                    message={`Revoke unused invite ${row.id}?`}
+                    pending={busy}
+                    onConfirm={() => {
+                      setError(null);
+                      setBusy(true);
+                      api(`/teams/${teamId}/invites/${row.id}`, { method: "DELETE" })
+                        .then(() => invites.reload())
+                        .catch((failure: unknown) => setError(failure))
+                        .finally(() => setBusy(false));
+                    }}
+                  />
+                ),
+            },
+          ]}
+        />
+      ) : null}
+    </Panel>
+  );
+}
+
 /** What was done here and by whom, plus the local feedback notes. */
 function ActivityPanel(): ReactNode {
   const [actor, setActor] = useState("");
@@ -699,6 +989,10 @@ export function UsersView(): ReactNode {
             rows={[
               ["mode", authRequired ? "token auth required" : "single local user"],
               ["you", me.data.user ? me.data.user.name : "no token in this browser"],
+              [
+                "login last used",
+                me.data.user ? me.data.user.last_used_at || "never" : NA,
+              ],
               ["role", me.data.role ?? NA],
               [
                 "permissions",
@@ -748,6 +1042,8 @@ export function UsersView(): ReactNode {
           }}
         />
       </Panel>
+      {authRequired && me.data?.user == null ? <SignupPanel onSignedUp={reload} /> : null}
+      {authRequired && me.data?.user ? <ApiKeysPanel /> : null}
       <Panel
         title="Users"
         subtitle={
@@ -795,6 +1091,11 @@ export function UsersView(): ReactNode {
                   row.disabled ? <Badge tone="warn">disabled</Badge> : <Badge tone="ok">active</Badge>,
               },
               { label: "Created", key: "created_at", mono: true },
+              {
+                label: "Last used",
+                render: (row) => row.last_used_at || "never",
+                mono: true,
+              },
               {
                 label: "Actions",
                 render: (row) => (
@@ -849,6 +1150,7 @@ export function UsersView(): ReactNode {
         ) : null}
       </Panel>
       <TeamsPanel users={rows} onChanged={reload} />
+      <InvitesPanel />
       <SecretsPanel />
       <ActivityPanel />
     </>

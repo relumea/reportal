@@ -926,6 +926,34 @@ class TestAddBinary:
         assert result.exit_code == 1
         assert "team-not-found" in result.output
 
+    def test_compiler_hint_stamps_the_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "portal.db"))
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ" + b"\x00" * 30)
+        result = runner.invoke(
+            cli.app, ["add-binary", str(target), "--compiler", "MinGW GCC", "--json"]
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            stored = store.get_binary(conn, int(payload["binary_id"]))
+        assert stored is not None
+        assert stored["compiler"] == "MinGW GCC"
+
+    def test_an_unknown_compiler_fails_before_open(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ" + b"\x00" * 30)
+        result = runner.invoke(cli.app, ["add-binary", str(target), "--compiler", "clang"])
+        assert result.exit_code == 1
+        assert "compiler must be one of" in result.output
+        assert not db.exists()
+
 
 class TestExtract:
     def _seed_archive(

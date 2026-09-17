@@ -117,7 +117,9 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     error       TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     started_at  TEXT NOT NULL DEFAULT '',
-    finished_at TEXT NOT NULL DEFAULT ''
+    finished_at TEXT NOT NULL DEFAULT '',
+    submitted_by TEXT NOT NULL DEFAULT '',
+    submitted_by_user_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON {TABLE}(status, id);
 CREATE INDEX IF NOT EXISTS idx_jobs_binary ON {TABLE}(binary_id);
@@ -127,6 +129,12 @@ CREATE INDEX IF NOT EXISTS idx_jobs_binary ON {TABLE}(binary_id);
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create the jobs table when the database predates it."""
     conn.executescript(_SCHEMA)
+    columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({TABLE})")}
+    if "submitted_by" not in columns:
+        conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN submitted_by TEXT NOT NULL DEFAULT ''")
+    if "submitted_by_user_id" not in columns:
+        conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN submitted_by_user_id INTEGER")
+    conn.commit()
 
 
 class ProgressPerform(Protocol):
@@ -428,6 +436,8 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
             _log.warning("job %s params_json is not a JSON object", job_id)
         params = {}
     result = _loads_column(raw_result, job_id=job_id, column="result_json") if raw_result else None
+    columns = set(row.keys())
+    raw_submitter_id = row["submitted_by_user_id"] if "submitted_by_user_id" in columns else None
     return {
         "id": job_id,
         "kind": str(row["kind"]),
@@ -443,6 +453,8 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "created_at": str(row["created_at"]),
         "started_at": str(row["started_at"]),
         "finished_at": str(row["finished_at"]),
+        "submitted_by": str(row["submitted_by"]) if "submitted_by" in columns else "",
+        "submitted_by_user_id": None if raw_submitter_id is None else int(raw_submitter_id),
         "live": str(row["status"]) in LIVE_STATUSES,
     }
 
@@ -595,12 +607,17 @@ def submit(
     kind: str,
     binary_id: int,
     params: Mapping[str, Any] | None = None,
+    submitted_by: str = "",
+    submitted_by_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Queue one job and return it; the caller decides whether to run it.
 
     A second submit of the same kind, binary and params while a matching job is
     still queued returns that row instead of inserting another: metered kinds
     (``ai-enrich``) and writers must not run twice for one double-click.
+    *submitted_by* names who queued it (and the stable id behind the name),
+    so the worker thread that later runs it records the submitter's identity
+    on the journal entries it writes.
 
     Raises :class:`KeyError` for an unknown binary, :class:`ValueError` for an
     unknown kind, for a parameter a kind does not take, for a parameter a kind
@@ -678,8 +695,18 @@ def submit(
         raise ValueError(f"the queue is full: {queued} jobs are waiting")
     cur = conn.execute(
         f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
-        " params_json, created_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?)",
-        (kind, binary_id, STATUS_QUEUED, "queued", params_json, store.now()),
+        " params_json, created_at, submitted_by, submitted_by_user_id)"
+        " VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?)",
+        (
+            kind,
+            binary_id,
+            STATUS_QUEUED,
+            "queued",
+            params_json,
+            store.now(),
+            submitted_by,
+            submitted_by_user_id,
+        ),
     )
     _prune(conn)
     conn.commit()
@@ -767,40 +794,46 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     The scan runs inside the same journaled action its synchronous route uses,
     so a queued run is revertible through the journal exactly like a direct one.
     An operation that fails records the failure and a bounded message; it never
-    raises, because a failed job is a result the caller polls for.
+    raises, because a failed job is a result the caller polls for.  The worker
+    thread re-enters the submitter's identity, so the entries carry who queued
+    the work rather than an empty actor.
     """
     spec = JOB_KINDS[job["kind"]]
     binary_id = int(job["binary_id"])
     params = dict(job.get("params") or {})
     job_id = int(job["id"])
+    raw_user_id = job.get("submitted_by_user_id")
+    submitter_id = int(raw_user_id) if isinstance(raw_user_id, int) else None
+    submitter = str(job.get("submitted_by") or "")
     started = time.perf_counter()
-    try:
-        scan_kind = spec.scan_kind_for(params)
-        if spec.perform_progress is not None:
-            payload = spec.perform_progress(
-                conn, binary_id, params, progress=_progress_sink(conn, job_id)
-            )
-        elif spec.perform is not None:
-            payload = spec.perform(conn, binary_id, params)
-        elif scan_kind is None:  # pragma: no cover - every other kind stores a scan
-            payload = spec.run(conn, binary_id, params)
-        else:
-            action = journal.new_action()
-            with journal.journaled(conn, action) as log:
-                payload = journal.journaled_scan(
-                    conn,
-                    log,
-                    binary_id,
-                    scan_kind,
-                    lambda: spec.run(conn, binary_id, params),
+    with journal.acting_as(submitter, user_id=submitter_id):
+        try:
+            scan_kind = spec.scan_kind_for(params)
+            if spec.perform_progress is not None:
+                payload = spec.perform_progress(
+                    conn, binary_id, params, progress=_progress_sink(conn, job_id)
                 )
-            payload = log.attach(payload)
-        failure = ""
-        failure_exc: BaseException | None = None
-    except Exception as exc:
-        payload = None
-        failure = f"{type(exc).__name__}: {exc}"
-        failure_exc = exc
+            elif spec.perform is not None:
+                payload = spec.perform(conn, binary_id, params)
+            elif scan_kind is None:  # pragma: no cover - every other kind stores a scan
+                payload = spec.run(conn, binary_id, params)
+            else:
+                action = journal.new_action()
+                with journal.journaled(conn, action) as log:
+                    payload = journal.journaled_scan(
+                        conn,
+                        log,
+                        binary_id,
+                        scan_kind,
+                        lambda: spec.run(conn, binary_id, params),
+                    )
+                payload = log.attach(payload)
+            failure = ""
+            failure_exc: BaseException | None = None
+        except Exception as exc:
+            payload = None
+            failure = f"{type(exc).__name__}: {exc}"
+            failure_exc = exc
     duration_ms = int((time.perf_counter() - started) * 1000)
     status = STATUS_FAILED if failure else STATUS_DONE
     observability.record_job(failed=bool(failure), duration_ms=duration_ms)

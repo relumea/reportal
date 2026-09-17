@@ -6,7 +6,8 @@ for the dashboard series), ``revert`` (undo a rename),
 ``tags``/``tag`` (list tags, tag a binary), ``apply-match`` (rename to a match
 candidate), ``diff`` (align a function against a match candidate), ``lineage``
 (compare two binaries' functions and report what is unchanged, changed, added
-or removed), ``add-binary`` (register a binary by content hash), ``download``
+or removed), ``add-binary`` (register a binary by content hash), ``binary-rename``
+(set a binary's display name and/or operator notes), ``download``
 (write a stored binary's bytes to a path), ``enrich``
 (store an engine fingerprint), ``decompile`` (decompile one function through
 the engine), ``summary``/``ai-comments``/``suggest-types`` (compute and store one
@@ -197,7 +198,9 @@ from reportal._paths import (
 )
 from reportal.surface import bulk_data_type_definitions as _bulk_data_types
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
+from reportal.surface import journaled_invite_join as _journal_invite_join
 from reportal.surface import journaled_signature_write as _journal_signature_write
+from reportal.surface import journaled_signup as _journal_signup
 
 # Exit status for a declined confirmation, a failed readiness check, or any
 # other command failure.  Click already uses 2 for usage errors; reportal keeps
@@ -1142,6 +1145,137 @@ def team_role(
     _print_journal_action(log, json_output)
 
 
+@app.command("team-invite")
+def team_invite(
+    team_id: int = typer.Argument(..., help="Team id to mint an invite for"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Mint one single-use invite code; shown once, only the digest is stored."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_team(conn, team_id) is None:
+            _fail(f"no team with id {team_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            invite_id, code = auth.create_invite(conn, team_id, None)
+            journal.journaled_create(
+                log,
+                table=auth.INVITE_TABLE,
+                key=invite_id,
+                description=f"minted an invite for team {team_id}",
+            )
+    payload = log.attach({"invite_id": invite_id, "code": code, "team_id": team_id})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Minted[/green] invite {invite_id} for team {team_id}")
+    console.print(f"  code: {code}")
+    console.print("  This is the only time the code is shown.")
+    _print_journal_action(log, json_output)
+
+
+@app.command("team-invites")
+def team_invites(
+    team_id: int = typer.Argument(..., help="Team id"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Every invite a team minted, without code digests."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_team(conn, team_id) is None:
+            _fail(f"no team with id {team_id}", json_output)
+        invites = auth.list_invites(conn, team_id)
+    if json_output:
+        typer.echo(json.dumps({"invites": invites, "count": len(invites)}))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ID", style="magenta", justify="right")
+    table.add_column("Minted by", justify="right")
+    table.add_column("Minted")
+    table.add_column("Expires")
+    table.add_column("Used by", justify="right")
+    table.add_column("Used")
+    for row in invites:
+        status = "expired" if row["expired"] else str(row["expires_at"])
+        table.add_row(
+            str(row["id"]),
+            "n/a" if row["created_by"] is None else str(row["created_by"]),
+            str(row["created_at"]),
+            status,
+            "n/a" if row["used_by"] is None else str(row["used_by"]),
+            str(row["used_at"] or ""),
+        )
+    console.print(f"\n[bold cyan]{len(invites)} invite(s)[/bold cyan]")
+    console.print(table)
+
+
+@app.command("team-invite-rm")
+def team_invite_rm(
+    invite_id: int = typer.Argument(..., help="Invite id to revoke"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete one unused invite; used rows stay. Journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        invite = auth.get_invite(conn, invite_id)
+        if invite is None:
+            _fail(f"no invite with id {invite_id}", json_output)
+        if invite["used_by"] is not None:
+            _fail("that invite was already used", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.INVITE_TABLE,
+                where="id = ?",
+                params=(invite_id,),
+                description=f"revoked invite {invite_id}",
+            )
+            payload = auth.revoke_invite(conn, invite_id)
+    payload = log.attach(payload)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Revoked[/green] invite {invite_id}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("team-join")
+def team_join(
+    code: str = typer.Argument(..., help="Invite code shown at mint"),
+    user_id: int = typer.Option(..., "--user", help="User id joining"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Redeem one invite code and join its team; journaled and revertible."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                team = _journal_invite_join(conn, log, code, user_id)
+            except auth.UnknownTeamError:
+                _fail(f"{auth.ERROR_INVITE_NOT_FOUND}: no invite carries that code", json_output)
+            except auth.UnknownUserError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+            except auth.AuthError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    payload = log.attach(team)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Joined[/green] team {team['name']} (id {team['id']})")
+    _print_journal_action(log, json_output)
+
+
 @app.command("organisations")
 def organisations_command(
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
@@ -1338,7 +1472,10 @@ def binary_command(
     console.print(f"  path:     {binary.get('path') or '-'}")
     console.print(f"  sha256:   {binary.get('sha256') or '-'}")
     console.print(f"  size:     {binary.get('size') or 0} bytes")
-    console.print(f"  format:   {binary.get('format') or '-'} / {binary.get('arch') or '-'}")
+    console.print(
+        f"  format:   {binary.get('format') or '-'} / {binary.get('arch') or '-'}"
+        f" / {binary.get('language') or '-'} / {binary.get('compiler') or '-'}"
+    )
     console.print(
         f"  scope:    {binary.get('visibility') or 'public'}"
         + (f" (team {owner})" if owner else "")
@@ -1352,6 +1489,56 @@ def binary_command(
             " binary answer no-engine-context. Set one with"
             " 'reportal import-rebrew <project-dir>'."
         )
+
+
+@app.command("binary-rename")
+def binary_rename(
+    binary_id: int = typer.Argument(..., help="Binary id"),
+    name: str | None = typer.Option(None, "--name", help="New display name"),
+    notes: str | None = typer.Option(None, "--notes", help="Operator note; empty clears it"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Set a binary's display name and/or operator notes; journaled."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    cleaned = None if name is None else name.strip()
+    if name is None and notes is None:
+        _fail("provide --name and/or --notes", json_output)
+    if name is not None and not cleaned:
+        _fail("binary name must not be empty", json_output)
+    if notes is not None and len(notes.strip()) > store.MAX_BINARY_NOTES:
+        _fail(
+            f"binary notes must be at most {store.MAX_BINARY_NOTES} characters",
+            json_output,
+        )
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table="binaries",
+                    where="id = ?",
+                    params=(binary_id,),
+                    description=f"updated binary {binary_id}",
+                )
+                binary = store.get_binary(conn, binary_id)
+                if cleaned is not None:
+                    binary = store.rename_binary(conn, binary_id, cleaned)
+                if notes is not None:
+                    binary = store.set_binary_notes(conn, binary_id, notes)
+        except ValueError as exc:
+            _fail(str(exc), json_output)
+    payload = log.attach(binary or {})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Updated[/green] binary {binary_id}")
+    _print_journal_action(log, json_output)
 
 
 @app.command("binary-scope")
@@ -1439,6 +1626,7 @@ def users(json_output: bool = typer.Option(False, "--json", help="Output results
     table.add_column("Token")
     table.add_column("State")
     table.add_column("Created", style="dim")
+    table.add_column("Last used", style="dim")
     for row in rows:
         table.add_row(
             str(row["id"]),
@@ -1447,6 +1635,7 @@ def users(json_output: bool = typer.Option(False, "--json", help="Output results
             "yes" if row["has_token"] else "no",
             "disabled" if row["disabled"] else "active",
             str(row["created_at"]),
+            str(row["last_used_at"] or "never"),
         )
     console.print(f"\n[bold cyan]{len(rows)} user(s)[/bold cyan]")
     console.print(table)
@@ -1496,6 +1685,38 @@ def user_add(
     _print_journal_action(log, json_output)
 
 
+@app.command("signup")
+def signup_command(
+    name: str = typer.Argument(..., help="User name for the new tenant"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Self-serve SaaS signup: user, organisation, owned team, free plan.
+
+    Refuses on the personal profile. The token is shown once.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                payload, token = _journal_signup(conn, log, name)
+        except auth.AuthError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    body = log.attach({**payload, "token": token})
+    if json_output:
+        typer.echo(json.dumps(body))
+        return
+    console.print(
+        f"[green]Signed up[/green] {payload['name']} (id {payload['id']},"
+        f" team {payload['team']['name']}, plan {payload['plan_id']})"
+    )
+    console.print(f"  token: {token}")
+    console.print("  This is the only time the token is shown.")
+    _print_journal_action(log, json_output)
+
+
 @app.command("user-token")
 def user_token(
     user_id: int = typer.Argument(..., help="User id whose token to replace"),
@@ -1524,6 +1745,111 @@ def user_token(
         typer.echo(json.dumps(payload))
         return
     console.print(f"[green]Rotated[/green] the token of user {user_id}: {token}")
+    _print_journal_action(log, json_output)
+
+
+@app.command("api-keys")
+def api_keys(
+    user_id: int = typer.Argument(..., help="User id whose named keys to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Named extra keys a user minted, without digests. The login token is not listed."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_user(conn, user_id) is None:
+            _fail(f"no user with id {user_id}", json_output)
+        keys = auth.list_api_keys(conn, user_id)
+        used = auth.count_api_keys(conn, user_id)
+        limit = auth.api_key_limit(conn, user_id)
+    from reportal import plans
+
+    payload = {
+        "keys": keys,
+        "count": len(keys),
+        "used": used,
+        "limit": None if limit == plans.UNLIMITED else limit,
+    }
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ID", style="magenta", justify="right")
+    table.add_column("Name", style="cyan")
+    table.add_column("Created", style="dim")
+    table.add_column("Last used", style="dim")
+    for row in keys:
+        last = str(row["last_used_at"] or "never")
+        table.add_row(str(row["id"]), str(row["name"]), str(row["created_at"]), last)
+    cap = "unlimited" if limit == plans.UNLIMITED else str(limit)
+    console.print(f"\n[bold cyan]{len(keys)} named key(s)[/bold cyan] ({used} of {cap} used)")
+    console.print(table)
+
+
+@app.command("api-key-add")
+def api_key_add(
+    user_id: int = typer.Argument(..., help="User id to mint a named key for"),
+    name: str = typer.Option(..., "--name", help="Label for this key"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Mint one named extra key; shown once, only the digest is stored."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_user(conn, user_id) is None:
+            _fail(f"no user with id {user_id}", json_output)
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                key, token = auth.create_api_key(conn, user_id, name)
+                journal.journaled_create(
+                    log,
+                    table=auth.KEY_TABLE,
+                    key=int(key["id"]),
+                    description=f"minted API key {key['name']} for user {user_id}",
+                )
+        except auth.AuthError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    payload = log.attach({**key, "token": token})
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Minted[/green] API key {key['id']} ({key['name']})")
+    console.print(f"  token: {token}")
+    console.print("  This is the only time the token is shown.")
+    _print_journal_action(log, json_output)
+
+
+@app.command("api-key-rm")
+def api_key_rm(
+    key_id: int = typer.Argument(..., help="Named key id to revoke"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete one named extra key. The login token is rotated, not revoked here."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_api_key(conn, key_id) is None:
+            _fail(f"no API key with id {key_id}", json_output)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.KEY_TABLE,
+                where="id = ?",
+                params=(key_id,),
+                description=f"revoked API key {key_id}",
+            )
+            payload = auth.revoke_api_key(conn, key_id)
+    payload = log.attach(payload)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Revoked[/green] API key {key_id}")
     _print_journal_action(log, json_output)
 
 
@@ -1908,7 +2234,7 @@ def function_strings_command(
     function_id: int = typer.Argument(..., help="Function whose strings to read"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """A function's analyst strings and the literals its decompilation carries."""
+    """A function's analyst strings, decompilation literals, and decoded listing runs."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
@@ -1921,13 +2247,16 @@ def function_strings_command(
         return
     console.print(
         f"function {function_id}: {payload['counts']['analyst']} analyst,"
-        f" {payload['counts']['derived']} derived"
+        f" {payload['counts']['derived']} derived,"
+        f" {payload['counts']['decoded']} decoded"
     )
     for entry in payload["analyst"]:
         note = f"  ({entry['note']})" if entry["note"] else ""
         console.print(f"  analyst  {entry['value']}{note}")
     for entry in payload["derived"]:
         console.print(f"  derived  {entry['value']}")
+    for entry in payload["decoded"]:
+        console.print(f"  decoded  {entry['value']} ({entry['source']})")
 
 
 @app.command("user-string-add")
@@ -3263,7 +3592,14 @@ def job_submit_command(
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
-                job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=params)
+                job = jobs.submit(
+                    conn,
+                    kind=kind,
+                    binary_id=binary_id,
+                    params=params,
+                    submitted_by=journal.current_actor() or journal.LOCAL_ACTOR,
+                    submitted_by_user_id=journal.current_actor_user_id(),
+                )
             except KeyError as exc:
                 _fail(_journal_error_text(exc), json_output)
             except ValueError as exc:
@@ -5076,10 +5412,14 @@ def composition_command(
 @app.command()
 def binaries(
     search: str = typer.Option(
-        "", "--search", help="Match the binary name or its SHA-256 (a prefix works)"
+        "", "--search", help="Match the binary name, SHA-256 (a prefix works) or notes"
     ),
     tag: str = typer.Option("", "--tag", help="Keep the binaries carrying this exact tag name"),
     fmt: str = typer.Option("", "--format", help="Keep one stored format, e.g. PE or ELF"),
+    language: str = typer.Option("", "--language", help="Keep one recovered language, e.g. Go"),
+    compiler: str = typer.Option(
+        "", "--compiler", help="Keep one recovered toolchain, e.g. MinGW GCC"
+    ),
     order: str = typer.Option(
         store.DEFAULT_BINARY_ORDER,
         "--order",
@@ -5094,7 +5434,13 @@ def binaries(
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
             rows = store.list_binaries(
-                conn, search=search or None, tag=tag or None, fmt=fmt or None, order=order
+                conn,
+                search=search or None,
+                tag=tag or None,
+                fmt=fmt or None,
+                language=language or None,
+                compiler=compiler or None,
+                order=order,
             )
             total = store.count_binaries(conn)
         except ValueError as exc:
@@ -5109,6 +5455,8 @@ def binaries(
                     "search": search or None,
                     "tag": tag or None,
                     "format": fmt or None,
+                    "language": language or None,
+                    "compiler": compiler or None,
                     "order": order,
                 }
             )
@@ -5126,7 +5474,16 @@ def binaries(
         table.add_row(
             str(row["id"]),
             str(row["name"]),
-            f"{row['format'] or 'n/a'} {row['arch'] or ''}".strip(),
+            " ".join(
+                part
+                for part in (
+                    row["format"] or "n/a",
+                    row.get("arch") or "",
+                    row.get("language") or "",
+                    row.get("compiler") or "",
+                )
+                if part
+            ),
             str(row["size"]),
             str(row["function_count"]),
             str(row["comment_count"]),
@@ -5226,19 +5583,31 @@ def add_binary(
     path: Path = typer.Argument(..., help="Path to the binary to register"),
     name: str | None = typer.Option(None, "--name", help="Display name (default: file name)"),
     team: int | None = typer.Option(None, "--team", help="Team id to register the binary into"),
+    compiler: str | None = typer.Option(None, "--compiler", help="Toolchain hint"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Register a binary by content hash (reportal's equivalent of an upload).
 
     ``--team`` puts it in that team's scope as it registers, the way the
     upload panel's scope control does; without one it is public and ownerless,
-    and ``reportal binary-scope`` changes it afterwards.
+    and ``reportal binary-scope`` changes it afterwards.  ``--compiler``
+    stamps the toolchain when the column is still empty.
     """
     binary = path.expanduser().resolve()
     if not binary.is_file():
         _fail(f"not a file: {path}", json_output)
     sha256 = _sha256_file(binary)
     display_name = name or binary.name
+    hint = ""
+    if compiler:
+        from reportal import api as portal_api
+
+        hint = compiler.strip()
+        if hint not in portal_api.UPLOAD_COMPILERS:
+            _fail(
+                f"compiler must be one of {', '.join(portal_api.UPLOAD_COMPILERS)}",
+                json_output,
+            )
     portal_db = _db_path(json_output)
     store.init_db(portal_db)
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -5260,6 +5629,8 @@ def add_binary(
                 size=binary.stat().st_size,
                 fmt=binary.suffix.lstrip(".").upper(),
             )
+            if hint:
+                store.set_binary_compiler(conn, binary_id, hint)
             if not known:
                 log.record(
                     effects.EFFECT_ROW_DELETE,
@@ -11619,7 +11990,13 @@ def report_pdf(
                 console.print(f"job {job['id']}: {job['status']} {job['error']}".rstrip())
             return
         if queue:
-            job = jobs.submit(conn, kind="report-pdf", binary_id=binary_id)
+            job = jobs.submit(
+                conn,
+                kind="report-pdf",
+                binary_id=binary_id,
+                submitted_by=journal.current_actor() or journal.LOCAL_ACTOR,
+                submitted_by_user_id=journal.current_actor_user_id(),
+            )
             if json_output:
                 typer.echo(json.dumps(job))
                 return

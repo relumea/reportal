@@ -69,6 +69,19 @@ class TestSearchKinds:
         assert [row["name"] for row in results["binaries"]] == ["gamma.sys"]
         assert results["binaries"][0]["match"] == "sha256"
 
+    def test_default_matches_operator_notes(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.set_binary_notes(conn, ids["beta"], "sample from vendor")
+        results = store.search(conn, "vendor")
+        assert [row["name"] for row in results["binaries"]] == ["beta.exe"]
+        assert results["binaries"][0]["match"] == "notes"
+
+    def test_binary_kind_ignores_notes(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.set_binary_notes(conn, ids["beta"], "sample from vendor")
+        results = store.search(conn, "vendor", kind=store.SEARCH_KIND_BINARY)
+        assert results["binaries"] == []
+
     def test_binary_kind_matches_the_name_only(self, conn: sqlite3.Connection) -> None:
         _seed(conn)
         results = store.search(conn, "alpha", kind=store.SEARCH_KIND_BINARY)

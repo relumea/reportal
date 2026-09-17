@@ -103,7 +103,9 @@ from reportal.plugins import RegistryError as RegistryError
 from reportal.server import db
 from reportal.surface import classified as _classified
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
+from reportal.surface import journaled_invite_join as _journal_invite_join
 from reportal.surface import journaled_signature_write as _journal_signature_write
+from reportal.surface import journaled_signup as _journal_signup
 from reportal.surface import store_lineage as _store_lineage
 
 
@@ -582,6 +584,8 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
     search = _arg_optional_str(arguments, "search")
     tag = _arg_optional_str(arguments, "tag")
     fmt = _arg_optional_str(arguments, "format")
+    language = _arg_optional_str(arguments, "language")
+    compiler = _arg_optional_str(arguments, "compiler")
     order = _arg_optional_str(arguments, "order", store.DEFAULT_BINARY_ORDER)
     if order not in store.BINARY_ORDERS:
         raise ToolError(
@@ -591,10 +595,16 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     with contextlib.closing(_open()) as conn:
         rows = store.list_binaries(
-            conn, search=search or None, tag=tag or None, fmt=fmt or None, order=order
+            conn,
+            search=search or None,
+            tag=tag or None,
+            fmt=fmt or None,
+            language=language or None,
+            compiler=compiler or None,
+            order=order,
         )
         total = store.count_binaries(conn)
-        formats = store.binary_filter_values(conn)["formats"]
+        facets = store.binary_filter_values(conn)
     return {
         "binaries": rows,
         "count": len(rows),
@@ -602,8 +612,12 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
         "search": search or None,
         "tag": tag or None,
         "format": fmt or None,
+        "language": language or None,
+        "compiler": compiler or None,
         "order": order,
-        "formats": formats,
+        "formats": facets["formats"],
+        "languages": facets["languages"],
+        "compilers": facets["compilers"],
     }
 
 
@@ -614,6 +628,41 @@ def _tool_get_binary(arguments: dict[str, Any]) -> dict[str, Any]:
         # The rebrew project every engine-backed read of this binary needs, null
         # when it has none.
         return {**binary, "rebrew_project": store.get_rebrew_context(conn, binary_id)}
+
+
+def _tool_rename_binary(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    has_name = "name" in arguments and arguments["name"] is not None
+    has_notes = "notes" in arguments and arguments["notes"] is not None
+    if not has_name and not has_notes:
+        raise ToolError("invalid binary", "name or notes is required")
+    name = _arg_str(arguments, "name") if has_name else ""
+    notes = _arg_optional_str(arguments, "notes") if has_notes else None
+    if notes is not None and len(notes.strip()) > store.MAX_BINARY_NOTES:
+        raise ToolError(
+            "invalid binary",
+            f"binary notes must be at most {store.MAX_BINARY_NOTES} characters",
+        )
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table="binaries",
+                where="id = ?",
+                params=(binary_id,),
+                description=f"updated binary {binary_id}",
+            )
+            try:
+                binary = store.get_binary(conn, binary_id)
+                if has_name:
+                    binary = store.rename_binary(conn, binary_id, name)
+                if notes is not None:
+                    binary = store.set_binary_notes(conn, binary_id, notes)
+            except ValueError as exc:
+                raise ToolError("invalid binary", str(exc)) from exc
+            return log.attach(binary or {})
 
 
 def _tool_list_functions(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4432,6 +4481,17 @@ def _tool_list_users(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"users": users, "count": len(users), "auth_required": auth.required()}
 
 
+def _tool_signup(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    with contextlib.closing(_open()) as conn:
+        try:
+            with journal.journaled(conn, journal.new_action()) as log:
+                payload, token = _journal_signup(conn, log, name)
+        except auth.AuthError as trans:
+            raise ToolError(trans.code, trans.detail) from trans
+        return log.attach({**payload, "token": token})
+
+
 def _tool_add_user(arguments: dict[str, Any]) -> dict[str, Any]:
     name = _arg_str(arguments, "name")
     role = _arg_optional_str(arguments, "role", auth.ROLE_ANALYST)
@@ -4450,6 +4510,61 @@ def _tool_add_user(arguments: dict[str, Any]) -> dict[str, Any]:
             description=f"created user {user['name']}",
         )
         return log.attach({**user, "token": token})
+
+
+def _tool_list_api_keys(arguments: dict[str, Any]) -> dict[str, Any]:
+    from reportal import plans
+
+    user_id = _arg_int(arguments, "user_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
+        keys = auth.list_api_keys(conn, user_id)
+        used = auth.count_api_keys(conn, user_id)
+        limit = auth.api_key_limit(conn, user_id)
+    return {
+        "keys": keys,
+        "count": len(keys),
+        "used": used,
+        "limit": None if limit == plans.UNLIMITED else limit,
+    }
+
+
+def _tool_create_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
+    user_id = _arg_int(arguments, "user_id")
+    name = _arg_str(arguments, "name")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_user(conn, user_id) is None:
+            raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                key, token = auth.create_api_key(conn, user_id, name)
+            except auth.AuthError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            journal.journaled_create(
+                log,
+                table=auth.KEY_TABLE,
+                key=int(key["id"]),
+                description=f"minted API key {key['name']} for user {user_id}",
+            )
+            return log.attach({**key, "token": token})
+
+
+def _tool_revoke_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
+    key_id = _arg_int(arguments, "key_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_api_key(conn, key_id) is None:
+            raise ToolError(auth.ERROR_API_KEY_NOT_FOUND, f"no API key with id {key_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.KEY_TABLE,
+                where="id = ?",
+                params=(key_id,),
+                description=f"revoked API key {key_id}",
+            )
+            return log.attach(auth.revoke_api_key(conn, key_id))
 
 
 def _tool_rotate_user_token(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4530,6 +4645,15 @@ def _tool_list_teams(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         teams = auth.list_teams(conn)
     return {"teams": teams, "count": len(teams)}
+
+
+def _tool_list_team_invites(arguments: dict[str, Any]) -> dict[str, Any]:
+    team_id = _arg_int(arguments, "team_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        invites = auth.list_invites(conn, team_id)
+    return {"invites": invites, "count": len(invites)}
 
 
 def _tool_create_team(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4616,6 +4740,61 @@ def _tool_remove_team_member(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError(auth.ERROR_NOT_A_MEMBER, f"user {user_id} is not in team {team_id}")
         auth.remove_member(conn, team_id, user_id)
         return log.attach(auth.get_team(conn, team_id) or {})
+
+
+def _tool_create_team_invite(arguments: dict[str, Any]) -> dict[str, Any]:
+    team_id = _arg_int(arguments, "team_id")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            invite_id, code = auth.create_invite(conn, team_id, None)
+            journal.journaled_create(
+                log,
+                table=auth.INVITE_TABLE,
+                key=invite_id,
+                description=f"minted an invite for team {team_id}",
+            )
+            return log.attach({"invite_id": invite_id, "code": code, "team_id": team_id})
+
+
+def _tool_revoke_team_invite(arguments: dict[str, Any]) -> dict[str, Any]:
+    invite_id = _arg_int(arguments, "invite_id")
+    with contextlib.closing(_open()) as conn:
+        invite = auth.get_invite(conn, invite_id)
+        if invite is None:
+            raise ToolError(auth.ERROR_INVITE_NOT_FOUND, f"no invite with id {invite_id}")
+        if invite["used_by"] is not None:
+            raise ToolError(auth.ERROR_INVITE_USED, "that invite was already used")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.INVITE_TABLE,
+                where="id = ?",
+                params=(invite_id,),
+                description=f"revoked invite {invite_id}",
+            )
+            payload = auth.revoke_invite(conn, invite_id)
+            return log.attach(payload)
+
+
+def _tool_join_team(arguments: dict[str, Any]) -> dict[str, Any]:
+    code = _arg_str(arguments, "code")
+    user_id = _arg_int(arguments, "user_id")
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        try:
+            team = _journal_invite_join(conn, log, code, user_id)
+        except auth.UnknownTeamError:
+            raise ToolError(auth.ERROR_INVITE_NOT_FOUND, "no invite carries that code") from None
+        except auth.UnknownUserError as exc:
+            raise ToolError(auth.ERROR_USER_NOT_FOUND, exc.detail) from exc
+        except auth.AuthError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        return log.attach(team)
 
 
 def _set_object_scope(arguments: dict[str, Any], *, kind: str) -> dict[str, Any]:
@@ -5078,6 +5257,16 @@ def _tool_register_binary(arguments: dict[str, Any]) -> dict[str, Any]:
     source = Path(_arg_str(arguments, "path")).expanduser().resolve()
     name = _arg_optional_str(arguments, "name")
     team = _arg_optional_int(arguments, "team_id", 0) or None
+    compiler = _arg_optional_str(arguments, "compiler")
+    hint = compiler.strip() if compiler else ""
+    if hint:
+        from reportal import api as portal_api
+
+        if hint not in portal_api.UPLOAD_COMPILERS:
+            raise ToolError(
+                "invalid-body",
+                f"compiler must be one of {', '.join(portal_api.UPLOAD_COMPILERS)}",
+            )
     if not source.is_file():
         raise ToolError("not-a-file", f"not a file: {source}")
     digest = effects.file_digest(source)
@@ -5102,6 +5291,8 @@ def _tool_register_binary(arguments: dict[str, Any]) -> dict[str, Any]:
                 size=source.stat().st_size,
                 fmt=source.suffix.lstrip(".").upper(),
             )
+            if hint:
+                store.set_binary_compiler(conn, binary_id, hint)
             if not known:
                 log.record(
                     effects.EFFECT_ROW_DELETE,
@@ -5450,7 +5641,14 @@ def _tool_submit_job(arguments: dict[str, Any]) -> dict[str, Any]:
         journal.journaled(conn, journal.new_action()) as log,
     ):
         try:
-            job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=params)
+            job = jobs.submit(
+                conn,
+                kind=kind,
+                binary_id=binary_id,
+                params=params,
+                submitted_by=journal.current_actor() or journal.LOCAL_ACTOR,
+                submitted_by_user_id=journal.current_actor_user_id(),
+            )
         except ValueError as exc:
             raise ToolError("invalid job", str(exc)) from exc
         except KeyError as exc:
@@ -5682,12 +5880,17 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "list_binaries",
             "List the registered binaries with their function and comment counts, optionally"
-            " filtered by name or SHA-256, by tag, or by stored format, and ordered.",
+            " filtered by name, SHA-256 or notes, by tag, by stored format, recovered"
+            " language or recovered toolchain, and ordered.",
             _object(
                 {
-                    "search": _str("Match the binary name or its SHA-256 (a prefix works)."),
+                    "search": _str(
+                        "Match the binary name, SHA-256 (a prefix works) or operator notes."
+                    ),
                     "tag": _str("Keep the binaries carrying this exact tag name."),
                     "format": _str("Keep one stored format, e.g. PE or ELF."),
+                    "language": _str("Keep one recovered language, e.g. Go or Rust."),
+                    "compiler": _str("Keep one recovered toolchain, e.g. MinGW GCC."),
                     "order": {
                         "type": "string",
                         "enum": sorted(store.BINARY_ORDERS),
@@ -5705,6 +5908,21 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"binary_id": _BINARY_ID}, ("binary_id",)),
             _READ,
             _tool_get_binary,
+        ),
+        Tool(
+            "rename_binary",
+            "Set a binary's display name and/or operator notes; journaled."
+            " Empty notes clears the note. Dedupe stays on sha256.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "name": _str("New display name."),
+                    "notes": _str("Operator note; empty clears it."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_rename_binary,
         ),
         Tool(
             "list_functions",
@@ -7671,6 +7889,23 @@ def builtin_tools() -> tuple[Tool, ...]:
             _tool_list_users,
         ),
         Tool(
+            "list_api_keys",
+            "Named extra keys a user minted, without digests. The login token counts"
+            " toward the plan cap and is not listed. last_used_at is empty until the"
+            " key authenticates.",
+            _object({"user_id": _int("User id.")}, ("user_id",)),
+            _READ,
+            _tool_list_api_keys,
+        ),
+        Tool(
+            "signup",
+            "Self-serve SaaS signup: create a user, an organisation, an owned team"
+            " and return the bearer token once. Refuses on the personal profile.",
+            _object({"name": _str("User name.")}, ("name",)),
+            _WRITE,
+            _tool_signup,
+        ),
+        Tool(
             "add_user",
             "Create a user and return its bearer token once; only the token's digest is stored."
             " Journaled and revertible.",
@@ -7691,6 +7926,24 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"user_id": _int("User id.")}, ("user_id",)),
             _WRITE,
             _tool_rotate_user_token,
+        ),
+        Tool(
+            "create_api_key",
+            "Mint one named extra key for a user; the token is returned once and"
+            " counts toward the organisation plan's max_api_keys. Journaled.",
+            _object(
+                {"user_id": _int("User id."), "name": _str("Label for this key.")},
+                ("user_id", "name"),
+            ),
+            _WRITE,
+            _tool_create_api_key,
+        ),
+        Tool(
+            "revoke_api_key",
+            "Delete one named extra key; the login token is rotated, not revoked here. Journaled.",
+            _object({"key_id": _int("Named key id.")}, ("key_id",)),
+            _WRITE,
+            _tool_revoke_api_key,
         ),
         Tool(
             "update_user",
@@ -7722,6 +7975,14 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({}),
             _READ,
             _tool_list_teams,
+        ),
+        Tool(
+            "list_team_invites",
+            "Every invite a team minted, without code digests: who minted each,"
+            " who redeemed it, when it expires, and whether it has expired.",
+            _object({"team_id": _int("Team id.")}, ("team_id",)),
+            _READ,
+            _tool_list_team_invites,
         ),
         Tool(
             "create_team",
@@ -7760,6 +8021,32 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_remove_team_member,
+        ),
+        Tool(
+            "create_team_invite",
+            "Mint one single-use invite code for a team; the code is returned once"
+            " and expires after seven days.",
+            _object({"team_id": _int("Team id.")}, ("team_id",)),
+            _WRITE,
+            _tool_create_team_invite,
+        ),
+        Tool(
+            "revoke_team_invite",
+            "Delete one unused invite; used rows stay for the audit trail. Journaled.",
+            _object({"invite_id": _int("Invite id.")}, ("invite_id",)),
+            _WRITE,
+            _tool_revoke_team_invite,
+        ),
+        Tool(
+            "join_team",
+            "Redeem one invite code and join its team; the code is single-use and"
+            " expires after seven days.",
+            _object(
+                {"code": _str("Invite code."), "user_id": _int("User id joining.")},
+                ("code", "user_id"),
+            ),
+            _WRITE,
+            _tool_join_team,
         ),
         Tool(
             "set_binary_scope",
@@ -8012,13 +8299,14 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "register_binary",
             "Register a local file as a binary by content hash, the CLI's `add-binary`:"
-            " the path the server reads, a display name, and optionally the team whose"
-            " scope the binary joins. Destructive.",
+            " the path the server reads, a display name, optionally the team whose"
+            " scope the binary joins, and an optional toolchain hint. Destructive.",
             _object(
                 {
                     "path": _str("Path to the file to register, as this host sees it."),
                     "name": _str("Display name (default: the file's name)."),
                     "team_id": _int("Team to put the binary in the scope of."),
+                    "compiler": _str("Toolchain hint; empty leaves recovery to fill it."),
                 },
                 ("path",),
             ),
@@ -8326,8 +8614,9 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_function_strings",
-            "A function's analyst-recorded strings and, beside them, the quoted literals its"
-            " stored decompilation carries; the two halves are never merged.",
+            "A function's analyst-recorded strings, the quoted literals its stored"
+            " decompilation carries, and stack/XOR strings recovered from its stored"
+            " NASM listing; the halves are never merged.",
             _object({"function_id": _FUNCTION_ID}, ("function_id",)),
             _READ,
             _tool_get_function_strings,

@@ -52,6 +52,7 @@ from reportal.components import (
     EFFECT_REVERTED,
     Component,
     Context,
+    Effect,
 )
 from reportal.effects import (
     EFFECT_AI_ARTIFACT,
@@ -1662,7 +1663,7 @@ def _duration_ms(started: float) -> int:
     return int((time.monotonic() - started) * 1000)
 
 
-def _stored_plan(ctx: Context) -> list[dict[str, Any]]:
+def _stored_plan(effects: Sequence[Effect]) -> list[dict[str, Any]]:
     """The run's stored plan: its durable writes and the bindings it changed.
 
     A binding change becomes an :data:`reportal.effects.EFFECT_CONTEXT_CHANGE`
@@ -1671,7 +1672,7 @@ def _stored_plan(ctx: Context) -> list[dict[str, Any]]:
     from and reports the change as not applied instead of inventing one.
     """
     plan: list[dict[str, Any]] = []
-    for effect in ctx.effects():
+    for effect in effects:
         if effect.undo is not None:
             plan.append(effect.undo)
         elif effect.kind in (CHANGE_PROVIDE, CHANGE_REVOKE) and effect.name is not None:
@@ -1827,7 +1828,7 @@ def run_pipeline(
         conn,
         run_id,
         status=RUN_FAILED if failed else RUN_DONE,
-        effects=_stored_plan(ctx),
+        effects=_stored_plan(ctx.effects()),
     )
     _store_run_context(run_id, ctx)
     stored = store.get_pipeline_run(conn, run_id)

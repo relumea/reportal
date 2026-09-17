@@ -326,13 +326,19 @@ inline under an HTTP request, `request_id`.  The middleware resolves the bearer 
 (`auth.authenticate`, constant-time digest comparison), refuses a disabled user,
 computes the permission the method and path need (`auth.required_permission`:
 `read`, `write`, or `admin` for `/api/users*`) and compares it with the role's
-set (`auth.ROLE_PERMISSIONS`); it leaves the user on `request.state.user`, which
+set (`auth.ROLE_PERMISSIONS`); an authenticated HTTP write past
+`auth.WRITE_MAX_HITS` in `auth.WRITE_WINDOW_S` is 429 `rate-limited` with `Retry-After`; it
+leaves the user on `request.state.user`, which
 is what `GET /api/iam/me` reports and what the next slice's per-object scoping
 will read.  `cli.serve` refuses a non-loopback bind unless the gate is armed and
 at least one enabled user exists (`cli._require_lan_auth`), so the unauthenticated
 remote control plane the old posture allowed cannot be reached by forgetting a
 flag.  Only a token's SHA-256 digest is stored; the token is returned once, by
-the call that created or rotated it.
+the call that created or rotated it.  Named extra keys (`user_api_keys`) sit
+beside the login token, count toward the organisation plan's `max_api_keys`,
+and authenticate as the same user.  A successful named-key authenticate stamps
+`user_api_keys.last_used_at`; a successful login-token authenticate stamps
+`users.last_used_at`.  Each column stays empty until that credential fires.
 
 A binary or a collection additionally carries a scope (`owner_team_id` plus a
 `visibility` of `public` or `team`), and the same dependency enforces it:
@@ -1244,8 +1250,8 @@ a missing part is 400 `no-file` and an empty one 400 `empty-file`. The CLI
 (`add-binary`, `import-rebrew`) still registers binaries from local paths.
 Repeated `file` parts, or a JSON `files` field beside one part, make the same
 route a batch: `files[i]` carries part *i*'s `name`, `tags`, `collection_ids`
-and explicit `format`/`arch` (validated against `UPLOAD_FORMATS`/
-`UPLOAD_ARCHITECTURES`), each failing part reports the single-file path's own
+and explicit `format`/`arch`/`compiler` (validated against `UPLOAD_FORMATS`/
+`UPLOAD_ARCHITECTURES`/`UPLOAD_COMPILERS`), each failing part reports the single-file path's own
 code inside its entry while the rest register, a duplicate is reported as
 `"duplicate": true`, and the whole request is one journal action capped at
 `MAX_UPLOAD_FILES` (400 `too-many-files` past it). `POST
@@ -1600,7 +1606,7 @@ function's name. An unknown binary or function is 404.
 
 `GET /api/search` is the global search over the store. `?q=` is the query and
 `?kind=` selects one of `store.SEARCH_KINDS`: `all` (the default) keeps the
-substring behaviour the route always had (binaries by name, path or hash,
+substring behaviour the route always had (binaries by name, path, hash or notes,
 functions by name, collections by name or description, tags by name), while
 `sha256` matches a binary hash prefix, `binary` a binary name, `collection` a
 collection name and `tag` a tag name, so a typed query is a subset of `all`.
@@ -1892,14 +1898,17 @@ action's or one entry's stored inverses and is destructive. `get_auto_run`
 reads an auto run and is read-only; `run_auto`, `revert_auto_run` and
 `recover_auto_run` (which closes a stale run and merges what its unfinished
 tasks recorded) are destructive.  The registry
-declares 252 built-in tools, 120 read-only and 132 destructive.
+declares 261 built-in tools, 122 read-only and 139 destructive.
 
-Deliberately not emulated: OAuth/JWT and API keys. The hosted server
-authenticates each request; reportal is a loopback, single-user tool on a local
-pipe, so the stdio transport is the whole trust boundary and there is no token
-to check. Streamable HTTP (SSE responses, `mcp-session-id`), server-initiated
-logging notifications and `tools.listChanged` are also out: one process, one
-registry snapshot, `refresh_tools()` the opt-in reload.
+Stdio (`reportal mcp`) is the local pipe; Streamable HTTP is `POST /mcp`
+(JSON replies) and `GET /mcp` (SSE session stream) on the same FastAPI
+process, gated by the portal bearer when auth is on (write, because the
+registry mixes readers and writers). `Last-Event-ID` resumes from
+`MemoryEventStore` (in-process, unbounded, dropped on restart). OAuth
+and JWT are still out: the token is the same portal bearer, or the loopback
+operator while auth is off. Server-initiated logging notifications and
+`tools.listChanged` stay out: one process, one registry snapshot,
+`refresh_tools()` the opt-in reload.
 
 ## SPA
 

@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS artifact_ratings (
     rating     TEXT NOT NULL,
     note       TEXT NOT NULL DEFAULT '',
     actor      TEXT NOT NULL DEFAULT '',
+    actor_user_id INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (binary_id, kind)
@@ -92,6 +93,10 @@ class UnknownArtifactError(RatingError, LookupError):
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create the ratings table when the database predates it."""
     conn.executescript(_SCHEMA)
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(artifact_ratings)")}
+    if "actor_user_id" not in columns:
+        conn.execute("ALTER TABLE artifact_ratings ADD COLUMN actor_user_id INTEGER")
+    conn.commit()
 
 
 def normalize_rating(rating: Any) -> str:
@@ -153,12 +158,15 @@ def require_artifact(conn: sqlite3.Connection, binary_id: int, kind: str) -> int
 
 def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     """One stored rating as the surfaces report it."""
+    columns = set(row.keys())
+    raw_id = row["actor_user_id"] if "actor_user_id" in columns else None
     return {
         "binary_id": int(row["binary_id"]),
         "kind": str(row["kind"]),
         "rating": str(row["rating"]),
         "note": str(row["note"]),
         "actor": str(row["actor"]),
+        "actor_user_id": None if raw_id is None else int(raw_id),
         "created_at": str(row["created_at"]),
         "updated_at": str(row["updated_at"]),
     }
@@ -190,6 +198,7 @@ def set_rating(
     rating: Any,
     note: Any = None,
     actor: str = "",
+    actor_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Set or clear one artifact's rating, replacing any verdict already there.
 
@@ -208,18 +217,25 @@ def set_rating(
         )
         conn.commit()
         return {"binary_id": int(binary_id), "kind": resolved_kind, "rating": "", "note": ""}
+    from reportal import journal
+
+    resolved_user_id = (
+        actor_user_id if actor_user_id is not None else journal.current_actor_user_id()
+    )
     timestamp = store.now()
     conn.execute(
-        f"INSERT INTO {TABLE} (binary_id, kind, rating, note, actor, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)"
+        f"INSERT INTO {TABLE} (binary_id, kind, rating, note, actor, actor_user_id,"
+        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(binary_id, kind) DO UPDATE SET rating = excluded.rating,"
-        " note = excluded.note, actor = excluded.actor, updated_at = excluded.updated_at",
+        " note = excluded.note, actor = excluded.actor,"
+        " actor_user_id = excluded.actor_user_id, updated_at = excluded.updated_at",
         (
             int(binary_id),
             resolved_kind,
             resolved_rating,
             resolved_note,
             str(actor or ""),
+            resolved_user_id,
             timestamp,
             timestamp,
         ),

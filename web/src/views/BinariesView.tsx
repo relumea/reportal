@@ -20,6 +20,7 @@ import {
   DEFAULT_BINARY_ORDER,
   MAX_UPLOAD_FILES,
   UPLOAD_ARCHITECTURES,
+  UPLOAD_COMPILERS,
   UPLOAD_FORMATS,
 } from "../constants";
 import type {
@@ -45,6 +46,7 @@ interface UploadRow {
   tags: string[];
   format: string;
   arch: string;
+  compiler: string;
   /** The team to register the binary into; "" leaves it public and ownerless. */
   scope: string;
 }
@@ -102,6 +104,8 @@ interface BinaryFilters {
   search: string;
   tag: string;
   format: string;
+  language: string;
+  compiler: string;
   order: string;
 }
 
@@ -111,6 +115,8 @@ function filtersFromQuery(query: Record<string, string>): BinaryFilters {
     search: query.search ?? "",
     tag: query.tag ?? "",
     format: query.format ?? "",
+    language: query.language ?? "",
+    compiler: query.compiler ?? "",
     order: (BINARY_ORDERS as readonly string[]).includes(order) ? order : DEFAULT_BINARY_ORDER,
   };
 }
@@ -121,6 +127,8 @@ function registerPath(filters: BinaryFilters): string {
   if (filters.search.trim()) params.set("search", filters.search.trim());
   if (filters.tag) params.set("tag", filters.tag);
   if (filters.format) params.set("format", filters.format);
+  if (filters.language) params.set("language", filters.language);
+  if (filters.compiler) params.set("compiler", filters.compiler);
   params.set("order", filters.order);
   return `/binaries?${params.toString()}`;
 }
@@ -155,7 +163,7 @@ export function BinariesView({
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
   const [dragging, setDragging] = useState(false);
-  const [configure, setConfigure] = useState({ format: "", arch: "", scope: "" });
+  const [configure, setConfigure] = useState({ format: "", arch: "", compiler: "", scope: "" });
   // The stored archives this session uploaded, so the batch can be unpacked in
   // place rather than by copying a hash into another view.
   const [extractTarget, setExtractTarget] = useState("");
@@ -283,6 +291,7 @@ export function BinariesView({
           tags: [],
           format: "",
           arch: "",
+          compiler: "",
           scope: activeTeam,
         })),
       ];
@@ -295,6 +304,8 @@ export function BinariesView({
     if (next.search.trim()) params.set("search", next.search.trim());
     if (next.tag) params.set("tag", next.tag);
     if (next.format) params.set("format", next.format);
+    if (next.language) params.set("language", next.language);
+    if (next.compiler) params.set("compiler", next.compiler);
     if (next.order !== DEFAULT_BINARY_ORDER) params.set("order", next.order);
     navigate({ pathname: "/binaries", search: params.toString() });
   };
@@ -320,6 +331,7 @@ export function BinariesView({
       tags: row.tags,
       format: row.format || undefined,
       arch: row.arch || undefined,
+      compiler: row.compiler || undefined,
       collection_ids: collectionIds,
       ...(row.scope === ""
         ? {}
@@ -484,6 +496,20 @@ export function BinariesView({
                   ))}
                 </select>
               </Field>
+              <Field label="Compiler for every file">
+                <select
+                  aria-label="Compiler for every file"
+                  value={configure.compiler}
+                  onChange={(event) => configureAll({ compiler: event.target.value })}
+                >
+                  <option value="">Auto</option>
+                  {UPLOAD_COMPILERS.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </Field>
               <Field label="Scope for every file">
                 <select
                   aria-label="Scope for every file"
@@ -515,13 +541,13 @@ export function BinariesView({
                   render: (row) =>
                     // A row nobody configured stays on the automatic plan, which
                     // is what the hosted portal's dashed badge means.
-                    row.format === "" && row.arch === "" ? (
-                      <Badge tone="info" title="Format and ISA are derived from the file">
+                    row.format === "" && row.arch === "" && row.compiler === "" ? (
+                      <Badge tone="info" title="Format, ISA and compiler are derived from the file">
                         auto
                       </Badge>
                     ) : (
                       <span className="muted">
-                        {row.format || "auto"} / {row.arch || "auto"}
+                        {row.format || "auto"} / {row.arch || "auto"} / {row.compiler || "auto"}
                       </span>
                     ),
                 },
@@ -572,6 +598,23 @@ export function BinariesView({
                     >
                       <option value="">Auto</option>
                       {UPLOAD_ARCHITECTURES.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  ),
+                },
+                {
+                  label: "Compiler",
+                  render: (row) => (
+                    <select
+                      aria-label={`compiler for ${row.file.name}`}
+                      value={row.compiler}
+                      onChange={(event) => updateRow(row.key, { compiler: event.target.value })}
+                    >
+                      <option value="">Auto</option>
+                      {UPLOAD_COMPILERS.map((value) => (
                         <option key={value} value={value}>
                           {value}
                         </option>
@@ -828,10 +871,10 @@ export function BinariesView({
         }
       >
         <Toolbar>
-          <Field label="Search" hint="name or SHA-256">
+          <Field label="Search" hint="name, SHA-256 or notes">
             <input
               type="search"
-              placeholder="name or hash"
+              placeholder="name, hash or notes"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
@@ -863,6 +906,32 @@ export function BinariesView({
               ))}
             </select>
           </Field>
+          <Field label="Language">
+            <select
+              value={filters.language}
+              onChange={(event) => apply({ language: event.target.value })}
+            >
+              <option value="">any language</option>
+              {(data?.languages ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Compiler">
+            <select
+              value={filters.compiler}
+              onChange={(event) => apply({ compiler: event.target.value })}
+            >
+              <option value="">any compiler</option>
+              {(data?.compilers ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field label="Order">
             <select value={filters.order} onChange={(event) => apply({ order: event.target.value })}>
               {BINARY_ORDERS.map((value) => (
@@ -878,6 +947,8 @@ export function BinariesView({
               filters.search === "" &&
               filters.tag === "" &&
               filters.format === "" &&
+              filters.language === "" &&
+              filters.compiler === "" &&
               filters.order === DEFAULT_BINARY_ORDER
             }
             onClick={() => {
@@ -911,6 +982,8 @@ export function BinariesView({
                   <span className="toolbar">
                     <Badge mono>{row.format || "n/a"}</Badge>
                     <Badge mono>{row.arch || "n/a"}</Badge>
+                    <Badge mono>{row.language || "n/a"}</Badge>
+                    <Badge mono>{row.compiler || "n/a"}</Badge>
                   </span>
                 ),
               },

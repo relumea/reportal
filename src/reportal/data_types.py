@@ -1002,8 +1002,12 @@ def _record(
     current: Mapping[str, Any] | None,
     source: str,
     actor: str = DEFAULT_ACTOR,
+    actor_user_id: int | None = None,
 ) -> int:
     """Append one history row for the states a write replaced and wrote."""
+    from reportal import journal
+
+    request_actor = journal.current_actor()
     return store.add_data_type_history(
         conn,
         data_type_id=data_type_id,
@@ -1011,7 +1015,8 @@ def _record(
         previous=previous,
         current=current,
         source=source,
-        actor=actor,
+        actor=request_actor or actor,
+        actor_user_id=actor_user_id or journal.current_actor_user_id(),
     )
 
 

@@ -25,7 +25,9 @@ every result's notes.
 
 :func:`detect` is pure and takes an evidence mapping, so a caller can run it
 over payloads it already holds.  :func:`run_filetype` assembles the evidence
-through the engine, detects, and stores the result as the ``filetype`` scan; a
+through the engine, detects, stores the result as the ``filetype`` scan, and
+stamps the binary's ``language`` from the strongest runtime match and
+its ``compiler`` from the strongest toolchain match; a
 missing evidence piece is recorded as a note instead of failing the run, while a
 run whose every engine call failed assembles nothing and propagates its error
 rather than storing an empty result over a real one.
@@ -40,7 +42,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -61,6 +63,13 @@ FILE_CATEGORIES: tuple[str, ...] = (
     CATEGORY_RUNTIME,
     CATEGORY_TOOLCHAIN,
 )
+
+
+def toolchain_names() -> tuple[str, ...]:
+    """Declared toolchain signature names, in table order."""
+    return tuple(
+        signature.name for signature in SIGNATURES if signature.category == CATEGORY_TOOLCHAIN
+    )
 
 # Confidence labels a match carries, strongest first.
 CONFIDENCE_HIGH = "high"
@@ -878,6 +887,9 @@ def run_filetype(
     :class:`FileNotFoundError` when its row has no file on disk and
     :class:`~reportal.engines.EngineError` when every engine call failed.
     Returns ``{"binary_id", "matches", "count", "by_category", "notes"}``.
+    The strongest runtime match is also written onto the binary as
+    ``language`` when that column is still empty, and the strongest
+    toolchain match as ``compiler``.
     """
     _binary, path = capabilities.require_binary_file(conn, binary_id)
 
@@ -901,4 +913,27 @@ def run_filetype(
     }
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
     store.set_scan(conn, analysis_id, store.SCAN_KIND_FILETYPE, payload)
+    store.set_binary_language(conn, binary_id, language_of(result["matches"]))
+    store.set_binary_compiler(conn, binary_id, compiler_of(result["matches"]))
     return payload
+
+
+def language_of(matches: Sequence[Mapping[str, Any]]) -> str:
+    """The strongest runtime match name, or empty when none fired.
+
+    Matches are already confidence-sorted by :func:`detect`.  The first
+    runtime row is the language the binary column records; packer and
+    toolchain hits are not languages.
+    """
+    for match in matches:
+        if str(match.get("category") or "") == CATEGORY_RUNTIME:
+            return str(match.get("name") or "").strip()
+    return ""
+
+
+def compiler_of(matches: Sequence[Mapping[str, Any]]) -> str:
+    """The strongest toolchain match name, or empty when none fired."""
+    for match in matches:
+        if str(match.get("category") or "") == CATEGORY_TOOLCHAIN:
+            return str(match.get("name") or "").strip()
+    return ""

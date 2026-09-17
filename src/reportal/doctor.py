@@ -40,6 +40,7 @@ from reportal import (
     external,
     graph_backends,
     llm,
+    profiles,
     remote_ingest,
     sandbox,
     settings,
@@ -156,6 +157,7 @@ def _optional_check() -> dict[str, str]:
         (entry for entry in graph_backends.graph_backends() if entry.name == backend), None
     )
     states = [
+        f"profile={profiles.current()}",
         f"llm={'on' if llm.get_client().available() else 'off'}",
         f"similarity={'on' if similarity.available() else 'off'}",
         f"sandbox={'on' if enabled else 'off'}",
@@ -164,6 +166,11 @@ def _optional_check() -> dict[str, str]:
         f"graph_backend={backend}",
     ]
     broken: list[str] = []
+    if profiles.is_saas() and not billing.billing_configured():
+        broken.append(
+            "the saas profile is on but no billing provider is configured;"
+            " quotas enforce against plans nobody can buy"
+        )
     if enabled and runner is None:
         broken.append("detonation is opted in but no sandbox runner is installed")
     if external_on and not key_present:
@@ -221,6 +228,7 @@ def _config_check() -> dict[str, str]:
 
 def _auth_check(conn: sqlite3.Connection | None) -> dict[str, str]:
     """The auth posture, and the enabled users a non-loopback bind needs."""
+    profile = profiles.current()
     if not auth.required():
         return _check(
             "auth",
@@ -241,7 +249,11 @@ def _auth_check(conn: sqlite3.Connection | None) -> dict[str, str]:
             "token auth is required and no enabled user exists",
             "run 'reportal user-add <name>' before serving on a non-loopback host",
         )
-    return _check("auth", STATUS_OK, f"token auth, {len(active)} enabled user(s)")
+    return _check(
+        "auth",
+        STATUS_OK,
+        f"profile {profile}, token auth, {len(active)} enabled user(s)",
+    )
 
 
 def report(*, port: int = DEFAULT_PORT) -> dict[str, Any]:

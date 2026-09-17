@@ -92,6 +92,7 @@ def add_comment(
     scope_id: int,
     body: str,
     author: str | None = None,
+    author_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Validate a scope and body, then store one comment and return its row."""
     check_scope(conn, scope_kind=scope_kind, scope_id=scope_id)
@@ -101,6 +102,7 @@ def add_comment(
         scope_id=scope_id,
         author=normalize_author(author),
         body=normalize_body(body),
+        author_user_id=author_user_id,
     )
 
 

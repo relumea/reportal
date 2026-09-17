@@ -21,6 +21,7 @@ import re
 import sqlite3
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import AsyncExitStack
 from contextvars import ContextVar, Token
 from typing import Any
 from urllib.parse import urlsplit
@@ -29,6 +30,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
+from starlette.types import Receive, Scope, Send
 
 from reportal import (
     __version__,
@@ -45,7 +47,7 @@ from reportal._paths import WorkspaceNotFound, db_path
 
 
 @contextlib.asynccontextmanager
-async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     """Stop what the application started, so a shutdown leaves no worker behind.
 
     The job pool is started lazily by the first submit (``jobs.ensure_worker``),
@@ -55,9 +57,11 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     An unreadable ``reportal.toml`` is refused here too: a process started
     through uvicorn (rather than ``reportal serve``) must not run on silent
-    defaults any more than the CLI path does.
+    defaults any more than the CLI path does.  The Streamable HTTP MCP
+    manager is the same kind of effect: it lives for the process and is
+    stopped here.
     """
-    from reportal import jobs, settings
+    from reportal import jobs, mcp_server, settings
 
     failing = settings.failing()
     if failing:
@@ -68,8 +72,35 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
             " (fix the file, then 'reportal config')"
         )
 
-    yield
-    jobs.stop_worker()
+    async with AsyncExitStack() as stack:
+        application.state.mcp_http = await stack.enter_async_context(mcp_server.http_lifespan())
+        try:
+            yield
+        finally:
+            application.state.mcp_http = None
+            jobs.stop_worker()
+
+
+class _McpHttpApp:
+    """ASGI wrapper around the live Streamable HTTP manager.
+
+    A process whose lifespan has not started (a unit test that never
+    entered it) answers 503 so the mount exists without a live manager.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            return
+        manager = getattr(app.state, "mcp_http", None)
+        if manager is None:
+            refusal = json_error(
+                503,
+                error="mcp-unavailable",
+                detail="MCP HTTP transport is not running",
+            )
+            await refusal(scope, receive, send)
+            return
+        await manager.handle_request(scope, receive, send)
 
 
 app = FastAPI(
@@ -84,6 +115,20 @@ app = FastAPI(
 )
 
 _log = logging.getLogger("reportal")
+
+# The one /api path no bearer covers: Stripe delivers it, so the HMAC
+# signature the route verifies is the gate, not a portal token.
+WEBHOOK_PATH = "/api/billing/webhook"
+SIGNUP_PATH = "/api/signup"
+MCP_PATH = "/mcp"
+
+
+def _is_mcp_path(path: str) -> bool:
+    """True when *path* is the Streamable HTTP MCP mount."""
+    return path == MCP_PATH or path.startswith(MCP_PATH + "/")
+
+
+app.add_route(MCP_PATH, _McpHttpApp(), methods=["GET", "POST", "DELETE"])
 
 # Loopback hostnames accepted by the Host-header guard.  The guard defeats DNS
 # rebinding (an attacker's domain resolving to 127.0.0.1) on loopback binds; a
@@ -334,14 +379,21 @@ def authenticate(request: Request) -> tuple[str, Response | None]:
 
     Auth is off unless the environment or the workspace config turns it on, so
     the default single-user loopback install is unchanged and this costs a
-    configuration read.  When it is on, every ``/api`` request needs
-    ``Authorization: Bearer <token>``: a missing or unknown token is 401
-    ``unauthorized``, a disabled user is 401 as well, and a role that does not
-    carry the permission the method and path imply is 403 ``forbidden``.  The
-    authenticated user is left on ``request.state.user`` for the routes that
-    report it, and the actor name is what :func:`reportal.journal.acting_as`
-    records on the entries the request writes: the user's name, or ``local``
-    while auth is off.
+    configuration read.  When it is on, every ``/api`` request and ``/mcp``
+    need ``Authorization: Bearer <token>``, with one exception: the billing
+    webhook, whose caller is Stripe rather than a portal user and whose gate
+    is the HMAC signature ``billing.verify_webhook`` checks, and the SaaS
+    signup, which creates the first token a visitor can present.  ``/mcp``
+    needs write, because the registry mixes readers and writers on one
+    session.  A missing or unknown token is 401 ``unauthorized``, a disabled
+    user is 401 as well, a role that does not carry the permission the
+    method and path imply is 403 ``forbidden``, and a write past
+    :data:`auth.WRITE_MAX_HITS` in :data:`auth.WRITE_WINDOW_S` is 429
+    ``rate-limited`` with ``Retry-After``.  The authenticated user is
+    left on
+    ``request.state.user`` for the routes that report it, and the actor name
+    is what :func:`reportal.journal.acting_as` records on the entries the
+    request writes: the user's name, or ``local`` while auth is off.
 
     It answers an ``(actor, refusal)`` pair rather than raising, because it runs
     inside a middleware: a raised :class:`JsonError` there would sit outside the
@@ -349,6 +401,10 @@ def authenticate(request: Request) -> tuple[str, Response | None]:
     is.
     """
     if not auth.required():
+        return journal.LOCAL_ACTOR, None
+    if request.url.path == WEBHOOK_PATH:
+        return journal.LOCAL_ACTOR, None
+    if request.method == "POST" and request.url.path == SIGNUP_PATH:
         return journal.LOCAL_ACTOR, None
     token = auth.token_of(request.headers.get(auth.AUTHORIZATION_HEADER))
     with contextlib.closing(db()) as conn:
@@ -361,6 +417,14 @@ def authenticate(request: Request) -> tuple[str, Response | None]:
         if needed not in auth.permissions_for(str(user["role"])):
             return "", json_error(403, error=auth.ERROR_FORBIDDEN, detail=auth.FORBIDDEN_DETAIL)
         refusal = _enforce_scope(conn, request, user)
+    write_key = f"user:{int(user['id'])}"
+    if not auth.is_read_method(request.method) and not auth.write_allowed(write_key):
+        return "", json_error(
+            429,
+            error=auth.ERROR_RATE_LIMITED,
+            detail="too many writes; try again shortly",
+            retry_after=auth.write_retry_after(write_key),
+        )
     request.state.user = user
     if refusal is not None:
         return "", refusal
@@ -484,31 +548,44 @@ class JsonError(Response, Exception):
     class covers both so the ported routes keep the call shape they had.
     """
 
-    def __init__(self, status_code: int, *, error: str, detail: str = "") -> None:
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        error: str,
+        detail: str = "",
+        retry_after: int | None = None,
+    ) -> None:
         body = json.dumps(
             {"error": error, "detail": detail, "doc_url": error_docs.doc_url(error)}
         ).encode("utf-8")
+        headers = {"Cache-Control": "no-store"}
+        if retry_after is not None:
+            headers["Retry-After"] = str(max(1, int(retry_after)))
         Response.__init__(
             self,
             content=body,
             status_code=status_code,
             media_type="application/json",
-            headers={"Cache-Control": "no-store"},
+            headers=headers,
         )
         Exception.__init__(self, error)
         self.error = error
         self.detail = detail
 
 
-def json_error(status: int, *, error: str, detail: str = "") -> JsonError:
+def json_error(
+    status: int, *, error: str, detail: str = "", retry_after: int | None = None
+) -> JsonError:
     """Build the JSON error response for *status*.
 
     *error* is a fixed, sanitized string so no exception text or request data
     reaches the response body, and *doc_url* points at the section of
     ``docs/ERRORS.md`` that documents the code.  A code the catalogue does not
     name carries ``null`` rather than a link to a section that does not exist.
+    A 429 names ``Retry-After`` when *retry_after* is set.
     """
-    return JsonError(status, error=error, detail=detail)
+    return JsonError(status, error=error, detail=detail, retry_after=retry_after)
 
 
 async def json_body(request: Request) -> dict[str, Any]:
@@ -600,6 +677,7 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
     request_id_token = observability.set_request_id(request_id)
     started = time.perf_counter()
     actor = journal.LOCAL_ACTOR
+    actor_user_id: int | None = None
     response: Response | None = None
     try:
         if ALLOWED_HOSTS is not None:
@@ -614,7 +692,7 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
                     400, error="unexpected Host header", detail="host not allowed"
                 )
                 return response
-        if request.url.path.startswith("/api"):
+        if request.url.path.startswith("/api") or _is_mcp_path(request.url.path):
             actor, refusal = authenticate(request)
             if refusal is not None:
                 response = refusal
@@ -624,6 +702,9 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
             # error body is serialized with no caller and is redacted.
             user = getattr(request.state, "user", None)
             _CALLER.set(user if isinstance(user, Mapping) else None)
+            if isinstance(user, Mapping):
+                raw_id = user.get("id")
+                actor_user_id = int(raw_id) if isinstance(raw_id, int) else None
         # The actor is set here, in the async middleware, so the worker thread
         # the route runs on inherits it; a value set inside a sync dependency
         # would not reach the handler.  Both meters ride the same scope: a
@@ -632,9 +713,9 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
         # billing exists, and a request with no tenant gets neither, so a
         # self-hosted install records nothing.
         organisation_id = metering.NO_ORG
-        if request.url.path.startswith("/api"):
+        if request.url.path.startswith("/api") or _is_mcp_path(request.url.path):
             organisation_id = caller_organisation(request)
-        with journal.acting_as(actor), contextlib.ExitStack() as stack:
+        with journal.acting_as(actor, user_id=actor_user_id), contextlib.ExitStack() as stack:
             if organisation_id != metering.NO_ORG:
                 stack.enter_context(
                     llm.recording_usage(_meter_tokens(organisation_id, request.url.path))
@@ -646,7 +727,9 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
             return response
     finally:
         duration_ms = int((time.perf_counter() - started) * 1000)
-        if response is not None and request.url.path.startswith("/api"):
+        if response is not None and (
+            request.url.path.startswith("/api") or _is_mcp_path(request.url.path)
+        ):
             observability.record_request(status=response.status_code, duration_ms=duration_ms)
             response.headers[observability.REQUEST_ID_HEADER] = request_id
             if observability.should_log_completion(
@@ -728,7 +811,7 @@ async def _handle_error(request: Request, exc: Exception) -> Response:
         observability.current_request_id(),
         exc_info=exc,
     )
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith("/api/") or _is_mcp_path(request.url.path):
         return json_error(500, error="internal server error")
     return Response(
         content=b"<html><body><h1>500 Internal Server Error</h1></body></html>",

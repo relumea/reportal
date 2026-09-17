@@ -509,10 +509,19 @@ def _record(
     *,
     source: str,
     actor: str,
+    actor_user_id: int | None = None,
 ) -> int:
     """Append one history row for the state a write replaced."""
+    from reportal import journal
+
+    current = journal.current_actor()
     return store.add_signature_history(
-        conn, function_id=function_id, previous=previous, source=source, actor=actor
+        conn,
+        function_id=function_id,
+        previous=previous,
+        source=source,
+        actor=current or actor,
+        actor_user_id=actor_user_id or journal.current_actor_user_id(),
     )
 
 

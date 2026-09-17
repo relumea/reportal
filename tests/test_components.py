@@ -542,3 +542,23 @@ class TestReload:
         assert report["changed"] == []
         assert report["skipped"] == []
         assert report["count"] == len(pipeline.builtin_components())
+
+
+class TestNotifyReentrancy:
+    def test_an_unsubscribe_inside_notify_keeps_every_subscriber(self) -> None:
+        from collections.abc import Callable
+
+        ctx = Context()
+        seen: list[tuple[str, str]] = []
+        stops: list[Callable[[], None]] = []
+
+        def dropping(name: str, kind: str) -> None:
+            seen.append((name, kind))
+            for stop in list(stops):
+                stop()
+
+        stops.append(ctx.subscribe(dropping))
+        ctx.subscribe(lambda name, kind: seen.append((name, kind)))
+        ctx.provide("a", 1)
+
+        assert seen == [("a", CHANGE_PROVIDE), ("a", CHANGE_PROVIDE)]

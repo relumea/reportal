@@ -8,11 +8,12 @@ one string per row with a scope, an optional note and the actor that recorded
 it, so an analyst can say "this literal is a command line template" or "this
 address is a URL" without pretending the engine found it.
 
-The per-function *read* merges two things and labels them: the strings the
-analyst recorded, and the string literals the function's stored decompilation
-carries (a local scan of its quoted literals, :func:`derived_literals`).  The
-two are reported separately in ``analyst`` and ``derived`` rather than mixed, so
-a reader can tell what a human asserted from what a scanner found.
+The per-function *read* reports three labelled halves: the strings the
+analyst recorded, the quoted literals the stored decompilation carries
+(:func:`derived_literals`), and the stack-built or single-byte-XOR strings
+a stored NASM listing recovers (:func:`decoded_strings`).  The halves are
+never mixed, so a reader can tell a human assertion from a text scan from
+a listing reconstruction.
 
 A scope is validated against the row it names, so an unknown function or
 analysis is a not-found rather than an orphan row, and the whole store is
@@ -48,12 +49,23 @@ MAX_STRINGS_PER_SCOPE = 500
 
 # Where a read's entries came from.
 SOURCE_DERIVED = "decompilation"
+SOURCE_STACK = "stack"
+SOURCE_XOR = "xor"
 
-# The note the merged read carries about the derived half.
+# The note the merged read carries about the derived and decoded halves.
 DERIVED_NOTE = (
     "the derived entries are the quoted literals reportal found in the function's"
-    " stored decompilation; they are a text scan, not engine output"
+    " stored decompilation; the decoded entries are stack-built or single-byte-XOR"
+    " strings recovered from its stored NASM listing; both are text scans, not"
+    " engine output"
 )
+
+# A reconstructed string shorter than this is noise (a flag, an enum).
+MIN_DECODED_CHARS = 4
+
+# Printable ASCII a reconstructed C string may carry.
+_PRINTABLE = frozenset(range(0x20, 0x7F))
+_REG8 = r"al|ah|bl|bh|cl|ch|dl|dh"
 
 # Error codes the surface reports, shared by the API, CLI and MCP.
 ERROR_INVALID = "invalid string"
@@ -61,6 +73,27 @@ ERROR_NOT_FOUND = "string not found"
 
 # A C string literal: a double-quoted run, with escapes, on one line.
 _LITERAL_RE = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
+_MOV_BYTE_RE = re.compile(
+    r"^\s*mov\s+byte\s+\[([^\]]+)\]\s*,\s*(0x[0-9a-fA-F]+|\d+)\s*(?:;.*)?$",
+    re.IGNORECASE,
+)
+_XOR_BYTE_RE = re.compile(
+    r"^\s*xor\s+byte\s+\[([^\]]+)\]\s*,\s*(0x[0-9a-fA-F]+|\d+)\s*(?:;.*)?$",
+    re.IGNORECASE,
+)
+_MOV_REG8_RE = re.compile(
+    rf"^\s*mov\s+({_REG8})\s*,\s*(0x[0-9a-fA-F]+|\d+)\s*(?:;.*)?$",
+    re.IGNORECASE,
+)
+_XOR_REG8_RE = re.compile(
+    rf"^\s*xor\s+({_REG8})\s*,\s*(0x[0-9a-fA-F]+|\d+)\s*(?:;.*)?$",
+    re.IGNORECASE,
+)
+_STORE_REG8_RE = re.compile(
+    rf"^\s*mov\s+(?:byte\s+)?\[([^\]]+)\]\s*,\s*({_REG8})\s*(?:;.*)?$",
+    re.IGNORECASE,
+)
+_LOC_OFFSET_RE = re.compile(r"^(.*?)([+-])(0x[0-9a-fA-F]+|\d+)$")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_strings (
@@ -71,6 +104,7 @@ CREATE TABLE IF NOT EXISTS user_strings (
     kind       TEXT NOT NULL DEFAULT 'string',
     note       TEXT NOT NULL DEFAULT '',
     actor      TEXT NOT NULL DEFAULT '',
+    actor_user_id INTEGER,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_user_strings_scope ON user_strings(scope_kind, scope_id);
@@ -103,6 +137,10 @@ class UnknownStringError(StringError, LookupError):
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create the string table when the database predates it."""
     conn.executescript(_SCHEMA)
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(user_strings)")}
+    if "actor_user_id" not in columns:
+        conn.execute("ALTER TABLE user_strings ADD COLUMN actor_user_id INTEGER")
+    conn.commit()
 
 
 # ── Validation ─────────────────────────────────────────────────────
@@ -167,6 +205,8 @@ def check_scope(conn: sqlite3.Connection, *, scope_kind: str, scope_id: int) -> 
 
 def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     """One stored string as the surfaces report it."""
+    columns = set(row.keys())
+    raw_id = row["actor_user_id"] if "actor_user_id" in columns else None
     return {
         "id": int(row["id"]),
         "scope_kind": str(row["scope_kind"]),
@@ -175,6 +215,7 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "kind": str(row["kind"]),
         "note": str(row["note"]),
         "actor": str(row["actor"]),
+        "actor_user_id": None if raw_id is None else int(raw_id),
         "created_at": str(row["created_at"]),
     }
 
@@ -191,6 +232,7 @@ def add_string(
     kind: Any = None,
     note: Any = None,
     actor: str = "",
+    actor_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Store one analyst string, replacing an identical value in that scope.
 
@@ -199,6 +241,8 @@ def add_string(
     duplicate; a new value appends.  The scope is checked first, so an unknown
     row is a not-found.
     """
+    from reportal import journal
+
     ensure_schema(conn)
     resolved_kind, resolved_id = normalize_scope(scope_kind, scope_id)
     check_scope(conn, scope_kind=resolved_kind, scope_id=resolved_id)
@@ -227,8 +271,8 @@ def add_string(
     if count is not None and int(count["n"]) >= MAX_STRINGS_PER_SCOPE:
         raise InvalidStringError(f"a scope holds at most {MAX_STRINGS_PER_SCOPE} strings")
     cursor = conn.execute(
-        f"INSERT INTO {TABLE} (scope_kind, scope_id, value, kind, note, actor, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        f"INSERT INTO {TABLE} (scope_kind, scope_id, value, kind, note, actor,"
+        " actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             resolved_kind,
             resolved_id,
@@ -236,6 +280,7 @@ def add_string(
             resolved_string_kind,
             resolved_note,
             str(actor or ""),
+            actor_user_id if actor_user_id is not None else journal.current_actor_user_id(),
             store.now(),
         ),
     )
@@ -373,17 +418,140 @@ def derived_literals(code: str, *, limit: int = MAX_STRINGS_PER_SCOPE) -> list[s
     return found
 
 
+def _imm(token: str) -> int | None:
+    """Parse one NASM immediate, or None when it is not a byte."""
+    try:
+        value = int(token, 0)
+    except ValueError:
+        return None
+    if 0 <= value <= 255:
+        return value
+    return None
+
+
+def _slot(operand: str) -> tuple[str, int] | None:
+    """A memory operand as ``(base, offset)``, or None when it has no offset."""
+    text = operand.strip().lower().replace(" ", "")
+    match = _LOC_OFFSET_RE.match(text)
+    if match is None:
+        return None
+    base, sign, raw = match.group(1, 2, 3)
+    try:
+        offset = int(raw, 0)
+    except ValueError:
+        return None
+    if sign == "-":
+        offset = -offset
+    return base, offset
+
+
+def _emit_run(
+    found: list[dict[str, str]],
+    seen: set[str],
+    bytes_by_offset: dict[int, int],
+    *,
+    source: str,
+    limit: int,
+) -> None:
+    """Append printable runs of at least :data:`MIN_DECODED_CHARS` from one location."""
+    if len(found) >= limit or not bytes_by_offset:
+        return
+    for start in sorted(bytes_by_offset):
+        if start - 1 in bytes_by_offset:
+            continue
+        chars: list[str] = []
+        offset = start
+        while offset in bytes_by_offset:
+            value = bytes_by_offset[offset]
+            if value == 0:
+                break
+            if value not in _PRINTABLE:
+                chars = []
+                break
+            chars.append(chr(value))
+            offset += 1
+        text = "".join(chars)
+        if len(text) < MIN_DECODED_CHARS or text in seen:
+            continue
+        seen.add(text)
+        found.append({"value": text, "source": source})
+        if len(found) >= limit:
+            return
+
+
+def decoded_strings(listing: str, *, limit: int = MAX_STRINGS_PER_SCOPE) -> list[dict[str, str]]:
+    """Stack-built and single-byte-XOR strings a stored NASM listing recovers.
+
+    It is a text scan of consecutive ``mov byte [loc], imm`` stores, and of
+    ``mov reg8, imm`` / ``xor reg8, imm`` / ``mov [loc], reg8`` triples.  A
+    reconstructed run shorter than :data:`MIN_DECODED_CHARS` is dropped as
+    noise.  An empty listing yields nothing.
+    """
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+    stacks: dict[str, dict[int, int]] = {}
+    xors: dict[str, dict[int, int]] = {}
+    pending: dict[str, int] = {}
+    keys: dict[str, int] = {}
+    for raw in (listing or "").splitlines():
+        line = raw.split(";", 1)[0]
+        match = _MOV_BYTE_RE.match(line)
+        if match is not None:
+            slot = _slot(match.group(1))
+            value = _imm(match.group(2))
+            if slot is not None and value is not None:
+                stacks.setdefault(slot[0], {})[slot[1]] = value
+            continue
+        match = _XOR_BYTE_RE.match(line)
+        if match is not None:
+            slot = _slot(match.group(1))
+            value = _imm(match.group(2))
+            if slot is not None and value is not None:
+                xors.setdefault(slot[0], {})[slot[1]] = (
+                    stacks.get(slot[0], {}).get(slot[1], 0) ^ value
+                )
+            continue
+        match = _MOV_REG8_RE.match(line)
+        if match is not None:
+            value = _imm(match.group(2))
+            if value is not None:
+                pending[match.group(1).lower()] = value
+            continue
+        match = _XOR_REG8_RE.match(line)
+        if match is not None:
+            value = _imm(match.group(2))
+            register = match.group(1).lower()
+            if value is not None and register in pending:
+                keys[register] = pending[register] ^ value
+            continue
+        match = _STORE_REG8_RE.match(line)
+        if match is not None:
+            slot = _slot(match.group(1))
+            register = match.group(2).lower()
+            if slot is None:
+                continue
+            if register in keys:
+                xors.setdefault(slot[0], {})[slot[1]] = keys[register]
+            elif register in pending:
+                stacks.setdefault(slot[0], {})[slot[1]] = pending[register]
+    for bytes_by_offset in stacks.values():
+        _emit_run(found, seen, bytes_by_offset, source=SOURCE_STACK, limit=limit)
+    for bytes_by_offset in xors.values():
+        _emit_run(found, seen, bytes_by_offset, source=SOURCE_XOR, limit=limit)
+    return found[:limit]
+
+
 def function_strings(
     conn: sqlite3.Connection,
     function_id: int,
     visible_to: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """One function's strings: the analyst's, and the derived literals beside them.
+    """One function's strings: analyst, derived literals, and decoded listing runs.
 
-    The two halves are never merged, so a reader can tell what a human recorded
-    from what the text scan found, and the payload carries the note saying which
-    is which.  ``visible_to`` empties both halves for a function on a hidden
-    binary, so the read never names what the gate would 404.
+    The three halves are never merged, so a reader can tell what a human
+    recorded from a decompilation text scan from a NASM reconstruction.
+    ``visible_to`` empties every half for a function on a hidden binary, so
+    the read never names what the gate would 404.
     """
     from reportal import auth
 
@@ -407,21 +575,33 @@ def function_strings(
                 "function_id": function_id,
                 "analyst": [],
                 "derived": [],
-                "count": 0,
+                "decoded": [],
+                "counts": {"analyst": 0, "derived": 0, "decoded": 0},
+                "note": DERIVED_NOTE,
             }
     analyst = list_strings(
         conn, scope_kind=SCOPE_FUNCTION, scope_id=function_id, visible_to=visible_to
     )
     stored = store.get_decompilation(conn, function_id)
     derived = derived_literals(str(stored["code"])) if stored is not None else []
+    listing = store.get_disasm(conn, function_id) or ""
+    decoded = decoded_strings(listing)
     recorded = {entry["value"] for entry in analyst}
+    derived_rows = [
+        {"value": text, "source": SOURCE_DERIVED} for text in derived if text not in recorded
+    ]
+    recorded.update(derived)
+    decoded_rows = [entry for entry in decoded if entry["value"] not in recorded]
     return {
         "function_id": function_id,
         "analyst": analyst,
-        "derived": [
-            {"value": text, "source": SOURCE_DERIVED} for text in derived if text not in recorded
-        ],
-        "counts": {"analyst": len(analyst), "derived": len(derived)},
+        "derived": derived_rows,
+        "decoded": decoded_rows,
+        "counts": {
+            "analyst": len(analyst),
+            "derived": len(derived),
+            "decoded": len(decoded),
+        },
         "note": DERIVED_NOTE,
     }
 

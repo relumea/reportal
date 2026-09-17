@@ -158,6 +158,8 @@ class TestBinaries:
         assert payload["total"] == 0
         assert payload["order"] == "id"
         assert payload["formats"] == []
+        assert payload["languages"] == []
+        assert payload["compilers"] == []
 
     def test_the_register_filters_orders_and_echoes(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
@@ -177,6 +179,8 @@ class TestBinaries:
         assert payload["total"] == 3
         assert payload["order"] == "name"
         assert payload["formats"] == ["ELF", "PE"]
+        assert payload["languages"] == []
+        assert payload["compilers"] == []
 
         # Each filter narrows the register and is echoed back.
         _status, headers, body = wsgi_request("GET", "/api/binaries?search=cc")
@@ -190,6 +194,18 @@ class TestBinaries:
         assert payload["total"] == 3
         _status, headers, body = wsgi_request("GET", "/api/binaries?format=ELF")
         assert [row["name"] for row in json_body(body, headers)["binaries"]] == ["alpha.exe"]
+        store.set_binary_language(conn, ids["binary"], "Go")
+        _status, headers, body = wsgi_request("GET", "/api/binaries?language=Go")
+        payload = json_body(body, headers)
+        assert [row["name"] for row in payload["binaries"]] == ["demo.exe"]
+        assert payload["language"] == "Go"
+        assert payload["languages"] == ["Go"]
+        store.set_binary_compiler(conn, ids["binary"], "MinGW GCC")
+        _status, headers, body = wsgi_request("GET", "/api/binaries?compiler=MinGW+GCC")
+        payload = json_body(body, headers)
+        assert [row["name"] for row in payload["binaries"]] == ["demo.exe"]
+        assert payload["compiler"] == "MinGW GCC"
+        assert payload["compilers"] == ["MinGW GCC"]
 
         # A filter that matches nothing is distinguishable from an empty register.
         _status, headers, body = wsgi_request("GET", "/api/binaries?search=absent")
@@ -213,6 +229,68 @@ class TestBinaries:
 
     def test_get_missing_404(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("GET", "/api/binaries/999")
+        assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "binary not found"
+
+    def test_rename_sets_the_display_name(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/binaries/{ids['binary']}",
+            body=json.dumps({"name": "  renamed.exe  "}).encode(),
+        )
+        payload = json_body(body, headers)
+        assert status.startswith("200")
+        assert payload["name"] == "renamed.exe"
+        assert payload["sha256"] == "aa" * 32
+        assert payload["journal_action"]
+        stored = store.get_binary(conn, ids["binary"])
+        assert stored is not None
+        assert stored["name"] == "renamed.exe"
+
+    def test_rename_refuses_an_empty_or_missing_name(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        status, headers, body = wsgi_request(
+            "PATCH", f"/api/binaries/{ids['binary']}", body=json.dumps({}).encode()
+        )
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid binary"
+
+        status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/binaries/{ids['binary']}",
+            body=json.dumps({"name": "   "}).encode(),
+        )
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid binary"
+        stored = store.get_binary(conn, ids["binary"])
+        assert stored is not None
+        assert stored["name"] == "demo.exe"
+
+    def test_notes_set_and_clear(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/binaries/{ids['binary']}",
+            body=json.dumps({"notes": "  vendor sample  "}).encode(),
+        )
+        payload = json_body(body, headers)
+        assert status.startswith("200")
+        assert payload["notes"] == "vendor sample"
+        assert payload["name"] == "demo.exe"
+        status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/binaries/{ids['binary']}",
+            body=json.dumps({"notes": "   "}).encode(),
+        )
+        payload = json_body(body, headers)
+        assert status.startswith("200")
+        assert payload["notes"] == ""
+
+    def test_rename_unknown_is_404(self, portal_db: Path) -> None:
+        status, headers, body = wsgi_request(
+            "PATCH", "/api/binaries/999", body=json.dumps({"name": "gone.exe"}).encode()
+        )
         assert status.startswith("404")
         assert json_body(body, headers)["error"] == "binary not found"
 

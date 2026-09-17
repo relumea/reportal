@@ -2,7 +2,14 @@
 
 *Reference material moved out of AGENTS.md.*
 
-`store.py` owns the schema.  `functions` is UNIQUE on `(analysis_id, va)`, which
+`store.py` owns the schema.  A binary row carries `format`, `arch`,
+`language`, `compiler` and `notes`.  `format`/`arch` come from the crawler or the
+fingerprint; `language` is stamped from the strongest filetype runtime
+match, or overwritten by a successful Go buildinfo recovery; `compiler`
+is stamped from the strongest filetype toolchain match.  An empty
+language or compiler is unknown, not a guess.  `notes` is an operator
+label, empty when none, capped at `store.MAX_BINARY_NOTES` (2000); the
+register `?search=` and `GET /api/search` `kind=all` match it.  `functions` is UNIQUE on `(analysis_id, va)`, which
 is what makes `upsert_function` and therefore `import-rebrew` idempotent: a
 binary is keyed by sha256 (or name+path when the binary bytes are unavailable),
 its import analysis is reused by engine label, and functions are refreshed by VA.
@@ -17,6 +24,16 @@ re-pull upserts the same row and a revert removes it.  Nothing new is stored:
 the row's payload carries `analysis_id`, `binary_id`, `source`, `kind`,
 `fetched_at` and the source's own `payload`, and the `local` and `virustotal`
 answers replace each other only within their own kind.
+
+`user_api_keys` holds named extra bearer tokens beside `users.token_hash`.
+Each row is `(user_id, name)` unique, stores only the SHA-256 digest, and
+counts toward the organisation plan's `max_api_keys` (the login token is
+one).  `last_used_at` is stamped on a successful named-key authenticate and
+stays empty until then.  `users.last_used_at` is stamped on a successful
+login-token authenticate and stays empty until then; rotating the login
+token clears it.  A named-key authenticate does not stamp the login
+column, and a login-token authenticate does not stamp a named key.  A
+disabled user never authenticates through either table.
 
 `secrets` holds the local credential store (`secret_store.py`), one row per
 `(name, scope, team_id)` with the value in plaintext and the times it was
@@ -271,7 +288,10 @@ its reference binary.  The stored detect value is reportal's own payload
 (`binary_id`, `families_checked`, `matches` with each match's confidence and
 signals, `count`, `notes` carrying the scope and both overlap thresholds).
 `matches` holds the computed edges: `reportal match` replaces a source
-function's rows on every run, so a stale candidate never survives.
+function's rows on every run, so a stale candidate never survives.  Each
+row stores the ISA pair (`source_arch`, `candidate_arch`) of the two
+binaries at record time, so a later reader can tell a cross-architecture
+pair from a same-ISA one.
 
 `data_types` holds the editable type model, one row per `(binary_id, name)`
 with the declaration `kind` (`struct`, `union`, `enum`, `typedef`, `pointer`,
@@ -448,11 +468,18 @@ writes are journaled like every other write, so a create, a role change, a
 rotation and a delete are each revertible.
 
 `teams` and `team_members` are the identity side of visibility, owned by
-`auth.py` alongside `users`.  A team is a name, an optional description and its
-creation time; membership is the pair `(team_id, user_id)` and nothing else,
-because a team here answers "who may write this" rather than carrying its own
-roles.  `binaries` and `collections` each carry `owner_team_id` (nullable) and
-`visibility` (`public`, the default, or `team`), added to databases that predate
+`auth.py` alongside `users`.  SaaS signup (`auth.signup_tenant`) creates one
+analyst, one organisation (default billed plan) and one owned team in a
+single journaled action.  A team is a name, an optional description and its
+creation time; membership is the pair `(team_id, user_id)` plus a team role.
+`team_invites` is the join path: one row per minted code, storing only
+`code_hash` (SHA-256 of the shown-once `invite_` token), who minted it,
+who redeemed it and `expires_at` (`created_at` plus seven days).  A row
+that predates the column has an empty stamp, and redeem/list derive the
+same TTL from `created_at`.  A revert of the join restores the unused
+invite and, when the redeemer was new, the membership.  `binaries` and `collections` each carry
+`owner_team_id` (nullable) and `visibility` (`public`, the default, or `team`),
+added to databases that predate
 them by the `_ADDED_COLUMNS` migration: a pre-team row is public and ownerless,
 which is what it always meant.  Deleting a team resets the objects it owned to
 public and ownerless rather than leaving a dangling scope, because a stale
@@ -470,12 +497,15 @@ recorded with it, the trimmed `body` (bounded by `store.MAX_FEEDBACK_CHARS`) and
 activity feed that sits beside them (`src/reportal/activity.py`) stores nothing:
 it merges the journal's actions with the analysis log at read time.
 
-`journal_entries` gained an `actor` column with the same release: the name the
-server recorded the request for (`server.authenticate` and
-`journal.acting_as`), the literal `local` while token auth is off, and empty for
-a write no request made.  An existing database gets the column through
-`journal.ensure_schema`, which adds it before creating its index, and the rows
-written before it read as an empty actor rather than an invented one.
+`journal_entries` carries the name the server recorded the request for
+(`server.authenticate` and `journal.acting_as`), the literal `local` while
+token auth is off, and empty for a write no request made, plus the stable
+`actor_user_id` behind that name (`NULL` where no identity was recorded).
+An existing database gains both columns through `journal.ensure_schema`, and
+rows written before them read as name-only rather than an invented identity.
+The rename, comment, signature and type histories carry the same pair, so a
+display name stays readable and the id stays stable across a user rename or
+delete.
 
 `artifact_ratings` is the analyst's verdict on a stored agent artifact, owned by
 `ratings.py` and created by its own lazy `ensure_schema`.  One row is one verdict:

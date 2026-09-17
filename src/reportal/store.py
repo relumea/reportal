@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS data_type_history (
     current_json  TEXT NOT NULL DEFAULT 'null',
     source        TEXT NOT NULL DEFAULT '',
     actor         TEXT NOT NULL DEFAULT '',
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_data_type_history_type ON data_type_history(data_type_id);
@@ -158,6 +159,9 @@ CREATE TABLE IF NOT EXISTS binaries (
     size       INTEGER NOT NULL DEFAULT 0,
     format     TEXT NOT NULL DEFAULT '',
     arch       TEXT NOT NULL DEFAULT '',
+    language   TEXT NOT NULL DEFAULT '',
+    compiler   TEXT NOT NULL DEFAULT '',
+    notes      TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
 
@@ -191,6 +195,8 @@ CREATE TABLE IF NOT EXISTS matches (
     similarity            REAL NOT NULL DEFAULT 0.0,
     confidence            REAL NOT NULL DEFAULT 0.0,
     settings_json         TEXT NOT NULL DEFAULT '',
+    source_arch           TEXT NOT NULL DEFAULT '',
+    candidate_arch        TEXT NOT NULL DEFAULT '',
     created_at            TEXT NOT NULL,
     UNIQUE (function_id, candidate_function_id)
 );
@@ -221,13 +227,14 @@ CREATE TABLE IF NOT EXISTS ai_artifacts (
 );
 
 CREATE TABLE IF NOT EXISTS name_history (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    function_id INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
-    old_name    TEXT NOT NULL DEFAULT '',
-    new_name    TEXT NOT NULL DEFAULT '',
-    source      TEXT NOT NULL DEFAULT '',
-    actor       TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    function_id   INTEGER NOT NULL REFERENCES functions(id) ON DELETE CASCADE,
+    old_name      TEXT NOT NULL DEFAULT '',
+    new_name      TEXT NOT NULL DEFAULT '',
+    source        TEXT NOT NULL DEFAULT '',
+    actor         TEXT NOT NULL DEFAULT '',
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS collections (
@@ -333,13 +340,14 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE TABLE IF NOT EXISTS comments (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    scope_kind TEXT NOT NULL,
-    scope_id   INTEGER NOT NULL,
-    author     TEXT NOT NULL,
-    body       TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope_kind    TEXT NOT NULL,
+    scope_id      INTEGER NOT NULL,
+    author        TEXT NOT NULL,
+    author_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    body          TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS feedback (
@@ -466,6 +474,7 @@ CREATE TABLE IF NOT EXISTS signature_history (
     previous_json TEXT NOT NULL DEFAULT 'null',
     source        TEXT NOT NULL DEFAULT '',
     actor         TEXT NOT NULL DEFAULT '',
+    actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at    TEXT NOT NULL
 );
 
@@ -537,6 +546,14 @@ def now() -> str:
 # every other open path.
 BUSY_TIMEOUT_MS = 30_000
 
+# Journal mode every connection uses. WAL lets readers proceed while a writer
+# holds the lock, so two users on the same workspace do not block each other.
+# Set on every open rather than once at init: the mode is persistent, but a
+# database created before this shipped still runs in rollback mode until each
+# connection switches it. Best effort; a reader on an unreadable path still
+# answers through its own error path.
+JOURNAL_MODE = "WAL"
+
 
 def connect(db_path: Path) -> sqlite3.Connection:
     """Open *db_path* read-write with row access by name and FKs enforced."""
@@ -544,6 +561,8 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    with contextlib.suppress(sqlite3.OperationalError):
+        conn.execute(f"PRAGMA journal_mode = {JOURNAL_MODE}")
     return conn
 
 
@@ -565,6 +584,11 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # this column existed was recorded outside a match run, so the empty
     # default reads as "no recorded settings" rather than an invented scope.
     ("matches", "settings_json", "TEXT NOT NULL DEFAULT ''"),
+    # The ISA pair a match row compared.  A row written before these columns
+    # existed has no recorded architectures, so the empty default reads as
+    # "unknown" rather than an invented ISA.
+    ("matches", "source_arch", "TEXT NOT NULL DEFAULT ''"),
+    ("matches", "candidate_arch", "TEXT NOT NULL DEFAULT ''"),
     # The inputs a scan ran with.  A stored scan is its result; the caller-named
     # input behind an engine result is not part of it (the engine's payload is
     # stored as it came back), so without this column the scan that produced a
@@ -605,6 +629,32 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # or project directory.
     ("disasm_cache", "extent_size", "INTEGER NOT NULL DEFAULT -1"),
     ("disasm_cache", "project_dir", "TEXT NOT NULL DEFAULT ''"),
+    # The stable user id behind a display name.  A row that predates the column
+    # was written before the id was kept, so NULL reads as "name only" rather
+    # than an invented identity.
+    ("name_history", "actor_user_id", "INTEGER"),
+    ("signature_history", "actor_user_id", "INTEGER"),
+    ("data_type_history", "actor_user_id", "INTEGER"),
+    ("comments", "author_user_id", "INTEGER"),
+    # The recovered source language of a binary (Go, Rust, ...). A row that
+    # predates the column has none recorded, so the empty default reads as
+    # "unknown" rather than an invented language.
+    ("binaries", "language", "TEXT NOT NULL DEFAULT ''"),
+    # Recovered toolchain (MSVC, MinGW, ...). A row that predates the
+    # column has none recorded, so the empty default reads as unknown.
+    ("binaries", "compiler", "TEXT NOT NULL DEFAULT ''"),
+    # Operator note on a binary. A row that predates the column has none,
+    # so the empty default reads as no note rather than invented text.
+    ("binaries", "notes", "TEXT NOT NULL DEFAULT ''"),
+    # Invite TTL. A row that predates the column has none recorded, so the
+    # empty default derives from created_at + INVITE_TTL_SECONDS at redeem.
+    ("team_invites", "expires_at", "TEXT NOT NULL DEFAULT ''"),
+    # Last time a named extra key authenticated. A row that predates the
+    # column has never been seen, so the empty default reads as never.
+    ("user_api_keys", "last_used_at", "TEXT NOT NULL DEFAULT ''"),
+    # Last time the login token authenticated. A row that predates the
+    # column has never been seen, so the empty default reads as never.
+    ("users", "last_used_at", "TEXT NOT NULL DEFAULT ''"),
 )
 
 # Statements run after the columns above are added, to fill what an existing
@@ -648,6 +698,8 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
     """Add the columns an existing database predates; a fresh one has them all."""
     for table, column, declaration in _ADDED_COLUMNS:
         existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:
+            continue
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
     for statement in _BACKFILLS:
@@ -729,15 +781,34 @@ def add_binary(
     Dedupe is by ``sha256`` when supplied, else by ``(name, path)`` (see
     :func:`_find_binary`).  ``sha256`` stays NULL when the binary bytes are
     not available, so two unknown binaries never collide on an empty string.
+    The insert is atomic: two concurrent uploads of the same bytes race on
+    the UNIQUE index and the loser reads back the winner's row instead of
+    raising ``IntegrityError``.
     """
-    existing = _find_binary(conn, sha256=sha256, name=name, path=path)
+    if sha256:
+        conn.execute(
+            "INSERT OR IGNORE INTO binaries (sha256, name, path, size, format, arch, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (sha256, name, path, size, fmt, arch, now()),
+        )
+        conn.commit()
+        existing = _find_binary(conn, sha256=sha256, name=name, path=path)
+        assert existing is not None, "the row was just inserted"
+        return existing
+    existing = _find_binary(conn, sha256=None, name=name, path=path)
     if existing is not None:
         return existing
-    cur = conn.execute(
-        "INSERT INTO binaries (sha256, name, path, size, format, arch, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (sha256 or None, name, path, size, fmt, arch, now()),
-    )
+    try:
+        cur = conn.execute(
+            "INSERT INTO binaries (sha256, name, path, size, format, arch, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (None, name, path, size, fmt, arch, now()),
+        )
+    except sqlite3.IntegrityError:
+        existing = _find_binary(conn, sha256=None, name=name, path=path)
+        if existing is not None:
+            return existing
+        raise
     conn.commit()
     return int(cur.lastrowid or 0)
 
@@ -773,17 +844,22 @@ def list_binaries(
     search: str | None = None,
     tag: str | None = None,
     fmt: str | None = None,
+    language: str | None = None,
+    compiler: str | None = None,
     order: str = DEFAULT_BINARY_ORDER,
     visible_to: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """The binaries, in *order*, each with its function and comment counts.
 
-    *search* matches the binary's name or its SHA-256 (a prefix is enough, which
-    is what an analyst has for a sample they know by hash); *tag* keeps the
+    *search* matches the binary's name, its SHA-256 (a prefix is enough, which
+    is what an analyst has for a sample they know by hash) or its operator
+    notes; *tag* keeps the
     binaries carrying that exact tag name; *fmt* keeps one stored format, which
-    is the crawler's own reading rather than a vocabulary written down twice.
-    *order* is one of :data:`BINARY_ORDERS`; an unknown one raises ``ValueError``,
-    which the API, the CLI and the MCP tools map to their own error vocabulary.
+    is the crawler's own reading rather than a vocabulary written down twice;
+    *language* keeps one recovered source language; *compiler* one recovered
+    toolchain.  *order* is one of
+    :data:`BINARY_ORDERS`; an unknown one raises ``ValueError``, which the API,
+    the CLI and the MCP tools map to their own error vocabulary.
 
     *visible_to* is the authenticated caller (None while auth is off); a
     non-admin caller sees only the public binaries and its own teams', which is
@@ -811,7 +887,15 @@ def list_binaries(
             GROUP BY c.scope_id
         ) cc ON cc.binary_id = b.id
     """
-    where, params = _binary_where(conn, search=search, tag=tag, fmt=fmt, visible_to=visible_to)
+    where, params = _binary_where(
+        conn,
+        search=search,
+        tag=tag,
+        fmt=fmt,
+        language=language,
+        compiler=compiler,
+        visible_to=visible_to,
+    )
     sql += where
     sql += f" ORDER BY {BINARY_ORDERS[order]}"
     return _rows(conn.execute(sql, params))
@@ -823,6 +907,8 @@ def _binary_where(
     search: str | None,
     tag: str | None,
     fmt: str | None,
+    language: str | None,
+    compiler: str | None,
     visible_to: Mapping[str, Any] | None,
 ) -> tuple[str, list[Any]]:
     """The shared WHERE of the register listing and its count.
@@ -839,8 +925,11 @@ def _binary_where(
         params.extend(scope[1])
     if search:
         pattern = _escape_like(search)
-        clauses.append("(b.name LIKE ? ESCAPE '\\' OR b.sha256 LIKE ? ESCAPE '\\')")
-        params.extend((pattern, pattern))
+        clauses.append(
+            "(b.name LIKE ? ESCAPE '\\' OR b.sha256 LIKE ? ESCAPE '\\'"
+            " OR b.notes LIKE ? ESCAPE '\\')"
+        )
+        params.extend((pattern, pattern, pattern))
     if tag:
         clauses.append(
             "EXISTS (SELECT 1 FROM binary_tags bt JOIN tags t ON t.id = bt.tag_id"
@@ -850,6 +939,12 @@ def _binary_where(
     if fmt:
         clauses.append("b.format = ?")
         params.append(fmt)
+    if language:
+        clauses.append("b.language = ?")
+        params.append(language)
+    if compiler:
+        clauses.append("b.compiler = ?")
+        params.append(compiler)
     return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
 
 
@@ -859,25 +954,129 @@ def count_binaries(
     search: str | None = None,
     tag: str | None = None,
     fmt: str | None = None,
+    language: str | None = None,
+    compiler: str | None = None,
     visible_to: Mapping[str, Any] | None = None,
 ) -> int:
     """How many binaries the same filters :func:`list_binaries` takes keep."""
-    where, params = _binary_where(conn, search=search, tag=tag, fmt=fmt, visible_to=visible_to)
+    where, params = _binary_where(
+        conn,
+        search=search,
+        tag=tag,
+        fmt=fmt,
+        language=language,
+        compiler=compiler,
+        visible_to=visible_to,
+    )
     row = conn.execute("SELECT COUNT(*) AS total FROM binaries b" + where, params).fetchone()
     return int(row["total"]) if row is not None else 0
 
 
 def binary_filter_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
-    """The formats the register actually holds, for the listing's own control.
+    """The formats, languages and compilers the register actually holds.
 
-    A distinct `format` column read the way the analyses facets are, so the
-    control offers only values that can match something.
+    Distinct column reads the way the analyses facets are, so the control
+    offers only values that can match something.
     """
-    rows = conn.execute(
-        "SELECT DISTINCT format AS value FROM binaries"
-        " WHERE format IS NOT NULL AND format != '' ORDER BY format"
-    )
-    return {"formats": [str(row["value"]) for row in rows]}
+
+    def distinct(column: str) -> list[str]:
+        rows = conn.execute(
+            f"SELECT DISTINCT {column} AS value FROM binaries"
+            f" WHERE {column} IS NOT NULL AND {column} != '' ORDER BY {column}"
+        )
+        return [str(row["value"]) for row in rows]
+
+    return {
+        "formats": distinct("format"),
+        "languages": distinct("language"),
+        "compilers": distinct("compiler"),
+    }
+
+
+def set_binary_language(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    language: str,
+    *,
+    overwrite: bool = False,
+) -> None:
+    """Record the recovered source language of *binary_id*.
+
+    An empty *language* is ignored.  Without *overwrite*, a binary that
+    already carries a language keeps it, so a later weaker guess cannot
+    replace a stronger stamp (Go buildinfo over a filetype heuristic).
+    """
+    value = language.strip()
+    if not value:
+        return
+    if overwrite:
+        conn.execute("UPDATE binaries SET language = ? WHERE id = ?", (value, binary_id))
+    else:
+        conn.execute(
+            "UPDATE binaries SET language = ? WHERE id = ? AND language = ''",
+            (value, binary_id),
+        )
+    conn.commit()
+
+
+def set_binary_compiler(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    compiler: str,
+    *,
+    overwrite: bool = False,
+) -> None:
+    """Record the recovered toolchain of *binary_id*.
+
+    An empty *compiler* is ignored.  Without *overwrite*, a binary that
+    already carries a toolchain keeps it.
+    """
+    value = compiler.strip()
+    if not value:
+        return
+    if overwrite:
+        conn.execute("UPDATE binaries SET compiler = ? WHERE id = ?", (value, binary_id))
+    else:
+        conn.execute(
+            "UPDATE binaries SET compiler = ? WHERE id = ? AND compiler = ''",
+            (value, binary_id),
+        )
+    conn.commit()
+
+
+def rename_binary(conn: sqlite3.Connection, binary_id: int, name: str) -> dict[str, Any] | None:
+    """Set the display name of *binary_id*; None when the id is unknown.
+
+    The name is stripped.  An empty value raises ``ValueError``.  Dedupe
+    stays on sha256, so two binaries may share a display name.
+    """
+    cleaned = name.strip()
+    if not cleaned:
+        raise ValueError("binary name must not be empty")
+    if get_binary(conn, binary_id) is None:
+        return None
+    conn.execute("UPDATE binaries SET name = ? WHERE id = ?", (cleaned, binary_id))
+    conn.commit()
+    return get_binary(conn, binary_id)
+
+
+MAX_BINARY_NOTES = 2000
+
+
+def set_binary_notes(conn: sqlite3.Connection, binary_id: int, notes: str) -> dict[str, Any] | None:
+    """Set the operator note on *binary_id*; None when the id is unknown.
+
+    The note is stripped.  Empty is allowed (clears the note).  A value
+    past :data:`MAX_BINARY_NOTES` raises ``ValueError``.
+    """
+    cleaned = notes.strip()
+    if len(cleaned) > MAX_BINARY_NOTES:
+        raise ValueError(f"binary notes must be at most {MAX_BINARY_NOTES} characters")
+    if get_binary(conn, binary_id) is None:
+        return None
+    conn.execute("UPDATE binaries SET notes = ? WHERE id = ?", (cleaned, binary_id))
+    conn.commit()
+    return get_binary(conn, binary_id)
 
 
 def get_binary(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
@@ -2237,6 +2436,8 @@ def record_match(
     similarity: float,
     confidence: float,
     settings: Mapping[str, Any] | None = None,
+    source_arch: str = "",
+    candidate_arch: str = "",
 ) -> int:
     """Record a similarity edge between two functions; returns its id.
 
@@ -2244,20 +2445,27 @@ def record_match(
     inserting a duplicate row (the pair is UNIQUE).  *settings* is the match
     run's scope, stored with the row so a later reader can tell which run
     produced it; None records no settings, which is what an edge written
-    outside a match run carries.
+    outside a match run carries.  *source_arch* and *candidate_arch* are the
+    ISA tokens of the two binaries at record time, so a later reader can tell
+    a cross-architecture pair from a same-ISA one.
     """
     conn.execute(
         "INSERT INTO matches (function_id, candidate_function_id, similarity,"
-        " confidence, settings_json, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+        " confidence, settings_json, source_arch, candidate_arch, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         " ON CONFLICT(function_id, candidate_function_id) DO UPDATE SET"
         " similarity = excluded.similarity, confidence = excluded.confidence,"
-        " settings_json = excluded.settings_json",
+        " settings_json = excluded.settings_json,"
+        " source_arch = excluded.source_arch,"
+        " candidate_arch = excluded.candidate_arch",
         (
             function_id,
             candidate_function_id,
             similarity,
             confidence,
             json.dumps(dict(settings)) if settings is not None else "",
+            source_arch,
+            candidate_arch,
             now(),
         ),
     )
@@ -2951,6 +3159,7 @@ def rename_function(
     new_name: str,
     actor: str,
     source: str = "manual",
+    actor_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Rename a function and append the change to ``name_history``.
 
@@ -2966,9 +3175,10 @@ def rename_function(
     if old_name == new_name:
         return {"function_id": function_id, "old_name": old_name, "new_name": new_name}
     conn.execute(
-        "INSERT INTO name_history (function_id, old_name, new_name, source, actor, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (function_id, old_name, new_name, source, actor, now()),
+        "INSERT INTO name_history"
+        " (function_id, old_name, new_name, source, actor, actor_user_id, created_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (function_id, old_name, new_name, source, actor, actor_user_id, now()),
     )
     conn.execute(
         "UPDATE functions SET name = ?, name_source = ? WHERE id = ?",
@@ -2993,7 +3203,13 @@ def get_name_history(conn: sqlite3.Connection, history_id: int) -> dict[str, Any
     return dict(row) if row else None
 
 
-def revert_name(conn: sqlite3.Connection, history_id: int, *, actor: str = "revert") -> int:
+def revert_name(
+    conn: sqlite3.Connection,
+    history_id: int,
+    *,
+    actor: str = "revert",
+    actor_user_id: int | None = None,
+) -> int:
     """Restore the pre-rename name recorded by *history_id*; returns function id.
 
     The revert itself is recorded in ``name_history`` (source ``revert``), so
@@ -3005,7 +3221,14 @@ def revert_name(conn: sqlite3.Connection, history_id: int, *, actor: str = "reve
     if row is None:
         raise KeyError(f"no name_history row with id {history_id}")
     function_id = int(row["function_id"])
-    rename_function(conn, function_id, new_name=str(row["old_name"]), actor=actor, source="revert")
+    rename_function(
+        conn,
+        function_id,
+        new_name=str(row["old_name"]),
+        actor=actor,
+        source="revert",
+        actor_user_id=actor_user_id,
+    )
     return function_id
 
 
@@ -3034,13 +3257,14 @@ def create_collection(
     cleaned = _canonical_label(name)
     if not cleaned:
         raise ValueError("collection name must not be empty")
-    if conn.execute("SELECT 1 FROM collections WHERE name = ?", (cleaned,)).fetchone():
-        raise ValueError(f"collection {cleaned!r} already exists")
-    cur = conn.execute(
-        "INSERT INTO collections (name, description, scope, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (cleaned, description, scope, now(), now()),
-    )
+    try:
+        cur = conn.execute(
+            "INSERT INTO collections (name, description, scope, created_at, updated_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (cleaned, description, scope, now(), now()),
+        )
+    except sqlite3.IntegrityError:
+        raise ValueError(f"collection {cleaned!r} already exists") from None
     conn.commit()
     return int(cur.lastrowid or 0)
 
@@ -3741,7 +3965,13 @@ def message_ids(conn: sqlite3.Connection, conversation_id: int) -> set[int]:
 
 
 def add_comment(
-    conn: sqlite3.Connection, *, scope_kind: str, scope_id: int, author: str, body: str
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str,
+    scope_id: int,
+    author: str,
+    body: str,
+    author_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Store one comment on ``(scope_kind, scope_id)`` and return its row.
 
@@ -3753,9 +3983,10 @@ def add_comment(
         raise ValueError("comment body must not be empty")
     stamp = now()
     cur = conn.execute(
-        "INSERT INTO comments (scope_kind, scope_id, author, body, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?, ?)",
-        (scope_kind, scope_id, author, body, stamp, stamp),
+        "INSERT INTO comments"
+        " (scope_kind, scope_id, author, author_user_id, body, created_at, updated_at)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (scope_kind, scope_id, author, author_user_id, body, stamp, stamp),
     )
     conn.commit()
     return {
@@ -3763,6 +3994,7 @@ def add_comment(
         "scope_kind": scope_kind,
         "scope_id": scope_id,
         "author": author,
+        "author_user_id": author_user_id,
         "body": body,
         "created_at": stamp,
         "updated_at": stamp,
@@ -4202,6 +4434,8 @@ def _binary_match(row: Mapping[str, Any], needle: _Match) -> str:
         return SEARCH_KIND_SHA256
     if needle.test(row.get("name")):
         return SEARCH_KIND_BINARY
+    if needle.test(row.get("notes")):
+        return "notes"
     return "path"
 
 
@@ -4319,21 +4553,22 @@ def _binary_rows(
     return rows, total
 
 
-_BINARY_COLUMNS = "id, name, sha256, size, format, arch, created_at, path"
+_BINARY_COLUMNS = "id, name, sha256, size, format, arch, created_at, path, notes"
 
 
 def _search_binaries(
     conn: sqlite3.Connection, match: _Match, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """Binaries whose name, path or hash carries the needle (the default search)."""
+    """Binaries whose name, path, hash or notes carry the needle (the default search)."""
     name_sql, name_param = match.clause("name")
     path_sql, path_param = match.clause("path")
     hash_sql, hash_param = match.clause("sha256")
+    notes_sql, notes_param = match.clause("notes")
     sql = (
         f"SELECT {_BINARY_COLUMNS} FROM binaries"
-        f" WHERE {name_sql} OR {path_sql} OR {hash_sql} ORDER BY id"
+        f" WHERE {name_sql} OR {path_sql} OR {hash_sql} OR {notes_sql} ORDER BY id"
     )
-    return _binary_rows(conn, sql, (name_param, path_param, hash_param), limit, match)
+    return _binary_rows(conn, sql, (name_param, path_param, hash_param, notes_param), limit, match)
 
 
 def _search_sha256(
@@ -4458,11 +4693,11 @@ def search(
     """Search the store by substring or by one typed query.
 
     ``kind`` is one of :data:`SEARCH_KINDS`: ``all`` (the default) matches
-    binaries by name, path or hash, functions by name, collections by name or
-    description and tags by name; ``sha256`` matches a binary hash prefix,
-    ``binary`` a binary name, ``collection`` a collection name and ``tag`` a
-    tag name.  The typed forms are a subset of ``all`` for the same string, so
-    nothing the route returned before is lost.
+    binaries by name, path, hash or notes, functions by name, collections by
+    name or description and tags by name; ``sha256`` matches a binary hash
+    prefix, ``binary`` a binary name, ``collection`` a collection name and
+    ``tag`` a tag name.  The typed forms are a subset of ``all`` for the same
+    string, so nothing the route returned before is lost.
 
     Returns ``{"binaries", "functions", "collections", "tags", "counts"}``;
     each ``counts`` entry is the returned count against the matched total, so
@@ -4995,6 +5230,8 @@ def _data_type_history_row(row: sqlite3.Row) -> dict[str, Any]:
     """One ``data_type_history`` row with both recorded states parsed from JSON."""
     previous = json.loads(row["previous_json"])
     current = json.loads(row["current_json"])
+    columns = set(row.keys())
+    raw_id = row["actor_user_id"] if "actor_user_id" in columns else None
     return {
         "id": int(row["id"]),
         "data_type_id": int(row["data_type_id"]),
@@ -5003,6 +5240,7 @@ def _data_type_history_row(row: sqlite3.Row) -> dict[str, Any]:
         "current": current if isinstance(current, dict) else None,
         "source": str(row["source"] or ""),
         "actor": str(row["actor"] or ""),
+        "actor_user_id": None if raw_id is None else int(raw_id),
         "created_at": str(row["created_at"] or ""),
     }
 
@@ -5016,6 +5254,7 @@ def add_data_type_history(
     current: Mapping[str, Any] | None,
     source: str = "",
     actor: str = "",
+    actor_user_id: int | None = None,
 ) -> int:
     """Append one history row recording the states a write replaced and wrote.
 
@@ -5026,20 +5265,38 @@ def add_data_type_history(
     row scoped to it anyway.
     """
     ensure_data_type_history(conn)
-    cur = conn.execute(
-        "INSERT INTO data_type_history"
-        " (data_type_id, binary_id, previous_json, current_json, source, actor, created_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            data_type_id,
-            binary_id,
-            json.dumps(previous),
-            json.dumps(current),
-            source,
-            actor,
-            now(),
-        ),
-    )
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(data_type_history)")}
+    if "actor_user_id" in columns:
+        cur = conn.execute(
+            "INSERT INTO data_type_history"
+            " (data_type_id, binary_id, previous_json, current_json, source, actor,"
+            " actor_user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                data_type_id,
+                binary_id,
+                json.dumps(previous),
+                json.dumps(current),
+                source,
+                actor,
+                actor_user_id,
+                now(),
+            ),
+        )
+    else:
+        cur = conn.execute(
+            "INSERT INTO data_type_history"
+            " (data_type_id, binary_id, previous_json, current_json, source, actor, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                data_type_id,
+                binary_id,
+                json.dumps(previous),
+                json.dumps(current),
+                source,
+                actor,
+                now(),
+            ),
+        )
     conn.commit()
     return int(cur.lastrowid or 0)
 
@@ -5157,12 +5414,15 @@ def delete_signature(conn: sqlite3.Connection, function_id: int) -> bool:
 def _signature_history_row(row: sqlite3.Row) -> dict[str, Any]:
     """One ``signature_history`` row with its previous state parsed from JSON."""
     previous = json.loads(row["previous_json"])
+    columns = set(row.keys())
+    raw_id = row["actor_user_id"] if "actor_user_id" in columns else None
     return {
         "id": int(row["id"]),
         "function_id": int(row["function_id"]),
         "previous": previous if isinstance(previous, dict) else None,
         "source": str(row["source"] or ""),
         "actor": str(row["actor"] or ""),
+        "actor_user_id": None if raw_id is None else int(raw_id),
         "created_at": str(row["created_at"] or ""),
     }
 
@@ -5174,17 +5434,27 @@ def add_signature_history(
     previous: Mapping[str, Any] | None,
     source: str = "",
     actor: str = "",
+    actor_user_id: int | None = None,
 ) -> int:
     """Append one signature-history row recording the state a write replaced.
 
     *previous* is the signature row before the write, or None when the write
     created it.  Returns the new row's id.
     """
-    cur = conn.execute(
-        "INSERT INTO signature_history (function_id, previous_json, source, actor, created_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (function_id, json.dumps(previous), source, actor, now()),
-    )
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(signature_history)")}
+    if "actor_user_id" in columns:
+        cur = conn.execute(
+            "INSERT INTO signature_history"
+            " (function_id, previous_json, source, actor, actor_user_id, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (function_id, json.dumps(previous), source, actor, actor_user_id, now()),
+        )
+    else:
+        cur = conn.execute(
+            "INSERT INTO signature_history (function_id, previous_json, source, actor, created_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (function_id, json.dumps(previous), source, actor, now()),
+        )
     conn.commit()
     return int(cur.lastrowid or 0)
 

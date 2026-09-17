@@ -75,6 +75,41 @@ class TestBinaries:
     def test_get_missing_returns_none(self, conn: sqlite3.Connection) -> None:
         assert store.get_binary(conn, 999) is None
 
+    def test_rename_sets_the_display_name(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="old.exe")
+        other = store.add_binary(conn, sha256="bb" * 32, name="twin.exe")
+
+        renamed = store.rename_binary(conn, binary_id, "  new.exe  ")
+        assert renamed is not None
+        assert renamed["name"] == "new.exe"
+        assert renamed["sha256"] == "aa" * 32
+        twin = store.get_binary(conn, other)
+        assert twin is not None
+        assert twin["name"] == "twin.exe"
+
+    def test_rename_refuses_an_empty_name(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="old.exe")
+        with pytest.raises(ValueError, match="must not be empty"):
+            store.rename_binary(conn, binary_id, "   ")
+        kept = store.get_binary(conn, binary_id)
+        assert kept is not None
+        assert kept["name"] == "old.exe"
+
+    def test_rename_missing_returns_none(self, conn: sqlite3.Connection) -> None:
+        assert store.rename_binary(conn, 999, "gone.exe") is None
+
+    def test_notes_set_clear_and_bound(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="old.exe")
+        noted = store.set_binary_notes(conn, binary_id, "  sample from vendor  ")
+        assert noted is not None
+        assert noted["notes"] == "sample from vendor"
+        cleared = store.set_binary_notes(conn, binary_id, "   ")
+        assert cleared is not None
+        assert cleared["notes"] == ""
+        with pytest.raises(ValueError, match="at most"):
+            store.set_binary_notes(conn, binary_id, "x" * (store.MAX_BINARY_NOTES + 1))
+        assert store.set_binary_notes(conn, 999, "gone") is None
+
     def test_the_register_filters_by_search_tag_and_format(self, conn: sqlite3.Connection) -> None:
         store.add_binary(conn, sha256="aa" * 32, name="beta.exe", size=30, fmt="PE")
         tagged = store.add_binary(conn, sha256="bb" * 32, name="alpha.exe", size=10, fmt="ELF")
@@ -87,9 +122,17 @@ class TestBinaries:
         assert names(search="alpha") == ["alpha.exe"]
         # A hash prefix is what an analyst has for a sample they know by hash.
         assert names(search="bb") == ["alpha.exe"]
+        store.set_binary_notes(conn, tagged, "sample from vendor")
+        assert names(search="vendor") == ["alpha.exe"]
         assert names(tag="packed") == ["alpha.exe"]
         assert names(tag="absent") == []
         assert names(fmt="PE") == ["beta.exe", "gamma.exe"]
+        store.set_binary_language(conn, tagged, "Go")
+        assert names(language="Go") == ["alpha.exe"]
+        assert names(language="Rust") == []
+        store.set_binary_compiler(conn, tagged, "MinGW GCC")
+        assert names(compiler="MinGW GCC") == ["alpha.exe"]
+        assert names(compiler="Microsoft Visual C++") == []
         # The LIKE wildcards stay literal, as every other search's do.
         assert names(search="%") == []
 
@@ -126,7 +169,28 @@ class TestBinaries:
         store.add_binary(conn, sha256="cc" * 32, name="c.exe", fmt="PE")
         store.add_binary(conn, sha256="dd" * 32, name="d.exe")
 
-        assert store.binary_filter_values(conn) == {"formats": ["ELF", "PE"]}
+        extra = store.add_binary(conn, sha256="ee" * 32, name="e.exe")
+        store.set_binary_language(conn, extra, "Go")
+        store.set_binary_compiler(conn, extra, "MinGW GCC")
+        assert store.binary_filter_values(conn) == {
+            "formats": ["ELF", "PE"],
+            "languages": ["Go"],
+            "compilers": ["MinGW GCC"],
+        }
+
+    def test_set_binary_compiler_does_not_overwrite_by_default(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
+        store.set_binary_compiler(conn, binary_id, "MinGW GCC")
+        store.set_binary_compiler(conn, binary_id, "Microsoft Visual C++")
+        stored = store.get_binary(conn, binary_id)
+        assert stored is not None
+        assert stored["compiler"] == "MinGW GCC"
+        store.set_binary_compiler(conn, binary_id, "Microsoft Visual C++", overwrite=True)
+        stored = store.get_binary(conn, binary_id)
+        assert stored is not None
+        assert stored["compiler"] == "Microsoft Visual C++"
 
 
 class TestFingerprints:
@@ -1125,6 +1189,39 @@ class TestScans:
         store.init_db(db)
         with contextlib.closing(store.connect(db)) as conn:
             assert int(conn.execute("PRAGMA busy_timeout").fetchone()[0]) == store.BUSY_TIMEOUT_MS
+
+    def test_connect_enables_wal(self, tmp_path: Path) -> None:
+        db = tmp_path / "wal.db"
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            assert str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal"
+
+    def test_concurrent_add_binary_dedupes(self, portal_db: Path) -> None:
+        import threading
+
+        ids: list[int] = []
+        errors: list[str] = []
+        lock = threading.Lock()
+
+        def worker() -> None:
+            try:
+                with contextlib.closing(store.connect(portal_db)) as conn:
+                    binary_id = store.add_binary(conn, sha256="ee" * 32, name="race.exe")
+                with lock:
+                    ids.append(binary_id)
+            except Exception as exc:  # pragma: no cover - fails the assert below
+                with lock:
+                    errors.append(repr(exc))
+
+        threads = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert errors == []
+        assert set(ids) == {ids[0]}
+        with contextlib.closing(store.connect(portal_db)) as conn:
+            assert store.count_binaries(conn) == 1
 
 
 class TestSearchAndCounts:

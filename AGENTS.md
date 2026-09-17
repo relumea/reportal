@@ -148,12 +148,15 @@ Non-obvious:
 
 ## MCP
 
-`reportal mcp` is stdio JSON-RPC via `mcp_server.py` (only stdout writer). Tools
-are plugins in `mcp_tools.py` (`reportal.mcp_tools` entry points). Handlers call
-internals directly, never HTTP back into reportal. Read tools stay stored-only;
-writers carry `destructiveHint: true`. Counts are pinned by
-`tests/test_mcp.py` (currently 252 / 120 read-only / 132 destructive); update
-the test when the registry changes, not a prose list here.
+`reportal mcp` is stdio JSON-RPC via `mcp_server.py` (only stdout writer). The
+same registry is `POST /mcp` (JSON replies) and `GET /mcp` (SSE session
+stream, `Last-Event-ID` resume), bearer-gated when auth is on; needs write.
+Tools are plugins in `mcp_tools.py`
+(`reportal.mcp_tools` entry points). Handlers call internals directly, never
+HTTP back into reportal. Read tools stay stored-only; writers carry
+`destructiveHint: true`. Counts are pinned by `tests/test_mcp.py` (currently
+261 / 122 read-only / 139 destructive); update the test when the registry
+changes, not a prose list here.
 
 ## Engines and matching
 

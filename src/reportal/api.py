@@ -91,6 +91,7 @@ from reportal import (
     observability,
     pdf,
     pipeline,
+    profiles,
     protocols,
     ratings,
     related,
@@ -184,6 +185,7 @@ MAX_FUNCTION_STRINGS = 16
 # own, `matching.ARCHITECTURES`); an absent value leaves the stored one.
 UPLOAD_FORMATS: tuple[str, ...] = ("pe", "elf", "blob")
 UPLOAD_ARCHITECTURES: tuple[str, ...] = ("x86_32", "x86_64", "arm64")
+UPLOAD_COMPILERS: tuple[str, ...] = filetypes.toolchain_names()
 
 # Read size while an upload streams to disk.
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
@@ -321,6 +323,22 @@ def _optional_str(body: dict[str, Any], key: str, default: str = "") -> str:
     return value
 
 
+def _request_actor(request: Request, body: Mapping[str, Any], default: str = "api") -> str:
+    """The actor name a write records: the authenticated caller wins.
+
+    A body-supplied ``actor`` is only a label while auth is off; with auth on
+    the server identity is authoritative so one user cannot file a change
+    under another user's name.
+    """
+    caller = _caller(request)
+    if caller is not None:
+        return str(caller["name"])
+    value = body.get("actor", default)
+    if not isinstance(value, str):
+        raise json_error(400, error="actor must be a string")
+    return value or default
+
+
 def _optional_number(body: dict[str, Any], key: str, default: float) -> float:
     """Return ``body[key]`` as a float, defaulting when absent."""
     value = body.get(key, default)
@@ -377,13 +395,16 @@ def list_binaries(request: Request) -> Response:
     """The binaries the caller may see, filtered and ordered.
 
     A team-scoped binary drops out for a non-member.  ``?search=`` matches the
-    binary's name or its SHA-256 (a prefix is enough), ``?tag=`` keeps the ones
-    carrying that exact tag name, ``?format=`` one stored format and
-    ``?order=`` one of :data:`reportal.store.BINARY_ORDERS`; an unknown order is
-    a 400.  The body echoes the filters it applied, carries ``count`` against
-    ``total`` so a filter that matched nothing is distinguishable from an empty
-    register, and names the ``formats`` the register holds, which is what the
-    SPA's control is built from.
+    binary's name, its SHA-256 (a prefix is enough) or its operator notes,
+    ``?tag=`` keeps the ones
+    carrying that exact tag name, ``?format=`` one stored format,
+    ``?language=`` one recovered source language, ``?compiler=`` one recovered
+    toolchain and ``?order=`` one of :data:`reportal.store.BINARY_ORDERS`; an
+    unknown order is a 400.  The body echoes the filters it applied, carries
+    ``count`` against ``total`` so a filter that matched nothing is
+    distinguishable from an empty register, and names the ``formats``,
+    ``languages`` and ``compilers`` the register holds, which is what the
+    SPA's controls are built from.
     """
     order = _query_text(request, "order") or store.DEFAULT_BINARY_ORDER
     if order not in store.BINARY_ORDERS:
@@ -391,17 +412,21 @@ def list_binaries(request: Request) -> Response:
     search = _query_text(request, "search")
     tag = _query_text(request, "tag")
     fmt = _query_text(request, "format")
+    language = _query_text(request, "language")
+    compiler = _query_text(request, "compiler")
     with contextlib.closing(_open()) as conn:
         binaries = store.list_binaries(
             conn,
             search=search,
             tag=tag,
             fmt=fmt,
+            language=language,
+            compiler=compiler,
             order=order,
             visible_to=_caller(request),
         )
         total = store.count_binaries(conn, visible_to=_caller(request))
-        formats = store.binary_filter_values(conn)["formats"]
+        facets = store.binary_filter_values(conn)
     return json_response(
         {
             "binaries": binaries,
@@ -410,8 +435,12 @@ def list_binaries(request: Request) -> Response:
             "search": search,
             "tag": tag,
             "format": fmt,
+            "language": language,
+            "compiler": compiler,
             "order": order,
-            "formats": formats,
+            "formats": facets["formats"],
+            "languages": facets["languages"],
+            "compilers": facets["compilers"],
         }
     )
 
@@ -703,6 +732,7 @@ def _upload_entry(
             fmt=_file_option_str(entry, "format") or suffix.lstrip(".").upper(),
             arch=_file_option_str(entry, "arch"),
         )
+        store.set_binary_compiler(conn, binary_id, _file_option_str(entry, "compiler"))
         duplicate = False
         if scope is not None:
             store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
@@ -759,6 +789,52 @@ def get_binary(binary_id: int) -> Response:
             )
         project = store.get_rebrew_context(conn, binary_id)
     return json_response({**binary, "rebrew_project": project})
+
+
+@router.patch("/api/binaries/{binary_id}")
+def rename_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Set a binary's display name and/or operator notes; journaled.
+
+    Dedupe stays on sha256. Empty notes clears the note.
+    """
+    has_name = "name" in body
+    has_notes = "notes" in body
+    if not has_name and not has_notes:
+        return json_error(400, error="invalid binary", detail="name or notes is required")
+    name = (_optional_str(body, "name") or "").strip() if has_name else ""
+    notes = _optional_str(body, "notes") if has_notes else None
+    if has_name and not name:
+        return json_error(400, error="invalid binary", detail="binary name must not be empty")
+    if notes is not None and len(notes.strip()) > store.MAX_BINARY_NOTES:
+        return json_error(
+            400,
+            error="invalid binary",
+            detail=f"binary notes must be at most {store.MAX_BINARY_NOTES} characters",
+        )
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table="binaries",
+                    where="id = ?",
+                    params=(binary_id,),
+                    description=f"updated binary {binary_id}",
+                )
+                binary = store.get_binary(conn, binary_id)
+                if has_name:
+                    binary = store.rename_binary(conn, binary_id, name)
+                if notes is not None:
+                    binary = store.set_binary_notes(conn, binary_id, notes)
+        except ValueError as exc:
+            return json_error(400, error="invalid binary", detail=str(exc))
+    return json_response(log.attach(binary or {}))
 
 
 @router.post("/api/binaries/{binary_id}/firmware")
@@ -1157,11 +1233,17 @@ def _match_view(row: Mapping[str, Any]) -> dict[str, Any]:
 
     ``difference`` is the platform's Difference metric, the complement
     ``100 - similarity``, and it is derived here rather than stored; ``band``
-    is the quality band the similarity falls into.
+    is the quality band the similarity falls into.  ``cross_arch`` is true
+    when both ISA tokens are known and differ.
     """
     similarity_score = float(row.get("similarity") or 0.0)
+    source_arch = str(row.get("source_arch") or "")
+    candidate_arch = str(row.get("candidate_arch") or "")
     return {
         **row,
+        "source_arch": source_arch,
+        "candidate_arch": candidate_arch,
+        "cross_arch": bool(source_arch and candidate_arch and source_arch != candidate_arch),
         "difference": matching.difference_of(similarity_score),
         "band": composition.quality_band(similarity_score),
     }
@@ -1295,7 +1377,7 @@ def transfer_binary_matches(
     except matching.InvalidSettingsError as exc:
         return json_error(400, error=exc.error, detail=exc.detail)
     dry_run = _optional_bool(body, "dry_run", False)
-    actor = _optional_str(body, "actor", "api")
+    actor = _request_actor(request, body)
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
         action = journal.new_action()
@@ -3389,13 +3471,21 @@ def _run_function_triage(
 
 @router.post("/api/binaries/{binary_id}/function-triage")
 def store_binary_function_triage(
-    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
-    """Summarize and score a binary's selected functions and store the result."""
+    """Summarize and score a binary's selected functions and store the result.
+
+    Under SaaS the credit allowance is checked for the whole batch (one
+    triage charge per function, up to the limit) before anything runs.
+    """
     function_ids = _optional_int_list(body, "function_ids")
     limit = _optional_int(body, "limit", function_triage.DEFAULT_LIMIT)
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
+        batch = _triage_batch_size(conn, binary_id, function_ids, limit)
+        refused = _refuse_over_batch(request, llm.TASK_TRIAGE, batch)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             result = journal.journaled_scan(
@@ -4372,9 +4462,11 @@ def get_function(function_id: int) -> Response:
 
 
 @router.post("/api/functions/{function_id}/rename")
-def rename_function(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def rename_function(
+    request: Request, function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     new_name = _require_str(body, "name")
-    actor = _optional_str(body, "actor", "api")
+    actor = _request_actor(request, body)
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -4403,7 +4495,7 @@ def function_history(function_id: int) -> Response:
 
 
 @router.post("/api/functions/{function_id}/history/{history_id}/revert")
-def revert_function_name(function_id: int, history_id: int) -> Response:
+def revert_function_name(request: Request, function_id: int, history_id: int) -> Response:
     """Restore the pre-rename name recorded by one history row of a function."""
     with contextlib.closing(_open()) as conn:
         if store.get_function(conn, function_id) is None:
@@ -4447,7 +4539,9 @@ def function_matches(function_id: int) -> Response:
 
 
 @router.post("/api/functions/{function_id}/apply-match")
-def apply_match(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def apply_match(
+    request: Request, function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Apply one recorded match to a function: its name, signature, or both.
 
     ``mode`` defaults to ``name``, the behaviour from before the modes
@@ -4465,7 +4559,7 @@ def apply_match(function_id: int, body: dict[str, Any] = Depends(json_body)) -> 
     """
     candidate_id = _require_int(body, "candidate_function_id")
     mode = _optional_str(body, "mode", matching.DEFAULT_TRANSFER_MODE)
-    actor = _optional_str(body, "actor", "api")
+    actor = _request_actor(request, body)
     with contextlib.closing(_open()) as conn:
         try:
             plan = matching.plan_transfer(
@@ -5016,11 +5110,13 @@ def _no_ai_artifact(function_id: int, kind: str) -> Response:
     )
 
 
-def _store_ai_artifact(function_id: int, kind: str) -> Response:
+def _store_ai_artifact(function_id: int, kind: str, request: Request) -> Response:
     """Compute one AI artifact through the configured LLM and store it.
 
     A stored decompilation is required and is never generated here: the route
-    reads the model's input from the ``decompilations`` table only.
+    reads the model's input from the ``decompilations`` table only. Under the
+    SaaS profile the tenant's credit allowance is checked against the input
+    size before the model is called.
     """
     with contextlib.closing(_open()) as conn:
         if store.get_function(conn, function_id) is None:
@@ -5031,6 +5127,9 @@ def _store_ai_artifact(function_id: int, kind: str) -> Response:
         stored = store.get_decompilation(conn, function_id)
         if stored is None:
             return _no_ai_decompilation(function_id)
+        refused = _refuse_over_credits(request, kind, str(stored["code"]))
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
@@ -5109,9 +5208,9 @@ def _get_ai_artifact(function_id: int, kind: str) -> Response:
 
 
 @router.post("/api/functions/{function_id}/summary")
-def store_function_summary(function_id: int) -> bytes | Any:
+def store_function_summary(request: Request, function_id: int) -> bytes | Any:
     """Summarize a function's stored decompilation with the configured LLM."""
-    return _store_ai_artifact(function_id, llm.AI_KIND_SUMMARY)
+    return _store_ai_artifact(function_id, llm.AI_KIND_SUMMARY, request)
 
 
 @router.delete("/api/functions/{function_id}/summary")
@@ -5129,9 +5228,9 @@ def get_function_summary(function_id: int) -> bytes | Any:
 
 
 @router.post("/api/functions/{function_id}/ai-comments")
-def store_function_ai_comments(function_id: int) -> bytes | Any:
+def store_function_ai_comments(request: Request, function_id: int) -> bytes | Any:
     """Ask the configured LLM for inline comments on a stored decompilation."""
-    return _store_ai_artifact(function_id, llm.AI_KIND_COMMENTS)
+    return _store_ai_artifact(function_id, llm.AI_KIND_COMMENTS, request)
 
 
 @router.delete("/api/functions/{function_id}/ai-comments")
@@ -5151,9 +5250,9 @@ def get_function_ai_comments(function_id: int) -> bytes | Any:
 
 
 @router.post("/api/functions/{function_id}/type-suggestions")
-def store_function_type_suggestions(function_id: int) -> bytes | Any:
+def store_function_type_suggestions(request: Request, function_id: int) -> bytes | Any:
     """Ask the configured LLM for type suggestions on a stored decompilation."""
-    return _store_ai_artifact(function_id, llm.AI_KIND_TYPES)
+    return _store_ai_artifact(function_id, llm.AI_KIND_TYPES, request)
 
 
 @router.delete("/api/functions/{function_id}/type-suggestions")
@@ -5187,13 +5286,19 @@ def _no_renames_artifact(function_id: int) -> Response:
 
 
 @router.post("/api/functions/{function_id}/renames")
-def store_function_renames(function_id: int) -> Response:
+def store_function_renames(request: Request, function_id: int) -> Response:
     """Suggest identifier renames for a stored decompilation and store them."""
     with contextlib.closing(_open()) as conn:
         if store.get_function(conn, function_id) is None:
             return json_error(
                 404, error="function not found", detail=f"no function with id {function_id}"
             )
+        stored = store.get_decompilation(conn, function_id)
+        if stored is None:
+            return _no_ai_decompilation(function_id)
+        refused = _refuse_over_credits(request, llm.TASK_RENAMES, str(stored["code"]))
+        if refused is not None:
+            return refused
         client = _ai_client()
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -5721,13 +5826,14 @@ def _no_pipeline_run(function_id: int) -> Response:
 
 @router.post("/api/functions/{function_id}/pipeline")
 def run_function_pipeline(
-    function_id: int, body: dict[str, Any] = Depends(optional_json_body)
+    request: Request, function_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Run the AI decompilation composition over one function and store the run.
 
     A component that cannot run is a skipped or failed step on the run, never a
     failed request: only a function that does not exist (404) or a composition
-    that cannot be assembled at all (503) answers without a run.
+    that cannot be assembled at all (503) answers without a run. Under SaaS
+    the tenant's credit allowance is checked against the input size first.
     """
     disabled = _disabled_components(body)
     with contextlib.closing(_open()) as conn:
@@ -5735,6 +5841,12 @@ def run_function_pipeline(
             return json_error(
                 404, error="function not found", detail=f"no function with id {function_id}"
             )
+        stored = store.get_decompilation(conn, function_id)
+        refused = _refuse_over_credits(
+            request, llm.TASK_DECOMPILE, str((stored or {}).get("code") or "")
+        )
+        if refused is not None:
+            return refused
         try:
             run = pipeline.run_pipeline(conn, function_id=function_id, disabled=disabled)
         except pipeline.PipelineUnavailable as exc:
@@ -5956,8 +6068,158 @@ def _execute_auto_run(run_id: int, params: auto_mode.AutoParams) -> None:
         _auto_run_slots.release()
 
 
+def _request_organisation_id(conn: sqlite3.Connection, request: Request) -> int:
+    """The organisation the request meters against, or NO_ORG for no tenant.
+
+    The caller's active team names it. Auth off, or no active team, is a
+    single-operator install: organisation 0, which the ledger records
+    nothing for. Local copy of ``server.caller_organisation`` (which reads
+    the request user the middleware already resolved) to avoid a circular
+    import: server owns the app, api owns the routes.
+    """
+    caller = _caller(request)
+    if caller is None:
+        return metering.NO_ORG
+    team_id = caller.get("active_team_id")
+    if not isinstance(team_id, int):
+        return metering.NO_ORG
+    row = conn.execute(
+        f"SELECT organisation_id FROM {auth.TEAM_TABLE} WHERE id = ?", (team_id,)
+    ).fetchone()
+    if row is None or row["organisation_id"] is None:
+        return metering.NO_ORG
+    return int(row["organisation_id"])
+
+
+def _refuse_over_quota(request: Request, kind: str, units: int = 1) -> Response | None:
+    """402 when the SaaS tenant behind *request* is past its *kind* allowance.
+
+    Personal profile (or no tenant): always None. A paid plan past its
+    allowance is covered by overage and also passes; only the free tier at
+    zero remaining, or a past-due subscription, is refused. The body names
+    the plan, the usage, and the upgrade path.
+    """
+    if not profiles.is_saas():
+        return None
+    with contextlib.closing(_open()) as conn:
+        organisation_id = _request_organisation_id(conn, request)
+        if organisation_id == metering.NO_ORG:
+            return None
+        check = metering.quota_check(conn, organisation_id, kind, units)
+    if check["allowed"]:
+        return None
+    return json_response(
+        {
+            "error": "quota-exceeded",
+            "detail": str(check["reason"]),
+            "plan_id": check["plan_id"],
+            "kind": kind,
+            "limit": check["limit"],
+            "used": check["used"],
+            "remaining": check["remaining"],
+            "upgrade": "/pricing",
+        },
+        status=402,
+    )
+
+
+def _refuse_over_credits(request: Request, task: str, prompt_text: str) -> Response | None:
+    """402 when the SaaS tenant's credit allowance cannot cover *task*.
+
+    Prices the call the way the post-run charger will (same task, same
+    input size), so the gate never refuses work the ledger would allow nor
+    allows work it would overcharge. Personal profile (or no tenant): None.
+    Two concurrent calls may each pass before either charges; the overshoot
+    is bounded by one call's cost, which the ledger still records.
+    """
+    if not profiles.is_saas():
+        return None
+    with contextlib.closing(_open()) as conn:
+        organisation_id = _request_organisation_id(conn, request)
+        if organisation_id == metering.NO_ORG:
+            return None
+        units = credits_mod.cost_of(task, credits_mod.tokens_of(prompt_text))
+        check = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, units)
+    if check["allowed"]:
+        return None
+    return json_response(
+        {
+            "error": "quota-exceeded",
+            "detail": str(check["reason"]),
+            "plan_id": check["plan_id"],
+            "kind": metering.KIND_CREDITS,
+            "task": task,
+            "cost": units,
+            "limit": check["limit"],
+            "used": check["used"],
+            "remaining": check["remaining"],
+            "upgrade": "/pricing",
+        },
+        status=402,
+    )
+
+
+def _triage_batch_size(
+    conn: sqlite3.Connection, binary_id: int, function_ids: list[int] | None, limit: int
+) -> int:
+    """How many functions one triage run will charge for."""
+    if function_ids:
+        return max(1, len(function_ids))
+    return max(1, min(limit, store.count_functions(conn, binary_id=binary_id)))
+
+
+def _refuse_over_batch(request: Request, task: str, calls: int) -> Response | None:
+    """402 when the SaaS tenant cannot cover *calls* of *task* at base price."""
+    if not profiles.is_saas():
+        return None
+    with contextlib.closing(_open()) as conn:
+        organisation_id = _request_organisation_id(conn, request)
+        if organisation_id == metering.NO_ORG:
+            return None
+        units = credits_mod.base_credits(task) * max(1, calls)
+        check = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, units)
+    if check["allowed"]:
+        return None
+    return json_response(
+        {
+            "error": "quota-exceeded",
+            "detail": str(check["reason"]),
+            "plan_id": check["plan_id"],
+            "kind": metering.KIND_CREDITS,
+            "task": task,
+            "cost": units,
+            "limit": check["limit"],
+            "used": check["used"],
+            "remaining": check["remaining"],
+            "upgrade": "/pricing",
+        },
+        status=402,
+    )
+
+
+def _record_auto_run_charge(request: Request) -> None:
+    """Record one auto-run unit against the SaaS tenant behind *request*.
+
+    Charged at submit, not at completion: the quota gate reads the ledger,
+    so a charge recorded later would let concurrent submits each pass the
+    check and overshoot the allowance together. Personal profile (or no
+    tenant) records nothing.
+    """
+    if not profiles.is_saas():
+        return
+    with contextlib.closing(_open()) as conn:
+        organisation_id = _request_organisation_id(conn, request)
+        if organisation_id == metering.NO_ORG:
+            return
+        metering.record_usage(
+            conn, organisation_id, metering.KIND_AUTO_RUN, 1, detail="auto run started"
+        )
+
+
 @router.post("/api/binaries/{binary_id}/auto")
-def start_auto_run(binary_id: int, body: dict[str, Any] = Depends(optional_json_body)) -> Response:
+def start_auto_run(
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
     """Plan an auto run and execute it in the background; returns the run id.
 
     The request creates the run and its task tree, then returns 202 with the
@@ -5967,9 +6229,13 @@ def start_auto_run(binary_id: int, body: dict[str, Any] = Depends(optional_json_
     worker), ``execute`` (default false), ``concurrency``,
     ``functions_per_task``, ``max_attempts`` and ``max_tasks``.  At most
     :data:`MAX_BACKGROUND_AUTO_RUNS` runs execute at once; past that the route
-    answers 503 without creating a run.
+    answers 503 without creating a run.  Under the SaaS profile a tenant past
+    its auto-run allowance is refused 402 before anything is created.
     """
     params = _auto_params(body)
+    refused = _refuse_over_quota(request, metering.KIND_AUTO_RUN)
+    if refused is not None:
+        return refused
     if not _auto_run_slots.acquire(blocking=False):
         return json_error(
             503,
@@ -5986,6 +6252,7 @@ def start_auto_run(binary_id: int, body: dict[str, Any] = Depends(optional_json_
             run_id = auto_mode.create_auto_run(
                 conn, binary_id=binary_id, params=params, functions=functions
             )
+        _record_auto_run_charge(request)
         thread = threading.Thread(
             target=_execute_auto_run,
             args=(run_id, params),
@@ -6183,7 +6450,7 @@ def delete_conversation(conversation_id: int) -> Response:
 
 @router.post("/api/conversations/{conversation_id}/messages")
 def post_conversation_message(
-    conversation_id: int, body: dict[str, Any] = Depends(json_body)
+    request: Request, conversation_id: int, body: dict[str, Any] = Depends(json_body)
 ) -> Response:
     """Send one message to the configured LLM and store the exchange.
 
@@ -6194,6 +6461,9 @@ def post_conversation_message(
     with contextlib.closing(_open()) as conn:
         if store.get_conversation(conn, conversation_id) is None:
             return _no_conversation(conversation_id)
+        refused = _refuse_over_credits(request, llm.TASK_AGENT, content)
+        if refused is not None:
+            return refused
         client = _ai_client()
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -6213,7 +6483,7 @@ def post_conversation_message(
 
 @router.post("/api/conversations/{conversation_id}/runs")
 def start_conversation_run(
-    conversation_id: int, body: dict[str, Any] = Depends(json_body)
+    request: Request, conversation_id: int, body: dict[str, Any] = Depends(json_body)
 ) -> Response:
     """Run one agent turn: the model may call local MCP tools and answer.
 
@@ -6227,6 +6497,9 @@ def start_conversation_run(
     with contextlib.closing(_open()) as conn:
         if store.get_conversation(conn, conversation_id) is None:
             return _no_conversation(conversation_id)
+        refused = _refuse_over_credits(request, llm.TASK_AGENT, content)
+        if refused is not None:
+            return refused
         client = _ai_client()
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -7282,6 +7555,9 @@ def list_journal(request: Request) -> Response:
     auth is off and empty for a CLI or MCP write); ``?limit=`` bounds the page.
     The body echoes what it applied and names the ``actors`` the journal holds,
     which is what the SPA's control is built from.
+
+    SaaS non-admin (and the existing self-service activity rule): only its
+    own entries. An admin, or auth off, keeps the workspace feed.
     """
     raw_limit = request.query_params.get("limit")
     limit = journal.DEFAULT_LIST_LIMIT
@@ -7296,9 +7572,21 @@ def list_journal(request: Request) -> Response:
     action = raw_action.strip() if isinstance(raw_action, str) and raw_action.strip() else None
     raw_actor = request.query_params.get("actor")
     actor = raw_actor.strip() if isinstance(raw_actor, str) and raw_actor.strip() else None
+    caller = _caller(request)
+    if caller is not None and str(caller.get("role")) != auth.ROLE_ADMIN:
+        own_name = str(caller["name"])
+        if actor is not None and actor != own_name:
+            return json_error(
+                403,
+                error=auth.ERROR_FORBIDDEN,
+                detail="an analyst may only read its own journal entries",
+            )
+        actor = own_name
     with contextlib.closing(_open()) as conn:
         entries = journal.list_entries(conn, action=action, actor=actor, limit=limit)
         actors = journal.list_actors(conn)
+        if caller is not None and str(caller.get("role")) != auth.ROLE_ADMIN:
+            actors = [name for name in actors if name == str(caller["name"])]
     return json_response(
         {
             "entries": entries,
@@ -7312,25 +7600,68 @@ def list_journal(request: Request) -> Response:
 
 
 @router.get("/api/journal/{action}")
-def get_journal_action(action: str) -> Response:
-    """Every entry of one action, newest first; 404 for an action never recorded."""
+def get_journal_action(action: str, request: Request) -> Response:
+    """Every entry of one action, newest first; 404 for an action never recorded.
+
+    A non-admin reading another actor's action gets 404, not 403, so the
+    answer does not disclose that someone else's action exists.
+    """
     with contextlib.closing(_open()) as conn:
         entries = journal.list_entries(conn, action=action, limit=journal.MAX_LIST_LIMIT)
+        caller = _caller(request)
+        if caller is not None and str(caller.get("role")) != auth.ROLE_ADMIN:
+            entries = [entry for entry in entries if entry["actor"] == str(caller["name"])]
     if not entries:
         return json_error(404, error="action not found", detail=f"no journal action {action!r}")
     return json_response({"action": action, "entries": entries, "count": len(entries)})
 
 
 @router.post("/api/journal/revert")
-def revert_journal(body: dict[str, Any] = Depends(json_body)) -> Response:
-    """Revert one action (``{"action"}``) or one entry (``{"entry_id"}``)."""
+def revert_journal(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Revert one action (``{"action"}``) or one entry (``{"entry_id"}``).
+
+    While auth is on, a non-admin may only revert its own actions: the journal
+    records the stable user id behind every HTTP write, so one analyst cannot
+    take back another's work.
+    """
     raw_action = body.get("action")
     raw_entry = body.get("entry_id")
     if (raw_action is None) == (raw_entry is None):
         return json_error(
             400, error="invalid body", detail="provide exactly one of action or entry_id"
         )
+    caller = _caller(request)
+    caller_id = _caller_id(request)
+    admin = caller is not None and str(caller.get("role")) == auth.ROLE_ADMIN
     with contextlib.closing(_open()) as conn:
+        if caller is not None and not admin and caller_id is not None:
+            owner_id: int | None = None
+            if raw_entry is not None:
+                if isinstance(raw_entry, bool) or not isinstance(raw_entry, int):
+                    return json_error(
+                        400, error="invalid body", detail="entry_id must be an integer"
+                    )
+                owner_id = journal.entry_actor_user_id(conn, raw_entry)
+                if owner_id is None and not journal.entry_exists(conn, raw_entry):
+                    return json_error(
+                        404, error="entry not found", detail=f"no journal entry {raw_entry}"
+                    )
+            else:
+                if not isinstance(raw_action, str) or not raw_action.strip():
+                    return json_error(
+                        400, error="invalid body", detail="action must be a non-empty string"
+                    )
+                owner_id = journal.action_actor_user_id(conn, raw_action.strip())
+                if owner_id is None and not journal.action_exists(conn, raw_action.strip()):
+                    return json_error(
+                        404, error="action not found", detail=f"no journal action {raw_action!r}"
+                    )
+            if owner_id is not None and owner_id != caller_id:
+                return json_error(
+                    403,
+                    error=auth.ERROR_FORBIDDEN,
+                    detail="an analyst may only revert its own actions",
+                )
         try:
             if raw_entry is not None:
                 if isinstance(raw_entry, bool) or not isinstance(raw_entry, int):
@@ -8059,6 +8390,13 @@ def _upload_batch(
                 error="invalid-body",
                 detail=f"file option arch must be one of {', '.join(UPLOAD_ARCHITECTURES)}",
             )
+        compiler = _file_option_str(entry, "compiler")
+        if compiler and compiler not in UPLOAD_COMPILERS:
+            return json_error(
+                400,
+                error="invalid-body",
+                detail=f"file option compiler must be one of {', '.join(UPLOAD_COMPILERS)}",
+            )
     directory = binaries_dir()
     with contextlib.closing(_open()) as conn:
         for entry in options:
@@ -8095,14 +8433,15 @@ async def upload_binary(request: Request) -> Response:
     One ``file`` part is the single-file upload and answers that binary's row
     with a ``duplicate`` flag, unchanged.  Repeated ``file`` parts (optionally
     described by a JSON ``files`` field, entry *i* per part, carrying a ``name``,
-    ``tags``, ``collection_ids``, an explicit ``format``/``arch`` hint and the
+    ``tags``, ``collection_ids``, an explicit ``format``/``arch``/``compiler``
+    hint and the
     ``visibility``/``team_id`` scope the binary should carry) are a
     batch: every created binary, applied tag, collection link and scope change is
     recorded in **one** journal action, so reverting its ``journal_action`` takes
     the whole request back.  Each entry answers the same refusal vocabulary as the
-    single-file path.  A compiler hint has no column in reportal's binary model
-    (the hosted portal's Platform hint has no local meaning), so it is not stored;
-    the scope does have one, and an entry that names none leaves the binary public
+    single-file path.  A compiler hint stamps ``binaries.compiler`` when the
+    binary is new and the column is still empty, so a later filetype recovery
+    can still fill a blank.  An entry that names none leaves the binary public
     and ownerless as before.
 
     The form is read here rather than declared as ``File``/``Form`` parameters
@@ -8526,11 +8865,15 @@ def _list_scope_comments(
     return json_response({"comments": rows})
 
 
-def _add_scope_comment(scope_kind: str, scope_id: int, body: dict[str, Any]) -> Response:
+def _add_scope_comment(
+    scope_kind: str, scope_id: int, body: dict[str, Any], request: Request | None = None
+) -> Response:
     text = _comment_text(body)
-    author = body.get("author")
+    caller = _caller(request) if request is not None else None
+    author = str(caller["name"]) if caller is not None else body.get("author")
     if author is not None and not isinstance(author, str):
         return json_error(400, error="invalid comment", detail="author must be a string")
+    author_id = _caller_id(request) if request is not None else None
     with contextlib.closing(db()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
@@ -8541,6 +8884,7 @@ def _add_scope_comment(scope_kind: str, scope_id: int, body: dict[str, Any]) -> 
                     scope_id=scope_id,
                     body=text,
                     author=author,
+                    author_user_id=author_id,
                 )
             except comments.CommentError as exc:
                 return _comment_failure(exc)
@@ -8559,9 +8903,11 @@ def list_binary_comments(request: Request, binary_id: int) -> Response:
 
 
 @router.post("/api/binaries/{binary_id}/comments")
-def add_binary_comment(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def add_binary_comment(
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Store one analyst comment on a binary; body ``{"body", "author"?}``."""
-    return _add_scope_comment(comments.SCOPE_BINARY, binary_id, body)
+    return _add_scope_comment(comments.SCOPE_BINARY, binary_id, body, request)
 
 
 @router.get("/api/functions/{function_id}/comments")
@@ -8571,16 +8917,48 @@ def list_function_comments(request: Request, function_id: int) -> Response:
 
 
 @router.post("/api/functions/{function_id}/comments")
-def add_function_comment(function_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def add_function_comment(
+    request: Request, function_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
     """Store one analyst comment on a function; body ``{"body", "author"?}``."""
-    return _add_scope_comment(comments.SCOPE_FUNCTION, function_id, body)
+    return _add_scope_comment(comments.SCOPE_FUNCTION, function_id, body, request)
+
+
+def _comment_ownership_refusal(
+    conn: sqlite3.Connection, request: Request, comment_id: int
+) -> Response | None:
+    """Refuse a comment edit/delete by a non-owner, or None when allowed."""
+    caller = _caller(request)
+    if caller is None or str(caller.get("role")) == auth.ROLE_ADMIN:
+        return None
+    caller_id = _caller_id(request)
+    if caller_id is None:
+        return None
+    try:
+        row = comments.get_comment(conn, comment_id)
+    except comments.CommentError:
+        return None
+    owner_id = row.get("author_user_id")
+    if owner_id is not None and int(owner_id) != caller_id:
+        return json_error(
+            403, error=auth.ERROR_FORBIDDEN, detail="an analyst may only change its own comments"
+        )
+    return None
 
 
 @router.patch("/api/comments/{comment_id}")
-def update_comment(comment_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
-    """Replace one comment's body; body ``{"body"}``."""
+def update_comment(
+    request: Request, comment_id: int, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Replace one comment's body; body ``{"body"}``.
+
+    While auth is on, a non-admin may only edit its own comments.
+    """
     text = _comment_text(body)
     with contextlib.closing(db()) as conn:
+        refusal = _comment_ownership_refusal(conn, request, comment_id)
+        if refusal is not None:
+            return refusal
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -8600,9 +8978,15 @@ def update_comment(comment_id: int, body: dict[str, Any] = Depends(json_body)) -
 
 
 @router.delete("/api/comments/{comment_id}")
-def delete_comment(comment_id: int) -> Response:
-    """Delete one comment by id."""
+def delete_comment(request: Request, comment_id: int) -> Response:
+    """Delete one comment by id.
+
+    While auth is on, a non-admin may only delete its own comments.
+    """
     with contextlib.closing(db()) as conn:
+        refusal = _comment_ownership_refusal(conn, request, comment_id)
+        if refusal is not None:
+            return refusal
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -8720,7 +9104,15 @@ def submit_job(request: Request, body: dict[str, Any] = Depends(json_body)) -> R
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
-                job = jobs.submit(conn, kind=kind, binary_id=binary_id, params=raw_params or {})
+                caller = _caller(request)
+                job = jobs.submit(
+                    conn,
+                    kind=kind,
+                    binary_id=binary_id,
+                    params=raw_params or {},
+                    submitted_by="" if caller is None else str(caller["name"]),
+                    submitted_by_user_id=_caller_id(request),
+                )
             except ValueError as exc:
                 return json_error(400, error="invalid job", detail=str(exc))
             except KeyError as exc:
@@ -9125,7 +9517,7 @@ def get_function_capabilities(function_id: int) -> Response:
 
 @router.get("/api/functions/{function_id}/strings")
 def get_function_strings(request: Request, function_id: int) -> Response:
-    """The analyst's strings for a function, and the literals its decompilation carries."""
+    """The analyst's strings, decompilation literals, and decoded listing runs."""
     with contextlib.closing(_open()) as conn:
         missing = _function_or_404(conn, function_id)
         if missing is not None:
@@ -10070,6 +10462,15 @@ def _caller(request: Request) -> dict[str, Any] | None:
     return user if isinstance(user, dict) else None
 
 
+def _caller_id(request: Request) -> int | None:
+    """The authenticated caller's stable user id, or None while auth is off."""
+    caller = _caller(request)
+    if caller is None:
+        return None
+    raw_id = caller.get("id")
+    return int(raw_id) if isinstance(raw_id, int) else None
+
+
 def _visible_binary_ids(conn: sqlite3.Connection, caller: dict[str, Any] | None) -> set[int] | None:
     """The binary ids *caller* may reach, or None for no restriction.
 
@@ -10147,12 +10548,133 @@ def iam_me_permissions(request: Request) -> Response:
     )
 
 
+@router.get("/api/iam/keys")
+def list_api_keys(request: Request) -> Response:
+    """The caller's named extra keys, without digests.
+
+    The login token on the user row counts toward the plan's
+    ``max_api_keys`` and is not listed here. Needs token auth.
+    """
+    caller = _caller(request)
+    if caller is None:
+        return json_response({"keys": [], "count": 0, "used": 0, "limit": None})
+    user_id = int(caller["id"])
+    with contextlib.closing(_open()) as conn:
+        keys = auth.list_api_keys(conn, user_id)
+        used = auth.count_api_keys(conn, user_id)
+        limit = auth.api_key_limit(conn, user_id)
+    from reportal import plans
+
+    return json_response(
+        {
+            "keys": keys,
+            "count": len(keys),
+            "used": used,
+            "limit": None if limit == plans.UNLIMITED else limit,
+        }
+    )
+
+
+@router.post("/api/iam/keys")
+def create_api_key(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Mint one named extra key; the token is shown once. Journaled."""
+    caller = _caller(request)
+    if caller is None:
+        return json_error(
+            400,
+            error=auth.ERROR_INVALID_API_KEY,
+            detail="minting an API key needs token auth; create a user first",
+        )
+    name = _require_str(body, "name")
+    user_id = int(caller["id"])
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                key, token = auth.create_api_key(conn, user_id, name)
+                journal.journaled_create(
+                    log,
+                    table=auth.KEY_TABLE,
+                    key=int(key["id"]),
+                    description=f"minted API key {key['name']} for user {user_id}",
+                )
+        except auth.AuthError as exc:
+            if exc.code == auth.ERROR_API_KEY_LIMIT:
+                return json_error(402, error=exc.code, detail=exc.detail)
+            return _auth_failure(exc)
+    return json_response(log.attach({**key, "token": token}), status=201)
+
+
+@router.delete("/api/iam/keys/{key_id}")
+def revoke_api_key(key_id: int, request: Request) -> Response:
+    """Delete one of the caller's named extra keys; journaled."""
+    caller = _caller(request)
+    if caller is None:
+        return json_error(
+            400,
+            error=auth.ERROR_INVALID_API_KEY,
+            detail="revoking an API key needs token auth",
+        )
+    user_id = int(caller["id"])
+    with contextlib.closing(_open()) as conn:
+        key = auth.get_api_key(conn, key_id)
+        if key is None or int(key["user_id"]) != user_id:
+            return json_error(
+                404, error=auth.ERROR_API_KEY_NOT_FOUND, detail=f"no API key with id {key_id}"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.KEY_TABLE,
+                where="id = ?",
+                params=(key_id,),
+                description=f"revoked API key {key_id}",
+            )
+            payload = auth.revoke_api_key(conn, key_id)
+    return json_response(log.attach(payload))
+
+
 @router.get("/api/users")
 def list_users() -> Response:
     """Every user with its role and state; the token digest is never included."""
     with contextlib.closing(db()) as conn:
         users = auth.list_users(conn)
     return json_response({"users": users, "count": len(users)})
+
+
+@router.post("/api/signup")
+def signup(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Self-serve SaaS signup: one tenant, one token, shown once.
+
+    Personal profile answers 403 ``signup-disabled``. A taken name is 409
+    ``user-exists``. Too many attempts from one TCP peer are 429
+    ``rate-limited``. The caller is an analyst who owns their team, never an
+    admin of the install.
+    """
+    client = request.client
+    peer = "" if client is None else str(client.host or "")
+    if not auth.signup_allowed(peer):
+        return json_error(
+            429,
+            error=auth.ERROR_RATE_LIMITED,
+            detail="too many signups from this address; try again later",
+            retry_after=auth.signup_retry_after(peer),
+        )
+    name = _require_str(body, "name")
+    with contextlib.closing(db()) as conn:
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                payload, token = surface.journaled_signup(conn, log, name)
+        except auth.UserExistsError as exc:
+            return json_error(409, error=exc.code, detail=exc.detail)
+        except auth.AuthError as exc:
+            if exc.code == auth.ERROR_SIGNUP_DISABLED:
+                return json_error(403, error=exc.code, detail=exc.detail)
+            return _auth_failure(exc)
+    return json_response(log.attach({**payload, "token": token}), status=201)
 
 
 @router.post("/api/users")
@@ -10462,14 +10984,15 @@ def _refuse_unless_tenant_admin(request: Request) -> Response | None:
 
 
 @router.get("/api/organisations")
-def list_organisations() -> Response:
-    """Every organisation with the teams it holds; a structural read.
+def list_organisations(request: Request) -> Response:
+    """The caller's organisations with the teams they hold.
 
-    An organisation is the hosted portal's one level above teams and is not
-    access control: an object's team still decides who may read or write it.
+    Personal profile (or admin): every organisation. SaaS non-admin: only
+    the organisations behind the caller's teams, so one tenant never
+    enumerates another.
     """
     with contextlib.closing(_open()) as conn:
-        organisations = auth.list_organisations(conn)
+        organisations = auth.list_organisations(conn, visible_to=_caller(request))
     return json_response({"organisations": organisations, "count": len(organisations)})
 
 
@@ -10498,16 +11021,32 @@ def create_organisation(request: Request, body: dict[str, Any] = Depends(json_bo
 
 
 @router.get("/api/organisations/{organisation_id}")
-def get_organisation(organisation_id: int) -> Response:
-    """One organisation with the teams it holds."""
+def get_organisation(organisation_id: int, request: Request) -> Response:
+    """One organisation with the teams it holds.
+
+    SaaS non-admin outside the organisation reads 404, not 403, so the
+    answer does not disclose that another tenant exists.
+    """
     with contextlib.closing(_open()) as conn:
         organisation = auth.get_organisation(conn, organisation_id)
-    if organisation is None:
-        return json_error(
-            404,
-            error=auth.ERROR_ORGANISATION_NOT_FOUND,
-            detail=f"no organisation with id {organisation_id}",
-        )
+        if organisation is None:
+            return json_error(
+                404,
+                error=auth.ERROR_ORGANISATION_NOT_FOUND,
+                detail=f"no organisation with id {organisation_id}",
+            )
+        caller = _caller(request)
+        if (
+            caller is not None
+            and str(caller.get("role")) != auth.ROLE_ADMIN
+            and not auth.may_access_organisation(conn, caller, organisation_id)
+            and profiles.is_saas()
+        ):
+            return json_error(
+                404,
+                error=auth.ERROR_ORGANISATION_NOT_FOUND,
+                detail=f"no organisation with id {organisation_id}",
+            )
     return json_response(organisation)
 
 
@@ -10805,7 +11344,10 @@ def sync_billing_subscription(organisation_id: int, request: Request) -> Respons
     """
     if not billing.reconcile_allowed(organisation_id):
         return json_error(
-            429, error="rate-limited", detail="too many reconcile attempts; try again shortly"
+            429,
+            error="rate-limited",
+            detail="too many reconcile attempts; try again shortly",
+            retry_after=billing.reconcile_retry_after(organisation_id),
         )
     with contextlib.closing(_open()) as conn:
         found = _organisation_or_404(conn, organisation_id)
@@ -11058,6 +11600,127 @@ def add_team_member(
             detail=f"user {user_id} is unknown or already in team {team_id}",
         )
     return json_response(log.attach(team or {}), status=201)
+
+
+@router.post("/api/teams/{team_id}/invites")
+def create_team_invite(team_id: int, request: Request) -> Response:
+    """Mint one single-use invite code for a team; journaled.
+
+    Only a team's owner (or an admin) may mint. The code is returned once,
+    here; only its digest is stored. The redeemer joins with
+    ``POST /api/teams/join``.
+    """
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
+        caller = _caller(request)
+        creator_id = None if caller is None else int(caller["id"])
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                invite_id, code = auth.create_invite(conn, team_id, creator_id)
+            except auth.AuthError as exc:
+                return _team_failure(exc)
+            journal.journaled_create(
+                log,
+                table=auth.INVITE_TABLE,
+                key=invite_id,
+                description=f"minted an invite for team {team_id}",
+            )
+    return json_response(log.attach({"invite_id": invite_id, "code": code, "team_id": team_id}))
+
+
+@router.get("/api/teams/{team_id}/invites")
+def list_team_invites(team_id: int, request: Request) -> Response:
+    """Every invite a team minted, without code digests.
+
+    Only a team's owner (or an admin) may list: the rows name who minted
+    and who redeemed each code.
+    """
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
+        invites = auth.list_invites(conn, team_id)
+    return json_response({"invites": invites, "count": len(invites)})
+
+
+@router.delete("/api/teams/{team_id}/invites/{invite_id}")
+def revoke_team_invite(team_id: int, invite_id: int, request: Request) -> Response:
+    """Delete one unused invite; journaled. Used rows stay for the audit trail."""
+    with contextlib.closing(_open()) as conn:
+        if auth.get_team(conn, team_id) is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        refused = _refuse_unless_team_manager(conn, request, team_id)
+        if refused is not None:
+            return refused
+        invite = auth.get_invite(conn, invite_id)
+        if invite is None or int(invite["team_id"]) != team_id:
+            return json_error(
+                404, error=auth.ERROR_INVITE_NOT_FOUND, detail=f"no invite with id {invite_id}"
+            )
+        if invite["used_by"] is not None:
+            return json_error(
+                410, error=auth.ERROR_INVITE_USED, detail="that invite was already used"
+            )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.INVITE_TABLE,
+                where="id = ?",
+                params=(invite_id,),
+                description=f"revoked invite {invite_id} of team {team_id}",
+            )
+            payload = auth.revoke_invite(conn, invite_id)
+    return json_response(log.attach(payload))
+
+
+@router.post("/api/teams/join")
+def join_team(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Redeem one invite code and join its team; journaled.
+
+    Needs token auth (there has to be a user to add). A redeemed or expired
+    code reads 410 (``invite-used`` / ``invite-expired``); an unknown one 404
+    without naming any team.
+    """
+    code = _require_str(body, "code")
+    caller = _caller(request)
+    if caller is None:
+        return json_error(
+            400,
+            error="invalid-team",
+            detail="joining a team needs token auth; create a user first",
+        )
+    user_id = int(caller["id"])
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                team = surface.journaled_invite_join(conn, log, code, user_id)
+        except auth.UnknownTeamError:
+            return json_error(
+                404, error=auth.ERROR_INVITE_NOT_FOUND, detail="no invite carries that code"
+            )
+        except auth.UnknownUserError as exc:
+            return json_error(404, error=auth.ERROR_USER_NOT_FOUND, detail=exc.detail)
+        except auth.AuthError as exc:
+            if exc.code in {auth.ERROR_INVITE_USED, auth.ERROR_INVITE_EXPIRED}:
+                return json_error(410, error=exc.code, detail=exc.detail)
+            return _team_failure(exc)
+    return json_response(log.attach(team))
 
 
 @router.delete("/api/teams/{team_id}/members/{user_id}")

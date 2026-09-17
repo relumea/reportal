@@ -311,7 +311,14 @@ export function BillingView(): ReactNode {
             {Object.values(payload.usage).some((quota) => !quota.allowed) ? (
               <Note tone="warn">
                 {Object.values(payload.usage).find((quota) => !quota.allowed)?.reason ??
-                  "A quota is exhausted."}
+                  "A quota is exhausted."}{" "}
+                {config.enabled ? (
+                  <a className="back-link" href="#billing-plans">
+                    See plans below to upgrade.
+                  </a>
+                ) : (
+                  "Billing is not configured on this install, so no plan can be purchased here."
+                )}
               </Note>
             ) : null}
           </Panel>
@@ -342,6 +349,7 @@ export function BillingView(): ReactNode {
             title="Plans"
             subtitle={`Extra credits are billed at $${catalog.data.overage_usd_per_credit.toFixed(2)} each.`}
           >
+            <span id="billing-plans" />
             <PlanCards
               plans={catalog.data.plans}
               currentPlanId={payload.plan.id}

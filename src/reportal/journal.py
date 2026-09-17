@@ -59,7 +59,8 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     descriptor_json TEXT NOT NULL,
     created_at      TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'active',
-    actor           TEXT NOT NULL DEFAULT ''
+    actor           TEXT NOT NULL DEFAULT '',
+    actor_user_id   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_journal_entries_action ON {_TABLE}(action);
 """
@@ -67,12 +68,15 @@ CREATE INDEX IF NOT EXISTS idx_journal_entries_action ON {_TABLE}(action);
 # The actor index is created after the column migration below, because an index
 # on a column an older database does not have yet would fail the script.
 _ACTOR_INDEX = f"CREATE INDEX IF NOT EXISTS idx_journal_entries_actor ON {_TABLE}(actor);"
+_ACTOR_USER_INDEX = (
+    f"CREATE INDEX IF NOT EXISTS idx_journal_entries_actor_user ON {_TABLE}(actor_user_id);"
+)
 
-# The actor an action was taken by: the authenticated user's name for a request,
-# ``local`` while token auth is off, and empty for a process with no identity
-# (a CLI invocation or an MCP tool call).  The server sets it around the request
-# it serves, so every entry the request records carries who made it.
+# The identity an action records: the display name plus the stable user id.
+# A name survives for readability; the id survives a rename or delete, so an
+# audit trail answers "which user" even after the name changed.
 _ACTOR: ContextVar[str] = ContextVar("reportal_journal_actor", default="")
+_ACTOR_USER_ID: ContextVar[int | None] = ContextVar("reportal_journal_actor_user_id", default=None)
 
 # The actor name a request without an authenticated user records.
 LOCAL_ACTOR = "local"
@@ -146,28 +150,39 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({_TABLE})")}
     if "actor" not in columns:
         conn.execute(f"ALTER TABLE {_TABLE} ADD COLUMN actor TEXT NOT NULL DEFAULT ''")
+    if "actor_user_id" not in columns:
+        conn.execute(f"ALTER TABLE {_TABLE} ADD COLUMN actor_user_id INTEGER")
     conn.execute(_ACTOR_INDEX)
+    conn.execute(_ACTOR_USER_INDEX)
     conn.commit()
 
 
 @contextlib.contextmanager
-def acting_as(actor: str) -> Iterator[None]:
+def acting_as(actor: str, *, user_id: int | None = None) -> Iterator[None]:
     """Record *actor* on every entry this block writes, and restore after.
 
     The value travels in a :class:`contextvars.ContextVar` so a writer deep in a
     call stack does not have to thread it through; the server sets it around the
     request it serves, and the worker thread the route runs on inherits it.
+    *user_id* is the stable identity behind the display name.
     """
     token = _ACTOR.set(actor)
+    id_token = _ACTOR_USER_ID.set(user_id)
     try:
         yield
     finally:
         _ACTOR.reset(token)
+        _ACTOR_USER_ID.reset(id_token)
 
 
 def current_actor() -> str:
     """The actor the current context records, or an empty string."""
     return _ACTOR.get()
+
+
+def current_actor_user_id() -> int | None:
+    """The stable user id the current context records, or None."""
+    return _ACTOR_USER_ID.get()
 
 
 # Entropy source for action ids.  A test patches ``_token_hex`` to pin the id
@@ -197,7 +212,7 @@ class Journal:
             raise ValueError("action must not be empty")
         self.conn = conn
         self.action = action
-        self._pending: list[dict[str, str]] = []
+        self._pending: list[dict[str, Any]] = []
         self._recorded = 0
         ensure_schema(conn)
 
@@ -215,6 +230,7 @@ class Journal:
                 "description": description,
                 "descriptor_json": encoded,
                 "actor": current_actor(),
+                "actor_user_id": current_actor_user_id(),
             }
         )
 
@@ -240,12 +256,13 @@ class Journal:
                 stamp,
                 STATUS_ACTIVE,
                 entry["actor"],
+                entry["actor_user_id"],
             )
             for entry in self._pending
         ]
         self.conn.executemany(
             f"INSERT INTO {_TABLE} (action, kind, description, descriptor_json, created_at,"
-            " status, actor) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " status, actor, actor_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
         self.conn.commit()
@@ -552,6 +569,7 @@ def journaled_rename(
     new_name: str,
     actor: str,
     source: str,
+    actor_user_id: int | None = None,
 ) -> dict[str, Any]:
     """Rename a function, journaling the functions row and the history row."""
     return journaled_name_change(
@@ -559,7 +577,12 @@ def journaled_rename(
         log,
         function_id,
         lambda: store.rename_function(
-            conn, function_id, new_name=new_name, actor=actor, source=source
+            conn,
+            function_id,
+            new_name=new_name,
+            actor=actor,
+            source=source,
+            actor_user_id=actor_user_id if actor_user_id is not None else current_actor_user_id(),
         ),
     )
 
@@ -570,7 +593,9 @@ def journaled_revert_name(
     """Revert one history row, journaling the rename that revert itself records."""
     before = snapshot_rows(conn, table="functions", where="id = ?", params=(function_id,))
     known = frozenset(int(row["id"]) for row in store.list_name_history(conn, function_id))
-    store.revert_name(conn, history_id)
+    store.revert_name(
+        conn, history_id, actor=current_actor(), actor_user_id=current_actor_user_id()
+    )
     _journal_rename_rows(conn, log, function_id, before, known)
 
 
@@ -802,6 +827,8 @@ def _columns_of(row: sqlite3.Row | Mapping[str, Any]) -> Any:
 
 def _entry_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     """The metadata of one entry, without its descriptor payload."""
+    columns = _columns_of(row)
+    raw_id = row["actor_user_id"] if "actor_user_id" in columns else None
     return {
         "id": int(row["id"]),
         "action": str(row["action"]),
@@ -809,7 +836,8 @@ def _entry_row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "description": str(row["description"]),
         "created_at": str(row["created_at"]),
         "status": str(row["status"]),
-        "actor": str(row["actor"]) if "actor" in _columns_of(row) else "",
+        "actor": str(row["actor"]) if "actor" in columns else "",
+        "actor_user_id": None if raw_id is None else int(raw_id),
     }
 
 
@@ -857,6 +885,51 @@ def list_actors(conn: sqlite3.Connection) -> list[str]:
     ensure_schema(conn)
     rows = conn.execute(f"SELECT DISTINCT actor FROM {_TABLE} WHERE actor != '' ORDER BY actor")
     return [str(row["actor"]) for row in rows]
+
+
+def _actor_user_column(conn: sqlite3.Connection) -> bool:
+    """Whether this database's journal carries stable user ids."""
+    return "actor_user_id" in {
+        str(row["name"]) for row in conn.execute(f"PRAGMA table_info({_TABLE})")
+    }
+
+
+def entry_exists(conn: sqlite3.Connection, entry_id: int) -> bool:
+    """Whether one journal entry id exists."""
+    ensure_schema(conn)
+    return conn.execute(f"SELECT 1 FROM {_TABLE} WHERE id = ?", (entry_id,)).fetchone() is not None
+
+
+def action_exists(conn: sqlite3.Connection, action: str) -> bool:
+    """Whether one journal action id exists."""
+    ensure_schema(conn)
+    row = conn.execute(f"SELECT 1 FROM {_TABLE} WHERE action = ?", (action,)).fetchone()
+    return row is not None
+
+
+def entry_actor_user_id(conn: sqlite3.Connection, entry_id: int) -> int | None:
+    """The stable user id that wrote one entry, or None when unknown."""
+    ensure_schema(conn)
+    if not _actor_user_column(conn):
+        return None
+    row = conn.execute(f"SELECT actor_user_id FROM {_TABLE} WHERE id = ?", (entry_id,)).fetchone()
+    if row is None or row["actor_user_id"] is None:
+        return None
+    return int(row["actor_user_id"])
+
+
+def action_actor_user_id(conn: sqlite3.Connection, action: str) -> int | None:
+    """The stable user id that wrote one action's newest entry, or None."""
+    ensure_schema(conn)
+    if not _actor_user_column(conn):
+        return None
+    row = conn.execute(
+        f"SELECT actor_user_id FROM {_TABLE} WHERE action = ? ORDER BY id DESC LIMIT 1",
+        (action,),
+    ).fetchone()
+    if row is None or row["actor_user_id"] is None:
+        return None
+    return int(row["actor_user_id"])
 
 
 def count_actions(conn: sqlite3.Connection, *, since: str | None = None) -> int:

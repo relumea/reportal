@@ -438,7 +438,8 @@ def render() -> str:
          functions against everything you have seen before, triage what matters, and
          let an agent drive the sweep. Metered only where inference actually runs.</p>
       <div class="hero-actions">
-        <a class="cta" href="/">Open the workbench</a>
+        <a class="cta" href="/#/users">Create a workspace</a>
+        <a class="link-quiet" href="/">Open the workbench</a>
         <a class="link-quiet" href="#pricing">Plans and credits</a>
       </div>
     </div>

@@ -93,6 +93,13 @@ class TestSignatureTable:
         names = [signature.name for signature in SIGNATURES]
         assert len(names) == len(set(names))
 
+    def test_toolchain_names_match_the_signature_table(self) -> None:
+        expected = tuple(
+            signature.name for signature in SIGNATURES if signature.category == CATEGORY_TOOLCHAIN
+        )
+        assert filetypes.toolchain_names() == expected
+        assert expected == ("Microsoft Visual C++", "MinGW GCC")
+
     def test_high_entropy_heuristic_uses_the_named_threshold(self) -> None:
         signature = next(s for s in SIGNATURES if s.name == "high-entropy-executable")
         assert signature.match.executable_entropy == HIGH_ENTROPY_THRESHOLD
@@ -554,6 +561,28 @@ class TestRunFiletype:
         assert ENTRY_BYTES_NOTE in payload["notes"]
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         assert store.get_scan(conn, analysis_id or 0, store.SCAN_KIND_FILETYPE) == payload
+        assert store.get_binary(conn, binary_id)["language"] == ""
+
+    def test_a_runtime_match_stamps_the_binary_language(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _seed(conn, tmp_path)
+        filetypes.run_filetype(
+            conn, binary_id=binary_id, evidence=_evidence(sections=[_section(".rustc")])
+        )
+        assert store.get_binary(conn, binary_id)["language"] == "Rust"
+        assert store.get_binary(conn, binary_id)["compiler"] == ""
+
+    def test_a_toolchain_match_stamps_the_binary_compiler(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _seed(conn, tmp_path)
+        filetypes.run_filetype(
+            conn,
+            binary_id=binary_id,
+            evidence=_evidence(rich_header={"present": True}),
+        )
+        assert store.get_binary(conn, binary_id)["compiler"] == "Microsoft Visual C++"
 
     def test_unknown_binary_raises_keyerror(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(KeyError):

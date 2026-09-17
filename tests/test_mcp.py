@@ -15,6 +15,7 @@ import pytest
 from conftest import FakeEngine
 from graph_helpers import FUNCTION_NAME, node_id, seed_corpus
 from mcp import types
+from mcp.server.streamable_http import EventMessage
 from mcp.shared.exceptions import MCPError
 from mcp.shared.message import SessionMessage
 from typer.main import get_command
@@ -34,6 +35,7 @@ from reportal import (
     mcp_tools,
     pipeline,
     plugins,
+    profiles,
     remote_ingest,
     store,
     threat,
@@ -177,7 +179,9 @@ _READ_ONLY_TOOLS = frozenset(
         "get_sandbox_report",
         "get_sandbox_status",
         "list_users",
+        "list_api_keys",
         "list_teams",
+        "list_team_invites",
         "get_job",
         "list_journal",
         "list_jobs",
@@ -291,14 +295,21 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "bulk_binaries",
         "bulk_functions",
         "bulk_analyses",
+        "signup",
         "add_user",
         "rotate_user_token",
+        "create_api_key",
+        "revoke_api_key",
         "update_user",
         "delete_user",
         "create_team",
         "delete_team",
         "add_team_member",
         "remove_team_member",
+        "create_team_invite",
+        "revoke_team_invite",
+        "join_team",
+        "rename_binary",
         "set_binary_scope",
         "set_collection_scope",
         "run_library",
@@ -482,9 +493,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 252
-        assert len(_READ_ONLY_TOOLS) == 120
-        assert len(_DESTRUCTIVE_TOOLS) == 132
+        assert len(names) == 261
+        assert len(_READ_ONLY_TOOLS) == 122
+        assert len(_DESTRUCTIVE_TOOLS) == 139
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
@@ -739,6 +750,35 @@ class TestReadTools:
         assert is_error is False
         assert payload["name"] == "demo.exe"
 
+    def test_rename_binary_sets_the_display_name(self, conn: Any, tmp_path: Path) -> None:
+        ids = _seed_binary(conn, tmp_path)
+        payload, is_error = _call(
+            "rename_binary", {"binary_id": ids["binary"], "name": "  renamed.exe  "}
+        )
+        assert is_error is False
+        assert payload["name"] == "renamed.exe"
+        assert payload["journal_action"]
+        stored = store.get_binary(conn, ids["binary"])
+        assert stored is not None
+        assert stored["name"] == "renamed.exe"
+
+        payload, is_error = _call("rename_binary", {"binary_id": ids["binary"], "name": "   "})
+        assert is_error is True
+        assert payload["error"] == "invalid params"
+
+        payload, is_error = _call("rename_binary", {"binary_id": 999, "name": "gone.exe"})
+        assert is_error is True
+        assert payload["error"] == "binary not found"
+
+        payload, is_error = _call(
+            "rename_binary", {"binary_id": ids["binary"], "notes": "  vendor sample  "}
+        )
+        assert is_error is False
+        assert payload["notes"] == "vendor sample"
+        payload, is_error = _call("rename_binary", {"binary_id": ids["binary"], "notes": "   "})
+        assert is_error is False
+        assert payload["notes"] == ""
+
     def test_list_binaries_filters_and_orders(self, conn: Any, tmp_path: Path) -> None:
         ids = _seed_binary(conn, tmp_path)
         store.add_binary(conn, sha256="cd" * 32, name="other.exe", size=99, fmt="ELF")
@@ -754,6 +794,8 @@ class TestReadTools:
         assert is_error is False
         assert [row["name"] for row in payload["binaries"]] == ["other.exe"]
         assert payload["formats"] == ["ELF", "EXE"]
+        assert payload["languages"] == []
+        assert payload["compilers"] == []
 
         payload, is_error = _call("list_binaries", {"order": "biggest"})
         assert is_error is True
@@ -1096,6 +1138,43 @@ class TestDestructiveTools:
         assert again["id"] == payload["id"]
         assert len(store.list_binaries(conn)) == 1
 
+    def test_register_binary_stamps_a_compiler_hint(
+        self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
+        source = tmp_path / "sample.exe"
+        source.write_bytes(b"MZ" + b"\x00" * 30)
+
+        payload, is_error = _call("register_binary", {"path": str(source), "compiler": "MinGW GCC"})
+        assert is_error is False
+        assert payload["compiler"] == "MinGW GCC"
+        stored = store.get_binary(conn, int(payload["id"]))
+        assert stored is not None
+        assert stored["compiler"] == "MinGW GCC"
+
+        again, is_error = _call(
+            "register_binary",
+            {"path": str(source), "compiler": "Microsoft Visual C++"},
+        )
+        assert is_error is False
+        assert again["duplicate"] is True
+        stored = store.get_binary(conn, int(again["id"]))
+        assert stored is not None
+        assert stored["compiler"] == "MinGW GCC"
+
+    def test_register_binary_refuses_an_unknown_compiler(
+        self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
+        source = tmp_path / "sample.exe"
+        source.write_bytes(b"MZ" + b"\x00" * 30)
+        payload, is_error = _call("register_binary", {"path": str(source), "compiler": "clang"})
+        assert is_error is True
+        assert payload["error"] == "invalid-body"
+        assert store.list_binaries(conn) == []
+
     def test_register_binary_into_a_team_scope(
         self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1110,6 +1189,79 @@ class TestDestructiveTools:
         assert is_error is False
         assert payload["visibility"] == "team"
         assert int(payload["owner_team_id"]) == team_id
+
+    def test_signup_needs_saas(self, conn: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        payload, is_error = _call("signup", {"name": "ana"})
+        assert is_error is True
+        assert payload["error"] == auth.ERROR_SIGNUP_DISABLED
+        monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
+        created, is_error = _call("signup", {"name": "ana"})
+        assert is_error is False
+        assert created["token"].startswith(auth.TOKEN_PREFIX)
+        assert created["plan_id"] == "free"
+
+    def test_named_api_keys_mint_list_and_revoke(self, conn: Any) -> None:
+        user, _ = auth.add_user(conn, name="ana")
+        minted, is_error = _call("create_api_key", {"user_id": int(user["id"]), "name": "ci"})
+        assert is_error is False
+        assert minted["token"].startswith(auth.TOKEN_PREFIX)
+        assert minted["name"] == "ci"
+        assert minted["last_used_at"] == ""
+        listed, is_error = _call("list_api_keys", {"user_id": int(user["id"])})
+        assert is_error is False
+        assert listed["count"] == 1
+        assert listed["used"] == 2
+        assert "token" not in listed["keys"][0]
+        assert listed["keys"][0]["last_used_at"] == ""
+        revoked, is_error = _call("revoke_api_key", {"key_id": minted["id"]})
+        assert is_error is False
+        assert revoked["deleted"] is True
+        missing, is_error = _call("revoke_api_key", {"key_id": minted["id"]})
+        assert is_error is True
+        assert missing["error"] == auth.ERROR_API_KEY_NOT_FOUND
+
+    def test_team_invite_mints_lists_and_joins(self, conn: Any) -> None:
+        team_id = int(auth.create_team(conn, name="Invited")["id"])
+        user, _ = auth.add_user(conn, name="ana")
+
+        minted, is_error = _call("create_team_invite", {"team_id": team_id})
+        assert is_error is False
+        assert minted["code"].startswith(auth.INVITE_PREFIX)
+
+        listed, is_error = _call("list_team_invites", {"team_id": team_id})
+        assert is_error is False
+        assert listed["count"] == 1
+        assert "code" not in listed["invites"][0]
+        assert "code_hash" not in listed["invites"][0]
+
+        extra, is_error = _call("create_team_invite", {"team_id": team_id})
+        assert is_error is False
+        revoked, is_error = _call("revoke_team_invite", {"invite_id": extra["invite_id"]})
+        assert is_error is False
+        assert revoked["deleted"] is True
+        listed, is_error = _call("list_team_invites", {"team_id": team_id})
+        assert is_error is False
+        assert listed["count"] == 1
+
+        joined, is_error = _call("join_team", {"code": minted["code"], "user_id": int(user["id"])})
+        assert is_error is False
+        assert int(user["id"]) in [member["id"] for member in joined["members"]]
+
+        spent, is_error = _call("revoke_team_invite", {"invite_id": minted["invite_id"]})
+        assert is_error is True
+        assert spent["error"] == auth.ERROR_INVITE_USED
+
+        again, is_error = _call("join_team", {"code": minted["code"], "user_id": int(user["id"])})
+        assert is_error is True
+        assert again["error"] == auth.ERROR_INVITE_USED
+
+        missing_invite, is_error = _call("revoke_team_invite", {"invite_id": 4242})
+        assert is_error is True
+        assert missing_invite["error"] == auth.ERROR_INVITE_NOT_FOUND
+
+        missing, is_error = _call("list_team_invites", {"team_id": 4242})
+        assert is_error is True
+        assert missing["error"] == auth.ERROR_TEAM_NOT_FOUND
 
     def test_register_binary_refuses_a_missing_file(
         self, conn: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2740,3 +2892,110 @@ class TestComponentTools:
         assert is_error is False
         assert payload["name"] == "prepare"
         assert calls == ["prepare"]
+
+
+class TestHttp:
+    def test_initialize_answers_server_info(self, portal_db: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        from reportal.webapp import app
+
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            response = client.post(
+                "/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _initialize_params(),
+                },
+                headers={"Accept": "application/json"},
+            )
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["protocolVersion"] == PROTOCOL_VERSION
+        assert result["serverInfo"] == {
+            "name": "reportal",
+            "title": "reportal",
+            "version": __version__,
+        }
+
+    def test_a_missing_lifespan_is_503(self, portal_db: Path) -> None:
+        from conftest import json_body, wsgi_request
+
+        status, headers, body = wsgi_request(
+            "POST",
+            "/mcp",
+            body=json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": _initialize_params(),
+                }
+            ),
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
+        )
+        payload = json_body(body, headers)
+        assert status.startswith("503")
+        assert payload["error"] == "mcp-unavailable"
+
+    def test_get_without_sse_accept_is_406(self, portal_db: Path) -> None:
+        from fastapi.testclient import TestClient
+
+        from reportal.webapp import app
+
+        with TestClient(app, base_url="http://127.0.0.1") as client:
+            response = client.get("/mcp", headers={"Accept": "application/json"})
+        assert response.status_code == 406
+
+    def test_get_missing_lifespan_is_503(self, portal_db: Path) -> None:
+        from conftest import json_body, wsgi_request
+
+        status, headers, body = wsgi_request(
+            "GET",
+            "/mcp",
+            headers={"Accept": "application/json"},
+        )
+        payload = json_body(body, headers)
+        assert status.startswith("503")
+        assert payload["error"] == "mcp-unavailable"
+
+
+class TestMemoryEventStore:
+    def test_replay_skips_priming_and_stays_on_one_stream(self) -> None:
+        store = mcp_server.MemoryEventStore()
+        note = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/message")
+        other = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/other")
+
+        async def run() -> None:
+            first = await store.store_event("a", None)
+            second = await store.store_event("a", note)
+            await store.store_event("b", other)
+            replayed: list[EventMessage] = []
+
+            async def send(event: EventMessage) -> None:
+                replayed.append(event)
+
+            stream_id = await store.replay_events_after(first, send)
+            assert stream_id == "a"
+            assert [item.event_id for item in replayed] == [second]
+            assert replayed[0].message.method == "notifications/message"
+
+        anyio.run(run)
+
+    def test_unknown_last_event_id_replays_nothing(self) -> None:
+        store = mcp_server.MemoryEventStore()
+        note = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/message")
+
+        async def run() -> None:
+            await store.store_event("a", note)
+            replayed: list[EventMessage] = []
+
+            async def send(event: EventMessage) -> None:
+                replayed.append(event)
+
+            assert await store.replay_events_after("missing", send) is None
+            assert replayed == []
+
+        anyio.run(run)

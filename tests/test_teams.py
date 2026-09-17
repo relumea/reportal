@@ -533,6 +533,50 @@ class TestCli:
 
         assert runner.invoke(cli.app, ["team-rm", "4242", "--yes"]).exit_code == 1
         assert runner.invoke(cli.app, ["team-member", "4242", "1"]).exit_code == 1
+        assert runner.invoke(cli.app, ["team-invite", "4242", "--json"]).exit_code == 1
+        assert runner.invoke(cli.app, ["team-invites", "4242", "--json"]).exit_code == 1
+        assert runner.invoke(cli.app, ["team-invite-rm", "4242", "--json"]).exit_code == 1
+
+    def test_team_invite_mints_and_joins(self, tmp_path: Path, monkeypatch: Any) -> None:
+        db = self._portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(db)) as conn:
+            user, _ = auth.add_user(conn, name="ana")
+            team = auth.create_team(conn, name="Blue")
+            team_id = int(team["id"])
+
+        minted = runner.invoke(cli.app, ["team-invite", str(team_id), "--json"])
+        assert minted.exit_code == 0, minted.output
+        invite = json.loads(minted.stdout)
+        assert invite["code"].startswith(auth.INVITE_PREFIX)
+
+        listed = runner.invoke(cli.app, ["team-invites", str(team_id), "--json"])
+        assert listed.exit_code == 0, listed.output
+        assert json.loads(listed.stdout)["count"] == 1
+
+        extra = runner.invoke(cli.app, ["team-invite", str(team_id), "--json"])
+        assert extra.exit_code == 0, extra.output
+        revoked = runner.invoke(
+            cli.app, ["team-invite-rm", str(json.loads(extra.stdout)["invite_id"]), "--json"]
+        )
+        assert revoked.exit_code == 0, revoked.output
+        assert json.loads(revoked.stdout)["deleted"] is True
+        listed = runner.invoke(cli.app, ["team-invites", str(team_id), "--json"])
+        assert json.loads(listed.stdout)["count"] == 1
+
+        joined = runner.invoke(
+            cli.app, ["team-join", invite["code"], "--user", str(user["id"]), "--json"]
+        )
+        assert joined.exit_code == 0, joined.output
+        assert json.loads(joined.stdout)["member_count"] == 1
+
+        again = runner.invoke(
+            cli.app, ["team-join", invite["code"], "--user", str(user["id"]), "--json"]
+        )
+        assert again.exit_code == 1
+        assert auth.ERROR_INVITE_USED in again.output
+
+        spent = runner.invoke(cli.app, ["team-invite-rm", str(invite["invite_id"])])
+        assert spent.exit_code == 1
 
     def test_binary_scope_sets_and_clears(self, tmp_path: Path, monkeypatch: Any) -> None:
         db = self._portal(tmp_path, monkeypatch)
@@ -559,11 +603,38 @@ class TestCli:
         assert cleared.exit_code == 0
         assert json.loads(cleared.stdout)["visibility"] == "public"
 
+    def test_binary_rename_sets_the_display_name(self, tmp_path: Path, monkeypatch: Any) -> None:
+        db = self._portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(db)) as conn:
+            binary_id = store.add_binary(conn, sha256="9" * 64, name="demo.exe")
+
+        renamed = runner.invoke(
+            cli.app, ["binary-rename", str(binary_id), "--name", "  renamed.exe  ", "--json"]
+        )
+        assert renamed.exit_code == 0, renamed.output
+        payload = json.loads(renamed.stdout)
+        assert payload["name"] == "renamed.exe"
+        assert payload["journal_action"]
+
+        empty = runner.invoke(cli.app, ["binary-rename", str(binary_id), "--name", "   "])
+        assert empty.exit_code == 1
+        noted = runner.invoke(
+            cli.app, ["binary-rename", str(binary_id), "--notes", "  vendor sample  ", "--json"]
+        )
+        assert noted.exit_code == 0, noted.output
+        assert json.loads(noted.stdout)["notes"] == "vendor sample"
+        with contextlib.closing(store.connect(db)) as conn:
+            stored = store.get_binary(conn, binary_id)
+        assert stored is not None
+        assert stored["name"] == "renamed.exe"
+        assert stored["notes"] == "vendor sample"
+
     def test_an_unknown_object_or_team_exits_non_zero(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
         self._portal(tmp_path, monkeypatch)
 
+        assert runner.invoke(cli.app, ["binary-rename", "4242", "--name", "x"]).exit_code == 1
         assert runner.invoke(cli.app, ["binary-scope", "4242"]).exit_code == 1
         assert runner.invoke(cli.app, ["collection-scope", "4242"]).exit_code == 1
         assert (

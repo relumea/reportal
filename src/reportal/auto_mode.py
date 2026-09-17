@@ -115,10 +115,9 @@ _sleep = time.sleep
 
 # SQLite settings for the connections auto mode opens per worker.  Batches run
 # concurrently and all of them write, so a writer waits for the lock rather
-# than failing the batch, and WAL lets a reader (the polling API) proceed while
-# a worker writes.
+# than failing the batch. WAL comes from every :func:`store.connect`.
 DB_BUSY_TIMEOUT_MS = store.BUSY_TIMEOUT_MS
-DB_JOURNAL_MODE = "WAL"
+DB_JOURNAL_MODE = store.JOURNAL_MODE
 # WAL's durability knob: a commit does not fsync the WAL on every write, only
 # at a checkpoint.  A crash of this process still loses nothing; only a power
 # loss can drop the last commits, which is the standard WAL tradeoff and what
@@ -757,17 +756,10 @@ def _database_path(conn: sqlite3.Connection) -> Path | None:
 def _configure(conn: sqlite3.Connection) -> None:
     """Apply the auto-mode SQLite settings to the coordinator connection.
 
-    The journal mode is a database-level setting, so it is switched once here,
-    before any worker connection opens: doing it per connection races, since
-    switching modes needs a brief exclusive lock.
+    The journal mode is persistent and every :func:`store.connect` already
+    requests WAL, so this only enforces the durability knob here.
     """
     conn.execute(f"PRAGMA busy_timeout = {DB_BUSY_TIMEOUT_MS}")
-    try:
-        conn.execute(f"PRAGMA journal_mode = {DB_JOURNAL_MODE}")
-    except sqlite3.OperationalError:
-        # Another connection holds the database; the run still works in the
-        # default journal mode, just with more write contention.
-        _log.warning("auto mode could not switch the database to %s", DB_JOURNAL_MODE)
     conn.execute(f"PRAGMA synchronous = {DB_SYNCHRONOUS}")
 
 
@@ -775,8 +767,8 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     """Open one auto-mode worker connection on *db_path*.
 
     Concurrent batches all write, so the connection waits for the write lock
-    (``busy_timeout``) instead of failing the batch.  The journal mode is not
-    touched here: :func:`_configure` switched it once on the coordinator.
+    (``busy_timeout``) instead of failing the batch. WAL and the timeout come
+    from :func:`store.connect`; only the durability knob is set here.
     """
     conn = store.connect(db_path)
     conn.execute(f"PRAGMA busy_timeout = {DB_BUSY_TIMEOUT_MS}")

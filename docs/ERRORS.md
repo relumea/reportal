@@ -29,7 +29,7 @@ under the hyphenated heading.
 
 ## Contents
 
-- Request shape: [invalid-body](#invalid-body), [invalid-json-body](#invalid-json-body), [request-body-must-be-a-json-object](#request-body-must-be-a-json-object), [invalid-params](#invalid-params), [invalid-bulk-request](#invalid-bulk-request), [invalid-data-type](#invalid-data-type), [invalid-scope-id](#invalid-scope-id), [invalid-scope-kind](#invalid-scope-kind), [invalid-size-range](#invalid-size-range), [invalid-kind](#invalid-kind), [invalid-limit](#invalid-limit), [invalid-hash](#invalid-hash), [short-hash](#short-hash), [ambiguous-hash](#ambiguous-hash), [invalid-url](#invalid-url)
+- Request shape: [invalid-body](#invalid-body), [invalid-json-body](#invalid-json-body), [request-body-must-be-a-json-object](#request-body-must-be-a-json-object), [invalid-params](#invalid-params), [invalid-bulk-request](#invalid-bulk-request), [invalid-data-type](#invalid-data-type), [invalid-scope-id](#invalid-scope-id), [invalid-scope-kind](#invalid-scope-kind), [invalid-size-range](#invalid-size-range), [invalid-kind](#invalid-kind), [invalid-limit](#invalid-limit), [invalid-hash](#invalid-hash), [short-hash](#short-hash), [ambiguous-hash](#ambiguous-hash), [invalid-url](#invalid-url), [invalid-binary](#invalid-binary)
 - Uploads and archives: [no-file](#no-file), [empty-file](#empty-file), [file-too-large](#file-too-large), [too-many-files](#too-many-files), [unsupported-format](#unsupported-format), [external-tool-required](#external-tool-required), [password-required](#password-required), [bad-password](#bad-password), [corrupt-archive](#corrupt-archive), [archive-too-large](#archive-too-large), [too-many-members](#too-many-members), [binary-not-on-disk](#binary-not-on-disk), [too-many-documents](#too-many-documents)
 - Not found: [edge-not-found](#edge-not-found), [string-not-found](#string-not-found), [binary-not-found](#binary-not-found), [function-not-found](#function-not-found), [collection-not-found](#collection-not-found), [family-not-found](#family-not-found), [comment-not-found](#comment-not-found), [conversation-not-found](#conversation-not-found), [data-type-not-found](#data-type-not-found), [document-not-found](#document-not-found), [member-not-found](#member-not-found), [node-not-found](#node-not-found), [project-not-found](#project-not-found), [run-not-found](#run-not-found), [tag-not-found](#tag-not-found), [format-not-found](#format-not-found), [domain-not-found](#domain-not-found), [component-not-found](#component-not-found), [action-not-found](#action-not-found), [entry-not-found](#entry-not-found), [history-not-found](#history-not-found), [analysis-not-found](#analysis-not-found), [candidate-not-found](#candidate-not-found), [signature-not-found](#signature-not-found), [not-found](#not-found)
 - Debug symbols: [symbols-unreadable](#symbols-unreadable), [no-symbols](#no-symbols)
@@ -37,13 +37,13 @@ under the hyphenated heading.
 - Agent artifacts: [no-artifact](#no-artifact)
 - Stored-only reads: [no-scan](#no-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
 - Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
-- Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
+- Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [mcp-unavailable](#mcp-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
 - Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
 - Sandbox: [sandbox-disabled](#sandbox-disabled), [sandbox-unavailable](#sandbox-unavailable), [invalid-sandbox](#invalid-sandbox)
-- Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [scope-forbidden](#scope-forbidden)
+- Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [invite-not-found](#invite-not-found), [invite-used](#invite-used), [invite-expired](#invite-expired), [signup-disabled](#signup-disabled), [quota-exceeded](#quota-exceeded), [scope-forbidden](#scope-forbidden), [invalid-api-key](#invalid-api-key), [api-key-not-found](#api-key-not-found), [api-key-limit](#api-key-limit)
 - Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation), [auto-busy](#auto-busy)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 - Documentation: [no-docs](#no-docs), [no-doc](#no-doc)
@@ -145,6 +145,13 @@ characters, or a full digest.
 `400`. A remote-ingestion target failed validation: empty, unparsable, without
 a host, carrying credentials, with an invalid port, or on a port that is not
 allowed. Send a plain `http`/`https` URL.
+
+### invalid-binary
+
+`400` (`invalid binary`). A binary update was missing both `name` and `notes`,
+the name was empty after stripping, or `notes` was past
+`store.MAX_BINARY_NOTES` (2000). Send a non-empty display name and/or a note.
+Empty notes clears the note. Dedupe stays on sha256.
 
 ## Uploads and archives
 
@@ -615,6 +622,13 @@ unusable body. Nothing was stored. Check the endpoint and the model name.
 `[llm] endpoint` or `REPORTAL_LLM_ENDPOINT`; every deterministic route keeps
 working without it.
 
+### mcp-unavailable
+
+`503`. `POST` or `GET /mcp` reached the Streamable HTTP mount before the
+process lifespan started the session manager. Restart the server;
+`reportal serve` and `reportal mcp` both start their transport before they
+accept work.
+
 ### pipeline-unavailable
 
 `503`. The AI decompilation composition could not be assembled at all. Check
@@ -644,10 +658,13 @@ checkout path by design: usage is still metered and readable.
 
 ### rate-limited
 
-`429`. Too many calls to a route that reaches the payment provider on your
-behalf (the per-organisation subscription sync). Webhooks are the primary path
-for subscription state and arrive on their own, so this endpoint is a fallback
-for a lost delivery rather than something to poll. Wait and try again.
+`429`. Too many calls to a bounded HTTP path. That is the
+per-organisation subscription sync (it reaches the payment provider),
+SaaS `POST /api/signup` (it mints a tenant with no bearer), and any
+authenticated HTTP write past `auth.WRITE_MAX_HITS` (60) in
+`auth.WRITE_WINDOW_S` (60 seconds). The response carries `Retry-After`
+(seconds until a slot frees). Wait that long and try again. Loopback
+auth-off, CLI and MCP are not this path.
 
 ### backend-unavailable
 
@@ -777,6 +794,22 @@ team secret needs that team's membership (or an admin).
 update with neither `role` nor `disabled`. Roles are `viewer`, `analyst` and
 `admin`.
 
+### invalid-api-key
+
+`400` (`invalid-api-key`). A named extra key was missing `name`, blank after
+strip, oversized, or already used by this user. Send a unique label.
+
+### api-key-not-found
+
+`404` (`api-key-not-found`). No named extra key carries that id, or it belongs
+to another user. The login token is rotated with `POST /api/users/<id>/token`,
+not deleted here.
+
+### api-key-limit
+
+`402` (`api-key-limit`). The organisation plan's `max_api_keys` is already
+held (the login token counts as one). Revoke a named key or upgrade.
+
 ### user-exists
 
 `409`. Another user already carries that name (names compare case-insensitively).
@@ -833,6 +866,36 @@ scope request.
 
 `404`. The membership addressed by `DELETE /api/teams/<id>/members/<user_id>`
 does not exist, so there is nothing to remove.
+
+### invite-not-found
+
+`404` (`invite-not-found`). No invite carries that code, so there is nothing
+to join. The answer never names a team, so a guessed code discloses nothing.
+
+### invite-used
+
+`410` (`invite-used`). The code was already redeemed; invite codes are
+single-use. A used row cannot be revoked either. Ask a team owner for a
+fresh one (`POST /api/teams/<id>/invites`).
+
+### invite-expired
+
+`410` (`invite-expired`). The code is past `auth.INVITE_TTL_SECONDS` (seven
+days from mint). Ask a team owner for a fresh one. An unused expired row
+stays listed so an owner can see it went unused.
+
+### signup-disabled
+
+`403` (`signup-disabled`). Self-serve signup needs the `saas` profile.
+A personal install already has an operator; create a user with
+`reportal user-add` or `POST /api/users` instead.
+
+### quota-exceeded
+
+`402` (`quota-exceeded`). The tenant's allowance cannot cover the call: the
+free tier at zero remaining, or a past-due subscription. Paid plans past
+their allowance are covered by overage and keep working. The body names the
+plan, the usage, and the `/pricing` upgrade path.
 
 ### invalid-region
 

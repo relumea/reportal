@@ -326,6 +326,21 @@ class TestMatchBinary:
         assert rows[0]["source_name"] == "a1"
         assert rows[0]["candidate_name"] == "a2"
         assert set(rows[0]) >= {"source_va", "candidate_va", "confidence"}
+        assert rows[0]["source_arch"] == ""
+        assert rows[0]["candidate_arch"] == ""
+        assert rows[0]["cross_arch"] is False
+
+    def test_records_the_isa_pair(self, conn: sqlite3.Connection) -> None:
+        ids = _seed_scoped(conn)
+        _run(conn, ids["a"])
+        matches = {row["candidate_name"]: row for row in store.list_matches(conn, ids["a1"])}
+        assert matches["a2"]["source_arch"] == "x86_32"
+        assert matches["a2"]["candidate_arch"] == "x86_32"
+        assert matches["b1"]["source_arch"] == "x86_32"
+        assert matches["b1"]["candidate_arch"] == "x86_64"
+        rows = {row["candidate_name"]: row for row in matching.binary_match_rows(conn, ids["a"])}
+        assert rows["a2"]["cross_arch"] is False
+        assert rows["b1"]["cross_arch"] is True
 
 
 class TestCachedDisassembler:

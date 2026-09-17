@@ -270,7 +270,7 @@ readout flashes and fades.
 
 The Binaries view carries the batch upload control: a multiple file input, a
 collection picker and a selected-files table with one row per file (name,
-a chip tag control, a Format and an ISA select, Remove), posting `FormData`
+a chip tag control, a Format, ISA and Compiler select, Remove), posting `FormData`
 with the repeated `file` parts and the `files` JSON options to
 `POST /api/binaries`.  The response renders one line per file, a duplicate as
 `Already stored <file> as binary #N.` rather than as a failure, and the whole
@@ -290,7 +290,10 @@ which streams the stored bytes with a `Content-Disposition` filename), and a
 and reports how many applied and how many were skipped.
 
 Binary detail (`#/binaries/<id>`) opens with the portal's binary-detail surface.
-header (name, sha256, format, arch, size, path and the rebrew project its engine-backed panels read, or the `import-rebrew` command that sets one when the binary has none); analyses (the binary's own runs from
+header (name, sha256, format, arch, size, path, a display-name field and a
+notes field that `PATCH /api/binaries/<id>` saves, and the rebrew project its engine-backed
+panels read, or the `import-rebrew` command that sets one when the binary has
+none); analyses (the binary's own runs from
 `GET /api/analyses?binary_id=`, newest first: each row's id, engine, created and
 finished times, status badge and the importer's log line, the scoped
 `count of total` line, an `All analyses` link to the workspace-wide view and a
@@ -537,7 +540,8 @@ function has no listing and a Refresh control); capabilities (the rules the
 function's own imports and literals matched, with their confidence and evidence
 count); strings (the analyst's list with an add form and a Remove per row, and
 below it, labelled as the text scan it is, the literals the stored
-decompilation carries); callees (a Declare callee form with the edge's kind and
+decompilation carries, then stack-built or single-byte-XOR strings recovered
+from the stored NASM listing); callees (a Declare callee form with the edge's kind and
 note, the declared edges with a Remove per row, and the derived names as one
 line of text); and a canonical-name panel whose Apply canonical name posts this
 function's id to `POST /api/functions/canonical-names` and reports the rename
@@ -610,7 +614,8 @@ The Matches view (`views/MatchesView.tsx`, `#/matches`) starts from a function
 id: Load reads that function's binary through `GET /api/functions/<id>` and then
 the candidates recorded for it from `GET /api/binaries/<id>/matches`, each row
 carrying the source and candidate function (both linked), the similarity, its
-band and the confidence.  Match settings opens the sheet the next run uses: the
+band, the confidence and the ISA pair (`source_arch` / `candidate_arch`,
+flagged when they differ).  Match settings opens the sheet the next run uses: the
 0-100 similarity floor, the 0-1 confidence floor, the most candidates kept per
 function (the API's `top`, 1 or more, default 10), whether the binary's own
 functions may be candidates, and the platform, architecture, binary and
@@ -718,7 +723,8 @@ token field that saves or clears what this browser sends, an `Active team`
 select that PUTs `/api/iam/active-team` (non-membership is the server's refusal,
 and clearing it is the empty option) rendering only when the install has auth on,
 and `GET /api/users`
-as the user table.  Creating a user takes a name and a role select and shows the
+as the user table (including `last_used_at` on the login token, `never`
+until it authenticates).  Creating a user takes a name and a role select and shows the
 returned token once in a `CodeBlock`, because that is the only time the server
 has it; each row's role select saves a `PATCH`, Disable/Enable flips the
 disabled flag, New token rotates and shows the replacement once, and Delete
@@ -817,7 +823,15 @@ feed reports) and carries the feedback form: a note posts to
 `POST /api/users/feedback` and the stored notes render under it, so the feed and
 the notes are on the page an operator already opens to manage identity.
 
-The Users view's identity half carries the team structure.  Its Teams panel reads
+The Users view's identity half carries the team structure.  When token auth
+is on and this browser has a user, an API keys panel lists named extra keys
+(`GET /api/iam/keys`, with `last_used_at` empty until the key authenticates),
+mints one (`POST /api/iam/keys`, shown once) and
+revokes one (`DELETE /api/iam/keys/<id>`); the login token counts toward the
+plan cap and is rotated from the user table, not this panel.  When token auth
+is on and this browser has no user, a Create a workspace panel POSTs
+`/api/signup` (SaaS only; personal answers `signup-disabled`; HTTP is
+rate-limited per TCP peer) and stores the shown-once token.  Its Teams panel reads
 `GET /api/teams` and renders id, name, member count, the owning organisation and
 the description, with a create form, a per-row organisation select that PUTs
 `/api/teams/<id>/organisation`, an "add member" select and a Delete behind the
@@ -831,7 +845,13 @@ in place that an organisation groups teams and decides nothing about access.
 The Users view also carries the Teams panel: `GET /api/teams` as a table (id,
 name, member count, description) with a create form, a per-row "add member"
 select over the known users and a Delete behind the confirm pattern, so team
-membership is managed in the browser the same way the CLI manages it.
+membership is managed in the browser the same way the CLI manages it.  Beside
+it, the Invites panel picks a team from `GET /api/teams`, mints one
+single-use code (`POST /api/teams/<id>/invites`, shown once, expires after
+seven days), redeems a code to join (`POST /api/teams/join`) and revokes an
+unused row (`DELETE /api/teams/<id>/invites/<invite_id>`); a team's
+invite list (`GET /api/teams/<id>/invites`) reads who minted, who redeemed
+and whether each code has expired, never the code itself. A used row stays.
 
 The Binaries view's upload panel (`views/BinariesView.tsx`) takes a batch one
 file at a time: a `Files` control and a dashed drop zone both queue files, each
@@ -850,14 +870,18 @@ it) with an optional password and reports each member with the binary it became
 or the reason it was skipped.
 
 The Binaries view's register (`views/BinariesView.tsx`, `#/binaries`) opens with
-the filters the route applies: a Search over the binary's name or SHA-256, a Tag
+the filters the route applies: a Search over the binary's name, SHA-256 or notes, a Tag
 select built from `GET /api/tags`, a Format select built from the `formats` the
-payload reports the register holds, and an Order select over
-`store.BINARY_ORDERS`, with a Clear control that resets all four and is disabled
-while none is set.  Every one of them lives in the route hash
-(`#/binaries?search=&tag=&format=&order=`), the convention the Analyses view
-uses, so a filtered register is a link, and the panel's subtitle reads
-`N of M binaries` against the payload's unfiltered `total`.  The register's own
+payload reports the register holds, a Language select built from the
+`languages` facet, a Compiler select built from the `compilers` facet, and an
+Order select over `store.BINARY_ORDERS`, with a Clear control that resets all
+six and is disabled while none is set.  Every one of them lives in the route
+hash (`#/binaries?search=&tag=&format=&language=&compiler=&order=`), the
+convention the Analyses view uses, so a filtered register is a link, and the
+panel's subtitle reads `N of M binaries` against the payload's unfiltered
+`total`.  Each row shows the stored `format`, `arch`, recovered `language` and
+recovered `compiler` (n/a when unknown).
+The register's own
 two pickers (the archive to extract, the family's reference binary) read the
 unfiltered list, so a filter narrows the table without hiding a binary from a
 form that needs one.

@@ -1124,3 +1124,41 @@ class TestOffline:
         jobs.run_pending(conn, limit=1)
 
         assert jobs.count_jobs(conn) == 1
+
+
+class TestSubmitterAttribution:
+    def test_submit_records_the_submitter(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        from reportal import auth
+
+        user, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        job = jobs.submit(
+            conn,
+            kind="composition",
+            binary_id=_binary(conn, tmp_path),
+            submitted_by="ana",
+            submitted_by_user_id=int(user["id"]),
+        )
+
+        assert job["submitted_by"] == "ana"
+        assert job["submitted_by_user_id"] == int(user["id"])
+
+    def test_execute_records_the_submitter_on_journal_entries(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        from reportal import auth, journal
+
+        user, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        job = jobs.submit(
+            conn,
+            kind="composition",
+            binary_id=_binary(conn, tmp_path),
+            submitted_by="ana",
+            submitted_by_user_id=int(user["id"]),
+        )
+
+        stored = jobs.execute(conn, jobs.get_job(conn, int(job["id"])) or {})
+        assert stored["status"] == jobs.STATUS_DONE
+        entries = journal.list_entries(conn, limit=journal.MAX_LIST_LIMIT)
+        assert entries
+        assert {entry["actor"] for entry in entries} == {"ana"}
+        assert {entry["actor_user_id"] for entry in entries} == {int(user["id"])}

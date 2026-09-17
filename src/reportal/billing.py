@@ -890,6 +890,15 @@ def reconcile_allowed(organisation_id: int) -> bool:
         return True
 
 
+def reconcile_retry_after(organisation_id: int) -> int:
+    """Seconds until *organisation_id* may reconcile again."""
+    now = _monotonic()
+    with _rate_states_lock:
+        return auth.retry_after_seconds(
+            _rate_states.get(organisation_id, []), _RECONCILE_WINDOW_S, now
+        )
+
+
 def reconcile_account(conn: sqlite3.Connection, organisation_id: int) -> ReconcileResult:
     """Re-read the organisation's subscription and mirror it.
 

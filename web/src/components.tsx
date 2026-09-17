@@ -503,6 +503,13 @@ export function ErrorNote({
   return (
     <div className="note note-error" role="alert">
       <p className="note-text">{errorText(error)}</p>
+      {isApiErrorCode(error, "quota-exceeded") ? (
+        <p className="note-text">
+          <a className="back-link" href="#/billing">
+            Open Billing to upgrade.
+          </a>
+        </p>
+      ) : null}
       {onRetry ? (
         <Button size="sm" tone="ghost" onClick={onRetry}>
           Retry

@@ -117,6 +117,7 @@ class TestRecover:
 
         assert payload["version"] == "go1.27.1-X:nodwarf5"
         assert payload["module"] == "command-line-arguments"
+        assert store.get_binary(conn, binary_id)["language"] == "Go"
 
     def test_recover_of_a_non_go_binary_is_not_go(
         self, conn: sqlite3.Connection, tmp_path: Path

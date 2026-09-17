@@ -438,3 +438,22 @@ class TestUnit:
         assert graph_backends.configured_backend_name() in {
             backend.name for backend in graph_backends.graph_backends()
         }
+
+
+class TestSaasProfileCheck:
+    def test_saas_without_billing_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import profiles, store
+        from reportal._paths import DB_ENV
+
+        monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        store.init_db(db)
+
+        payload = doctor.report(port=0)
+        optional = next(check for check in payload["checks"] if check["name"] == "optional")
+
+        assert optional["status"] == "warn"
+        assert "saas profile" in optional["hint"]

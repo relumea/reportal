@@ -6,6 +6,12 @@ export interface Binary {
   size: number;
   format: string;
   arch: string;
+  /** Recovered source language (Go, Rust, ...); empty when unknown. */
+  language: string;
+  /** Recovered toolchain (MSVC, MinGW, ...); empty when unknown. */
+  compiler: string;
+  /** Operator note; empty when none. */
+  notes: string;
   function_count: number;
   /** `public` to every authenticated caller, `team` to the owners' members. */
   visibility: "public" | "team";
@@ -121,6 +127,10 @@ export interface MatchRow {
   difference: number;
   /** The quality band the similarity falls into. */
   band: string;
+  source_arch: string;
+  candidate_arch: string;
+  /** True when both ISA tokens are known and differ. */
+  cross_arch: boolean;
   settings: MatchRunSettings | null;
 }
 
@@ -136,6 +146,10 @@ export interface BinaryMatchRow {
   confidence: number;
   difference: number;
   band: string;
+  source_arch: string;
+  candidate_arch: string;
+  /** True when both ISA tokens are known and differ. */
+  cross_arch: boolean;
   settings: MatchRunSettings | null;
 }
 
@@ -241,9 +255,15 @@ export interface BinaryListPayload {
   search: string | null;
   tag: string | null;
   format: string | null;
+  language: string | null;
+  compiler: string | null;
   order: string;
   /** The formats the register holds, which is what the filter control offers. */
   formats: string[];
+  /** The recovered languages the register holds. */
+  languages: string[];
+  /** The recovered toolchains the register holds. */
+  compilers: string[];
 }
 
 /** One row of `GET /api/tags`: a tag with how many objects carry it. */
@@ -1369,6 +1389,8 @@ export interface UploadFileOptions {
   format?: string;
   /** Explicit architecture, else the suffix-derived value. */
   arch?: string;
+  /** Explicit toolchain; empty leaves recovery to fill `binaries.compiler`. */
+  compiler?: string;
   collection_ids?: number[];
   /** The scope the registered binary should carry; absent leaves it public. */
   visibility?: "public" | "team";
@@ -2246,6 +2268,32 @@ export interface TeamsPayload {
   count: number;
 }
 
+/** One team invite: who minted it, who redeemed it, and when it expires. The code itself is never listed. */
+export interface TeamInvite {
+  id: number;
+  team_id: number;
+  created_by: number | null;
+  created_at: string;
+  expires_at: string;
+  expired: boolean;
+  used_by: number | null;
+  used_at: string | null;
+}
+
+/** `GET /api/teams/<id>/invites`. */
+export interface TeamInvitesPayload {
+  invites: TeamInvite[];
+  count: number;
+}
+
+/** `POST /api/teams/<id>/invites`: the code is returned once, here. */
+export interface TeamInviteCreated {
+  invite_id: number;
+  code: string;
+  team_id: number;
+  journal_action?: string;
+}
+
 /** One registered sandbox runner and whether it is installed. */
 export interface SandboxRunnerInfo {
   name: string;
@@ -2403,6 +2451,31 @@ export interface UserRow {
   has_token: boolean;
   /** The team this caller has selected as its working scope, or null. */
   active_team_id: number | null;
+  /** Last successful login-token authenticate; empty until then. */
+  last_used_at: string;
+}
+
+/** One named extra API key; the token digest is never listed. */
+export interface ApiKey {
+  id: number;
+  user_id: number;
+  name: string;
+  created_at: string;
+  last_used_at: string;
+}
+
+/** `GET /api/iam/keys`. `limit` is null when the plan is unlimited. */
+export interface ApiKeysPayload {
+  keys: ApiKey[];
+  count: number;
+  used: number;
+  limit: number | null;
+}
+
+/** `POST /api/iam/keys`: the token is returned once. */
+export interface ApiKeyCreated extends ApiKey {
+  token: string;
+  journal_action?: string;
 }
 
 /** `GET /api/users`: every user and the count. */
@@ -2910,12 +2983,13 @@ export interface AnalystString {
   created_at: string;
 }
 
-/** `GET /api/functions/<id>/strings`: the analyst's and the derived literals. */
+/** `GET /api/functions/<id>/strings`: analyst, derived, and decoded listing runs. */
 export interface FunctionStrings {
   function_id: number;
   analyst: AnalystString[];
   derived: Array<{ value: string; source: string }>;
-  counts: { analyst: number; derived: number };
+  decoded: Array<{ value: string; source: string }>;
+  counts: { analyst: number; derived: number; decoded: number };
   note: string;
 }
 

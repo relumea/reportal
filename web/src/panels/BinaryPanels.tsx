@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Link } from "react-router";
@@ -217,6 +217,38 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 /** Detail header of one binary: identity, key facts and the way back. */
 export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
+  const [name, setName] = useState(binary.name);
+  const [notes, setNotes] = useState(binary.notes ?? "");
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<unknown>(null);
+  const key = panelKey("binary", binary.id);
+
+  useEffect(() => {
+    setName(binary.name);
+    setNotes(binary.notes ?? "");
+  }, [binary.name, binary.notes]);
+
+  const save = async (): Promise<void> => {
+    const trimmed = name.trim();
+    const nextNotes = notes.trim();
+    const nameChanged = Boolean(trimmed) && trimmed !== binary.name;
+    const notesChanged = nextNotes !== (binary.notes ?? "");
+    if (!nameChanged && !notesChanged) return;
+    setActionError(null);
+    setBusy(true);
+    try {
+      const body: { name?: string; notes?: string } = {};
+      if (nameChanged) body.name = trimmed;
+      if (notesChanged) body.notes = nextNotes;
+      await api(`/binaries/${binary.id}`, { method: "PATCH", json: body });
+      refreshPanel(key, () => api<Binary>(`/binaries/${binary.id}`));
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <header className="detail-head">
       <div className="detail-heading">
@@ -248,6 +280,34 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         )}
       </div>
       <div className="panel-actions">
+        <Field label="Display name">
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void save();
+            }}
+          />
+        </Field>
+        <Field label="Notes">
+          <input
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void save();
+            }}
+          />
+        </Field>
+        <Button
+          pending={busy}
+          disabled={
+            (!name.trim() || name.trim() === binary.name) &&
+            notes.trim() === (binary.notes ?? "")
+          }
+          onClick={() => void save()}
+        >
+          Save
+        </Button>
         <a className="btn btn-ghost" href={`#/binaries/${binary.id}/functions`}>
           Functions
         </a>
@@ -255,6 +315,7 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
           Report site
         </a>
       </div>
+      {actionError ? <ErrorNote error={actionError} /> : null}
     </header>
   );
 }

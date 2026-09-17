@@ -78,6 +78,7 @@ function StringsSection({
   key,
   load,
   derived,
+  decoded,
   note,
   limit,
 }: {
@@ -85,6 +86,7 @@ function StringsSection({
   key: string;
   load: () => Promise<FunctionStrings | AnalysisStrings>;
   derived?: Array<{ value: string; source: string }>;
+  decoded?: Array<{ value: string; source: string }>;
   note?: string;
   limit: number;
 }): ReactNode {
@@ -198,6 +200,20 @@ function StringsSection({
                 {derived.map((row) => (
                   <li key={row.value} className="mono">
                     {row.value}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {decoded && decoded.length > 0 ? (
+            <>
+              <Muted>
+                Stack-built or single-byte-XOR strings recovered from the stored NASM listing.
+              </Muted>
+              <ul className="list">
+                {decoded.map((row) => (
+                  <li key={`${row.source}:${row.value}`} className="mono">
+                    {row.value} <span className="muted">{row.source}</span>
                   </li>
                 ))}
               </ul>
@@ -442,6 +458,7 @@ function FunctionStringsPanel({ functionId }: { functionId: number }): ReactNode
         key={key}
         load={load}
         derived={entry?.state === "ready" ? entry.data.derived : undefined}
+        decoded={entry?.state === "ready" ? entry.data.decoded : undefined}
         note={entry?.state === "ready" ? entry.data.note : undefined}
         limit={1024}
       />

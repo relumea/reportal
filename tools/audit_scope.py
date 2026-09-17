@@ -47,6 +47,8 @@ UNSCOPED_ID_NAMES = {
     "user_id",
     "team_id",
     "organisation_id",
+    "invite_id",
+    "key_id",
     "name",  # secrets are keyed by name
     "action",  # journal actions are global by the accepted decision
     "slug",  # shipped manual pages are global

@@ -469,11 +469,13 @@ export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
 export const SEARCH_DEBOUNCE_MS = 220;
 
 // Explicit per-file upload hints the upload form offers; mirrors the API's
-// UPLOAD_FORMATS and UPLOAD_ARCHITECTURES (the arch spellings are the engine's,
-// matching.ARCHITECTURES).  The empty value leaves the suffix-derived format
-// and arch in place, which is the hosted portal's Auto.
+// UPLOAD_FORMATS, UPLOAD_ARCHITECTURES and UPLOAD_COMPILERS (the arch
+// spellings are the engine's, matching.ARCHITECTURES; compilers are the
+// filetype toolchain names).  The empty value leaves recovery in place,
+// which is the hosted portal's Auto.
 export const UPLOAD_FORMATS = ["pe", "elf", "blob"] as const;
 export const UPLOAD_ARCHITECTURES = ["x86_32", "x86_64", "arm64"] as const;
+export const UPLOAD_COMPILERS = ["Microsoft Visual C++", "MinGW GCC"] as const;
 
 // Files one batch upload may carry; mirrors the API's MAX_UPLOAD_FILES.
 export const MAX_UPLOAD_FILES = 64;

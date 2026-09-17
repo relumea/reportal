@@ -11,7 +11,7 @@ reportal init [--dir PATH]                 # write reportal.toml + reportal.db
 reportal import-rebrew <project-dir> [--json]
                                            # ingest a rebrew workspace (idempotent; stores its context)
                                            #   plus the target binary's import stubs as THUNK rows
-reportal add-binary <path> [--name TEXT] [--team ID] [--json]   # register a binary by sha256 (dedupe)
+reportal add-binary <path> [--name TEXT] [--team ID] [--compiler TEXT] [--json]   # register a binary by sha256 (dedupe)
 reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--password TEXT] [--json]
                                            # write the stored binary's bytes to a path (default:
                                            #   the stored name in the current directory), copying
@@ -20,15 +20,19 @@ reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--
                                            #   'infected', a shared convention, not a secret);
                                            #   --analysis reads the id as an analysis id and
                                            #   writes that analysis's binary
-reportal binaries [--search TEXT] [--tag NAME] [--format FMT] [--order ORDER] [--json]
+reportal binaries [--search TEXT] [--tag NAME] [--format FMT] [--language LANG] [--compiler NAME] [--order ORDER] [--json]
                                            # list the register with function and comment
-                                           #   counts; --search matches the name or the
-                                           #   SHA-256, --order is id (default), newest,
+                                           #   counts; --search matches the name, the
+                                           #   SHA-256 or the notes, --order is id (default), newest,
                                            #   name, name-desc, size or size-desc
 reportal binary <binary-id> [--json]
                                            # one binary: identity, scope and the rebrew
                                            #   project its engine-backed reads use, or the
                                            #   command that sets one when it has none
+reportal binary-rename <binary-id> [--name TEXT] [--notes TEXT] [--json]
+                                           # set a binary's display name and/or operator
+                                           #   notes; empty --notes clears; journaled;
+                                           #   sha256 dedupe is unchanged
 reportal functions <binary-id> [--name TEXT] [--va ADDRESS] [--sort SORT] [--order ORDER] [--json]
                                            # list one binary's stored functions, filtered
                                            #   by a name substring or one exact address
@@ -182,7 +186,8 @@ reportal function-capabilities <function-id> [--json]
                                            #   literals its stored decompilation mentions
 reportal function-strings <function-id> [--json]
                                            # the analyst strings recorded for the function,
-                                           #   and the literals its decompilation carries
+                                           #   the literals its decompilation carries, and
+                                           #   stack/XOR strings from its stored NASM listing
 reportal user-string-add <function-id> <value> [--kind KIND] [--note TEXT] [--json]
 reportal user-string-rm <function-id> <string-id> [--json]
                                            # add or remove one analyst string; journaled
@@ -680,6 +685,20 @@ reportal team-member <team-id> <user-id> [--remove] [--json]
 reportal team-role <team-id> <user-id> [owner|member] [--json]
                                            # set one member's team role: an
                                            #   owner manages the team; journaled
+reportal team-invite <team-id> [--json]
+                                           # mint one single-use invite code;
+                                           #   shown once, only the digest is stored;
+                                           #   expires after seven days
+reportal team-invites <team-id> [--json]
+                                           # every invite a team minted, without
+                                           #   code digests (expires_at, expired)
+reportal team-invite-rm <invite-id> [--json]
+                                           # delete one unused invite; used rows stay;
+                                           #   journaled
+reportal team-join CODE --user <user-id> [--json]
+                                           # redeem one invite code and join its
+                                           #   team; 410 invite-used / invite-expired;
+                                           #   journaled
 reportal organisations [--json]            # the organisations and the teams each
                                            #   holds; a grouping, not access
 reportal organisation-add NAME [--description TEXT] [--json]
@@ -694,11 +713,26 @@ reportal binary-scope <binary-id> [--visibility public|team] [--team ID] [--json
 reportal collection-scope <collection-id> [--visibility public|team] [--team ID] [--json]
                                            # who may see one collection; journaled
 reportal users [--json]                    # local users with their roles and state;
-                                           #   never a token digest
+                                           #   never a token digest; last_used_at on
+                                           #   the login token, empty until it fires
 reportal user-add <name> [--role viewer|analyst|admin] [--json]
                                            # create a user and print its token once
                                            #   (only the digest is stored); journaled
+reportal signup NAME [--json]
+                                           # SaaS self-serve: user, organisation,
+                                           #   owned team, free plan; token shown once;
+                                           #   refuses on the personal profile
 reportal user-token <user-id> [--json]     # replace a user's token, printed once
+reportal api-keys <user-id> [--json]
+                                           # named extra keys, without digests;
+                                           #   used counts the login token too;
+                                           #   last_used_at empty until the key fires
+reportal api-key-add <user-id> --name TEXT [--json]
+                                           # mint one named extra key; shown once;
+                                           #   counts toward the plan's max_api_keys
+reportal api-key-rm <key-id> [--json]
+                                           # delete one named extra key; journaled;
+                                           #   the login token is rotated, not here
 reportal user-edit <user-id> [--role R] [--disable|--enable]
                         [--active-team ID|--clear-active-team] [--json]
                                            # set the role, the disabled state or the team
@@ -763,6 +797,7 @@ reportal serve [--port 8002] [--host 127.0.0.1] [--no-open]
                                            #   unless token auth is on and a user exists
 reportal mcp [--json]                      # run the stdio MCP server: newline-delimited
                                            #   JSON-RPC 2.0 on stdin/stdout (initialize,
-                                           #   notifications/initialized, tools/list, tools/call)
+                                           #   notifications/initialized, tools/list, tools/call).
+                                           #   The same registry is POST /mcp (JSON) and GET /mcp (SSE) on reportal serve
 reportal --version
 ```

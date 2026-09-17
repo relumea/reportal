@@ -168,7 +168,7 @@ class Context:
 
     def _notify(self, name: str, kind: str) -> None:
         """Tell every subscriber that *name* changed in the *kind* direction."""
-        for callback in self._subscribers:
+        for callback in tuple(self._subscribers):
             callback(name, kind)
 
     def _restore(self, name: str, previous: Any) -> None:
@@ -306,7 +306,13 @@ class Context:
             effect = self._effects[index]
             if effect.kind == change and effect.name == name:
                 del self._effects[index]
-                effect.inverse()
+                try:
+                    effect.inverse()
+                except Exception:
+                    # The binding is already taken off the journal, so a
+                    # failing restore cannot be retried by a second take; the
+                    # caller reports the miss instead of claiming a restore.
+                    return False
                 return True
         return False
 

@@ -29,6 +29,7 @@ from reportal import (
     journal,
     knowledge,
     llm,
+    profiles,
     remote_ingest,
     sandbox,
     similarity,
@@ -148,6 +149,8 @@ def features() -> dict[str, Any]:
         "auth": "token" if auth.required() else "single-user",
         "sandbox": sandbox.enabled(),
         "external_sources": external.remote_enabled(),
+        "profile": profiles.current(),
+        "multi_tenant": profiles.is_saas(),
     }
 
 

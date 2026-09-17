@@ -279,7 +279,43 @@ class TestSyncRoute:
         monkeypatch.setenv(billing.PROVIDER_ENV, billing.PROVIDER_MANUAL)
         organisation_id = _organisation(portal_db)
         seen = [
-            on_request("POST", f"/api/organisations/{organisation_id}/billing/sync")[0]
+            on_request("POST", f"/api/organisations/{organisation_id}/billing/sync")
             for _ in range(billing._RECONCILE_MAX_HITS + 1)
         ]
-        assert seen[-1].startswith("429")
+        assert seen[-1][0].startswith("429")
+        wait = int(seen[-1][1]["Retry-After"])
+        assert 1 <= wait <= int(billing._RECONCILE_WINDOW_S)
+
+
+class TestWebhookUnderSaaS:
+    def test_signed_webhook_passes_without_bearer(
+        self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import profiles
+
+        monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        monkeypatch.setenv(billing.PROVIDER_ENV, billing.PROVIDER_STRIPE)
+        monkeypatch.setenv(billing.STRIPE_SECRET_ENV, "sk_test_123")
+        monkeypatch.setenv(billing.STRIPE_WEBHOOK_ENV, WEBHOOK_SECRET)
+        monkeypatch.setenv("REPORTAL_STRIPE_PRICE_TEAM", "price_team")
+        organisation_id = _organisation(portal_db)
+        body, signature = _signed(
+            {
+                "id": "evt_saas_1",
+                "type": "customer.subscription.updated",
+                "data": {
+                    "object": {
+                        "id": "sub_saas",
+                        "status": "active",
+                        "customer": "cus_saas",
+                        "metadata": {"organisation_id": str(organisation_id)},
+                        "items": {"data": [{"price": {"id": "price_team"}}]},
+                    }
+                },
+            }
+        )
+        headers = {"Content-Type": "application/json", "Stripe-Signature": signature}
+        status, _, chunks = on_request("POST", "/api/billing/webhook", body=body, headers=headers)
+        assert status.startswith("200")
+        assert json_body(b"".join(chunks), {})["status"] == "applied"

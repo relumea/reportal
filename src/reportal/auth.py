@@ -8,7 +8,9 @@ on (`REPORTAL_AUTH` truthy: ``1``, ``true``, ``yes``, ``on``, ``enabled``,
 or ``required``; or the workspace ``[auth] required = true``) and at
 least one user exists; see `docs/THREAT_MODEL.md`.
 
-A user has a name, one of :data:`ROLES` and a token.  Only the token's SHA-256
+A user has a name, one of :data:`ROLES` and a token.  Extra named API keys
+live beside that login token, capped by the organisation's plan
+(``max_api_keys``).  Only a token's SHA-256
 digest is stored: the token is generated with :func:`secrets.token_urlsafe` and
 shown once, at creation or rotation, so the database never carries a usable
 credential.  A 256-bit random token is not guessable, so a plain digest is the
@@ -28,14 +30,19 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import math
 import os
 import secrets
 import sqlite3
+import threading
+import time
 import tomllib
 import unicodedata
 from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 from typing import Any
 
+from reportal import profiles
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
 
 _log = logging.getLogger(__name__)
@@ -61,6 +68,12 @@ ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
 # method that writes needs `write`, any other read.
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
+
+def is_read_method(method: str) -> bool:
+    """True when *method* is a read (GET, HEAD, OPTIONS)."""
+    return method.upper() in _READ_METHODS
+
+
 # Path prefixes that need `admin` whatever the method: who may read the user
 # table, its roles and its tokens is an administrative decision.
 _ADMIN_PREFIXES: tuple[str, ...] = ("/api/users",)
@@ -68,7 +81,12 @@ _ADMIN_PREFIXES: tuple[str, ...] = ("/api/users",)
 # Paths under an admin prefix that every authenticated caller owns: the hosted
 # portal's `users/activity` and `users/feedback` are self-service, so an analyst
 # reads its own activity and writes its own note rather than needing an admin.
-_SELF_PATHS: tuple[str, ...] = ("/api/users/activity", "/api/users/feedback")
+# Named API keys are the same: a caller mints and revokes its own keys.
+_SELF_PATHS: tuple[str, ...] = (
+    "/api/users/activity",
+    "/api/users/feedback",
+    "/api/iam/keys",
+)
 
 # The authentication mode's environment variable and its workspace spelling.
 REQUIRED_ENV = "REPORTAL_AUTH"
@@ -100,12 +118,13 @@ MEMBER_TABLE = "team_members"
 ORG_TABLE = "organisations"
 _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS {TABLE} (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
-    role       TEXT NOT NULL,
-    token_hash TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    disabled   INTEGER NOT NULL DEFAULT 0
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    role         TEXT NOT NULL,
+    token_hash   TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL,
+    disabled     INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS {ORG_TABLE} (
@@ -130,6 +149,29 @@ CREATE TABLE IF NOT EXISTS {MEMBER_TABLE} (
     PRIMARY KEY (team_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_team_members_user ON {MEMBER_TABLE}(user_id);
+
+CREATE TABLE IF NOT EXISTS team_invites (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id     INTEGER NOT NULL REFERENCES {TEAM_TABLE}(id) ON DELETE CASCADE,
+    code_hash   TEXT NOT NULL UNIQUE,
+    created_by  INTEGER REFERENCES {TABLE}(id) ON DELETE SET NULL,
+    created_at  TEXT NOT NULL,
+    expires_at  TEXT NOT NULL DEFAULT '',
+    used_by     INTEGER REFERENCES {TABLE}(id) ON DELETE SET NULL,
+    used_at     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_team_invites_team ON team_invites(team_id);
+
+CREATE TABLE IF NOT EXISTS user_api_keys (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES {TABLE}(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL COLLATE NOCASE,
+    token_hash   TEXT NOT NULL UNIQUE,
+    created_at   TEXT NOT NULL,
+    last_used_at TEXT NOT NULL DEFAULT '',
+    UNIQUE (user_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys(user_id);
 
 """
 
@@ -167,6 +209,17 @@ ERROR_TEAM_EXISTS = "team-exists"
 ERROR_TEAM_NOT_FOUND = "team-not-found"
 ERROR_NOT_A_MEMBER = "not-a-team-member"
 ERROR_SCOPE_FORBIDDEN = "scope-forbidden"
+ERROR_INVITE_NOT_FOUND = "invite-not-found"
+ERROR_INVITE_USED = "invite-used"
+ERROR_INVITE_EXPIRED = "invite-expired"
+
+INVITE_TABLE = "team_invites"
+
+# Invite code shape: greppable prefix plus randomness, shown once at create
+# like a bearer token. Only the digest is stored.
+INVITE_PREFIX = "invite_"
+INVITE_BYTES = 16
+INVITE_TTL_SECONDS = 7 * 24 * 60 * 60
 
 # Error names the API, CLI and MCP surfaces report.
 ERROR_UNAUTHORIZED = "unauthorized"
@@ -174,6 +227,32 @@ ERROR_FORBIDDEN = "forbidden"
 ERROR_INVALID_USER = "invalid-user"
 ERROR_USER_EXISTS = "user-exists"
 ERROR_USER_NOT_FOUND = "user-not-found"
+ERROR_SIGNUP_DISABLED = "signup-disabled"
+ERROR_RATE_LIMITED = "rate-limited"
+ERROR_API_KEY_NOT_FOUND = "api-key-not-found"
+ERROR_API_KEY_LIMIT = "api-key-limit"
+ERROR_INVALID_API_KEY = "invalid-api-key"
+
+KEY_TABLE = "user_api_keys"
+MAX_API_KEY_NAME = 64
+
+# HTTP signup window: the public path creates a tenant with no bearer, so an
+# unbounded caller can fill the user table. CLI and MCP skip this; they are
+# not the public surface. Shared across the ASGI thread pool.
+SIGNUP_WINDOW_S = 3600.0
+SIGNUP_MAX_HITS = 5
+_signup_states: dict[str, list[float]] = {}
+_signup_states_lock = threading.Lock()
+_signup_monotonic = time.monotonic
+
+# HTTP write window when token auth is on: one caller (user id, else TCP peer)
+# cannot fill the job queue or burn inference by repeating POST/PATCH/PUT/DELETE.
+# Loopback auth-off stays unbounded. CLI and MCP skip this; they are not HTTP.
+WRITE_WINDOW_S = 60.0
+WRITE_MAX_HITS = 60
+_write_states: dict[str, list[float]] = {}
+_write_states_lock = threading.Lock()
+_write_monotonic = time.monotonic
 
 # Fixed details the authentication failures report; neither echoes the token.
 UNAUTHORIZED_DETAIL = "send Authorization: Bearer <token>"
@@ -247,6 +326,23 @@ def now() -> str:
     return store.now()
 
 
+def invite_expires_at(created_at: str) -> str:
+    """The ISO stamp *created_at* plus :data:`INVITE_TTL_SECONDS`."""
+    stamp = datetime.fromisoformat(created_at)
+    return (stamp + timedelta(seconds=INVITE_TTL_SECONDS)).isoformat(timespec="seconds")
+
+
+def invite_is_expired(row: Mapping[str, Any], *, at: str | None = None) -> bool:
+    """True when an unused invite's expiry is at or before *at* (default now)."""
+    keys = set(row.keys())
+    if "used_by" in keys and row["used_by"] is not None:
+        return False
+    expires = str(row["expires_at"] if "expires_at" in keys and row["expires_at"] else "")
+    if not expires:
+        expires = invite_expires_at(str(row["created_at"]))
+    return (at or now()) >= expires
+
+
 def _truthy(value: str) -> bool:
     return value.strip().lower() in _TRUTHY
 
@@ -277,11 +373,15 @@ def _workspace_required() -> bool:
 
 
 def required() -> bool:
-    """True when the environment or the workspace config requires token auth.
+    """True when token auth guards the API.
 
-    A pure configuration read: it opens no database, so the per-request check is
-    free and an install that never enables auth behaves exactly as before.
+    The SaaS profile always requires it; otherwise the environment or the
+    workspace config decides.  A pure configuration read: it opens no
+    database, so the per-request check is free and an install that never
+    enables auth behaves exactly as before.
     """
+    if profiles.is_saas():
+        return True
     if _truthy(os.environ.get(REQUIRED_ENV, "")):
         return True
     return _workspace_required()
@@ -313,6 +413,8 @@ def required_permission(method: str, path: str) -> str:
         return PERMISSION_READ if method.upper() in _READ_METHODS else PERMISSION_WRITE
     if any(path.startswith(prefix) for prefix in _ADMIN_PREFIXES):
         return PERMISSION_ADMIN
+    if path == "/mcp" or path.startswith("/mcp/"):
+        return PERMISSION_WRITE
     return PERMISSION_READ if method.upper() in _READ_METHODS else PERMISSION_WRITE
 
 
@@ -359,6 +461,7 @@ def _user_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     """One user as the API reports it: the digest never leaves this module."""
     keys = set(row.keys())
     active = row["active_team_id"] if "active_team_id" in keys else None
+    last_used = str(row["last_used_at"] or "") if "last_used_at" in keys else ""
     return {
         "id": int(row["id"]),
         "name": str(row["name"]),
@@ -367,6 +470,7 @@ def _user_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         "disabled": bool(row["disabled"]),
         "has_token": bool(row["token_hash"]),
         "active_team_id": None if active is None else int(active),
+        "last_used_at": last_used,
     }
 
 
@@ -404,18 +508,78 @@ def add_user(
     """
     cleaned = _validated_name(name)
     _validated_role(role)
-    if find_user(conn, cleaned) is not None:
-        raise UserExistsError(ERROR_USER_EXISTS, f"a user named {cleaned!r} already exists")
     token = new_token()
-    cursor = conn.execute(
-        f"INSERT INTO {TABLE} (name, role, token_hash, created_at) VALUES (?, ?, ?, ?)",
-        (cleaned, role, hash_token(token), now()),
-    )
+    try:
+        cursor = conn.execute(
+            f"INSERT INTO {TABLE} (name, role, token_hash, created_at) VALUES (?, ?, ?, ?)",
+            (cleaned, role, hash_token(token), now()),
+        )
+    except sqlite3.IntegrityError:
+        raise UserExistsError(
+            ERROR_USER_EXISTS, f"a user named {cleaned!r} already exists"
+        ) from None
     conn.commit()
     user_id = int(cursor.lastrowid or 0)
     user = get_user(conn, user_id)
     assert user is not None, "the row was just created"
     return user, token
+
+
+def _unique_tenant_name(conn: sqlite3.Connection, *, table: str, base: str) -> str:
+    """A name that does not collide with an existing team or organisation."""
+    stem = _canonical_identity_name(base) or "tenant"
+    if table == TEAM_TABLE:
+        stem = stem[:MAX_TEAM_NAME]
+        exists = find_team
+        limit = MAX_TEAM_NAME
+    else:
+        stem = stem[:MAX_ORGANISATION_NAME]
+        exists = find_organisation
+        limit = MAX_ORGANISATION_NAME
+    if exists(conn, stem) is None:
+        return stem
+    suffix = 2
+    while True:
+        extra = f"-{suffix}"
+        candidate = f"{stem[: limit - len(extra)]}{extra}"
+        if exists(conn, candidate) is None:
+            return candidate
+        suffix += 1
+
+
+def signup_tenant(conn: sqlite3.Connection, *, name: str) -> tuple[dict[str, Any], str]:
+    """Create one SaaS tenant: user, organisation, owned team, free plan.
+
+    Personal profile refuses: a loopback install already has an operator, and
+    this path is how a hosted visitor becomes a tenant without an admin.
+    The user is an ``analyst`` (not an admin): they own their team, not the
+    install. The organisation lands on the default billed plan.
+    """
+    if not profiles.is_saas():
+        raise AuthError(ERROR_SIGNUP_DISABLED, "self-serve signup needs the saas profile")
+    from reportal import metering
+
+    metering.ensure_schema(conn)
+    user, token = add_user(conn, name=name, role=ROLE_ANALYST)
+    org_name = _unique_tenant_name(conn, table=ORG_TABLE, base=str(user["name"]))
+    organisation = create_organisation(conn, name=org_name)
+    team_name = _unique_tenant_name(conn, table=TEAM_TABLE, base=str(user["name"]))
+    team = create_team(conn, name=team_name)
+    set_team_organisation(conn, int(team["id"]), int(organisation["id"]))
+    add_member(conn, int(team["id"]), int(user["id"]))
+    set_member_role(conn, int(team["id"]), int(user["id"]), TEAM_ROLE_OWNER)
+    set_active_team(conn, int(user["id"]), int(team["id"]))
+    refreshed = get_user(conn, int(user["id"]))
+    assert refreshed is not None, "the user was just created"
+    organisation = get_organisation(conn, int(organisation["id"]))
+    team = get_team(conn, int(team["id"]))
+    assert organisation is not None and team is not None, "tenant rows were just created"
+    return {
+        **refreshed,
+        "organisation": organisation,
+        "team": team,
+        "plan_id": metering.organisation_plan(conn, int(organisation["id"])).id,
+    }, token
 
 
 def update_user(
@@ -447,13 +611,145 @@ def delete_user(conn: sqlite3.Connection, user_id: int) -> bool:
 
 
 def rotate_token(conn: sqlite3.Connection, user_id: int) -> str | None:
-    """Replace one user's token; returns the new token, or None when unknown."""
+    """Replace one user's token; returns the new token, or None when unknown.
+
+    The new token has never authenticated, so ``last_used_at`` is cleared.
+    """
     if get_user(conn, user_id) is None:
         return None
     token = new_token()
-    conn.execute(f"UPDATE {TABLE} SET token_hash = ? WHERE id = ?", (hash_token(token), user_id))
+    conn.execute(
+        f"UPDATE {TABLE} SET token_hash = ?, last_used_at = '' WHERE id = ?",
+        (hash_token(token), user_id),
+    )
     conn.commit()
     return token
+
+
+def _api_key_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    """One named key as the API reports it: the digest never leaves this module."""
+    keys = set(row.keys())
+    last_used = str(row["last_used_at"] or "") if "last_used_at" in keys else ""
+    return {
+        "id": int(row["id"]),
+        "user_id": int(row["user_id"]),
+        "name": str(row["name"]),
+        "created_at": str(row["created_at"]),
+        "last_used_at": last_used,
+    }
+
+
+def _validated_api_key_name(name: str) -> str:
+    cleaned = _canonical_identity_name(name)
+    if not cleaned:
+        raise InvalidUserError(ERROR_INVALID_API_KEY, "name must not be blank")
+    if len(cleaned) > MAX_API_KEY_NAME:
+        raise InvalidUserError(
+            ERROR_INVALID_API_KEY, f"name must be at most {MAX_API_KEY_NAME} characters"
+        )
+    if _has_control_characters(cleaned):
+        raise InvalidUserError(ERROR_INVALID_API_KEY, "name must not contain control characters")
+    return cleaned
+
+
+def api_key_limit(conn: sqlite3.Connection, user_id: int) -> int:
+    """How many bearer tokens *user_id* may hold, from its organisations' plans.
+
+    The login token on the user row counts as one.  A user in no organisation
+    is the self-hosted case and is unmetered.  Several orgs take the highest
+    cap; unlimited on any of them wins.
+    """
+    from reportal import metering, plans
+
+    limit = 0
+    found = False
+    for team in teams_of_user(conn, user_id):
+        org_id = team.get("organisation_id")
+        if org_id is None:
+            continue
+        found = True
+        cap = metering.organisation_plan(conn, int(org_id)).max_api_keys
+        if cap == plans.UNLIMITED:
+            return plans.UNLIMITED
+        limit = max(limit, cap)
+    if not found:
+        return plans.get_plan(plans.SELF_HOST_PLAN_ID).max_api_keys
+    return limit
+
+
+def count_api_keys(conn: sqlite3.Connection, user_id: int) -> int:
+    """Login token plus named keys *user_id* currently holds."""
+    user = conn.execute(f"SELECT token_hash FROM {TABLE} WHERE id = ?", (user_id,)).fetchone()
+    primary = 1 if user is not None and str(user["token_hash"]) else 0
+    extra = conn.execute(
+        f"SELECT COUNT(*) AS n FROM {KEY_TABLE} WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return primary + (int(extra["n"]) if extra is not None else 0)
+
+
+def list_api_keys(conn: sqlite3.Connection, user_id: int) -> list[dict[str, Any]]:
+    """Named keys *user_id* minted, oldest first, without digests."""
+    rows = conn.execute(
+        f"SELECT id, user_id, name, created_at, last_used_at FROM {KEY_TABLE}"
+        " WHERE user_id = ? ORDER BY id ASC",
+        (user_id,),
+    ).fetchall()
+    return [_api_key_row(row) for row in rows]
+
+
+def get_api_key(conn: sqlite3.Connection, key_id: int) -> dict[str, Any] | None:
+    """One named key by id, without its digest, or None."""
+    row = conn.execute(
+        f"SELECT id, user_id, name, created_at, last_used_at FROM {KEY_TABLE} WHERE id = ?",
+        (key_id,),
+    ).fetchone()
+    return _api_key_row(row) if row else None
+
+
+def create_api_key(conn: sqlite3.Connection, user_id: int, name: str) -> tuple[dict[str, Any], str]:
+    """Mint one named extra key for *user_id*; the token is shown once.
+
+    Raises :class:`UnknownUserError` when the user is unknown,
+    :class:`InvalidUserError` for a blank or already-used name, and
+    :class:`AuthError` ``api-key-limit`` when the plan's ``max_api_keys``
+    is already held (the login token counts).
+    """
+    from reportal import plans
+
+    if get_user(conn, user_id) is None:
+        raise UnknownUserError(ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
+    cleaned = _validated_api_key_name(name)
+    limit = api_key_limit(conn, user_id)
+    if limit != plans.UNLIMITED and count_api_keys(conn, user_id) >= limit:
+        raise AuthError(
+            ERROR_API_KEY_LIMIT,
+            f"plan allows {limit} API key(s); revoke one or upgrade",
+        )
+    token = new_token()
+    try:
+        cursor = conn.execute(
+            f"INSERT INTO {KEY_TABLE} (user_id, name, token_hash, created_at, last_used_at)"
+            " VALUES (?, ?, ?, ?, '')",
+            (user_id, cleaned, hash_token(token), now()),
+        )
+    except sqlite3.IntegrityError:
+        raise InvalidUserError(
+            ERROR_INVALID_API_KEY, f"an API key named {cleaned!r} already exists"
+        ) from None
+    conn.commit()
+    key = get_api_key(conn, int(cursor.lastrowid or 0))
+    assert key is not None, "the row was just created"
+    return key, token
+
+
+def revoke_api_key(conn: sqlite3.Connection, key_id: int) -> dict[str, Any]:
+    """Delete one named extra key. The login token is rotated, not revoked here."""
+    row = conn.execute(f"SELECT * FROM {KEY_TABLE} WHERE id = ?", (key_id,)).fetchone()
+    if row is None:
+        raise UnknownUserError(ERROR_API_KEY_NOT_FOUND, f"no API key with id {key_id}")
+    conn.execute(f"DELETE FROM {KEY_TABLE} WHERE id = ?", (key_id,))
+    conn.commit()
+    return {"key_id": key_id, "deleted": True}
 
 
 def token_of(header_value: str | None) -> str:
@@ -495,13 +791,16 @@ def _team_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
 def create_team(conn: sqlite3.Connection, *, name: str, description: str = "") -> dict[str, Any]:
     """Create one team; a duplicate name (case-insensitive) is refused."""
     cleaned = _validated_team_name(name)
-    if find_team(conn, cleaned) is not None:
-        raise TeamExistsError(ERROR_TEAM_EXISTS, f"a team named {cleaned!r} already exists")
     text = (description or "").strip()[:MAX_TEAM_DESCRIPTION]
-    cursor = conn.execute(
-        f"INSERT INTO {TEAM_TABLE} (name, description, created_at) VALUES (?, ?, ?)",
-        (cleaned, text, now()),
-    )
+    try:
+        cursor = conn.execute(
+            f"INSERT INTO {TEAM_TABLE} (name, description, created_at) VALUES (?, ?, ?)",
+            (cleaned, text, now()),
+        )
+    except sqlite3.IntegrityError:
+        raise TeamExistsError(
+            ERROR_TEAM_EXISTS, f"a team named {cleaned!r} already exists"
+        ) from None
     conn.commit()
     team = get_team(conn, int(cursor.lastrowid or 0))
     assert team is not None, "the row was just created"
@@ -647,6 +946,124 @@ def member_role(conn: sqlite3.Connection, team_id: int, user_id: int) -> str | N
     return None if row is None else str(row["role"])
 
 
+# ── Team invites ─────────────────────────────────────────────────
+
+
+def new_invite_code() -> str:
+    """Return a fresh invite code; only its digest is ever stored."""
+    return f"{INVITE_PREFIX}{_token_urlsafe(INVITE_BYTES)}"
+
+
+def create_invite(
+    conn: sqlite3.Connection, team_id: int, created_by: int | None
+) -> tuple[int, str]:
+    """Mint one single-use invite code for *team_id*.
+
+    Returns ``(invite_id, code)``; the code is shown once, here. Raises
+    :class:`UnknownTeamError` for an unknown team.
+    """
+    if get_team(conn, team_id) is None:
+        raise UnknownTeamError(ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+    code = new_invite_code()
+    created_at = now()
+    cursor = conn.execute(
+        f"INSERT INTO {INVITE_TABLE}"
+        " (team_id, code_hash, created_by, created_at, expires_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (team_id, hash_token(code), created_by, created_at, invite_expires_at(created_at)),
+    )
+    conn.commit()
+    return int(cursor.lastrowid or 0), code
+
+
+def get_invite(conn: sqlite3.Connection, invite_id: int) -> dict[str, Any] | None:
+    """One invite by id, without its code digest, or None."""
+    row = conn.execute(
+        f"SELECT id, team_id, created_by, created_at, expires_at, used_by, used_at"
+        f" FROM {INVITE_TABLE} WHERE id = ?",
+        (invite_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    item = dict(row)
+    expires = str(item.get("expires_at") or "")
+    if not expires:
+        expires = invite_expires_at(str(item["created_at"]))
+        item["expires_at"] = expires
+    item["expired"] = invite_is_expired(item)
+    return item
+
+
+def revoke_invite(conn: sqlite3.Connection, invite_id: int) -> dict[str, Any]:
+    """Delete one unused invite; used rows stay for the audit trail.
+
+    Raises :class:`UnknownTeamError` when the id is unknown, and
+    :class:`AuthError` ``invite-used`` when it was already redeemed.
+    """
+    row = conn.execute(f"SELECT * FROM {INVITE_TABLE} WHERE id = ?", (invite_id,)).fetchone()
+    if row is None:
+        raise UnknownTeamError(ERROR_INVITE_NOT_FOUND, f"no invite with id {invite_id}")
+    if row["used_by"] is not None:
+        raise AuthError(ERROR_INVITE_USED, "that invite was already used")
+    conn.execute(f"DELETE FROM {INVITE_TABLE} WHERE id = ?", (invite_id,))
+    conn.commit()
+    return {"invite_id": invite_id, "deleted": True}
+
+
+def list_invites(conn: sqlite3.Connection, team_id: int) -> list[dict[str, Any]]:
+    """Every invite a team minted, newest first, without code digests."""
+    rows = conn.execute(
+        f"SELECT id, team_id, created_by, created_at, expires_at, used_by, used_at"
+        f" FROM {INVITE_TABLE} WHERE team_id = ? ORDER BY id DESC",
+        (team_id,),
+    ).fetchall()
+    stamped = now()
+    listed: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        expires = str(item.get("expires_at") or "")
+        if not expires:
+            expires = invite_expires_at(str(item["created_at"]))
+            item["expires_at"] = expires
+        item["expired"] = invite_is_expired(item, at=stamped)
+        listed.append(item)
+    return listed
+
+
+def redeem_invite(conn: sqlite3.Connection, code: str, user_id: int) -> dict[str, Any]:
+    """Join the invite's team as *user_id*; single-use.
+
+    Raises :class:`UnknownTeamError` for a code no invite carries
+    (reported as invite-not-found, never naming a team),
+    :class:`AuthError` ``invite-used`` for a redeemed one, and
+    ``invite-expired`` past :data:`INVITE_TTL_SECONDS`. An already-member
+    redeemer consumes the code and reads the team back: the code is spent
+    either way, so it cannot be passed on.
+    """
+    digest = hash_token((code or "").strip())
+    row = conn.execute(f"SELECT * FROM {INVITE_TABLE} WHERE code_hash = ?", (digest,)).fetchone()
+    if row is None:
+        raise UnknownTeamError(ERROR_INVITE_NOT_FOUND, "no invite carries that code")
+    if row["used_by"] is not None:
+        raise AuthError(ERROR_INVITE_USED, "that invite was already used")
+    if invite_is_expired(row):
+        raise AuthError(ERROR_INVITE_EXPIRED, "that invite has expired")
+    team_id = int(row["team_id"])
+    if get_user(conn, user_id) is None:
+        raise UnknownUserError(ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
+    claimed = conn.execute(
+        f"UPDATE {INVITE_TABLE} SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL",
+        (user_id, now(), int(row["id"])),
+    )
+    if claimed.rowcount == 0:
+        raise AuthError(ERROR_INVITE_USED, "that invite was already used")
+    add_member(conn, team_id, user_id)
+    conn.commit()
+    team = get_team(conn, team_id)
+    assert team is not None, "the team was just read"
+    return team
+
+
 def set_member_role(conn: sqlite3.Connection, team_id: int, user_id: int, role: str) -> bool:
     """Set one membership's role; False when the membership does not exist.
 
@@ -756,15 +1173,16 @@ def create_organisation(
     read or write it.
     """
     cleaned = _validated_organisation_name(name)
-    if find_organisation(conn, cleaned) is not None:
+    text = (description or "").strip()[:MAX_ORGANISATION_DESCRIPTION]
+    try:
+        cursor = conn.execute(
+            f"INSERT INTO {ORG_TABLE} (name, description, created_at) VALUES (?, ?, ?)",
+            (cleaned, text, now()),
+        )
+    except sqlite3.IntegrityError:
         raise AuthError(
             ERROR_ORGANISATION_EXISTS, f"an organisation named {cleaned!r} already exists"
-        )
-    text = (description or "").strip()[:MAX_ORGANISATION_DESCRIPTION]
-    cursor = conn.execute(
-        f"INSERT INTO {ORG_TABLE} (name, description, created_at) VALUES (?, ?, ?)",
-        (cleaned, text, now()),
-    )
+        ) from None
     conn.commit()
     organisation = get_organisation(conn, int(cursor.lastrowid or 0))
     assert organisation is not None, "the row was just created"
@@ -794,9 +1212,28 @@ def find_organisation(conn: sqlite3.Connection, name: str) -> dict[str, Any] | N
     return _organisation_row(row) if row else None
 
 
-def list_organisations(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every organisation, oldest first, each with its teams."""
-    rows = conn.execute(f"SELECT id FROM {ORG_TABLE} ORDER BY id").fetchall()
+def list_organisations(
+    conn: sqlite3.Connection, *, visible_to: Mapping[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Organisations oldest first, each with its teams.
+
+    Personal profile (or admin, or auth off): every organisation. SaaS
+    non-admin: only the organisations behind the caller's teams, so one
+    tenant never enumerates another's.
+    """
+    if (
+        visible_to is not None
+        and profiles.is_saas()
+        and str(visible_to.get("role") or "") != ROLE_ADMIN
+    ):
+        rows = conn.execute(
+            f"SELECT DISTINCT t.organisation_id AS id FROM {TEAM_TABLE} t"
+            f" JOIN {MEMBER_TABLE} m ON m.team_id = t.id"
+            " WHERE m.user_id = ? AND t.organisation_id IS NOT NULL ORDER BY t.organisation_id",
+            (int(visible_to["id"]),),
+        ).fetchall()
+    else:
+        rows = conn.execute(f"SELECT id FROM {ORG_TABLE} ORDER BY id").fetchall()
     found: list[dict[str, Any]] = []
     for row in rows:
         organisation = get_organisation(conn, int(row["id"]))
@@ -930,8 +1367,10 @@ def scope_of(
 def authenticate(conn: sqlite3.Connection, token: str) -> dict[str, Any] | None:
     """The active user *token* names, or None.
 
-    The digest of every user is compared in constant time, and a disabled user
-    never authenticates.
+    The digest of every user login token and every named extra key is compared
+    in constant time, and a disabled user never authenticates.  A successful
+    login-token authenticate stamps ``users.last_used_at``; a named-key
+    authenticate stamps ``user_api_keys.last_used_at`` instead.
     """
     if not token:
         return None
@@ -940,5 +1379,92 @@ def authenticate(conn: sqlite3.Connection, token: str) -> dict[str, Any] | None:
         if row["disabled"]:
             continue
         if hmac.compare_digest(str(row["token_hash"]), digest):
-            return _user_row(row)
+            conn.execute(
+                f"UPDATE {TABLE} SET last_used_at = ? WHERE id = ?",
+                (now(), int(row["id"])),
+            )
+            conn.commit()
+            return get_user(conn, int(row["id"]))
+    for row in conn.execute(f"SELECT id, user_id, token_hash FROM {KEY_TABLE}").fetchall():
+        if not hmac.compare_digest(str(row["token_hash"]), digest):
+            continue
+        user = get_user(conn, int(row["user_id"]))
+        if user is None or user["disabled"]:
+            return None
+        conn.execute(
+            f"UPDATE {KEY_TABLE} SET last_used_at = ? WHERE id = ?",
+            (now(), int(row["id"])),
+        )
+        conn.commit()
+        return user
     return None
+
+
+def retry_after_seconds(hits: Sequence[float], window_s: float, now: float) -> int:
+    """Seconds until the oldest hit in *hits* leaves *window_s*.
+
+    HTTP ``Retry-After`` is an integer delay; a fractional remainder rounds
+    up so the client waits long enough for a slot to free.  An empty hit
+    list (a race after expiry) still names the whole window.
+    """
+    if not hits:
+        return max(1, math.ceil(window_s))
+    return max(1, math.ceil(window_s - (now - min(hits))))
+
+
+def signup_retry_after(client_key: str) -> int:
+    """Seconds until *client_key* may mint another HTTP tenant."""
+    key = (client_key or "").strip() or "unknown"
+    now = _signup_monotonic()
+    with _signup_states_lock:
+        return retry_after_seconds(_signup_states.get(key, []), SIGNUP_WINDOW_S, now)
+
+
+def write_retry_after(client_key: str) -> int:
+    """Seconds until *client_key* may make another HTTP write."""
+    key = (client_key or "").strip() or "unknown"
+    now = _write_monotonic()
+    with _write_states_lock:
+        return retry_after_seconds(_write_states.get(key, []), WRITE_WINDOW_S, now)
+
+
+def signup_allowed(client_key: str) -> bool:
+    """Whether *client_key* may mint another HTTP tenant inside the window.
+
+    A key whose window has emptied is dropped rather than left as a permanent
+    entry, so the limiter's state is bounded by callers signing up *now*.
+    """
+    key = (client_key or "").strip() or "unknown"
+    now = _signup_monotonic()
+    with _signup_states_lock:
+        for other, hits in list(_signup_states.items()):
+            if all(now - hit >= SIGNUP_WINDOW_S for hit in hits):
+                del _signup_states[other]
+        hits = [hit for hit in _signup_states.get(key, []) if now - hit < SIGNUP_WINDOW_S]
+        if len(hits) >= SIGNUP_MAX_HITS:
+            _signup_states[key] = hits
+            return False
+        hits.append(now)
+        _signup_states[key] = hits
+        return True
+
+
+def write_allowed(client_key: str) -> bool:
+    """Whether *client_key* may make another HTTP write inside the window.
+
+    A key whose window has emptied is dropped rather than left as a permanent
+    entry, so the limiter's state is bounded by callers writing *now*.
+    """
+    key = (client_key or "").strip() or "unknown"
+    now = _write_monotonic()
+    with _write_states_lock:
+        for other, hits in list(_write_states.items()):
+            if all(now - hit >= WRITE_WINDOW_S for hit in hits):
+                del _write_states[other]
+        hits = [hit for hit in _write_states.get(key, []) if now - hit < WRITE_WINDOW_S]
+        if len(hits) >= WRITE_MAX_HITS:
+            _write_states[key] = hits
+            return False
+        hits.append(now)
+        _write_states[key] = hits
+        return True

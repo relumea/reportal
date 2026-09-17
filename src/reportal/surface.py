@@ -24,7 +24,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from reportal import data_types, engines, families, journal, lineage, store, threat
+from reportal import auth, data_types, engines, families, journal, lineage, store, threat
 
 # ``fail(status, error, detail)``: build the exception a surface raises.
 Fail = Callable[[int, str, str], Exception]
@@ -282,6 +282,87 @@ def _definition_name(definition: Any) -> str:
         return ""
     name = parsed.get("name")
     return str(name) if name else ""
+
+
+def journaled_signup(
+    conn: sqlite3.Connection, log: journal.Journal, name: str
+) -> tuple[dict[str, Any], str]:
+    """Create one SaaS tenant and journal every row it inserted.
+
+    Revert deletes the membership, team, organisation and user in that order.
+    """
+    payload, token = auth.signup_tenant(conn, name=name)
+    user_id = int(payload["id"])
+    organisation_id = int(payload["organisation"]["id"])
+    team_id = int(payload["team"]["id"])
+    journal.journaled_create(
+        log,
+        table=auth.TABLE,
+        key=user_id,
+        description=f"signed up user {payload['name']}",
+    )
+    journal.journaled_create(
+        log,
+        table=auth.ORG_TABLE,
+        key=organisation_id,
+        description=f"created organisation {payload['organisation']['name']}",
+    )
+    journal.journaled_create(
+        log,
+        table=auth.TEAM_TABLE,
+        key=team_id,
+        description=f"created team {payload['team']['name']}",
+    )
+    journal.journaled_create(
+        log,
+        table=auth.MEMBER_TABLE,
+        key={"team_id": team_id, "user_id": user_id},
+        description=f"user {user_id} owns team {team_id}",
+    )
+    return payload, token
+
+
+def journaled_invite_join(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    code: str,
+    user_id: int,
+) -> dict[str, Any]:
+    """Redeem one invite and journal the spent code plus any new membership.
+
+    A revert restores the invite to unused, then (when the redeemer was new)
+    removes the membership, so the code can be handed out again.
+    """
+    digest = auth.hash_token((code or "").strip())
+    invite = conn.execute(
+        f"SELECT id, team_id, used_by, created_at, expires_at"
+        f" FROM {auth.INVITE_TABLE} WHERE code_hash = ?",
+        (digest,),
+    ).fetchone()
+    if invite is None:
+        raise auth.UnknownTeamError(auth.ERROR_INVITE_NOT_FOUND, "no invite carries that code")
+    if invite["used_by"] is not None:
+        raise auth.AuthError(auth.ERROR_INVITE_USED, "that invite was already used")
+    if auth.invite_is_expired(invite):
+        raise auth.AuthError(auth.ERROR_INVITE_EXPIRED, "that invite has expired")
+    already = auth.member_role(conn, int(invite["team_id"]), user_id) is not None
+    journal.journaled_rows(
+        conn,
+        log,
+        table=auth.INVITE_TABLE,
+        where="id = ?",
+        params=(int(invite["id"]),),
+        description=f"spent invite {invite['id']}",
+    )
+    team = auth.redeem_invite(conn, code, user_id)
+    if not already:
+        journal.journaled_create(
+            log,
+            table=auth.MEMBER_TABLE,
+            key={"team_id": int(team["id"]), "user_id": user_id},
+            description=f"user {user_id} joined team {team['id']} by invite",
+        )
+    return team
 
 
 def journaled_data_type_write(

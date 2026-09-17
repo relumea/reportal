@@ -15,9 +15,9 @@ and are not named here.
 |------|------|----------|-------------------|---------------|-----|
 | 1 | Opt-in sample detonation shares the host kernel | 7 | Only path that executes attacker-supplied bytes; a kernel escape is host compromise | Off until `sandbox.require_enabled` + installed runner; `BwrapRunner` unshares namespaces and caps wall/CPU/AS (`sandbox.py`) | No seccomp, no VM, runner binary not attested |
 | 2 | Plaintext secrets and binaries at rest | 2, Secrets | Stolen `reportal.db` or `reportal backup` archive yields every stored credential and sample | FS permissions; reads never return secret values (`secret_store`); tokens stored as SHA-256 only (`auth.hash_token`) | No encryption at rest; journal retains prior secret values until pruned |
-| 3 | Auth-off loopback is full operator | 1 | Any local process that can open the bind is the operator | Default `127.0.0.1`; `cli._require_lan_auth` refuses a wider bind until auth is on and a user exists | No rate limit; XSS against the SPA origin steals `localStorage` token (`web/src/api.ts` `TOKEN_STORAGE_KEY`) |
-| 4 | Billing webhook vs bearer gate | 10 | Entitlement change is high impact; Stripe cannot present a portal bearer | HMAC + timestamp in `billing.verify_webhook`; no secret configured refuses every webhook | When `auth.required()` is true, `server._reportal_headers` demands a bearer on every `/api` path *before* signature check, so a LAN-auth install cannot receive Stripe deliveries as written |
-| 5 | Metering records but does not refuse | Abuse | A tenant (or auth-off operator) can burn inference / auto runs past published allowances | `metering.charge_task` / `record_usage` append the ledger; `quota_check` computes `allowed` for the usage panel | No request path branches on `quota_check(...)["allowed"]` to stop work |
+| 3 | Auth-off loopback is full operator | 1 | Any local process that can open the bind is the operator | Default `127.0.0.1`; `cli._require_lan_auth` refuses a wider bind until auth is on and a user exists; authenticated HTTP writes are capped at `auth.WRITE_MAX_HITS` per `WRITE_WINDOW_S` | XSS against the SPA origin steals `localStorage` token (`web/src/api.ts` `TOKEN_STORAGE_KEY`); auth-off loopback stays unbounded |
+| 4 | Billing webhook vs bearer gate | 10 | Entitlement change is high impact; Stripe cannot present a portal bearer | HMAC + timestamp in `billing.verify_webhook`; no secret configured refuses every webhook | `server.WEBHOOK_PATH` skips the bearer gate; the signature stays the gate |
+| 5 | Concurrent quota check can overshoot one call | Abuse | Two SaaS HTTP starts may each pass `quota_check` before either charges | `_refuse_over_quota` / `_refuse_over_credits` on auto and credit-priced AI routes | Overshoot bounded by one call; personal profile, CLI and MCP skip the HTTP refuse |
 | 6 | SSRF-shaped URL ingest (opt-in) | 5 | Caller-chosen URL leaves the process | Off by default; `remote_ingest.validate_target` + peer check | Residual TOCTOU; handshake bytes may leave before block |
 | 7 | LLM / agent as untrusted actuator | 6 | Model sees workspace text; destructive tools run after one analyst confirm | Bridge off without endpoint; destructive tools pause for `POST .../confirm` (`agent.py`) | Read-only tools run unbound by analyst intent; results leave to the configured endpoint |
 
@@ -25,7 +25,12 @@ and are not named here.
 
 reportal is a single-process, single-host application: one SQLite database
 (`store._SCHEMA`, the `users` table included) and a `binaries/` plus `reports/`
-directory per workspace.  It is designed to run on a loopback interface beside
+directory per workspace.  It ships two deployment profiles (`profiles.py`):
+`personal` (the default) is the single-operator loopback tool, and `saas`
+(`REPORTAL_PROFILE=saas` or `[deployment] profile = "saas"`) is the
+multi-tenant service with auth forced on, tenant-scoped listings, self-only
+journal reads for non-admins, own-action revert, and quota enforcement on
+metered starts.  It is designed to run on a loopback interface beside
 the rebrew checkout it drives, and the default bind is `127.0.0.1`
 (`cli.serve`, `server.LOOPBACK_HOSTS`).  On that bind it is a single-user tool
 with no identity in play; a bind another machine can reach refuses to start
@@ -47,7 +52,7 @@ it is written out in full below.
    (`server._validate_host`, `server.LOOPBACK_HOSTS`) and answers with fixed
    security headers (`server._security_headers`).  Authentication has two
    modes, chosen once per install by `auth.required()` (`REPORTAL_AUTH=required`
-   or `[auth] required = true`):
+   or `[auth] required = true`; the `saas` profile forces it on):
    - **off** (the default).  The caller *is* the operator.  The loopback bind is
      the safeguard, and `cli.serve` refuses a non-loopback bind in this mode
      (`cli._require_lan_auth`), so an exposed control plane cannot be reached by
@@ -63,7 +68,7 @@ it is written out in full below.
      shown once, and it is 256 bits of `secrets.token_urlsafe` randomness.
    The static SPA shell and its assets stay public in both modes: they carry no
    portal data, and a browser cannot attach a header to the initial document
-   request.  Every `/api` route, `/api/health` included, is behind the gate.
+   request.  Two `/api` paths stay public while auth is on: the Stripe webhook (HMAC, not a portal token) and `POST /api/signup` (SaaS only; personal answers 403 `signup-disabled`; HTTP signup is capped at `auth.SIGNUP_MAX_HITS` per TCP peer per hour).  Every other `/api` route, `/api/health` included, is behind the gate.  `POST /mcp` is the same bearer as `/api` and needs write (a viewer is 403), because the MCP registry mixes readers and writers on one session.
    Authorization beyond the route kind is per object: a binary or a collection
    carries a `visibility` (`public` or `team`) and an `owner_team_id`, and
    `server._enforce_scope` resolves the object a path names (a function, an
@@ -295,21 +300,24 @@ path named.  None of these are demonstrated here.
 
 - **Fill the job queue.**  `POST /api/jobs` accepts kinds from `jobs.JOB_KINDS`
   until `jobs.MAX_QUEUED_JOBS` (100).  The pool is `jobs.MAX_WORKERS` (2)
-  threads.  There is no per-caller rate limit, so a write-capable caller can
-  keep the workers busy with expensive kinds (match, pipeline, PDF) and delay
-  other work.  Caps are size and queue depth, not request rate
-  (`jobs.submit`, `jobs.ensure_worker`).
-- **Burn inference past the published allowance.**  For an organisation with an
-  active team, `server._reportal_headers` installs `llm.charging` →
-  `metering.charge_task`, which only appends usage.  `metering.quota_check`
-  computes whether units would fit and is served on
-  `GET /api/organisations/<id>/usage`, but no AI or auto route refuses on
-  `allowed: false`.  Credits.py comments describe refusal; the live request
-  path does not implement it.
-- **Workspace-wide journal revert.**  Any authenticated caller with write may
-  revert journal entries (`revert_journal_entry`), including another actor's
-  writes.  Team scope does not narrow the journal half of activity feeds
-  (see out-of-scope above).
+  threads.  Authenticated HTTP writes are also capped at `auth.WRITE_MAX_HITS`
+  (60) per `auth.WRITE_WINDOW_S` (60 seconds), so a write-capable caller cannot
+  keep the workers busy by repeating the submit.  Auth-off loopback, CLI and
+  MCP stay unbounded.  Caps are size, queue depth and HTTP write rate
+  (`jobs.submit`, `jobs.ensure_worker`, `auth.write_allowed`).
+- **Burn inference past the published allowance.**  SaaS HTTP auto-run and
+  credit-priced AI paths refuse 402 `quota-exceeded` when
+  `metering.quota_check` says `allowed: false` (`api._refuse_over_quota`,
+  `_refuse_over_credits`).  Two concurrent calls may each pass before either
+  charges; the overshoot is bounded by one call's cost, which the ledger
+  still records.  Personal profile, auth-off loopback, CLI and MCP do not
+  take this HTTP gate.
+- **Workspace-wide journal revert.**  An admin may revert any action; a
+  non-admin analyst may only revert its own actions (matched on the stable
+  `actor_user_id` the journal records, not the display name).  Writes that
+  predate the id column, and CLI/MCP writes with no identity, carry no id and
+  stay revertible by any writer.  Team scope does not narrow the journal half
+  of activity feeds (see out-of-scope above).
 - **SPA token theft via origin XSS.**  Enforcement of auth is server-side; the
   client only stores and attaches the bearer (`web/src/api.ts`).  A script on
   the portal origin reads `TOKEN_STORAGE_KEY` from `localStorage`.  There is no
@@ -353,7 +361,10 @@ path named.  None of these are demonstrated here.
   creation or rotation; only `auth.hash_token` (SHA-256) is stored, so the
   database carries no usable credential and a stolen database copy cannot
   authenticate.  The token is never logged: the middleware reports a fixed
-  detail that does not echo the header value.
+  detail that does not echo the header value.  A team invite code uses the
+  same shape (`invite_` plus 16 bytes of `token_urlsafe`, digest stored,
+  shown once); listing never returns the code or its digest, and an unknown
+  redeem is 404 without naming a team.
 - **A backup carries every secret the workspace holds, plus the stored binary
   bytes.**  `reportal backup` writes one archive of the database, the stored
   binaries and the generated reports, and the database is where the secret store
@@ -381,12 +392,15 @@ path named.  None of these are demonstrated here.
   team's objects fully: there is no per-member ownership inside a team, and an
   object has one owning team rather than a set of collaborators.
 - **The journal is a revert tool that now attributes its entries.**  Each entry
-  carries the `actor` the server recorded the request for (`local` while auth is
-  off, empty for a CLI or MCP write), and `GET /api/users/activity` reports it.
-  What it does not carry is the session: no token, no address, no user agent, so
-  an entry says which identity acted, not from where or with which credential.
-  An actor is a name, and a name is not a principal: renaming or deleting a user
-  leaves the historic entries under the old name.
+  carries the `actor` name the server recorded the request for (`local` while auth is
+  off, empty for a CLI or MCP write) plus the stable `actor_user_id` behind it,
+  and `GET /api/users/activity` reports both.  The id survives a rename or
+  delete; the name stays for readability.  What an entry does not carry is the
+  session: no token, no address, no user agent, so an entry says which identity
+  acted, not from where or with which credential.  The rename, comment,
+  signature and type histories carry the same pair.  A body-supplied `actor`
+  is only a label while auth is off; with auth on the server identity wins, so
+  one user cannot file a change under another's name.
 - **The user table is not a directory of trust.**  A name is free text and the
   role is the only attribute; there is no password, second factor, expiry,
   lockout after failed attempts or login attempt log.  That is a deliberate
@@ -460,16 +474,17 @@ path named.  None of these are demonstrated here.
   (its writes in the removed directory, its process tree) is contained by the
   sandbox rather than undone by the journal, which is the honest boundary of the
   effect model here.
-- **No rate limiting or quota enforcement on the request path.**  Each request
-  is bounded (upload size, body size, task counts, `auto_mode.MAX_CONCURRENCY`,
-  `jobs.MAX_QUEUED_JOBS`), but a client can repeat requests or start many runs.
-  `metering.quota_check` is advisory for the usage panel only; see Abuse cases.
-- **Billing webhook signature is not reachable under LAN auth.**  The intended
-  control is `billing.verify_webhook`.  With `auth.required()`, Stripe's POST
-  lacks a portal bearer and is refused by `server.authenticate` first.  An
-  install that both binds non-loopback (which requires auth) and expects Stripe
-  webhooks therefore has no working in-process path for entitlement updates
-  unless something outside reportal supplies a bearer Stripe does not have.
+- **HTTP write rate limited when auth is on; quota enforced on metered starts.**
+  Each request is bounded (upload size, body size, task counts,
+  `auto_mode.MAX_CONCURRENCY`, `jobs.MAX_QUEUED_JOBS`) and authenticated HTTP
+  writes refuse 429 past `auth.WRITE_MAX_HITS` in `auth.WRITE_WINDOW_S`,
+  with `Retry-After`.  Auto-run starts and credit-priced AI routes refuse
+  402 past quota under the SaaS profile (`_refuse_over_quota` /
+  `_refuse_over_credits`). Auth-off loopback, CLI and MCP stay unbounded.
+- **Billing webhook skips the bearer gate by design.**  `server.WEBHOOK_PATH`
+  exempts `/api/billing/webhook` because the caller is Stripe; the HMAC
+  signature plus the timestamp window stays the gate.  A leaked webhook secret
+  lets anyone forge entitlement events until it is rotated.
 - **The database is unencrypted and single-host.**  Host compromise, a stolen
   backup, or filesystem access discloses all portal state; see
   [DR_RUNBOOK.md](DR_RUNBOOK.md).
@@ -480,9 +495,10 @@ path named.  None of these are demonstrated here.
 
 ## Response readiness (note only)
 
-- Journal entries record an `actor` name for authenticated HTTP writes
-  (`journal.acting_as`); CLI/MCP writes may carry an empty actor.  There is no
-  source address, user agent or token id on the entry, so investigation of
-  "who from where" needs host or reverse-proxy logs, not the journal alone.
+- Journal entries record an `actor` name plus the stable `actor_user_id` for
+  authenticated HTTP writes (`journal.acting_as`); CLI/MCP writes may carry
+  neither.  There is no source address, user agent or token id on the entry,
+  so investigation of "who from where" needs host or reverse-proxy logs, not
+  the journal alone.
 - This repository's disclosure path is stated in [SECURITY.md](../SECURITY.md).
   There is no in-tree runbook from "report received" to "fix shipped".

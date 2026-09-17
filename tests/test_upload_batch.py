@@ -161,6 +161,40 @@ class TestBatchResults:
         assert row["format"] == "pe"
         assert row["arch"] == "x86_32"
 
+    def test_compiler_hint_stamps_an_empty_column(self, portal_db: Path, workspace: Path) -> None:
+        options = json.dumps([{"compiler": "MinGW GCC"}])
+        body, headers = _multipart([("hinted.bin", b"hinted")], files_json=options)
+        status, response_headers, raw = wsgi_request(
+            "POST", "/api/binaries", body=body, headers=headers
+        )
+        assert status.startswith("200")
+        binary_id = json_body(raw, response_headers)["files"][0]["binary_id"]
+        _, get_headers, raw_binary = wsgi_request("GET", f"/api/binaries/{binary_id}")
+        assert json_body(raw_binary, get_headers)["compiler"] == "MinGW GCC"
+
+    def test_a_duplicate_upload_does_not_restamp_compiler(
+        self, portal_db: Path, workspace: Path
+    ) -> None:
+        first = json.dumps([{"compiler": "MinGW GCC"}])
+        body, headers = _multipart([("hinted.bin", b"same bytes")], files_json=first)
+        status, response_headers, raw = wsgi_request(
+            "POST", "/api/binaries", body=body, headers=headers
+        )
+        assert status.startswith("200")
+        binary_id = json_body(raw, response_headers)["files"][0]["binary_id"]
+
+        second = json.dumps([{"compiler": "Microsoft Visual C++"}])
+        body, headers = _multipart([("hinted.bin", b"same bytes")], files_json=second)
+        status, response_headers, raw = wsgi_request(
+            "POST", "/api/binaries", body=body, headers=headers
+        )
+        assert status.startswith("200")
+        payload = json_body(raw, response_headers)
+        assert payload["files"][0]["duplicate"] is True
+        assert payload["files"][0]["binary_id"] == binary_id
+        _, get_headers, raw_binary = wsgi_request("GET", f"/api/binaries/{binary_id}")
+        assert json_body(raw_binary, get_headers)["compiler"] == "MinGW GCC"
+
     def test_format_falls_back_to_the_suffix(self, portal_db: Path, workspace: Path) -> None:
         status, headers, raw = _upload_batch([("code.exe", b"code")], files_json="[{}]")
         assert status.startswith("200")
@@ -468,6 +502,14 @@ class TestBatchRefusals:
         status, headers, raw = _upload_batch([("a.exe", b"aaa")], files_json=options)
         assert status.startswith("400")
         assert json_body(raw, headers)["error"] == "invalid-body"
+
+    def test_unknown_compiler_hint_is_refused(self, portal_db: Path, workspace: Path) -> None:
+        options = json.dumps([{"compiler": "clang"}])
+        status, headers, raw = _upload_batch([("a.exe", b"aaa")], files_json=options)
+        assert status.startswith("400")
+        payload = json_body(raw, headers)
+        assert payload["error"] == "invalid-body"
+        assert "compiler" in payload["detail"]
 
     def test_top_level_name_in_a_batch_is_refused(self, portal_db: Path, workspace: Path) -> None:
         body, headers = _multipart([("a.exe", b"aaa"), ("b.exe", b"bbb")], name="not-in-a-batch")

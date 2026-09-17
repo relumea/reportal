@@ -13,7 +13,8 @@ and a restriction to a set of binaries or collections.  Every documented
 setting has a default that reproduces the run from before the settings existed,
 and a value outside its range or its closed vocabulary is refused rather than
 coerced.  The settings a run used are stored on every row it records, so a
-later reader can tell which run produced those rows.
+later reader can tell which run produced those rows, and each row also
+stores the ISA pair of the two binaries.
 
 :func:`transfer_matches` copies a candidate's name, signature, or both onto a
 target function, for one row or a batch, journaling every row it writes so the
@@ -643,7 +644,7 @@ def match_binary(
     binaries, collections, platforms or architectures; the binary's own
     functions are candidates only while ``settings.include_self``, and the
     source function is never its own candidate.  Every recorded row carries the
-    settings that produced it.
+    settings that produced it and the ISA pair of the two binaries.
 
     The confidence floor filters after the softmax over the similarity-floor
     survivors, so it drops candidates without re-ranking the ones it keeps.
@@ -709,6 +710,9 @@ def match_binary(
         relevant = {int(function["id"]): function for function in (*sources, *candidates)}
         texts = {function_id: disassembler(function) for function_id, function in relevant.items()}
     candidate_ids = [int(function["id"]) for function in candidates]
+    function_binary = {
+        int(function["id"]): int(function["binary_id"]) for function in (*sources, *candidates)
+    }
     payload = resolved.payload()
     summary = {"functions": len(sources), "matched": 0, "pairs": 0}
 
@@ -749,6 +753,10 @@ def match_binary(
                 similarity=score,
                 confidence=confidence,
                 settings=payload,
+                source_arch=_binary_format_arch(conn, function_binary[source_id], scope_cache)[1],
+                candidate_arch=_binary_format_arch(
+                    conn, function_binary[candidate_id], scope_cache
+                )[1],
             )
             recorded += 1
         if recorded:
@@ -773,11 +781,14 @@ def binary_match_rows(conn: sqlite3.Connection, binary_id: int) -> list[dict[str
     """All recorded matches whose source is a function of *binary_id*.
 
     Each row pairs the source function with its candidate and carries the
-    stored similarity and confidence plus the run settings the edge was
-    recorded under.  Rows are ordered best similarity first.
+    stored similarity and confidence, the ISA pair of the two binaries, and
+    the run settings the edge was recorded under.  Rows are ordered best
+    similarity first.
     """
     rows: list[dict[str, Any]] = []
     for match in store.list_matches_for_binary(conn, binary_id):
+        source_arch = str(match.get("source_arch") or "")
+        candidate_arch = str(match.get("candidate_arch") or "")
         rows.append(
             {
                 "source_function_id": int(match["source_function_id"]),
@@ -788,6 +799,11 @@ def binary_match_rows(conn: sqlite3.Connection, binary_id: int) -> list[dict[str
                 "candidate_va": int(match["candidate_va"]),
                 "similarity": float(match["similarity"]),
                 "confidence": float(match["confidence"]),
+                "source_arch": source_arch,
+                "candidate_arch": candidate_arch,
+                "cross_arch": bool(
+                    source_arch and candidate_arch and source_arch != candidate_arch
+                ),
                 "settings": match.get("settings"),
             }
         )
@@ -1018,6 +1034,7 @@ def _journal_signature_write(
     signature: Mapping[str, Any],
     *,
     actor: str,
+    actor_user_id: int | None = None,
 ) -> None:
     """Write one signature, journaling the row and history entry it changes.
 
@@ -1041,6 +1058,9 @@ def _journal_signature_write(
         previous=_signature_state(current),
         source=TRANSFER_SOURCE,
         actor=actor,
+        actor_user_id=actor_user_id
+        if actor_user_id is not None
+        else journal.current_actor_user_id(),
     )
     store.upsert_signature(
         conn,
@@ -1074,7 +1094,12 @@ def _journal_signature_write(
 
 
 def apply_transfer(
-    conn: sqlite3.Connection, log: journal.Journal, plan: TransferPlan, *, actor: str
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    plan: TransferPlan,
+    *,
+    actor: str,
+    actor_user_id: int | None = None,
 ) -> None:
     """Apply a planned transfer, journaling every row it changes.
 
@@ -1089,9 +1114,12 @@ def apply_transfer(
             new_name=plan.new_name,
             actor=actor,
             source=TRANSFER_SOURCE,
+            actor_user_id=actor_user_id,
         )
     if plan.writes_signature and plan.signature is not None:
-        _journal_signature_write(conn, log, plan.function_id, plan.signature, actor=actor)
+        _journal_signature_write(
+            conn, log, plan.function_id, plan.signature, actor=actor, actor_user_id=actor_user_id
+        )
 
 
 def plan_payload(plan: TransferPlan) -> dict[str, Any]:

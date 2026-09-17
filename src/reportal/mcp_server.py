@@ -1,30 +1,37 @@
-"""Stdio MCP server for reportal.
+"""MCP server for reportal.
 
 The protocol is the official ``mcp`` SDK's: it owns the JSON-RPC 2.0 framing,
-the stdio transport, ``initialize`` and its version negotiation, the tool
+the transports, ``initialize`` and its version negotiation, the tool
 catalogue and the tool call.  reportal supplies what only reportal knows -- the
 tool registry in :mod:`reportal.mcp_tools` -- through the two handlers below, so
 the wire behaviour is the SDK's while the tools stay the portal's.
 
 The tools call reportal's internal functions directly and never make an HTTP
-request back into reportal.  Every server message goes to stdout, which is the
-SDK's; diagnostics go to stderr through the logging module.  ``run_server``
-drives the transport from one ``anyio`` run, so the CLI stays synchronous.
+request back into reportal.  Stdio is the local pipe (`reportal mcp`);
+Streamable HTTP is the same registry at ``/mcp``, gated by the portal bearer
+when auth is on.  POST answers JSON; GET with ``Accept: text/event-stream``
+is the SSE session stream, resumed through :class:`MemoryEventStore`.
+Diagnostics go to stderr through the logging module.  ``run_server`` drives
+the stdio transport from one ``anyio`` run, so the CLI stays synchronous.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from typing import Any
 
 import anyio
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
+from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.exceptions import MCPError
-from mcp.types import INVALID_PARAMS
+from mcp.types import INVALID_PARAMS, JSONRPCMessage
 
 from reportal import __version__, mcp_tools
 from reportal.mcp_tools import Tool, ToolError
@@ -41,6 +48,10 @@ SERVER_INSTRUCTIONS = (
     "reportal exposes a local reverse-engineering portal: binaries, functions,"
     " disassembly, decompilation, scans, matching and scoped conversations."
 )
+
+# HTTP path the Streamable HTTP transport is mounted at.  Auth is the same
+# bearer as ``/api`` (loopback operator while auth is off).
+HTTP_PATH = "/mcp"
 
 _log = logging.getLogger(__name__)
 
@@ -138,3 +149,69 @@ def run_server() -> int:
     """Run the stdio loop until the client closes it."""
     anyio.run(serve)
     return 0
+
+
+class MemoryEventStore(EventStore):
+    """In-process event log so a GET stream can resume after ``Last-Event-ID``.
+
+    Process-local, unbounded.  A restart drops the log, which is the same
+    lifetime as the Streamable HTTP session manager.  Priming events
+    (``message is None``) are stored for id continuity and skipped on
+    replay: the SDK's live GET stream sends those as empty-data SSE, and
+    ``EventMessage.message`` cannot be None.  Replay stays on the stream
+    ``last_event_id`` belongs to.
+    """
+
+    def __init__(self) -> None:
+        self._events: list[tuple[EventId, StreamId, JSONRPCMessage | None]] = []
+        self._next = 1
+        self._lock = asyncio.Lock()
+        # ponytail: unbounded process-local log; ring-buffer if a long-lived
+        # process retains sessions.
+
+    async def store_event(self, stream_id: StreamId, message: JSONRPCMessage | None) -> EventId:
+        async with self._lock:
+            event_id = str(self._next)
+            self._next += 1
+            self._events.append((event_id, stream_id, message))
+            return event_id
+
+    async def replay_events_after(
+        self, last_event_id: EventId, send_callback: EventCallback
+    ) -> StreamId | None:
+        async with self._lock:
+            snapshot = list(self._events)
+        started = False
+        stream_id: StreamId | None = None
+        for event_id, sid, message in snapshot:
+            if not started:
+                if event_id == last_event_id:
+                    started = True
+                    stream_id = sid
+                continue
+            if sid != stream_id:
+                continue
+            if message is None:
+                continue
+            await send_callback(EventMessage(message, event_id))
+        return stream_id
+
+
+def http_session_manager() -> StreamableHTTPSessionManager:
+    """A Streamable HTTP manager over the live tool registry.
+
+    POST stays one JSON-RPC reply so a bearer client can collect the body
+    without an open stream.  GET with ``Accept: text/event-stream`` is the
+    SDK's SSE session stream, resumed through :class:`MemoryEventStore`.
+    """
+    return StreamableHTTPSessionManager(
+        build_server(), json_response=True, event_store=MemoryEventStore()
+    )
+
+
+@asynccontextmanager
+async def http_lifespan() -> AsyncIterator[StreamableHTTPSessionManager]:
+    """Run the HTTP session manager for the life of the FastAPI app."""
+    manager = http_session_manager()
+    async with manager.run():
+        yield manager

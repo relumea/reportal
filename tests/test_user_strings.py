@@ -371,10 +371,11 @@ class TestDerivedAndFunctionRead:
                 note="why",
             )
             payload = user_strings.function_strings(conn, ids["function"])
-        assert payload["counts"] == {"analyst": 1, "derived": 2}
+        assert payload["counts"] == {"analyst": 1, "derived": 2, "decoded": 0}
         assert [entry["value"] for entry in payload["analyst"]] == ["/etc/passwd"]
         assert [entry["value"] for entry in payload["derived"]] == ["second"]
         assert payload["derived"][0]["source"] == user_strings.SOURCE_DERIVED
+        assert payload["decoded"] == []
 
     def test_a_function_with_no_decompilation_derives_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -387,9 +388,48 @@ class TestDerivedAndFunctionRead:
             "function_id": other,
             "analyst": [],
             "derived": [],
-            "counts": {"analyst": 0, "derived": 0},
+            "decoded": [],
+            "counts": {"analyst": 0, "derived": 0, "decoded": 0},
             "note": payload["note"],
         }
+
+    def test_a_stack_built_listing_is_decoded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        listing = (
+            "mov byte [rbp-0x10], 0x68\n"
+            "mov byte [rbp-0xf], 0x74\n"
+            "mov byte [rbp-0xe], 0x74\n"
+            "mov byte [rbp-0xd], 0x70\n"
+            "mov byte [rbp-0xc], 0x00\n"
+        )
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            store.set_disasm(conn, ids["function"], listing)
+            payload = user_strings.function_strings(conn, ids["function"])
+        assert {"value": "http", "source": user_strings.SOURCE_STACK} in payload["decoded"]
+
+    def test_a_register_xor_listing_is_decoded(self) -> None:
+        listing = (
+            "mov al, 0x2a\n"
+            "xor al, 0x42\n"
+            "mov [rbp-0x8], al\n"
+            "mov al, 0x36\n"
+            "xor al, 0x42\n"
+            "mov [rbp-0x7], al\n"
+            "mov al, 0x36\n"
+            "xor al, 0x42\n"
+            "mov [rbp-0x6], al\n"
+            "mov al, 0x32\n"
+            "xor al, 0x42\n"
+            "mov [rbp-0x5], al\n"
+            "mov al, 0x42\n"
+            "xor al, 0x42\n"
+            "mov [rbp-0x4], al\n"
+        )
+        assert user_strings.decoded_strings(listing) == [
+            {"value": "http", "source": user_strings.SOURCE_XOR}
+        ]
 
     def test_an_unknown_function_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -427,6 +467,7 @@ class TestDerivedAndFunctionRead:
             hidden = user_strings.function_strings(conn, ids["function"], visible_to=stranger)
             assert hidden["analyst"] == []
             assert hidden["derived"] == []
+            assert hidden["decoded"] == []
             member = user_strings.function_strings(conn, ids["function"], visible_to=ana)
             assert [entry["value"] for entry in member["analyst"]] == ["/etc/passwd"]
             listed = user_strings.list_strings(

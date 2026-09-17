@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS conversation_runs (
     content         TEXT NOT NULL DEFAULT '',
     error           TEXT NOT NULL DEFAULT '',
     actor           TEXT NOT NULL DEFAULT '',
+    actor_user_id   INTEGER,
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
@@ -152,6 +153,10 @@ class NotWaitingError(AgentError, ValueError):
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create the run table when the database predates it."""
     conn.executescript(_SCHEMA)
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(conversation_runs)")}
+    if "actor_user_id" not in columns:
+        conn.execute("ALTER TABLE conversation_runs ADD COLUMN actor_user_id INTEGER")
+    conn.commit()
 
 
 # ── The tool set ───────────────────────────────────────────────────
@@ -210,6 +215,8 @@ def is_destructive(name: str) -> bool:
 def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     """One stored run as the surfaces report it."""
     status = str(row["status"])
+    columns = set(row.keys())
+    raw_id = row["actor_user_id"] if "actor_user_id" in columns else None
     return {
         "id": int(row["id"]),
         "conversation_id": int(row["conversation_id"]),
@@ -220,6 +227,7 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "content": str(row["content"]),
         "error": str(row["error"]),
         "actor": str(row["actor"]),
+        "actor_user_id": None if raw_id is None else int(raw_id),
         "created_at": str(row["created_at"]),
         "updated_at": str(row["updated_at"]),
         "live": status in LIVE_STATUSES,
@@ -333,9 +341,16 @@ def _create_run(
     ensure_schema(conn)
     timestamp = store.now()
     cursor = conn.execute(
-        f"INSERT INTO {RUN_TABLE} (conversation_id, status, actor, created_at, updated_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (int(conversation_id), STATUS_RUNNING, journal.current_actor(), timestamp, timestamp),
+        f"INSERT INTO {RUN_TABLE} (conversation_id, status, actor, actor_user_id,"
+        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            int(conversation_id),
+            STATUS_RUNNING,
+            journal.current_actor(),
+            journal.current_actor_user_id(),
+            timestamp,
+            timestamp,
+        ),
     )
     conn.commit()
     run_id = int(cursor.lastrowid or 0)

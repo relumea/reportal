@@ -82,7 +82,9 @@ class TestMarkup:
         assert "<script>" not in markup.replace('<script type="module"', "")
 
     def test_it_links_into_the_app(self) -> None:
-        assert 'href="/"' in landing.render()
+        markup = landing.render()
+        assert 'href="/"' in markup
+        assert 'href="/#/users"' in markup
 
     def test_it_needs_no_frontend_build(self) -> None:
         """It is served whether or not the SPA bundle exists, so it inlines its CSS."""

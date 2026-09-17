@@ -39,6 +39,7 @@ from reportal import (
     llm,
     pipeline,
     plans,
+    profiles,
     remote_ingest,
     sandbox,
 )
@@ -177,6 +178,16 @@ SETTINGS: tuple[Setting, ...] = (
         table=auth.CONFIG_TABLE,
         key=auth.CONFIG_REQUIRED,
         default="off",
+    ),
+    Setting(
+        name="deployment.profile",
+        describe="which product this install is: personal (single operator) or saas (multi-tenant)",
+        kind=KIND_TEXT,
+        read=profiles.current,
+        env=profiles.PROFILE_ENV,
+        table=profiles.CONFIG_TABLE,
+        key=profiles.CONFIG_PROFILE,
+        default=profiles.PROFILE_PERSONAL,
     ),
     Setting(
         name="llm.endpoint",

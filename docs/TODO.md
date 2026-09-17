@@ -116,7 +116,19 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   team, which is what keeps a lockout recoverable (`may_manage_team`,
   `PUT /api/teams/<id>/members/<user_id>/role`, `reportal team-role`, the
   `set_team_member_role` tool, and the Users view's per-team Members table with
-  a role select per row).  An `organisations` table sits one level above teams:
+  a role select per row).  Single-use invite codes (`team_invites`, digest
+  stored, shown once, expire after seven days) close the hosted join path:
+  `POST`/`GET /api/teams/<id>/invites`, `POST /api/teams/join`,
+  `reportal team-invite`/`team-invites`/`team-join`, the
+  `create_team_invite`/`list_team_invites`/`join_team` tools, and the Users
+  view Invites panel.  Self-serve SaaS signup (`POST /api/signup`,
+  `reportal signup`, the `signup` tool, Users view Create a workspace)
+  creates an analyst, organisation, owned team and free-plan tenant without
+  an admin; personal profile answers 403 `signup-disabled`; HTTP signup is
+  429 `rate-limited` past five attempts from one TCP peer in an hour.
+  Authenticated HTTP writes are 429 past 60 in 60 seconds.  Those 429s
+  carry `Retry-After`.  An
+  `organisations` table sits one level above teams:
   `GET`/`POST /api/organisations`, `GET`/`DELETE
   /api/organisations/<id>`, `PUT /api/teams/<id>/organisation` (the body's
   `organisation_id` or null to ungroup), the `reportal organisations`,
