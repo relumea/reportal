@@ -674,17 +674,26 @@ def cancel(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
     A ``running`` job is refused with :class:`ValueError`: the engine call it
     already entered cannot be stopped, so pretending to cancel it would leave a
     scan writing its result after the client was told it had stopped.
+
+    The status gate is the ``UPDATE`` predicate, not a prior read: a worker
+    that claims the same row between a read and a write would otherwise leave
+    the job ``cancelled`` while still executing.
     """
     job = get_job(conn, job_id)
     if job is None:
         return None
     if job["status"] != STATUS_QUEUED:
         raise ValueError(f"job {job_id} is {job['status']} and cannot be cancelled")
-    conn.execute(
-        f"UPDATE {TABLE} SET status = ?, message = ?, finished_at = ? WHERE id = ?",
-        (STATUS_CANCELLED, "cancelled before it started", store.now(), job_id),
+    cur = conn.execute(
+        f"UPDATE {TABLE} SET status = ?, message = ?, finished_at = ? WHERE id = ? AND status = ?",
+        (STATUS_CANCELLED, "cancelled before it started", store.now(), job_id, STATUS_QUEUED),
     )
     conn.commit()
+    if cur.rowcount == 0:
+        raced = get_job(conn, job_id)
+        if raced is None:
+            return None
+        raise ValueError(f"job {job_id} is {raced['status']} and cannot be cancelled")
     return get_job(conn, job_id)
 
 
@@ -906,6 +915,7 @@ class JobWorker:
             for index in range(max(1, workers))
         ]
         self._last_error_log = 0.0
+        self._error_log_lock = threading.Lock()
 
     def start(self) -> None:
         for thread in self._threads:
@@ -927,8 +937,13 @@ class JobWorker:
                 # reason to kill the worker: the next tick tries again.  Log
                 # occasionally so an operator can see why the queue is stuck.
                 now = _monotonic()
-                if now - self._last_error_log >= WORKER_ERROR_LOG_SECONDS:
-                    self._last_error_log = now
+                with self._error_log_lock:
+                    if now - self._last_error_log >= WORKER_ERROR_LOG_SECONDS:
+                        self._last_error_log = now
+                        should_log = True
+                    else:
+                        should_log = False
+                if should_log:
                     _log.warning(
                         "job worker tick failed: %s: %s",
                         type(exc).__name__,

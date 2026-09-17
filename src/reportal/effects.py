@@ -24,6 +24,7 @@ import hashlib
 import logging
 import re
 import sqlite3
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from functools import partial
 from pathlib import Path
@@ -367,6 +368,7 @@ _registry: dict[str, EffectHandler] = {}
 _origins: dict[str, str] = {}
 _builtins_loaded = False
 _entry_points_loaded = False
+_registry_lock = threading.RLock()
 
 
 def _valid_kind(kind: object) -> bool:
@@ -389,20 +391,22 @@ def register_effect_handler(
         raise RegistryError(
             f"bad effect handler registration {kind!r} from {origin}: handler is not callable"
         )
-    if kind in _registry:
-        raise RegistryError(
-            f"duplicate effect handler registration {kind!r}: {origin} conflicts"
-            f" with {_origins[kind]} (single-source discipline)"
-        )
-    _registry[kind] = handler
-    _origins[kind] = origin
+    with _registry_lock:
+        if kind in _registry:
+            raise RegistryError(
+                f"duplicate effect handler registration {kind!r}: {origin} conflicts"
+                f" with {_origins[kind]} (single-source discipline)"
+            )
+        _registry[kind] = handler
+        _origins[kind] = origin
 
 
 def effect_handlers() -> dict[str, EffectHandler]:
     """Every registered handler, built-ins first, in registration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return dict(_registry)
+    with _registry_lock:
+        return dict(_registry)
 
 
 def unregister_effect_handler(kind: str) -> None:
@@ -413,10 +417,11 @@ def unregister_effect_handler(kind: str) -> None:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    if kind not in _registry:
-        raise RegistryError(f"no effect handler registration {kind!r} to withdraw")
-    del _registry[kind]
-    _origins.pop(kind, None)
+    with _registry_lock:
+        if kind not in _registry:
+            raise RegistryError(f"no effect handler registration {kind!r} to withdraw")
+        del _registry[kind]
+        _origins.pop(kind, None)
 
 
 def refresh_effect_handlers() -> dict[str, EffectHandler]:
@@ -426,37 +431,40 @@ def refresh_effect_handlers() -> dict[str, EffectHandler]:
     is how a long-lived process picks up a plugin installed after startup.
     """
     global _builtins_loaded, _entry_points_loaded
-    _registry.clear()
-    _origins.clear()
-    _builtins_loaded = False
-    _entry_points_loaded = False
+    with _registry_lock:
+        _registry.clear()
+        _origins.clear()
+        _builtins_loaded = False
+        _entry_points_loaded = False
     return effect_handlers()
 
 
 def _ensure_builtins() -> None:
     """Load the in-tree handlers once."""
     global _builtins_loaded
-    if _builtins_loaded:
-        return
-    _builtins_loaded = True
-    for kind, handler in builtin_effect_handlers().items():
-        register_effect_handler(kind, handler, origin=BUILTIN_ORIGIN)
+    with _registry_lock:
+        if _builtins_loaded:
+            return
+        _builtins_loaded = True
+        for kind, handler in builtin_effect_handlers().items():
+            register_effect_handler(kind, handler, origin=BUILTIN_ORIGIN)
 
 
 def _ensure_entry_points() -> None:
     """Load third-party handlers once, skipping a broken registration."""
     global _entry_points_loaded
-    if _entry_points_loaded:
-        return
-    _entry_points_loaded = True
-    for name, value in plugins.items(EFFECT_ENTRY_POINT_GROUP):
-        handlers = _load_entry_point(name, value)
-        if handlers is None:
-            continue
-        # A duplicate kind is not skipped: two handlers claiming one kind is a
-        # composition error, and the RegistryError says which registration lost.
-        for kind, handler in handlers.items():
-            register_effect_handler(kind, handler, origin=plugins.origin(name, value))
+    with _registry_lock:
+        if _entry_points_loaded:
+            return
+        _entry_points_loaded = True
+        for name, value in plugins.items(EFFECT_ENTRY_POINT_GROUP):
+            handlers = _load_entry_point(name, value)
+            if handlers is None:
+                continue
+            # A duplicate kind is not skipped: two handlers claiming one kind is a
+            # composition error, and the RegistryError says which registration lost.
+            for kind, handler in handlers.items():
+                register_effect_handler(kind, handler, origin=plugins.origin(name, value))
 
 
 def _load_entry_point(name: str, value: str) -> dict[str, EffectHandler] | None:

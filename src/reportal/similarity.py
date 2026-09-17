@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import threading
 from functools import _CacheInfo, lru_cache
 from types import ModuleType
 
@@ -54,6 +55,7 @@ _REQUIRED_MODULES = ("rapidfuzz", "resembl.scoring")
 # re-run the import statement per pair, and the attribute lookup stays live
 # for a monkeypatched `resembl.scoring.code_tokenize`.
 _loaded_modules: tuple[ModuleType, ModuleType] | None = None
+_loaded_modules_lock = threading.Lock()
 
 
 class SimilarityUnavailable(RuntimeError):  # noqa: N818  # name fixed by the similarity contract
@@ -81,19 +83,20 @@ def _load_modules() -> tuple[ModuleType, ModuleType]:
     Raises :class:`SimilarityUnavailable` when the extra is not installed.
     """
     global _loaded_modules
-    modules = _loaded_modules
-    if modules is None:
-        try:
-            from rapidfuzz import fuzz
-            from resembl import scoring
-        except ImportError as exc:
-            raise SimilarityUnavailable(
-                "function similarity requires the optional 'similarity' extra"
-                " (uv sync --extra similarity)"
-            ) from exc
-        modules = (scoring, fuzz)
-        _loaded_modules = modules
-    return modules
+    with _loaded_modules_lock:
+        modules = _loaded_modules
+        if modules is None:
+            try:
+                from rapidfuzz import fuzz
+                from resembl import scoring
+            except ImportError as exc:
+                raise SimilarityUnavailable(
+                    "function similarity requires the optional 'similarity' extra"
+                    " (uv sync --extra similarity)"
+                ) from exc
+            modules = (scoring, fuzz)
+            _loaded_modules = modules
+        return modules
 
 
 @lru_cache(maxsize=PREPARED_CACHE_SIZE)

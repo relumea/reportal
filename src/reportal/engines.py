@@ -29,6 +29,7 @@ import importlib
 import importlib.machinery
 import importlib.util
 import os
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Concatenate
@@ -985,17 +986,20 @@ class RebrewEngine:
 
 
 _engine: RebrewEngine | None = None
+_engine_lock = threading.Lock()
 
 
 def get_engine() -> RebrewEngine:
     """Return the process-wide engine, probing rebrew on first use."""
     global _engine
-    if _engine is None:
-        _engine = RebrewEngine()
-    return _engine
+    with _engine_lock:
+        if _engine is None:
+            _engine = RebrewEngine()
+        return _engine
 
 
 def set_engine(engine: RebrewEngine | None) -> None:
     """Install *engine* process-wide; None restores the default resolution."""
     global _engine
-    _engine = engine
+    with _engine_lock:
+        _engine = engine

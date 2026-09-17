@@ -47,6 +47,7 @@ import json
 import math
 import os
 import re
+import threading
 import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextvars import ContextVar
@@ -480,6 +481,7 @@ class LlmClient:
         self.config = config
         self._http = http
         self._client: OpenAI | None = None
+        self._sdk_lock = threading.Lock()
 
     @property
     def model(self) -> str:
@@ -614,36 +616,37 @@ class LlmClient:
 
     def _sdk(self) -> OpenAI:
         """Return the SDK client for this config, building it on first use."""
-        if self._client is None:
-            config = self.config
-            if config is None:  # pragma: no cover - callers check `available` first
-                raise LlmUnavailable(UNAVAILABLE_DETAIL)
-            http = self._http if self._http is not None else httpx2.Client()
-            # The placeholder is only ever sent by this client, and only when no
-            # key is configured; the hook makes an unkeyed endpoint receive no
-            # Authorization header at all.  Install it once per HTTP client:
-            # ``with_model`` shares the transport, and appending on every
-            # ``_sdk`` build would stack the same hook without bound.
-            hooks = http.event_hooks.setdefault("request", [])
-            if _drop_anonymous_key not in hooks:
-                hooks.append(_drop_anonymous_key)
-            self._http = http
-            self._client = OpenAI(
-                base_url=_base_url(config.endpoint),
-                api_key=config.api_key or ANONYMOUS_KEY,
-                # The SDK annotates this argument as `httpx.Client`, and
-                # reportal's one HTTP client line is the `httpx2` fork, whose
-                # client carries the same interface under another package name.
-                # A cast is the only way to say that: the two packages are
-                # distinct types, and the client is exercised end to end by the
-                # suite through a mock transport.
-                http_client=cast(Any, http),
-                # reportal's callers decide when to retry; the SDK's own retries
-                # would multiply an engine-verified run's attempts silently.
-                max_retries=0,
-                timeout=LLM_TIMEOUT_SECONDS,
-            )
-        return self._client
+        with self._sdk_lock:
+            if self._client is None:
+                config = self.config
+                if config is None:  # pragma: no cover - callers check `available` first
+                    raise LlmUnavailable(UNAVAILABLE_DETAIL)
+                http = self._http if self._http is not None else httpx2.Client()
+                # The placeholder is only ever sent by this client, and only when no
+                # key is configured; the hook makes an unkeyed endpoint receive no
+                # Authorization header at all.  Install it once per HTTP client:
+                # ``with_model`` shares the transport, and appending on every
+                # ``_sdk`` build would stack the same hook without bound.
+                hooks = http.event_hooks.setdefault("request", [])
+                if _drop_anonymous_key not in hooks:
+                    hooks.append(_drop_anonymous_key)
+                self._http = http
+                self._client = OpenAI(
+                    base_url=_base_url(config.endpoint),
+                    api_key=config.api_key or ANONYMOUS_KEY,
+                    # The SDK annotates this argument as `httpx.Client`, and
+                    # reportal's one HTTP client line is the `httpx2` fork, whose
+                    # client carries the same interface under another package name.
+                    # A cast is the only way to say that: the two packages are
+                    # distinct types, and the client is exercised end to end by the
+                    # suite through a mock transport.
+                    http_client=cast(Any, http),
+                    # reportal's callers decide when to retry; the SDK's own retries
+                    # would multiply an engine-verified run's attempts silently.
+                    max_retries=0,
+                    timeout=LLM_TIMEOUT_SECONDS,
+                )
+            return self._client
 
 
 # ── Embeddings ─────────────────────────────────────────────────────
@@ -1232,17 +1235,20 @@ AI_RUNNERS: dict[str, ArtifactRunner] = {
 
 
 _client: LlmClient | None = None
+_client_lock = threading.Lock()
 
 
 def get_client() -> LlmClient:
     """Return the process-wide client, resolving the config on first use."""
     global _client
-    if _client is None:
-        _client = LlmClient(LlmConfig.resolve())
-    return _client
+    with _client_lock:
+        if _client is None:
+            _client = LlmClient(LlmConfig.resolve())
+        return _client
 
 
 def set_client(client: LlmClient | None) -> None:
     """Install *client* process-wide; None restores the default resolution."""
     global _client
-    _client = client
+    with _client_lock:
+        _client = client

@@ -519,6 +519,27 @@ class TestCancel:
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("a finished job must not be cancellable")
 
+    def test_cancel_loses_to_a_claim_without_overwriting_running(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        """A claim that wins the row must leave cancel refusing, not rewriting."""
+        job = _submit(conn, tmp_path)
+        claimed = jobs._claim(conn)
+        assert claimed is not None
+        assert claimed["id"] == job["id"]
+        assert claimed["status"] == jobs.STATUS_RUNNING
+
+        try:
+            jobs.cancel(conn, job["id"])
+        except ValueError as exc:
+            assert "cannot be cancelled" in str(exc)
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("a claimed job must not be cancellable")
+
+        still = jobs.get_job(conn, job["id"])
+        assert still is not None
+        assert still["status"] == jobs.STATUS_RUNNING
+
 
 class TestListing:
     def test_the_listing_filters_by_status_and_kind(

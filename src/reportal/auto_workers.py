@@ -24,6 +24,7 @@ import importlib
 import logging
 import re
 import sqlite3
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -143,6 +144,7 @@ class Worker:
 _registry: dict[str, Worker] = {}
 _builtins_loaded = False
 _entry_points_loaded = False
+_registry_lock = threading.RLock()
 
 
 def register_worker(worker: Worker, *, origin: str = BUILTIN_ORIGIN) -> None:
@@ -161,19 +163,21 @@ def register_worker(worker: Worker, *, origin: str = BUILTIN_ORIGIN) -> None:
         raise RegistryError(
             f"bad worker registration {worker.name!r} from {origin}: run is not callable"
         )
-    if worker.name in _registry:
-        raise RegistryError(
-            f"duplicate worker registration {worker.name!r}: {origin} conflicts"
-            f" with an existing registration (single-source discipline)"
-        )
-    _registry[worker.name] = worker
+    with _registry_lock:
+        if worker.name in _registry:
+            raise RegistryError(
+                f"duplicate worker registration {worker.name!r}: {origin} conflicts"
+                f" with an existing registration (single-source discipline)"
+            )
+        _registry[worker.name] = worker
 
 
 def workers() -> tuple[Worker, ...]:
     """Every registered worker, built-ins first, in declaration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return tuple(_registry.values())
+    with _registry_lock:
+        return tuple(_registry.values())
 
 
 def get_worker(name: str) -> Worker | None:
@@ -189,9 +193,10 @@ def unregister_worker(name: str) -> None:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    if name not in _registry:
-        raise RegistryError(f"no worker registration {name!r} to withdraw")
-    del _registry[name]
+    with _registry_lock:
+        if name not in _registry:
+            raise RegistryError(f"no worker registration {name!r} to withdraw")
+        del _registry[name]
 
 
 def refresh_workers() -> tuple[Worker, ...]:
@@ -201,24 +206,26 @@ def refresh_workers() -> tuple[Worker, ...]:
     is how a long-lived process picks up a plugin installed after startup.
     """
     global _builtins_loaded, _entry_points_loaded
-    _registry.clear()
-    _builtins_loaded = False
-    _entry_points_loaded = False
+    with _registry_lock:
+        _registry.clear()
+        _builtins_loaded = False
+        _entry_points_loaded = False
     return workers()
 
 
 def _ensure_builtins() -> None:
     """Load the in-tree workers once."""
     global _builtins_loaded
-    if _builtins_loaded:
-        return
-    _builtins_loaded = True
-    module = importlib.import_module("reportal.auto_llm_worker")
-    register_worker(offline_worker(), origin=BUILTIN_ORIGIN)
-    register_worker(
-        replace(module.llm_c_source_worker(), planned_paths=planned_llm_source_paths),
-        origin=BUILTIN_ORIGIN,
-    )
+    with _registry_lock:
+        if _builtins_loaded:
+            return
+        _builtins_loaded = True
+        module = importlib.import_module("reportal.auto_llm_worker")
+        register_worker(offline_worker(), origin=BUILTIN_ORIGIN)
+        register_worker(
+            replace(module.llm_c_source_worker(), planned_paths=planned_llm_source_paths),
+            origin=BUILTIN_ORIGIN,
+        )
 
 
 def planned_llm_source_paths(ctx: WorkerContext) -> Sequence[str]:
@@ -242,13 +249,14 @@ def planned_llm_source_paths(ctx: WorkerContext) -> Sequence[str]:
 def _ensure_entry_points() -> None:
     """Load third-party workers once, skipping a broken registration."""
     global _entry_points_loaded
-    if _entry_points_loaded:
-        return
-    _entry_points_loaded = True
-    for name, value, worker in plugins.load(WORKER_ENTRY_POINT_GROUP, Worker, "Worker"):
-        # A duplicate name is not skipped: two workers claiming one name is a
-        # composition error, and the RegistryError says which registration lost.
-        register_worker(worker, origin=plugins.origin(name, value))
+    with _registry_lock:
+        if _entry_points_loaded:
+            return
+        _entry_points_loaded = True
+        for name, value, worker in plugins.load(WORKER_ENTRY_POINT_GROUP, Worker, "Worker"):
+            # A duplicate name is not skipped: two workers claiming one name is a
+            # composition error, and the RegistryError says which registration lost.
+            register_worker(worker, origin=plugins.origin(name, value))
 
 
 def is_address_placeholder(name: str) -> bool:
