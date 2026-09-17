@@ -571,14 +571,15 @@ def signup_tenant(conn: sqlite3.Connection, *, name: str) -> tuple[dict[str, Any
     set_active_team(conn, int(user["id"]), int(team["id"]))
     refreshed = get_user(conn, int(user["id"]))
     assert refreshed is not None, "the user was just created"
-    organisation = get_organisation(conn, int(organisation["id"]))
-    team = get_team(conn, int(team["id"]))
-    assert organisation is not None and team is not None, "tenant rows were just created"
+    refreshed_organisation = get_organisation(conn, int(organisation["id"]))
+    refreshed_team = get_team(conn, int(team["id"]))
+    assert refreshed_organisation is not None, "the organisation was just created"
+    assert refreshed_team is not None, "the team was just created"
     return {
         **refreshed,
-        "organisation": organisation,
-        "team": team,
-        "plan_id": metering.organisation_plan(conn, int(organisation["id"])).id,
+        "organisation": refreshed_organisation,
+        "team": refreshed_team,
+        "plan_id": metering.organisation_plan(conn, int(refreshed_organisation["id"])).id,
     }, token
 
 
