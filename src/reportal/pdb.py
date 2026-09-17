@@ -55,6 +55,12 @@ _MIN_BLOCK_SIZE = 512
 _U16_PAIR = struct.Struct("<HH")
 _U32 = struct.Struct("<I")
 
+
+def _ceil_div(numerator: int, denominator: int) -> int:
+    """Smallest integer at least *numerator* / *denominator* (positive ints)."""
+    return (numerator + denominator - 1) // denominator
+
+
 # Streams this reader needs by index.  Stream 1 is the PDB info stream and
 # stream 3 the DBI stream; the symbol record stream is wherever its DBI header
 # says, and 0xFFFF means the DBI header names none.
@@ -227,7 +233,7 @@ def _directory(data: bytes) -> tuple[list[int], list[list[int]], int, int]:
         raise PdbError(_UNREADABLE, f"block size {block_size} is not a multiple of 512")
     if num_blocks * block_size > len(data):
         raise PdbError(_UNREADABLE, "container is shorter than the superblock's block count")
-    directory_blocks = (directory_bytes + block_size - 1) // block_size
+    directory_blocks = _ceil_div(directory_bytes, block_size)
     if directory_bytes < _U32.size or directory_blocks > num_blocks:
         raise PdbError(_UNREADABLE, f"directory byte count {directory_bytes} is inconsistent")
     map_at = block_map * block_size
@@ -246,7 +252,7 @@ def _directory(data: bytes) -> tuple[list[int], list[list[int]], int, int]:
     blocks: list[list[int]] = []
     cursor = _U32.size + count * _U32.size
     for size in sizes:
-        held = (size + block_size - 1) // block_size
+        held = _ceil_div(size, block_size)
         end = cursor + held * _U32.size
         if end > directory_bytes:
             raise PdbError(_UNREADABLE, "stream directory is truncated inside its block lists")

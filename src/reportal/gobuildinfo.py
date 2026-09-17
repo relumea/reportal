@@ -32,10 +32,10 @@ from __future__ import annotations
 import re
 import sqlite3
 import struct
-from pathlib import Path
 from typing import Any
 
 from reportal import store
+from reportal.capabilities import require_binary_file
 
 # The stored scan kind the build information is kept under.  Mirrored as
 # `store.SCAN_KIND_GOBUILDINFO` so the ratings vocabulary picks it up.
@@ -164,19 +164,16 @@ def recover(
     :class:`FileNotFoundError` when its row has no file on disk and
     :class:`GobuildinfoError` when the file is not a Go binary.
     """
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
     if data is None:
-        path = Path(str(binary["path"]))
-        if not path.is_file():
-            raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+        _binary, path = require_binary_file(conn, binary_id)
         try:
             size = path.stat().st_size
             with open(path, "rb") as handle:
                 data = handle.read(min(size, MAX_SCAN_BYTES))
         except OSError as exc:
             raise GobuildinfoError(f"cannot read binary file: {exc}", code="unreadable") from exc
+    elif store.get_binary(conn, binary_id) is None:
+        raise KeyError(f"no binary with id {binary_id}")
     payload = {"binary_id": binary_id, **parse_buildinfo(data, build_id=build_id)}
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
     store.set_scan(conn, analysis_id, SCAN_KIND, payload, params={})

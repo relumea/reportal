@@ -54,6 +54,7 @@ from urllib.parse import urlsplit
 
 from reportal import engines, protocols, store, threat
 from reportal._paths import WorkspaceNotFound, db_path
+from reportal.capabilities import require_binary_file
 from reportal.engines import RebrewEngine
 
 # Candidate strings kept per rule.  A string table can hold thousands of
@@ -1157,12 +1158,7 @@ def build_remediation(
     is configured.  An engine failure propagates as
     :class:`~reportal.engines.EngineError`.
     """
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    binary, path = require_binary_file(conn, binary_id)
 
     source = engine if engine is not None else engines.get_engine()
     if source is None or not source.available():

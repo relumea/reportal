@@ -5189,7 +5189,8 @@ def _tool_get_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
         _analysis_or_error(conn, analysis_id)
         detail = store.analysis_detail(conn, analysis_id)
         status = store.analysis_status(conn, analysis_id)
-    assert detail is not None and status is not None, "the row was just read"
+    assert detail is not None, "the row was just read"
+    assert status is not None, "the row was just read"
     return {**detail, "lifecycle": status}
 
 

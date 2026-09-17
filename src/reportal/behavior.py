@@ -21,7 +21,6 @@ import re
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from reportal import capabilities, engines, store
@@ -389,25 +388,13 @@ def scan_domain(
     """
     if domain not in BEHAVIOR_DOMAINS:
         raise ValueError(f"unknown behavior domain: {domain}")
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    _binary, path = capabilities.require_binary_file(conn, binary_id)
 
     source: capabilities.CapabilityIO = engine or engines.get_engine()
-    raw_imports = (
-        list(imports)
-        if imports is not None
-        else capabilities._entries(source.imports(path), "imports")
+    raw_imports, raw_strings = capabilities.load_imports_and_strings(
+        path, source, imports=imports, strings=strings
     )
-    raw_strings = (
-        list(strings)
-        if strings is not None
-        else capabilities._entries(source.strings(path), "strings")
-    )
-    result = classify(domain, raw_imports, raw_strings[:MAX_STRINGS_INSPECTED])
+    result = classify(domain, raw_imports, raw_strings)
     payload = {"binary_id": binary_id, "domain": domain, **result}
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
     store.set_scan(conn, analysis_id, DOMAIN_SCAN_KINDS[domain], payload)

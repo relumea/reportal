@@ -29,7 +29,6 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
 from reportal import capabilities, engines, store
@@ -167,29 +166,14 @@ def derive_bundle(
     unknown binary, :class:`FileNotFoundError` when its row has no file, and
     :class:`engines.EngineUnavailable` without an engine.
     """
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    _binary, path = capabilities.require_binary_file(conn, binary_id)
     source = engine or engines.get_engine()
     fingerprint = source.fingerprint(path)
     imports_payload = source.imports(path)
     strings_payload = source.strings(path)
     names = import_names(imports_payload)
-    raw_imports = imports_payload.get("imports")
-    raw_strings = strings_payload.get("strings")
-    import_entries = (
-        [entry for entry in raw_imports if isinstance(entry, dict)]
-        if isinstance(raw_imports, list)
-        else []
-    )
-    string_entries = (
-        [entry for entry in raw_strings if isinstance(entry, dict)]
-        if isinstance(raw_strings, list)
-        else []
-    )
+    import_entries = capabilities._entries(imports_payload, "imports")
+    string_entries = capabilities._entries(strings_payload, "strings")
     return {
         FINGERPRINT_SHA256: _fingerprint_hash(fingerprint, FINGERPRINT_SHA256),
         FINGERPRINT_IMPHASH: _fingerprint_hash(fingerprint, FINGERPRINT_IMPHASH),

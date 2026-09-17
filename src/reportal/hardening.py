@@ -625,25 +625,12 @@ def scan_hardening(
     """
     if domain not in HARDENING_DOMAINS:
         raise ValueError(f"unknown hardening domain: {domain}")
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    binary, path = capabilities.require_binary_file(conn, binary_id)
 
     source: HardeningIO = engine or engines.get_engine()
-    raw_imports = (
-        list(imports)
-        if imports is not None
-        else capabilities._entries(source.imports(path), "imports")
+    raw_imports, raw_strings = capabilities.load_imports_and_strings(
+        path, source, imports=imports, strings=strings
     )
-    raw_strings = (
-        list(strings)
-        if strings is not None
-        else capabilities._entries(source.strings(path), "strings")
-    )
-    raw_strings = raw_strings[:MAX_STRINGS_INSPECTED]
 
     if domain == DOMAIN_ANTI_ANALYSIS:
         result: dict[str, Any] = {

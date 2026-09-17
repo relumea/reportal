@@ -542,12 +542,16 @@ CAPABILITIES: tuple[Capability, ...] = (
 )
 
 
-class CapabilityIO(Protocol):
+class StringsIO(Protocol):
+    """The engine surface a strings-only scan needs; ``rebrew strings`` is standalone."""
+
+    def strings(self, binary: str | Path) -> dict[str, Any]: ...
+
+
+class CapabilityIO(StringsIO, Protocol):
     """The engine surface a capabilities run needs; both calls are standalone."""
 
     def imports(self, binary: str | Path) -> dict[str, Any]: ...
-
-    def strings(self, binary: str | Path) -> dict[str, Any]: ...
 
 
 def _import_name(entry: dict[str, Any]) -> str:
@@ -633,6 +637,57 @@ def _entries(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return [entry for entry in raw if isinstance(entry, dict)]
 
 
+def require_binary_file(conn: sqlite3.Connection, binary_id: int) -> tuple[dict[str, Any], Path]:
+    """Return ``(binary_row, path)`` for a stored binary with bytes on disk.
+
+    Raises :class:`KeyError` for an unknown id and :class:`FileNotFoundError`
+    when the row's path is empty or no longer holds a file.
+    """
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise KeyError(f"no binary with id {binary_id}")
+    path = Path(str(binary["path"]))
+    if not path.is_file():
+        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    return binary, path
+
+
+def load_imports_and_strings(
+    path: Path,
+    source: CapabilityIO,
+    *,
+    imports: Sequence[dict[str, Any]] | None = None,
+    strings: Sequence[dict[str, Any]] | None = None,
+    max_strings: int = MAX_STRINGS_INSPECTED,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Resolve import and string entries from overrides or *source*.
+
+    An override of either side is taken as-is; otherwise the engine payload is
+    parsed through :func:`_entries`.  Strings are truncated to *max_strings*.
+    """
+    raw_imports = (
+        list(imports) if imports is not None else _entries(source.imports(path), "imports")
+    )
+    raw_strings = (
+        list(strings) if strings is not None else _entries(source.strings(path), "strings")
+    )
+    return raw_imports, raw_strings[:max_strings]
+
+
+def load_strings(
+    path: Path,
+    source: StringsIO,
+    *,
+    strings: Sequence[dict[str, Any]] | None = None,
+    max_strings: int = MAX_STRINGS_INSPECTED,
+) -> list[dict[str, Any]]:
+    """Resolve string entries from an override or *source*, capped at *max_strings*."""
+    raw_strings = (
+        list(strings) if strings is not None else _entries(source.strings(path), "strings")
+    )
+    return raw_strings[:max_strings]
+
+
 def run_capabilities(
     conn: sqlite3.Connection,
     *,
@@ -653,20 +708,12 @@ def run_capabilities(
     :class:`FileNotFoundError` when its row has no file on disk; an engine
     failure propagates.  Returns ``{"binary_id", "capabilities", "count"}``.
     """
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    _binary, path = require_binary_file(conn, binary_id)
     source: CapabilityIO = io or engine or engines.get_engine()
-    raw_imports = (
-        list(imports) if imports is not None else _entries(source.imports(path), "imports")
+    raw_imports, raw_strings = load_imports_and_strings(
+        path, source, imports=imports, strings=strings
     )
-    raw_strings = (
-        list(strings) if strings is not None else _entries(source.strings(path), "strings")
-    )
-    found = classify(raw_imports, raw_strings[:MAX_STRINGS_INSPECTED])
+    found = classify(raw_imports, raw_strings)
     payload = {"binary_id": binary_id, "capabilities": found, "count": len(found)}
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
     store.set_scan(conn, analysis_id, store.SCAN_KIND_CAPABILITIES, payload)

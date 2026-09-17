@@ -879,12 +879,7 @@ def run_filetype(
     :class:`~reportal.engines.EngineError` when every engine call failed.
     Returns ``{"binary_id", "matches", "count", "by_category", "notes"}``.
     """
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    _binary, path = capabilities.require_binary_file(conn, binary_id)
 
     notes = [SCOPE_NOTE, CONFIDENCE_NOTE]
     if evidence is None:

@@ -64,6 +64,7 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from reportal import engines, llm, store
+from reportal.capabilities import require_binary_file
 
 # IOC categories, in the order every payload and view lists them.
 IOC_CATEGORY_URLS = "urls"
@@ -763,12 +764,7 @@ def build_threat_report(
     when its row has no file on disk, and :class:`~reportal.engines.EngineError`
     when a configured engine fails.
     """
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    path = Path(str(binary["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(f"binary {binary_id} has no file at {path}")
+    _binary, path = require_binary_file(conn, binary_id)
 
     notes: list[str] = []
     strings: list[dict[str, Any]] = []
