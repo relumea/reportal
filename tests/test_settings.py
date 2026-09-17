@@ -222,6 +222,13 @@ class TestDeploymentProfile:
         monkeypatch.setattr(profiles, "project_root", missing)
         assert profiles.current() == profiles.PROFILE_PERSONAL
 
+    def test_saas_requires_auth_even_when_explicitly_disabled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "off")
+        assert auth.required() is True
 
 class TestAgreement:
     """Each resolved value is the one the module that reads it resolves."""
