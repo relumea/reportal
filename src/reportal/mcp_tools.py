@@ -3553,9 +3553,7 @@ def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
     try:
         target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
-        handle, temp_name = tempfile.mkstemp(
-            dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
-        )
+        handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
         try:
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
                 stream.write(text)

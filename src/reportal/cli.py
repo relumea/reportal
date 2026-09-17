@@ -455,7 +455,7 @@ def _run_scan_command(
 def _write_text_atomic(path: Path, text: str) -> Path:
     """Write *text* to *path* through a same-directory temp file and rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)

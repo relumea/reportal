@@ -904,9 +904,7 @@ def write_report(
     report = _render(conn, binary_id=binary_id, engine=engine, generated=generated)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(
-        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
-    )
+    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
     try:
         with os.fdopen(handle, "wb") as stream:
             stream.write(report.data)

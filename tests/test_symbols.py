@@ -907,7 +907,10 @@ class TestSymbolRoutes:
 
 
 class TestSymbolCli:
-    def test_the_commands(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("export_name", ["symbols.h", "s" * 248 + ".h"])
+    def test_the_commands(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, export_name: str
+    ) -> None:
         ids = _seed(tmp_path, monkeypatch)
         path = tmp_path / "demo.elf"
         path.write_bytes(_symbol_elf())
@@ -932,7 +935,7 @@ class TestSymbolCli:
         assert one.exit_code == 0, one.output
         assert "make_point" in one.output
 
-        export_path = tmp_path / "symbols.h"
+        export_path = tmp_path / export_name
         exported = runner.invoke(
             cli.app,
             [
@@ -995,7 +998,10 @@ class TestSymbolCli:
 
 
 class TestSymbolMcp:
-    def test_the_tools(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("export_name", ["symbols.h", "s" * 248 + ".h"])
+    def test_the_tools(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, export_name: str
+    ) -> None:
         ids = _seed(tmp_path, monkeypatch)
         path = tmp_path / "demo.elf"
         path.write_bytes(_symbol_elf())
@@ -1017,7 +1023,7 @@ class TestSymbolMcp:
         assert not failed, one
         assert one["parsed"]["counts"]["types"] == 1
 
-        export_path = tmp_path / "symbols.h"
+        export_path = tmp_path / export_name
         exported, failed = mcp_server.call_tool(
             "export_symbols", {"binary_id": ids["binary"], "path": str(export_path)}
         )

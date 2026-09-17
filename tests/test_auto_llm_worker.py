@@ -309,10 +309,11 @@ class TestSkips:
 
 
 class TestExecute:
+    @pytest.mark.parametrize("name", ["Work", "W" * 248])
     def test_an_exact_verdict_matches_and_records_the_file(
-        self, conn: sqlite3.Connection, tmp_path: Path
+        self, conn: sqlite3.Connection, tmp_path: Path, name: str
     ) -> None:
-        ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),), project_dir=str(tmp_path))
+        ids = seed_rows(conn, rows=((0x1000, name, 8, "STUB"),), project_dir=str(tmp_path))
         write_rebrew_project(tmp_path)
         engine = AutoFakeEngine(statuses=("EXACT",))
         result = _worker().run(
@@ -325,7 +326,7 @@ class TestExecute:
                 execute=True,
             )
         )
-        path = tmp_path / "src" / "NP" / "Work.c"
+        path = tmp_path / "src" / "NP" / f"{name}.c"
         assert result.status == auto_workers.WORKER_MATCHED
         assert result.verified is True
         assert result.status_after == "EXACT"

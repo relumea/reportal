@@ -744,11 +744,12 @@ class TestDeterminismAndWrite:
         assert target.is_file()
         assert not [path for path in tmp_path.iterdir() if path.name.endswith(".tmp")]
 
+    @pytest.mark.parametrize("filename", ["report.pdf", "r" * 246 + ".pdf"])
     def test_write_report_overwrites_atomically(
-        self, conn: sqlite3.Connection, tmp_path: Path
+        self, conn: sqlite3.Connection, tmp_path: Path, filename: str
     ) -> None:
         binary_id, _ = _binary(conn)
-        target = tmp_path / "report.pdf"
+        target = tmp_path / filename
         first = pdf.write_report(conn, binary_id=binary_id, path=target, generated=GENERATED)
         second = pdf.write_report(conn, binary_id=binary_id, path=target, generated="other")
         assert first["bytes"] != second["bytes"]
