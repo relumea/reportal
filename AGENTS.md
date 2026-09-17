@@ -76,10 +76,10 @@ make setup
 # Optional Cognee graph backend: uv sync --extra cognee
 
 make spa                     # Vite build + .gz siblings into assets/dist
-cd web && bun run dev
-cd web && bun run lint       # oxlint
-cd web && bun run typecheck
-cd web && bun run test:ui    # Playwright; seeds .scratch/e2e-web
+(cd web && bun run dev)
+(cd web && bun run lint)
+(cd web && bun run typecheck)
+(cd web && bun run test:ui)
 
 make run                     # build SPA, serve (PORT=8002)
 make serve                   # serve current build
