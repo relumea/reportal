@@ -8650,6 +8650,8 @@ def doctor_report(request: Request) -> Response:
             port = int(raw)
         except ValueError:
             return json_error(400, error="port must be an integer")
+    if not 0 <= port <= 65535:
+        return json_error(400, error="port must be between 0 and 65535")
     return json_response(doctor.report(port=port))
 
 

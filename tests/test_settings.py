@@ -162,6 +162,15 @@ class TestDeploymentProfile:
         with pytest.raises(ValueError, match="deployment.profile"):
             profiles.current()
 
+    def test_no_workspace(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+
+        def missing() -> Path:
+            raise _paths.WorkspaceNotFound("no workspace")
+
+        monkeypatch.setattr(profiles, "project_root", missing)
+        assert profiles.current() == profiles.PROFILE_PERSONAL
+
 
 class TestAgreement:
     """Each resolved value is the one the module that reads it resolves."""

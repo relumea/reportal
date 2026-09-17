@@ -338,6 +338,12 @@ class TestDoctorRoute:
             row["name"] for row in doctor.report()["checks"]
         }
 
+    @pytest.mark.parametrize("port", ["-1", "65536", "999999999999999999999999"])
+    def test_an_out_of_range_port_is_a_400(self, conn: sqlite3.Connection, port: str) -> None:
+        status, headers, body = wsgi_request("GET", f"/api/doctor?port={port}")
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "port must be between 0 and 65535"
+
     def test_a_non_integer_port_is_a_400(self, conn: sqlite3.Connection) -> None:
         status, headers, body = wsgi_request("GET", "/api/doctor?port=nope")
         assert status.startswith("400")
