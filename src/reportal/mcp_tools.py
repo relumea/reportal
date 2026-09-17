@@ -703,8 +703,10 @@ def _tool_get_fingerprint(arguments: dict[str, Any]) -> dict[str, Any]:
         stored = store.get_fingerprint(conn, binary_id)
         if stored is not None:
             return stored
-        path = _binary_file(conn, binary_id)
-    return _run_engine(lambda: _engine().fingerprint(path))
+    raise ToolError(
+        "no-artifact",
+        f"no fingerprint for binary {binary_id}; call the run_fingerprint tool first",
+    )
 
 
 def _tool_get_imports(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5954,8 +5956,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_fingerprint",
-            "Return a binary's stored fingerprint, else compute one live through"
-            " rebrew without storing it.",
+            "Return a binary's stored fingerprint; no-artifact until run_fingerprint stores one."
+            " Never runs the engine.",
             _object({"binary_id": _BINARY_ID}, ("binary_id",)),
             _READ,
             _tool_get_fingerprint,

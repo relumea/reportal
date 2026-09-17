@@ -847,6 +847,45 @@ class TestReadTools:
         assert is_error is False
         assert [tag["name"] for tag in payload["tags"]] == ["pe"]
 
+    @pytest.mark.parametrize("has_path", [False, True])
+    def test_get_fingerprint_without_stored_data_never_runs_the_engine(
+        self, conn: Any, tmp_path: Path, fake_engine: FakeEngine, has_path: bool
+    ) -> None:
+        binary_id = (
+            _seed_binary(conn, tmp_path)["binary"]
+            if has_path
+            else store.add_binary(conn, sha256="ab" * 32, name="demo.exe", size=10)
+        )
+        before = list(conn.iterdump())
+
+        payload, is_error = _call("get_fingerprint", {"binary_id": binary_id})
+
+        assert fake_engine.calls == []
+        assert is_error is True
+        assert payload["error"] == "no-artifact"
+        assert "run_fingerprint" in payload["detail"]
+        assert list(conn.iterdump()) == before
+
+    @pytest.mark.parametrize("fingerprint", [{}, {"md5": "stored"}])
+    def test_get_fingerprint_returns_stored_data_without_a_binary_file(
+        self, conn: Any, fake_engine: FakeEngine, fingerprint: dict[str, Any]
+    ) -> None:
+        binary_id = store.add_binary(conn, sha256="ab" * 32, name="demo.exe", size=10)
+        store.set_fingerprint(conn, binary_id, fingerprint)
+        before = list(conn.iterdump())
+
+        payload, is_error = _call("get_fingerprint", {"binary_id": binary_id})
+
+        assert is_error is False
+        assert payload == fingerprint
+        assert fake_engine.calls == []
+        assert list(conn.iterdump()) == before
+
+    def test_get_fingerprint_missing_binary_is_a_structured_error(self, conn: Any) -> None:
+        payload, is_error = _call("get_fingerprint", {"binary_id": 999})
+        assert is_error is True
+        assert payload["error"] == "binary not found"
+
     def test_get_triage_without_a_scan_is_a_structured_error(
         self, conn: Any, tmp_path: Path
     ) -> None:
