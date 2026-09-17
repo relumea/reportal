@@ -11,8 +11,10 @@ and `--refine`.
 
 from pathlib import Path
 
+import pytest
 import typer
 import typer.main
+from typer.testing import CliRunner
 
 from reportal import cli
 
@@ -138,6 +140,23 @@ def check_docs(app: typer.Typer, doc: str) -> list[str]:
 
     walk(command, ())
     return problems
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        registered.name or registered.callback.__name__.replace("_", "-")
+        for registered in cli.app.registered_commands
+        if registered.callback is not None
+    ],
+)
+def test_every_command_help_is_pipeable(command: str) -> None:
+    result = CliRunner().invoke(cli.app, [command, "--help"], env={"NO_COLOR": "1", "TERM": "dumb"})
+    assert result.exit_code == 0, result.output
+    assert "Usage:" in result.stdout
+    assert "--help" in result.stdout
+    assert "\x1b" not in result.stdout
+    assert result.stderr == ""
 
 
 def test_every_command_is_documented_with_every_option() -> None:

@@ -383,7 +383,7 @@ def _require_confirmation(
         _fail("confirmation required; pass --yes", json_output)
     if preamble is not None:
         console.print(preamble)
-    if not typer.confirm(prompt, default=False):
+    if not typer.confirm(prompt, default=False, err=True):
         console.print("[red]aborted[/red]")
         raise typer.Exit(EXIT_DECLINED)
 
@@ -502,8 +502,8 @@ def init(
 
 @app.command("backup")
 def backup_command(
-    output: Path = typer.Option(
-        Path(""),
+    output: Path | None = typer.Option(
+        None,
         "--output",
         "-o",
         help="Where to write the archive; a dated file under ../reportal-backups by default",
@@ -518,7 +518,7 @@ def backup_command(
     lets a restore into a different directory rewrite the stored binary paths.
     """
     try:
-        result = backup.create(output=Path(output).expanduser() if str(output) else None)
+        result = backup.create(output=output)
     except backup.BackupError as exc:
         _fail(f"{exc.code}: {exc.detail}", json_output)
     manifest = result["manifest"]

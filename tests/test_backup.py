@@ -449,6 +449,17 @@ class TestManifest:
 
 
 class TestCli:
+    def test_backup_uses_the_default_destination(self, tmp_path: Path, monkeypatch: Any) -> None:
+        source = _workspace(tmp_path / "one")
+        monkeypatch.chdir(source)
+        made = runner.invoke(cli.app, ["backup", "--json"])
+        assert made.exit_code == 0, made.output
+        payload = json.loads(made.stdout)
+        archive = Path(payload["path"])
+        assert archive.parent == tmp_path / "reportal-backups"
+        assert archive.is_file()
+        assert payload["manifest"]["counts"]["binaries"] == 1
+
     def test_backup_then_restore_round_trips(self, tmp_path: Path, monkeypatch: Any) -> None:
         source = _workspace(tmp_path / "one")
         monkeypatch.chdir(source)
@@ -491,7 +502,9 @@ class TestCli:
         monkeypatch.chdir(target)
         declined = runner.invoke(cli.app, ["restore", str(archive)], input="n\n")
         assert declined.exit_code == 1
-        assert "aborted" in declined.output
+        assert "aborted" in declined.stderr
+        assert "Continue?" in declined.stderr
+        assert "Continue?" not in declined.stdout
         assert not (target / "reportal.db").exists()
 
     def test_restore_json_still_needs_yes(self, tmp_path: Path, monkeypatch: Any) -> None:
