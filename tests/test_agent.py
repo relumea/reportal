@@ -227,6 +227,78 @@ class TestRuns:
         assert [row["body"] for row in comments] == ["from the agent"]
         assert finished["pending"] is None
 
+    def test_a_second_confirm_while_the_first_runs_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A double-click must not run a destructive tool twice."""
+        ids = _seed(tmp_path, monkeypatch)
+        client = ScriptedAgentClient(
+            [
+                {
+                    "tool_calls": [
+                        _call(
+                            "add_comment",
+                            json.dumps(
+                                {
+                                    "scope_kind": "function",
+                                    "scope_id": ids["function"],
+                                    "body": "from the agent",
+                                }
+                            ),
+                        )
+                    ]
+                },
+                {"content": "commented"},
+            ]
+        )
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            _journaled(
+                conn,
+                lambda conn, log: agent.start(
+                    conn,
+                    log,
+                    conversation_id=ids["conversation"],
+                    content="comment on it",
+                    client=client,
+                ),
+            )
+            nested: list[BaseException] = []
+            real_execute = agent._execute
+
+            def claim_then_execute(name: str, arguments: Any) -> tuple[str, bool]:
+                try:
+                    _journaled(
+                        conn,
+                        lambda conn, log: agent.confirm(
+                            conn,
+                            log,
+                            conversation_id=ids["conversation"],
+                            approve=True,
+                            client=client,
+                        ),
+                    )
+                except agent.NotWaitingError as exc:
+                    nested.append(exc)
+                else:  # pragma: no cover - the assertion is the point
+                    nested.append(AssertionError("a claimed confirm must refuse a second one"))
+                return real_execute(name, arguments)
+
+            monkeypatch.setattr(agent, "_execute", claim_then_execute)
+            finished = _journaled(
+                conn,
+                lambda conn, log: agent.confirm(
+                    conn,
+                    log,
+                    conversation_id=ids["conversation"],
+                    approve=True,
+                    client=client,
+                ),
+            )
+            comments = store.list_comments(conn, scope_kind="function", scope_id=ids["function"])
+        assert len(nested) == 1 and isinstance(nested[0], agent.NotWaitingError)
+        assert finished["status"] == agent.STATUS_COMPLETED
+        assert [row["body"] for row in comments] == ["from the agent"]
+
     def test_a_rejected_call_is_fed_back_and_the_run_continues(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

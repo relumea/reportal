@@ -598,6 +598,10 @@ def submit(
 ) -> dict[str, Any]:
     """Queue one job and return it; the caller decides whether to run it.
 
+    A second submit of the same kind, binary and params while a matching job is
+    still queued returns that row instead of inserting another: metered kinds
+    (``ai-enrich``) and writers must not run twice for one double-click.
+
     Raises :class:`KeyError` for an unknown binary, :class:`ValueError` for an
     unknown kind, for a parameter a kind does not take, for a parameter a kind
     needs and for a queue that is already at :data:`MAX_QUEUED_JOBS`.
@@ -653,13 +657,29 @@ def submit(
         if ids is not None and (not isinstance(ids, list) or not all(_is_int(v) for v in ids)):
             raise ValueError("function_ids must be a list of function ids")
     ensure_schema(conn)
+    # Stable encoding so a double-click that rebuilds the same params map still
+    # matches the queued row; without sort_keys, insertion order alone would
+    # make every retry look new.
+    params_json = json.dumps(resolved, sort_keys=True)
+    # A second submit of the same kind/binary/params while the first is still
+    # queued returns that row: ai-enrich and match jobs meter and write, and a
+    # double-click must not queue a second run of the same work.
+    existing = conn.execute(
+        f"SELECT id FROM {TABLE} WHERE status = ? AND kind = ? AND binary_id = ?"
+        " AND params_json = ? ORDER BY id LIMIT 1",
+        (STATUS_QUEUED, kind, binary_id, params_json),
+    ).fetchone()
+    if existing is not None:
+        job = get_job(conn, int(existing["id"]))
+        assert job is not None, "the row was just selected"
+        return job
     queued = count_jobs(conn, status=STATUS_QUEUED)
     if queued >= MAX_QUEUED_JOBS:
         raise ValueError(f"the queue is full: {queued} jobs are waiting")
     cur = conn.execute(
         f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
         " params_json, created_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?)",
-        (kind, binary_id, STATUS_QUEUED, "queued", json.dumps(resolved), store.now()),
+        (kind, binary_id, STATUS_QUEUED, "queued", params_json, store.now()),
     )
     _prune(conn)
     conn.commit()

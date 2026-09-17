@@ -10665,7 +10665,9 @@ def set_organisation_plan(
 
     This is the operator path (a grant, a migration, a support fix), not the
     customer one: a self-serve upgrade goes through checkout so there is a
-    payment behind it.
+    payment behind it.  Setting the plan the organisation already holds is a
+    no-op: a double-click must not wipe the open period's usage and hand back a
+    fresh allowance.
     """
     refused = _refuse_unless_tenant_admin(request)
     if refused is not None:
@@ -10677,6 +10679,8 @@ def set_organisation_plan(
         found = _organisation_or_404(conn, organisation_id)
         if isinstance(found, Response):
             return found
+        if metering.organisation_plan(conn, organisation_id).id == plan_id:
+            return json_response(metering.usage_summary(conn, organisation_id))
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             journal.journaled_rows(

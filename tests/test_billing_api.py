@@ -131,6 +131,32 @@ class TestPlanAssignment:
         assert status.startswith("400")
         assert json_body(b"".join(chunks), {})["error"] == "invalid plan"
 
+    def test_setting_the_same_plan_again_does_not_restart_the_period(self, portal_db: Path) -> None:
+        """A double-click must not wipe the open period's usage."""
+        organisation_id = _organisation(portal_db)
+        first_status, _, first_chunks = on_request(
+            "PUT",
+            f"/api/organisations/{organisation_id}/plan",
+            body=json.dumps({"plan_id": "team"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert first_status.startswith("200")
+        first = json_body(b"".join(first_chunks), {})
+        started = first["period_started_at"]
+        assert started
+        assert first.get("journal_action")
+
+        again_status, _, again_chunks = on_request(
+            "PUT",
+            f"/api/organisations/{organisation_id}/plan",
+            body=json.dumps({"plan_id": "team"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert again_status.startswith("200")
+        again = json_body(b"".join(again_chunks), {})
+        assert again["period_started_at"] == started
+        assert again.get("journal_action") is None
+
 
 class TestCheckoutRoute:
     """What a self-serve upgrade answers before any provider is configured."""

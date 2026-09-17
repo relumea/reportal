@@ -174,6 +174,30 @@ class TestSubmit:
         assert stored is not None
         assert stored["params"] == {"domain": behavior.BEHAVIOR_DOMAINS[0]}
 
+    def test_a_second_submit_of_the_same_work_reuses_the_queued_row(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        """A double-click must not queue a second metered or writing run."""
+        binary_id = _binary(conn, tmp_path)
+        first = jobs.submit(conn, kind="composition", binary_id=binary_id)
+        second = jobs.submit(conn, kind="composition", binary_id=binary_id)
+
+        assert second["id"] == first["id"]
+        rows, total = jobs.list_jobs(conn, status=jobs.STATUS_QUEUED, binary_id=binary_id)
+        assert total == 1
+        assert rows[0]["id"] == first["id"]
+
+    def test_a_submit_after_the_first_finishes_queues_a_new_row(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        first = jobs.submit(conn, kind="composition", binary_id=binary_id)
+        jobs.run_pending(conn, limit=1)
+        again = jobs.submit(conn, kind="composition", binary_id=binary_id)
+
+        assert again["id"] != first["id"]
+        assert again["status"] == jobs.STATUS_QUEUED
+
 
 class TestRun:
     def test_running_a_job_records_its_result(
@@ -190,8 +214,12 @@ class TestRun:
         assert finished[0]["finished_at"]
 
     def test_a_queued_job_runs_oldest_first(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
-        first = _submit(conn, tmp_path)
-        second = _submit(conn, tmp_path)
+        first = jobs.submit(
+            conn, kind="composition", binary_id=_binary(conn, tmp_path, "first.exe")
+        )
+        second = jobs.submit(
+            conn, kind="composition", binary_id=_binary(conn, tmp_path, "second.exe")
+        )
 
         finished = jobs.run_pending(conn, limit=2)
 

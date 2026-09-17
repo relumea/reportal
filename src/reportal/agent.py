@@ -490,13 +490,29 @@ def confirm(
     A rejection is fed back to the model as a refused tool result, so the run
     continues rather than failing.  Raises :class:`NotWaitingError` when the run
     awaits no confirmation.
+
+    The waiting slot is claimed (status and pending cleared) before the tool
+    runs, so a second confirm that arrives while the first is still inside the
+    tool loses the claim rather than running a destructive write twice.
     """
     run = resolve_run(conn, conversation_id, run_id)
     if run["status"] != STATUS_WAITING or not run["pending"]:
         raise NotWaitingError(f"run {run['id']} awaits no confirmation")
     conversation_id = int(run["conversation_id"])
-    call = run["pending"]
-    messages: list[Any] = list(_stored_messages(conn, int(run["id"])))
+    run_id = int(run["id"])
+    call = dict(run["pending"])
+    # Claim is the UPDATE predicate, not a prior read: a double-click while the
+    # first confirm is still in ``_execute`` must not also run the tool.
+    claimed = conn.execute(
+        f"UPDATE {RUN_TABLE} SET status = ?, pending_json = '',"
+        " tool_calls = tool_calls + 1, updated_at = ?"
+        " WHERE id = ? AND status = ?",
+        (STATUS_RUNNING, store.now(), run_id, STATUS_WAITING),
+    )
+    conn.commit()
+    if claimed.rowcount == 0:
+        raise NotWaitingError(f"run {run_id} awaits no confirmation")
+    messages: list[Any] = list(_stored_messages(conn, run_id))
     if approve:
         result, _ = _execute(str(call["name"]), call.get("arguments") or {})
         detail = {"tool": call["name"], "arguments": call.get("arguments") or {}, "approved": True}
@@ -507,21 +523,23 @@ def confirm(
         detail = {"tool": call["name"], "arguments": call.get("arguments") or {}, "approved": False}
     messages.append(_tool_message(call, result))
     detail["result"] = result
+    # Re-read after the claim so events append to the live row (tool_calls and
+    # pending already moved); a cancel that landed during the tool still wins
+    # inside ``_store_state`` when status would return to running.
+    run = get_run(conn, run_id)
     state = _event(run, EVENT_TOOL_REJECTED if not approve else EVENT_TOOL_CALL, detail)
     _store_state(
         conn,
-        int(run["id"]),
+        run_id,
         status=STATUS_RUNNING,
-        tool_calls=int(run["tool_calls"]) + 1,
         events=state["events"],
         messages=messages,
-        clear_pending=True,
     )
     return _drive(
         conn,
         log,
         conversation_id=conversation_id,
-        run_id=int(run["id"]),
+        run_id=run_id,
         messages=messages,
         client=client,
     )
