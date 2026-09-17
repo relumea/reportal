@@ -613,7 +613,7 @@ def submit(
     """Queue one job and return it; the caller decides whether to run it.
 
     A second submit of the same kind, binary and params while a matching job is
-    still queued returns that row instead of inserting another: metered kinds
+    queued or running returns that row instead of inserting another: metered kinds
     (``ai-enrich``) and writers must not run twice for one double-click.
     *submitted_by* names who queued it (and the stable id behind the name),
     so the worker thread that later runs it records the submitter's identity
@@ -679,38 +679,38 @@ def submit(
     # matches the queued row; without sort_keys, insertion order alone would
     # make every retry look new.
     params_json = json.dumps(resolved, sort_keys=True)
-    # A second submit of the same kind/binary/params while the first is still
-    # queued returns that row: ai-enrich and match jobs meter and write, and a
-    # double-click must not queue a second run of the same work.
-    existing = conn.execute(
-        f"SELECT id FROM {TABLE} WHERE status = ? AND kind = ? AND binary_id = ?"
-        " AND params_json = ? ORDER BY id LIMIT 1",
-        (STATUS_QUEUED, kind, binary_id, params_json),
-    ).fetchone()
-    if existing is not None:
-        job = get_job(conn, int(existing["id"]))
-        assert job is not None, "the row was just selected"
-        return job
-    queued = count_jobs(conn, status=STATUS_QUEUED)
-    if queued >= MAX_QUEUED_JOBS:
-        raise ValueError(f"the queue is full: {queued} jobs are waiting")
-    cur = conn.execute(
-        f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
-        " params_json, created_at, submitted_by, submitted_by_user_id)"
-        " VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?)",
-        (
-            kind,
-            binary_id,
-            STATUS_QUEUED,
-            "queued",
-            params_json,
-            store.now(),
-            submitted_by,
-            submitted_by_user_id,
-        ),
-    )
-    _prune(conn)
-    conn.commit()
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        existing = conn.execute(
+            f"SELECT * FROM {TABLE} WHERE status IN (?, ?) AND kind = ? AND binary_id = ?"
+            " AND params_json = ? ORDER BY id LIMIT 1",
+            (*LIVE_STATUSES, kind, binary_id, params_json),
+        ).fetchone()
+        if existing is not None:
+            return _row(existing)
+        queued = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM {TABLE} WHERE status = ?", (STATUS_QUEUED,)
+            ).fetchone()[0]
+        )
+        if queued >= MAX_QUEUED_JOBS:
+            raise ValueError(f"the queue is full: {queued} jobs are waiting")
+        cur = conn.execute(
+            f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
+            " params_json, created_at, submitted_by, submitted_by_user_id)"
+            " VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?)",
+            (
+                kind,
+                binary_id,
+                STATUS_QUEUED,
+                "queued",
+                params_json,
+                store.now(),
+                submitted_by,
+                submitted_by_user_id,
+            ),
+        )
+        _prune(conn)
     job = get_job(conn, int(cur.lastrowid or 0))
     assert job is not None, "the row was just inserted"
     return job

@@ -6,7 +6,9 @@ import contextlib
 import json
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 
 import pytest
@@ -186,6 +188,64 @@ class TestSubmit:
         rows, total = jobs.list_jobs(conn, status=jobs.STATUS_QUEUED, binary_id=binary_id)
         assert total == 1
         assert rows[0]["id"] == first["id"]
+
+    def test_a_second_submit_reuses_a_running_job(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        first = jobs.submit(conn, kind="ai-enrich", binary_id=binary_id)
+        claimed = jobs._claim(conn)
+        assert claimed is not None
+
+        second = jobs.submit(conn, kind="ai-enrich", binary_id=binary_id)
+
+        assert second == claimed
+        assert second["id"] == first["id"]
+        assert jobs.count_jobs(conn) == 1
+        assert jobs.count_jobs(conn, status=jobs.STATUS_QUEUED) == 0
+
+    def test_concurrent_submits_reuse_one_job(
+        self,
+        conn: sqlite3.Connection,
+        portal_db: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        jobs.ensure_schema(conn)
+        ready = Barrier(2, timeout=10)
+        ensure_schema = jobs.ensure_schema
+        synchronized: set[sqlite3.Connection] = set()
+
+        def synchronized_schema(connection: sqlite3.Connection) -> None:
+            ensure_schema(connection)
+            if connection not in synchronized:
+                synchronized.add(connection)
+                ready.wait()
+
+        def submit() -> dict[str, Any]:
+            with contextlib.closing(store.connect(portal_db)) as connection:
+                return jobs.submit(connection, kind="ai-enrich", binary_id=binary_id)
+
+        monkeypatch.setattr(jobs, "ensure_schema", synchronized_schema)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(submit)
+            second = pool.submit(submit)
+            assert first.result(timeout=15)["id"] == second.result(timeout=15)["id"]
+        monkeypatch.setattr(jobs, "ensure_schema", ensure_schema)
+        assert jobs.count_jobs(conn) == 1
+
+    def test_a_duplicate_is_reused_even_when_the_queue_is_full(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(jobs, "MAX_QUEUED_JOBS", 1)
+        first = _submit(conn, tmp_path)
+
+        assert jobs.submit(conn, kind="composition", binary_id=first["binary_id"]) == first
+        with pytest.raises(ValueError, match="queue is full"):
+            jobs.submit(conn, kind="report", binary_id=first["binary_id"])
+        assert not conn.in_transaction
+        assert jobs.count_jobs(conn) == 1
 
     def test_a_submit_after_the_first_finishes_queues_a_new_row(
         self, conn: sqlite3.Connection, tmp_path: Path
