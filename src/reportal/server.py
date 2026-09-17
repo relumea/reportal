@@ -30,6 +30,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
+from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from reportal import (
@@ -128,7 +129,7 @@ def _is_mcp_path(path: str) -> bool:
     return path == MCP_PATH or path.startswith(MCP_PATH + "/")
 
 
-app.add_route(MCP_PATH, _McpHttpApp(), methods=["GET", "POST", "DELETE"])
+app.router.routes.append(Route(MCP_PATH, _McpHttpApp(), methods=["GET", "POST", "DELETE"]))
 
 # Loopback hostnames accepted by the Host-header guard.  The guard defeats DNS
 # rebinding (an attacker's domain resolving to 127.0.0.1) on loopback binds; a

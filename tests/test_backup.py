@@ -308,15 +308,18 @@ class TestRestore:
         rel = "binaries/relative.exe"
         (root / rel).write_bytes(b"MZ" + b"\x00" * 30)
         with contextlib.closing(store.connect(root / "reportal.db")) as conn:
-            store.add_binary(conn, sha256="dd" * 32, name="relative.exe", path=rel, size=32)
+            binary_id = store.add_binary(
+                conn, sha256="dd" * 32, name="relative.exe", path=rel, size=32
+            )
         archive = Path(backup.create(workspace=root, output=tmp_path / "rel.tar.gz")["path"])
         target = tmp_path / "two"
         target.mkdir()
         result = backup.restore(archive, workspace=target)
-        assert result["rewritten"] >= 1
+        assert result["rewritten"] == 2
+        assert result["external"] == 0
         paths = _paths(target / "reportal.db")
-        assert any(path.endswith("binaries/relative.exe") for path in paths.values())
-        assert all(Path(path).is_absolute() for path in paths.values() if "relative" in path)
+        assert paths[binary_id] == str(target.resolve() / rel)
+        assert Path(paths[binary_id]).read_bytes() == b"MZ" + b"\x00" * 30
 
     def test_an_existing_workspace_needs_overwrite(self, tmp_path: Path) -> None:
         source = _workspace(tmp_path / "one")

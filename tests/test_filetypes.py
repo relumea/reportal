@@ -561,7 +561,9 @@ class TestRunFiletype:
         assert ENTRY_BYTES_NOTE in payload["notes"]
         analysis_id = store.latest_analysis_for_binary(conn, binary_id)
         assert store.get_scan(conn, analysis_id or 0, store.SCAN_KIND_FILETYPE) == payload
-        assert store.get_binary(conn, binary_id)["language"] == ""
+        binary = store.get_binary(conn, binary_id)
+        assert binary is not None
+        assert binary["language"] == ""
 
     def test_a_runtime_match_stamps_the_binary_language(
         self, conn: sqlite3.Connection, tmp_path: Path
@@ -570,8 +572,10 @@ class TestRunFiletype:
         filetypes.run_filetype(
             conn, binary_id=binary_id, evidence=_evidence(sections=[_section(".rustc")])
         )
-        assert store.get_binary(conn, binary_id)["language"] == "Rust"
-        assert store.get_binary(conn, binary_id)["compiler"] == ""
+        binary = store.get_binary(conn, binary_id)
+        assert binary is not None
+        assert binary["language"] == "Rust"
+        assert binary["compiler"] == ""
 
     def test_a_toolchain_match_stamps_the_binary_compiler(
         self, conn: sqlite3.Connection, tmp_path: Path
@@ -582,7 +586,9 @@ class TestRunFiletype:
             binary_id=binary_id,
             evidence=_evidence(rich_header={"present": True}),
         )
-        assert store.get_binary(conn, binary_id)["compiler"] == "Microsoft Visual C++"
+        binary = store.get_binary(conn, binary_id)
+        assert binary is not None
+        assert binary["compiler"] == "Microsoft Visual C++"
 
     def test_unknown_binary_raises_keyerror(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(KeyError):

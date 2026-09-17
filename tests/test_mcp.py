@@ -3048,6 +3048,7 @@ class TestMemoryEventStore:
             stream_id = await store.replay_events_after(first, send)
             assert stream_id == "a"
             assert [item.event_id for item in replayed] == [second]
+            assert isinstance(replayed[0].message, types.JSONRPCNotification)
             assert replayed[0].message.method == "notifications/message"
 
         anyio.run(run)

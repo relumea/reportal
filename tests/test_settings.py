@@ -18,7 +18,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import _paths, auth, cli, doctor, external, graph_backends, llm, settings
+from reportal import _paths, auth, cli, doctor, external, graph_backends, llm, profiles, settings
 
 runner = CliRunner()
 
@@ -132,6 +132,69 @@ class TestAgreement:
             problem["where"] == "REPORTAL_SANDBOX" and "ignored" in problem["problem"]
             for problem in problems
         )
+
+    @pytest.mark.parametrize(
+        ("configured", "override", "expected", "origin"),
+        [
+            ("", "", "personal", settings.ORIGIN_DEFAULT),
+            ('[deployment]\nprofile = "saas"\n', "", "saas", settings.ORIGIN_WORKSPACE),
+            (
+                '[deployment]\nprofile = "personal"\n',
+                " SAAS ",
+                "saas",
+                settings.ORIGIN_ENVIRONMENT,
+            ),
+            (
+                '[deployment]\nprofile = "saas"\n',
+                "personal",
+                "personal",
+                settings.ORIGIN_ENVIRONMENT,
+            ),
+        ],
+    )
+    def test_deployment_profile_controls_auth(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        configured: str,
+        override: str,
+        expected: str,
+        origin: str,
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, configured)
+        monkeypatch.setenv("REPORTAL_PROFILE", override)
+        monkeypatch.setenv("REPORTAL_AUTH", "off")
+        row = _row("deployment.profile")
+        assert row["value"] == expected
+        assert row["origin"] == origin
+        assert profiles.current() == expected
+        assert profiles.is_saas() is (expected == "saas")
+        assert auth.required() is (expected == "saas")
+
+    @pytest.mark.parametrize(
+        ("configured", "override", "message"),
+        [
+            ("", "saaz", "unknown deployment profile"),
+            ('[deployment]\nprofile = "saaz"\n', "", "unknown deployment profile"),
+            ("[deployment]\nprofile = true\n", "", "deployment profile must be a string"),
+            ('deployment = "saas"\n', "", "deployment must be a table"),
+        ],
+    )
+    def test_invalid_deployment_profile_cannot_disable_auth(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        configured: str,
+        override: str,
+        message: str,
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, configured)
+        monkeypatch.setenv("REPORTAL_PROFILE", override)
+        monkeypatch.setenv("REPORTAL_AUTH", "off")
+        with pytest.raises(ValueError, match=message):
+            profiles.current()
+        with pytest.raises(ValueError, match=message):
+            auth.required()
 
     def test_the_job_pool_reads_its_falsey_value(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
