@@ -247,28 +247,37 @@ class TestCreate:
 
 class TestRestore:
     @pytest.mark.parametrize("relative", [False, True])
-    def test_symbol_files_survive_workspace_loss(self, tmp_path: Path, relative: bool) -> None:
+    def test_symbol_files_survive_instance_loss(self, tmp_path: Path, relative: bool) -> None:
         source = _workspace(tmp_path / "one")
         data = b"debug symbols"
         digest = symbols.digest(data)
-        stored = source / symbols.SYMBOLS_DIR / digest[:2] / digest
+        local = Path(symbols.SYMBOLS_DIR) / digest[:2] / digest
+        stored = source / local
         stored.parent.mkdir(parents=True)
         stored.write_bytes(data)
-        path = str(stored.relative_to(source) if relative else stored)
         with contextlib.closing(store.connect(source / "reportal.db")) as conn:
-            log = journal.Journal(conn, "symbol-import")
-            symbols.import_symbols(
-                conn, log, binary_id=1, data=data, parsed={"kind": "pdb"}, path=path, apply=False
-            )
+            binary_id = store.list_binaries(conn)[0]["id"]
+            with journal.journaled(conn, journal.new_action()) as log:
+                symbols.import_symbols(
+                    conn,
+                    log,
+                    binary_id=binary_id,
+                    data=data,
+                    parsed={"kind": "pdb", "symbols": [], "types": []},
+                    path=str(local if relative else stored),
+                    apply=False,
+                )
         archive = Path(backup.create(workspace=source, output=tmp_path / "symbols.tar.gz")["path"])
-        assert str(stored.relative_to(source)) in _names(archive)
+        assert local.as_posix() in _names(archive)
+        assert backup.describe(archive)["counts"]["symbols"] == 1
         stored.unlink()
         target = tmp_path / "two"
         backup.restore(archive, workspace=target)
         with contextlib.closing(store.connect(target / "reportal.db")) as conn:
-            restored = symbols.get_file(conn, binary_id=1)
-        assert restored["path"] == str(target / stored.relative_to(source))
+            restored = symbols.get_file(conn, binary_id=binary_id)
+        assert restored["path"] == str(target / local)
         assert Path(restored["path"]).read_bytes() == data
+        assert restored["sha256"] == digest
 
     def test_a_round_trip_into_another_directory(self, tmp_path: Path) -> None:
         source = _workspace(tmp_path / "one")

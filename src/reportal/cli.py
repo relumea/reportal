@@ -510,7 +510,7 @@ def backup_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Write the whole workspace (database, binaries, reports) as one archive.
+    """Write the workspace database, binaries, symbols and reports as one archive.
 
     The database is copied through SQLite's own backup API after its WAL is
     checkpointed, so the archive holds one consistent snapshot; the manifest
@@ -592,10 +592,10 @@ def restore_command(
         f" ({result['members']} file(s))"
     )
     if result["rewritten"]:
-        console.print(f"  rewrote {result['rewritten']} stored binary path(s) to the new root")
+        console.print(f"  rewrote {result['rewritten']} stored file path(s) to the new root")
     if result["external"]:
         console.print(
-            f"  [yellow]{result['external']} stored binary path(s) live outside the archived"
+            f"  [yellow]{result['external']} stored file path(s) live outside the archived"
             " workspace and were left where they point[/yellow]"
         )
 

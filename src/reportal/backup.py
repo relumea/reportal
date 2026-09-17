@@ -211,6 +211,9 @@ def create(
         "counts": {
             "binaries": sum(1 for name, _path in members if name.startswith(f"{BINARIES_DIR}/")),
             "reports": sum(1 for name, _path in members if name.startswith(f"{REPORTS_DIR}/")),
+            "symbols": sum(
+                1 for name, _path in members if name.startswith(f"{symbols.SYMBOLS_DIR}/")
+            ),
         },
     }
     try:
