@@ -151,6 +151,43 @@ class TestRoute:
         assert payload["generated_at"]
         assert payload["job"]["status"] == jobs.STATUS_DONE
 
+    @pytest.mark.parametrize("reader", ["api", "cli"])
+    @pytest.mark.parametrize("replacement", [None, "queued", "cancelled"])
+    @pytest.mark.parametrize("exists", [False, True])
+    def test_pdf_metadata_is_independent_of_the_latest_job(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        workspace: Path,
+        reader: str,
+        replacement: str | None,
+        exists: bool,
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        rendered = jobs.render_pdf(conn, binary_id, {}) if exists else None
+        job = None
+        if replacement is not None:
+            job = jobs.submit(conn, kind="report-pdf", binary_id=binary_id)
+            if replacement == "cancelled":
+                jobs.cancel(conn, job["id"])
+
+        if reader == "api":
+            status, payload = _get(f"/api/binaries/{binary_id}/report/pdf/status")
+            assert status.startswith("200")
+        else:
+            result = runner.invoke(cli.app, ["report-pdf", str(binary_id), "--status", "--json"])
+            assert result.exit_code == 0, result.exception
+            payload = json.loads(result.stdout)
+
+        assert payload["exists"] is exists
+        assert payload["pages"] == (rendered["pages"] if rendered else 0)
+        assert payload["bytes"] == (rendered["bytes"] if rendered else 0)
+        if job is None:
+            assert payload["job"] is None
+        else:
+            assert payload["job"]["id"] == job["id"]
+            assert payload["job"]["status"] == replacement
+
     def test_the_status_route_of_an_unknown_binary_is_404(self, conn: sqlite3.Connection) -> None:
         status, payload = _get("/api/binaries/4242/report/pdf/status")
 

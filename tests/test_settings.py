@@ -98,6 +98,71 @@ class TestSurface:
             assert settings.BY_NAME[name].env == plans.price_env_name(plan.id)
 
 
+class TestDeploymentProfile:
+    @pytest.mark.parametrize("value", ["personal", "saas", " SAAS "])
+    def test_workspace_profile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        from reportal import profiles
+
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+        _workspace(tmp_path, monkeypatch, f'[deployment]\nprofile = "{value}"\n')
+
+        assert profiles.current() == value.strip().lower()
+        assert profiles.is_saas() is (value.strip().lower() == "saas")
+        assert _row("deployment.profile")["value"] == profiles.current()
+
+    def test_environment_overrides_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import profiles
+
+        _workspace(tmp_path, monkeypatch, '[deployment]\nprofile = "personal"\n')
+        monkeypatch.setenv(profiles.PROFILE_ENV, " SAAS ")
+
+        assert profiles.is_saas()
+        assert auth.required()
+
+    def test_personal_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from reportal import profiles
+
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+        _workspace(tmp_path, monkeypatch)
+
+        assert profiles.current() == profiles.PROFILE_PERSONAL
+        assert not profiles.is_saas()
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '[deployment]\nprofile = "sass"\n',
+            "[deployment]\nprofile = true\n",
+            'deployment = "saas"\n',
+        ],
+    )
+    def test_invalid_profile_is_not_personal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+    ) -> None:
+        from reportal import profiles
+
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+        _workspace(tmp_path, monkeypatch, body)
+
+        with pytest.raises(ValueError, match="deployment"):
+            profiles.current()
+
+    def test_invalid_environment_is_not_personal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import profiles
+
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(profiles.PROFILE_ENV, "sass")
+
+        with pytest.raises(ValueError, match="deployment.profile"):
+            profiles.current()
+
+
 class TestAgreement:
     """Each resolved value is the one the module that reads it resolves."""
 

@@ -11979,7 +11979,7 @@ def report_pdf(
                 "exists": target.is_file(),
                 "path": str(target),
                 "bytes": target.stat().st_size if target.is_file() else 0,
-                "pages": (job or {}).get("result", {}).get("pages", 0) if job else 0,
+                "pages": pdf.page_count(target.read_bytes()) if target.is_file() else 0,
                 "job": job,
             }
             if json_output:

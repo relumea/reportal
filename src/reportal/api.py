@@ -1578,7 +1578,7 @@ def get_binary_report_pdf_status(binary_id: int) -> Response:
             "exists": exists,
             "path": str(target),
             "bytes": target.stat().st_size if exists else 0,
-            "pages": (job or {}).get("result", {}).get("pages", 0) if exists and job else 0,
+            "pages": pdf.page_count(target.read_bytes()) if exists else 0,
             "generated_at": datetime.fromtimestamp(target.stat().st_mtime, UTC).isoformat(
                 timespec="seconds"
             )
