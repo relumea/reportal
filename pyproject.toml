@@ -149,9 +149,9 @@ extend-exclude = [".scratch", "docs"]
 # passes them (RSE's two paren-on-raise hits were autofixed when added).
 select = [
     "E", "F", "W", "I", "UP", "B", "SIM",
-    "A", "DTZ", "G", "N", "PGH", "TID", "RUF100",
+    "A", "DTZ", "G", "N", "PGH", "TID", "RUF006", "RUF100",
     "T10", "C4", "RET", "PIE", "ISC", "FURB", "T20",
-    "ASYNC", "LOG", "FA", "FLY", "SLOT", "PYI", "INT", "YTT", "RSE", "PLE",
+    "ASYNC", "LOG", "FA", "FLY", "SLOT", "PYI", "INT", "YTT", "RSE", "PLE", "PLW0711",
 ]
 ignore = []
 
