@@ -3480,17 +3480,17 @@ kbd.key {
 
 .plan-card-head h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: var(--text-lg);
 }
 
 .plan-card-price {
-  font-size: 1.6rem;
+  font-size: var(--text-2xl);
   font-weight: 600;
   line-height: 1.1;
 }
 
 .plan-card-price small {
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   font-weight: 400;
   color: var(--text-muted);
 }
@@ -3505,7 +3505,7 @@ kbd.key {
 .plan-card-features li {
   padding: var(--space-1) 0;
   border-top: 1px solid var(--border);
-  font-size: 0.85rem;
+  font-size: var(--text-base);
   color: var(--text-muted);
 }
 
