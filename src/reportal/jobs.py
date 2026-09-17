@@ -806,7 +806,7 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     raw_user_id = job.get("submitted_by_user_id")
     submitter_id = int(raw_user_id) if isinstance(raw_user_id, int) else None
     submitter = str(job.get("submitted_by") or "")
-    started = time.perf_counter()
+    started = _monotonic()
     with journal.acting_as(submitter, user_id=submitter_id):
         try:
             scan_kind = spec.scan_kind_for(params)
@@ -835,7 +835,7 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
             payload = None
             failure = f"{type(exc).__name__}: {exc}"
             failure_exc = exc
-    duration_ms = int((time.perf_counter() - started) * 1000)
+    duration_ms = int((_monotonic() - started) * 1000)
     status = STATUS_FAILED if failure else STATUS_DONE
     observability.record_job(failed=bool(failure), duration_ms=duration_ms)
     if failure_exc is not None:
