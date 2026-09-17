@@ -71,6 +71,7 @@ def toolchain_names() -> tuple[str, ...]:
         signature.name for signature in SIGNATURES if signature.category == CATEGORY_TOOLCHAIN
     )
 
+
 # Confidence labels a match carries, strongest first.
 CONFIDENCE_HIGH = "high"
 CONFIDENCE_MEDIUM = "medium"
