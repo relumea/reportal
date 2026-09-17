@@ -563,14 +563,6 @@ def classify_obfuscation(
     }
 
 
-def _entries(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
-    """Return the dict entries under *payload[key]*, ignoring any other shape."""
-    raw = payload.get(key)
-    if not isinstance(raw, list):
-        return []
-    return [entry for entry in raw if isinstance(entry, dict)]
-
-
 def _stored_triage(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
     """Return the binary's stored triage dossier, or None when none exists."""
     analysis_id = store.latest_analysis_for_binary(conn, binary_id)
