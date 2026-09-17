@@ -31,14 +31,9 @@ SEVERITY_WARN = "warn"
 SEVERITY_ERROR = "error"
 SEVERITIES: tuple[str, ...] = (SEVERITY_INFO, SEVERITY_WARN, SEVERITY_ERROR)
 
-# Entries `list_entries` returns when the caller names no bound, and the
-# largest bound it accepts.  A log is read as a page; the true total is what
-# tells a reader there is more.
 DEFAULT_LOG_LIMIT = 200
 MAX_LOG_LIMIT = 1000
 
-# Longest message stored.  An engine failure can carry a multi-line stderr
-# dump; the tail is dropped with an explicit ellipsis rather than stored whole.
 MAX_MESSAGE_CHARS = 2000
 
 # The table the entries live in.  It is public so a caller reverting an
@@ -56,7 +51,6 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
 CREATE INDEX IF NOT EXISTS idx_analysis_log_analysis ON {TABLE}(analysis_id);
 """
 
-# Suffix a truncated message ends with, so a reader can see text was dropped.
 TRUNCATION_MARKER = "..."
 
 
