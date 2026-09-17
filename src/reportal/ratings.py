@@ -29,7 +29,6 @@ from reportal import journal, store
 # The table the ratings live in (created on first use).
 TABLE = "artifact_ratings"
 
-# The two verdicts, and the empty one that clears a rating.
 RATINGS: tuple[str, ...] = ("up", "down")
 
 # Every stored scan kind, read from the store's own constants so a kind added
@@ -43,7 +42,6 @@ SCAN_KINDS: tuple[str, ...] = tuple(
     )
 )
 
-# Bounds on the note a rating may carry.
 MAX_NOTE_CHARS = 500
 
 # The error codes the surfaces report, shared by the API, CLI and MCP.
