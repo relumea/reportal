@@ -9425,38 +9425,45 @@ def _ingest_symbols(
         return json_error(exc.status, error=exc.error, detail=exc.detail)
     except OSError as exc:
         return json_error(500, error="write-failed", detail=str(exc))
+    # Keep the upload temporary until visibility and parse succeed, so a 404 or
+    # a refuse path cannot leave content-addressed bytes under symbols/.
+    kept = False
     try:
-        data = temp.read_bytes()
-    except OSError as exc:
-        temp.unlink(missing_ok=True)
-        return json_error(500, error="write-failed", detail=str(exc))
-    if not data:
-        temp.unlink(missing_ok=True)
-        return json_error(400, error="empty-file", detail="uploaded file is empty")
-    try:
-        parsed = symbols.parse(data, filename=str(upload.filename or ""))
-    except symbols.UnreadableSymbolError as exc:
-        temp.unlink(missing_ok=True)
-        return json_error(400, error=exc.code, detail=exc.detail)
-    target = directory / symbols.digest(data)
-    os.replace(temp, target)
-    with contextlib.closing(_open()) as conn:
-        if not _visible_binary(conn, binary_id, _caller(request) if request is not None else None):
-            return json_error(
-                404, error="binary not found", detail=f"no binary with id {binary_id}"
-            )
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            report = symbols.import_symbols(
-                conn,
-                log,
-                binary_id=binary_id,
-                data=data,
-                parsed=parsed,
-                path=str(target),
-                apply=apply,
-            )
-    return json_response(log.attach(report))
+        try:
+            data = temp.read_bytes()
+        except OSError as exc:
+            return json_error(500, error="write-failed", detail=str(exc))
+        if not data:
+            return json_error(400, error="empty-file", detail="uploaded file is empty")
+        try:
+            parsed = symbols.parse(data, filename=str(upload.filename or ""))
+        except symbols.UnreadableSymbolError as exc:
+            return json_error(400, error=exc.code, detail=exc.detail)
+        with contextlib.closing(_open()) as conn:
+            if not _visible_binary(
+                conn, binary_id, _caller(request) if request is not None else None
+            ):
+                return json_error(
+                    404, error="binary not found", detail=f"no binary with id {binary_id}"
+                )
+            target = directory / symbols.digest(data)
+            os.replace(temp, target)
+            kept = True
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                report = symbols.import_symbols(
+                    conn,
+                    log,
+                    binary_id=binary_id,
+                    data=data,
+                    parsed=parsed,
+                    path=str(target),
+                    apply=apply,
+                )
+        return json_response(log.attach(report))
+    finally:
+        if not kept:
+            temp.unlink(missing_ok=True)
 
 
 @router.get("/api/binaries/{binary_id}/symbols")

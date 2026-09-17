@@ -1078,14 +1078,16 @@ def export_prototypes(
         raise ExportExistsError(f"refusing to overwrite {target} without force")
 
     handle, temp_name = tempfile.mkstemp(dir=parent, prefix=".signatures-")
-    temp = Path(temp_name)
     try:
         with os.fdopen(handle, "wb") as stream:
             stream.write(header)
-        os.replace(temp, target)
-    except Exception:
+        os.replace(temp_name, target)
+    except BaseException:
+        # fdopen takes ownership only on success; a failed open leaves the fd.
         with contextlib.suppress(OSError):
             os.close(handle)
-        temp.unlink(missing_ok=True)
         raise
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_name)
     return {"path": str(target), "bytes": len(header), "signatures": len(signatures)}

@@ -130,6 +130,29 @@ class TestCreate:
             backup.create(workspace=root, output=root / "inside.tar.gz")
         assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
 
+    def test_snapshot_closes_source_when_target_open_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = tmp_path / "source.db"
+        store.init_db(source)
+        opened: list[sqlite3.Connection] = []
+        real_connect = sqlite3.connect
+
+        def connect(path: object, *args: object, **kwargs: object) -> sqlite3.Connection:
+            conn = real_connect(path, *args, **kwargs)  # type: ignore[arg-type]
+            opened.append(conn)
+            if len(opened) == 2:
+                conn.close()
+                raise sqlite3.OperationalError("target open failed")
+            return conn
+
+        monkeypatch.setattr(sqlite3, "connect", connect)
+        with pytest.raises(sqlite3.OperationalError, match="target open failed"):
+            backup._snapshot(source, tmp_path / "target.db")
+        assert len(opened) == 2
+        with pytest.raises(sqlite3.ProgrammingError):
+            opened[0].execute("SELECT 1")
+
     def test_a_directory_without_a_database_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(backup.BackupError) as failure:
             backup.create(workspace=tmp_path / "empty", output=tmp_path / "out.tar.gz")

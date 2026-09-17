@@ -136,11 +136,13 @@ def _checkpoint(db: Path) -> None:
 def _snapshot(source: Path, target: Path) -> None:
     """Copy one SQLite file through the backup API, never as loose bytes."""
     source_connection = sqlite3.connect(source)
-    target_connection = sqlite3.connect(target)
     try:
-        source_connection.backup(target_connection)
+        target_connection = sqlite3.connect(target)
+        try:
+            source_connection.backup(target_connection)
+        finally:
+            target_connection.close()
     finally:
-        target_connection.close()
         source_connection.close()
 
 

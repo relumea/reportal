@@ -839,6 +839,29 @@ class TestSymbolRoutes:
         assert bad_format.startswith("400")
         assert json_body(response, response_headers)["error"] == "invalid format"
 
+    def test_unknown_binary_upload_leaves_no_symbol_bytes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A 404 after a valid parse must not keep content-addressed bytes."""
+        root = tmp_path / "ws"
+        root.mkdir()
+        (root / "reportal.toml").write_text("", encoding="utf-8")
+        monkeypatch.chdir(root)
+        _seed(tmp_path, monkeypatch)
+        body, headers = _multipart(_symbol_elf(), filename="demo.elf")
+        status, response_headers, response = wsgi_request(
+            "POST", "/api/binaries/999/symbols", body=body, headers=headers
+        )
+        assert status.startswith("404"), response
+        assert json_body(response, response_headers)["error"] == "binary not found"
+        symbols_dir = root / symbols.SYMBOLS_DIR
+        leftover = (
+            [path for path in symbols_dir.rglob("*") if path.is_file()]
+            if symbols_dir.exists()
+            else []
+        )
+        assert leftover == []
+
     def test_upload_to_a_hidden_binary_is_404(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

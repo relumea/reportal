@@ -5331,7 +5331,6 @@ def _copy_stream(source: Path, target: Path) -> int:
     from reportal import api
 
     handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".download-")
-    temp = Path(temp_name)
     written = 0
     try:
         with source.open("rb") as src, os.fdopen(handle, "wb") as dst:
@@ -5341,12 +5340,15 @@ def _copy_stream(source: Path, target: Path) -> int:
                     break
                 dst.write(chunk)
                 written += len(chunk)
-        os.replace(temp, target)
-    except Exception:
+        os.replace(temp_name, target)
+    except BaseException:
+        # fdopen takes ownership only on success; a failed open leaves the fd.
         with contextlib.suppress(OSError):
             os.close(handle)
-        temp.unlink(missing_ok=True)
         raise
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_name)
     return written
 
 

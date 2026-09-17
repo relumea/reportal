@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -534,3 +535,25 @@ class TestExportPrototypes:
         target = tmp_path / "out" / "prototypes.h"
         summary = signatures.export_prototypes(conn, binary_id=binary_id, path=target)
         assert Path(summary["path"]).is_file()
+
+    def test_interrupt_during_write_removes_the_temp(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id, _ = _seeded(conn)
+        target = tmp_path / "prototypes.h"
+        real_fdopen = os.fdopen
+
+        def boom(fd: int, *args: object, **kwargs: object) -> object:
+            handle = real_fdopen(fd, *args, **kwargs)
+
+            def write(_data: object) -> int:
+                raise KeyboardInterrupt
+
+            handle.write = write  # type: ignore[method-assign]
+            return handle
+
+        monkeypatch.setattr(os, "fdopen", boom)
+        with pytest.raises(KeyboardInterrupt):
+            signatures.export_prototypes(conn, binary_id=binary_id, path=target)
+        assert list(tmp_path.glob(".signatures-*")) == []
+        assert not target.exists()
