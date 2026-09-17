@@ -170,6 +170,7 @@ export function BinariesView({
   const [extractCollection, setExtractCollection] = useState("");
   const [extractPassword, setExtractPassword] = useState("");
   const [extractResult, setExtractResult] = useState<ExtractResult | null>(null);
+  const [extractError, setExtractError] = useState<unknown>(null);
   const [uploadCollection, setUploadCollection] = useState("");
   const [uploadResult, setUploadResult] = useState<UploadBatchResult | null>(null);
   const [uploadError, setUploadError] = useState<unknown>(null);
@@ -249,10 +250,10 @@ export function BinariesView({
   };
 
   const extract = async (): Promise<void> => {
-    setUploadError(null);
+    setExtractError(null);
     setExtractResult(null);
     if (!extractTarget) {
-      setUploadError(new Error("Upload an archive first, then extract it."));
+      setExtractError(new Error("Select a stored archive above. If it is not listed, upload it first."));
       return;
     }
     setBusy("extract");
@@ -268,8 +269,9 @@ export function BinariesView({
       setExtractPassword("");
       reload();
       collectionData.reload();
+      register.reload();
     } catch (failure) {
-      setUploadError(failure);
+      setExtractError(failure);
     } finally {
       setBusy("");
     }
@@ -345,6 +347,7 @@ export function BinariesView({
       setUploadRows([]);
       if (fileRef.current) fileRef.current.value = "";
       reload();
+      register.reload();
     } catch (failure) {
       setUploadError(failure);
     } finally {
@@ -753,6 +756,7 @@ export function BinariesView({
           that is not a binary the portal can register is reported as skipped with its reason
           rather than dropped silently.
         </Muted>
+        {extractError ? <ErrorNote error={extractError} /> : null}
         {extractResult ? (
           <div className="upload-results">
             <p className="muted">

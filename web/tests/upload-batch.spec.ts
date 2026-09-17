@@ -33,10 +33,30 @@ test("a batch upload lists each file, applies its tag and reports each result", 
   await expect(panel.getByText(`Tags: ${tag}.`)).toBeVisible();
   await expect(panel.getByText("2 file(s): 0 already stored, 0 refused.")).toBeVisible();
 
+  const archive = panelByTitle(page, "Extract an archive").getByLabel("Archive", { exact: true });
+  await expect(archive.getByRole("option", { name: first, exact: true })).toHaveCount(1);
+  await archive.selectOption({ label: first });
+  await expect(archive).not.toHaveValue("");
+  const reference = panelByTitle(page, "Malware families").getByLabel("Reference binary");
+  await expect(reference.getByRole("option", { name: second, exact: true })).toHaveCount(1);
+
   // The upload list clears and the new binaries join the table.
   await expect(
     page.locator("table.data-table tbody tr").filter({ hasText: first }),
   ).toBeVisible();
+});
+
+test("extraction validation stays beside the archive controls", async ({ page }) => {
+  await page.goto("/#/binaries");
+  const upload = panelByTitle(page, "Upload binaries");
+  const extract = panelByTitle(page, "Extract an archive");
+  await extract.getByRole("button", { name: "Extract", exact: true }).click();
+  await expect(extract.getByRole("alert")).toContainText("Select a stored archive above.");
+  await expect(upload.getByRole("alert")).toHaveCount(0);
+
+  await page.locator('input[type="file"]').setInputFiles(fileUpload("queued.bin"));
+  await expect(extract.getByRole("alert")).toContainText("Select a stored archive above.");
+  await expect(upload.getByRole("alert")).toHaveCount(0);
 });
 
 test("a duplicate is reported as already stored, not as a failure", async ({ page }) => {
