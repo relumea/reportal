@@ -670,6 +670,7 @@ def submit(
             raise ValueError(f"limit must be an integer, got {raw_limit!r}") from exc
         if not 1 <= limit <= pipeline.MAX_BATCH_LIMIT:
             raise ValueError(f"limit must be between 1 and {pipeline.MAX_BATCH_LIMIT}, got {limit}")
+        resolved["limit"] = limit
         ids = resolved.get("function_ids")
         if ids is not None and (not isinstance(ids, list) or not all(_is_int(v) for v in ids)):
             raise ValueError("function_ids must be a list of function ids")

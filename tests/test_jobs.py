@@ -486,6 +486,28 @@ class TestAiEnrichJob:
         assert finished["status"] == jobs.STATUS_DONE, finished["error"]
         assert finished["result"]["total"] == len(ids)
 
+    @pytest.mark.parametrize(
+        "params",
+        [{}, {"limit": None}, {"limit": str(pipeline.DEFAULT_BATCH_LIMIT)}],
+    )
+    def test_equivalent_limits_reuse_the_queued_job(
+        self, conn: sqlite3.Connection, tmp_path: Path, params: dict[str, Any]
+    ) -> None:
+        binary_id, _ = self._seed(conn, tmp_path)
+        job = jobs.submit(conn, kind="ai-enrich", binary_id=binary_id, params=params)
+        repeated = jobs.submit(
+            conn,
+            kind="ai-enrich",
+            binary_id=binary_id,
+            params={"limit": pipeline.DEFAULT_BATCH_LIMIT},
+        )
+
+        assert repeated["id"] == job["id"]
+        assert jobs.count_jobs(conn, status=jobs.STATUS_QUEUED) == 1
+        stored = jobs.get_job(conn, int(job["id"]))
+        assert stored is not None
+        assert stored["params"] == {"limit": pipeline.DEFAULT_BATCH_LIMIT}
+
     def test_an_out_of_range_limit_is_refused_at_submit(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:
@@ -517,7 +539,7 @@ class TestAiEnrichJob:
 
         assert status.startswith("202")
         assert payload["kind"] == "ai-enrich"
-        assert payload["params"] == {"function_ids": ids}
+        assert payload["params"] == {"function_ids": ids, "limit": pipeline.DEFAULT_BATCH_LIMIT}
 
 
 class TestCancel:
