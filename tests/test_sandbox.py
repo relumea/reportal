@@ -256,6 +256,29 @@ class TestReport:
         assert payload["status"] == sandbox.STATUS_FAILED
         assert payload["notes"], "why it failed is recorded"
 
+    def test_an_execute_exception_closes_the_run_as_failed(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn, tmp_path)
+        fake = sandbox.register_runner(_FakeRunner())
+        monkeypatch.setenv(sandbox.ENABLED_ENV, "enabled")
+        monkeypatch.setenv(sandbox.RUNNER_ENV, fake.name)
+
+        def _boom(*_args: object, **_kwargs: object) -> dict[str, Any]:
+            raise RuntimeError("runner exploded before a report")
+
+        monkeypatch.setattr(sandbox, "execute", _boom)
+        with pytest.raises(RuntimeError, match="runner exploded"):
+            sandbox.detonate_binary(conn, ids["binary"])
+
+        analysis_id = store.latest_analysis_for_binary(conn, ids["binary"])
+        assert analysis_id is not None
+        run = sandbox.latest_run(conn, analysis_id)
+        assert run is not None
+        assert run["status"] == sandbox.STATUS_FAILED
+        assert run["finished_at"] is not None
+        assert any("detonation aborted" in note for note in run["notes"])
+
     def test_a_runner_that_raises_leaves_no_scratch_behind(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -613,13 +613,17 @@ def submit(
         raise KeyError(f"no binary with id {binary_id}")
     # Validate the parameters now rather than when the job runs: a typo should
     # be a 400 on submit, not a failed job later.
+    resolved = dict(params or {})
     for name in spec.params:
         if name == "domain":
             what = "behavior" if kind == "behavior" else "hardening"
             domains = (
                 behavior.BEHAVIOR_DOMAINS if kind == "behavior" else hardening.HARDENING_DOMAINS
             )
-            _domain_of(params or {}, domains, what)
+            # Persist the defaulted domain so the stored job matches the scan
+            # that will run; submit must not leave params empty while execute
+            # silently picks domains[0].
+            resolved["domain"] = _domain_of(resolved, domains, what)
     if kind == "match":
         # The settings are the match routes' body shape, so a run queued here
         # records what the same settings would record there; a bad value, an
@@ -631,21 +635,21 @@ def submit(
                 " (uv sync --extra similarity)"
             )
         try:
-            settings = matching.MatchSettings.from_request(dict(params or {}))
+            settings = matching.MatchSettings.from_request(resolved)
             matching.resolve_scope(conn, settings)
         except matching.InvalidSettingsError as exc:
             raise ValueError(f"{exc.error}: {exc.detail}") from exc
     if kind == "ai-enrich":
         # The batch's own bounds, checked now so a typo is a 400 on submit
         # rather than a failed job later.
-        raw_limit = (params or {}).get("limit")
+        raw_limit = resolved.get("limit")
         try:
             limit = pipeline.DEFAULT_BATCH_LIMIT if raw_limit is None else int(raw_limit)
         except (TypeError, ValueError) as exc:
             raise ValueError(f"limit must be an integer, got {raw_limit!r}") from exc
         if not 1 <= limit <= pipeline.MAX_BATCH_LIMIT:
             raise ValueError(f"limit must be between 1 and {pipeline.MAX_BATCH_LIMIT}, got {limit}")
-        ids = (params or {}).get("function_ids")
+        ids = resolved.get("function_ids")
         if ids is not None and (not isinstance(ids, list) or not all(_is_int(v) for v in ids)):
             raise ValueError("function_ids must be a list of function ids")
     ensure_schema(conn)
@@ -655,7 +659,7 @@ def submit(
     cur = conn.execute(
         f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
         " params_json, created_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?)",
-        (kind, binary_id, STATUS_QUEUED, "queued", json.dumps(dict(params or {})), store.now()),
+        (kind, binary_id, STATUS_QUEUED, "queued", json.dumps(resolved), store.now()),
     )
     _prune(conn)
     conn.commit()

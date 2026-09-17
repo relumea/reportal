@@ -13,7 +13,18 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, engines, jobs, journal, mcp_tools, pipeline, similarity, store
+from reportal import (
+    auth,
+    behavior,
+    cli,
+    engines,
+    jobs,
+    journal,
+    mcp_tools,
+    pipeline,
+    similarity,
+    store,
+)
 
 HAS_SIMILARITY = similarity.available()
 requires_similarity = pytest.mark.skipif(
@@ -152,6 +163,16 @@ class TestSubmit:
         stored = jobs.get_job(conn, job["id"])
         assert stored is not None
         assert stored["params"] == {"domain": "networking"}
+
+    def test_a_missing_domain_is_persisted_as_the_default(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        job = jobs.submit(conn, kind="behavior", binary_id=_binary(conn, tmp_path), params={})
+
+        assert job["params"] == {"domain": behavior.BEHAVIOR_DOMAINS[0]}
+        stored = jobs.get_job(conn, job["id"])
+        assert stored is not None
+        assert stored["params"] == {"domain": behavior.BEHAVIOR_DOMAINS[0]}
 
 
 class TestRun:

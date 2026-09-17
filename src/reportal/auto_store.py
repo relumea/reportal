@@ -325,16 +325,25 @@ def add_auto_attempt(
     conn: sqlite3.Connection,
     *,
     task_id: int,
-    attempt: int,
     worker: str,
     status: str,
     detail: dict[str, Any],
+    attempt: int | None = None,
 ) -> int:
     """Append one attempt of a task; returns its id.
 
     Written as the attempt happens, so a run interrupted mid-batch still shows
-    the attempts it made before it died.
+    the attempts it made before it died.  ``attempt`` is a per-task sequence
+    number (unique with ``task_id``): omit it to take the next free value, which
+    is what a multi-function batch needs so two functions cannot both claim
+    attempt 1 on the same task.
     """
+    if attempt is None:
+        row = conn.execute(
+            "SELECT COALESCE(MAX(attempt), 0) + 1 AS n FROM auto_attempts WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        attempt = int(row["n"]) if row is not None else 1
     cur = conn.execute(
         "INSERT INTO auto_attempts (task_id, attempt, worker, status, detail_json, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?)",

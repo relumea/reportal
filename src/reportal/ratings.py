@@ -137,15 +137,18 @@ def normalize_kind(kind: Any) -> str:
 def require_artifact(conn: sqlite3.Connection, binary_id: int, kind: str) -> int:
     """The analysis id whose stored scan of *kind* is being rated.
 
-    Raises :class:`UnknownArtifactError` for an unknown binary or a binary with
-    no stored scan of that kind: there is nothing to have an opinion about.
+    Resolves against the binary's latest analysis only, matching the scan GET
+    routes: a newer empty analysis must not leave a stale scan rateable while
+    the live read answers 404.  Raises :class:`UnknownArtifactError` for an
+    unknown binary or a binary whose latest analysis has no stored scan of that
+    kind: there is nothing to have an opinion about.
     """
     if store.get_binary(conn, binary_id) is None:
         raise UnknownArtifactError(f"no binary with id {binary_id}")
-    for analysis in store.list_analyses(conn, binary_id=binary_id):
-        if store.get_scan(conn, int(analysis["id"]), kind) is not None:
-            return int(analysis["id"])
-    raise UnknownArtifactError(f"binary {binary_id} has no stored {kind} scan")
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None or store.get_scan(conn, analysis_id, kind) is None:
+        raise UnknownArtifactError(f"binary {binary_id} has no stored {kind} scan")
+    return analysis_id
 
 
 def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
@@ -279,13 +282,10 @@ def describe(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
     unrated artifact from one that was never produced.
     """
     ratings = {row["kind"]: row for row in list_ratings(conn, binary_id)}
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
     artifacts: list[dict[str, Any]] = []
     for kind in SCAN_KINDS:
-        stored = None
-        for analysis in store.list_analyses(conn, binary_id=binary_id):
-            stored = store.get_scan(conn, int(analysis["id"]), kind)
-            if stored is not None:
-                break
+        stored = store.get_scan(conn, analysis_id, kind) if analysis_id is not None else None
         if stored is None and kind not in ratings:
             continue
         artifacts.append({"kind": kind, "stored": stored is not None, "rating": ratings.get(kind)})

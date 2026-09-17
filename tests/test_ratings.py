@@ -99,6 +99,19 @@ class TestStore:
             with pytest.raises(ratings.UnknownArtifactError):
                 ratings.require_artifact(conn, 999, "threat")
 
+    def test_a_stale_scan_on_an_older_analysis_is_not_rateable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            store.create_analysis(conn, binary_id=ids["binary"], engine="manual")
+            with pytest.raises(ratings.UnknownArtifactError):
+                ratings.require_artifact(conn, ids["binary"], "threat")
+            described = ratings.describe(conn, ids["binary"])
+            assert all(
+                not entry["stored"] for entry in described["artifacts"] if entry["kind"] == "threat"
+            )
+
     def test_a_verdict_survives_a_scan_re_run(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

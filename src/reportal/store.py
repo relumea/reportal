@@ -496,7 +496,9 @@ CREATE INDEX IF NOT EXISTS idx_auto_runs_binary ON auto_runs(binary_id);
 CREATE INDEX IF NOT EXISTS idx_auto_tasks_run ON auto_tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_auto_tasks_parent ON auto_tasks(parent_id);
 -- Unique ``(task_id, attempt)`` replaces the plain task index and stops a
--- double-write of the same attempt number.
+-- double-write of the same attempt number.  Attempt numbers are a per-task
+-- sequence (see ``auto_store.add_auto_attempt``), not a per-function retry
+-- index, so a multi-function batch does not collide on attempt 1.
 DROP INDEX IF EXISTS idx_auto_attempts_task;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_attempts_task_attempt
     ON auto_attempts(task_id, attempt);
@@ -1574,10 +1576,12 @@ def update_analysis_status(
 
     *status* must be one of :data:`ANALYSIS_STATUSES`.  ``finished_at`` is
     stamped automatically when *status* is terminal and the caller supplied no
-    explicit timestamp.  A status that differs from the stored one appends a
-    log entry, so the log carries every transition and not only the last.  The
-    status write and that log row share one commit, so a crash cannot leave a
-    transition without its entry.
+    explicit timestamp, and cleared when *status* is non-terminal unless the
+    caller passed one: a reopen (``begin_scan``, a move back to ``pending``)
+    must not keep the previous close time beside a live status.  A status that
+    differs from the stored one appends a log entry, so the log carries every
+    transition and not only the last.  The status write and that log row share
+    one commit, so a crash cannot leave a transition without its entry.
     """
     if status not in ANALYSIS_STATUSES:
         raise ValueError(f"unknown analysis status: {status}")
@@ -1585,8 +1589,11 @@ def update_analysis_status(
     if row is None:
         return False
     previous = str(row["status"])
+    clear_finished = False
     if finished_at is None and status in TERMINAL_STATUSES:
         finished_at = now()
+    elif finished_at is None and status not in TERMINAL_STATUSES:
+        clear_finished = True
     assignments = ["status = ?"]
     params: list[Any] = [status]
     if log is not None:
@@ -1595,6 +1602,8 @@ def update_analysis_status(
     if finished_at is not None:
         assignments.append("finished_at = ?")
         params.append(finished_at)
+    elif clear_finished:
+        assignments.append("finished_at = NULL")
     params.append(analysis_id)
     # Ensure the log table exists before the status write: ``executescript``
     # commits, and must not cut the status UPDATE off from its log INSERT.

@@ -751,7 +751,9 @@ def detonate_binary(
     checked once: the workspace opt-in, an installed runner, a file on disk, and
     bounds inside the caps.  The run row is written before the sample starts and
     updated with the report after, so a reader sees a run in progress and a
-    process that dies mid-run leaves the `running` row behind.  Raises
+    process that dies mid-run leaves the `running` row behind.  An exception
+    from the runner closes the row as ``failed`` instead, so a Python failure
+    never looks like a detonation still in flight.  Raises
     :class:`SandboxError` for every refusal.
     """
     require_enabled()
@@ -791,7 +793,27 @@ def detonate_binary(
             key=run_id,
             description=f"ran binary {binary_id} in the {runner.name} sandbox",
         )
-        report = execute(stored, caps=caps, runner=runner)
+        # A process kill still leaves ``running`` (no Python frame to close the
+        # row).  A raised exception here must not: the status route would then
+        # report a perpetual in-progress detonation.
+        try:
+            report = execute(stored, caps=caps, runner=runner)
+        except Exception as exc:
+            finish_run(
+                conn,
+                run_id,
+                {
+                    "status": STATUS_FAILED,
+                    "timed_out": False,
+                    "exit_code": None,
+                    "duration_ms": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "files": [],
+                    "notes": [f"detonation aborted: {exc}"],
+                },
+            )
+            raise
         finish_run(conn, run_id, report)
         finished = get_run(conn, run_id)
     return log.attach(finished or {"id": run_id, **report})

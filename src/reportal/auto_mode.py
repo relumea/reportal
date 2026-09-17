@@ -579,10 +579,11 @@ def _run_function(
                 ],
             )
         detail = _attempt_detail(result)
+        # Sequence per task, not per-function retry index: a batch of N
+        # functions would otherwise all try to insert attempt=1.
         auto_store.add_auto_attempt(
             conn,
             task_id=task_id,
-            attempt=attempt,
             worker=params.worker,
             status=result.status,
             detail=detail,
@@ -1038,13 +1039,22 @@ def persist_undo_plan(conn: sqlite3.Connection, run_id: int) -> None:
 
 
 def _recovered_run_status(batches: Sequence[dict[str, Any]]) -> str:
-    """The status a recovered run closes with, from its batches' recorded outcomes."""
-    completed = [task for task in batches if task["status"] == auto_store.AUTO_TASK_DONE]
-    if batches and len(completed) == len(batches):
+    """The status a recovered run closes with, from its batches' recorded outcomes.
+
+    Aligns with :func:`_close_root` and a normal finish: ``skipped`` is a
+    finished success (nothing left to do), not an incomplete run.  ``partial``
+    is reserved for a mix of successful work and failed batches; an all-skipped
+    plan closes ``done`` the same way a live run would.
+    """
+    if not batches:
         return auto_store.AUTO_RUN_DONE
-    if completed:
+    if all(task["status"] == auto_store.AUTO_TASK_FAILED for task in batches):
+        return auto_store.AUTO_RUN_FAILED
+    succeeded = any(task["status"] == auto_store.AUTO_TASK_DONE for task in batches)
+    failed = any(task["status"] == auto_store.AUTO_TASK_FAILED for task in batches)
+    if succeeded and failed:
         return auto_store.AUTO_RUN_PARTIAL
-    return auto_store.AUTO_RUN_FAILED
+    return auto_store.AUTO_RUN_DONE
 
 
 def _pending_intent_descriptors(
@@ -1103,8 +1113,9 @@ def recover_auto_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
     as possibly applied: it is merged, marked with
     :data:`auto_store.INTENT_PENDING`, and listed in ``uncertain_intents``,
     because the process that would have confirmed the write died before it did.
-    The run closes `done` when every batch had completed, `partial` when some
-    had, and `failed` when none had.  A run already closed is left untouched.
+    The run closes `done` when every batch finished without a failure (including
+    all-skipped), `partial` when some succeeded and some failed, and `failed`
+    when every batch failed.  A run already closed is left untouched.
     Raises :class:`KeyError` for an unknown run.
     """
     run = auto_store.get_auto_run(conn, run_id)

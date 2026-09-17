@@ -173,6 +173,21 @@ class TestAnalysisLifecycle:
             entry["message"] == f"{store.SCAN_KIND_TRIAGE} scan finished" for entry in entries
         )
 
+    def test_update_status_clears_finished_at_when_reopening(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        analysis_id = _analysis(conn, _binary(conn))
+        assert store.update_analysis_status(conn, analysis_id, status=store.ANALYSIS_STATUS_DONE)
+        finished = store.get_analysis(conn, analysis_id)
+        assert finished is not None and finished["finished_at"] is not None
+
+        store.begin_scan(conn, analysis_id, store.SCAN_KIND_TRIAGE)
+
+        reopened = store.get_analysis(conn, analysis_id)
+        assert reopened is not None
+        assert reopened["status"] == store.ANALYSIS_STATUS_PROCESSING
+        assert reopened["finished_at"] is None
+
     def test_update_status_records_each_transition(self, conn: sqlite3.Connection) -> None:
         analysis_id = _analysis(conn, _binary(conn))
         assert store.update_analysis_status(

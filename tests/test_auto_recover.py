@@ -369,6 +369,14 @@ class TestRecoverAutoRun:
                 [auto_store.AUTO_TASK_FAILED, auto_store.AUTO_TASK_FAILED],
                 auto_store.AUTO_RUN_FAILED,
             ),
+            (
+                [auto_store.AUTO_TASK_SKIPPED, auto_store.AUTO_TASK_SKIPPED],
+                auto_store.AUTO_RUN_DONE,
+            ),
+            (
+                [auto_store.AUTO_TASK_DONE, auto_store.AUTO_TASK_SKIPPED],
+                auto_store.AUTO_RUN_DONE,
+            ),
         ],
     )
     def test_the_run_status_after_recovery(
