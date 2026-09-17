@@ -999,7 +999,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
     (
         "changelog",
         "#/changelog",
-        (("Changelog",), ("1.2.0",), ("1.1.0",)),
+        (("Changelog",), ("2.0.0",), ("1.2.0",), ("1.1.0",)),
     ),
 )
 

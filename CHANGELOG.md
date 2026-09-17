@@ -7,6 +7,8 @@ view renders it from here.
 
 ## Unreleased
 
+## 2.0.0
+
 ### Breaking changes
 
 - **`requires-python` is now `>=3.13`** (was `>=3.12`).  The 3.12 claim was never

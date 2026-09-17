@@ -139,12 +139,12 @@ class TestCreate:
         real_connect = sqlite3.connect
 
         def connect(path: object, *args: object, **kwargs: object) -> sqlite3.Connection:
-            conn = real_connect(path, *args, **kwargs)  # type: ignore[arg-type]
+            conn = real_connect(path, *args, **kwargs)  # type: ignore[call-overload]
             opened.append(conn)
             if len(opened) == 2:
                 conn.close()
                 raise sqlite3.OperationalError("target open failed")
-            return conn
+            return conn  # type: ignore[no-any-return]
 
         monkeypatch.setattr(sqlite3, "connect", connect)
         with pytest.raises(sqlite3.OperationalError, match="target open failed"):

@@ -349,12 +349,12 @@ class TestExportHeader:
         real_fdopen = os.fdopen
 
         def boom(fd: int, *args: object, **kwargs: object) -> object:
-            handle = real_fdopen(fd, *args, **kwargs)
+            handle = real_fdopen(fd, *args, **kwargs)  # type: ignore[call-overload]
 
             def write(_data: object) -> int:
                 raise KeyboardInterrupt
 
-            handle.write = write  # type: ignore[method-assign]
+            handle.write = write
             return handle
 
         monkeypatch.setattr(os, "fdopen", boom)

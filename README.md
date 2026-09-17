@@ -368,7 +368,7 @@ $ reportal stats --json
 
 $ reportal serve --no-open --port 8123 &
 $ curl -s localhost:8123/api/health
-{"status": "ok", "version": "1.2.0", "db": "/home/maci/Desktop/Projects/relumea/reportal/.scratch/ws/portal/reportal.db", "counts": {"binaries": 1, "analyses": 1, "functions": 3, "matched": 2, "matches": 0, "collections": 0, "documents": 0, "chunks": 0}}
+{"status": "ok", "version": "2.0.0", "db": "/home/maci/Desktop/Projects/relumea/reportal/.scratch/ws/portal/reportal.db", "counts": {"binaries": 1, "analyses": 1, "functions": 3, "matched": 2, "matches": 0, "collections": 0, "documents": 0, "chunks": 0}}
 $ curl -s -o /dev/null -w "%{http_code}\n" localhost:8123/api/health
 200
 ```

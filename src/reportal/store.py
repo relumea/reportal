@@ -3421,9 +3421,7 @@ def replace_collection_binaries(
         placeholders = ", ".join("?" for _ in wanted)
         known = {
             int(row["id"])
-            for row in conn.execute(
-                f"SELECT id FROM binaries WHERE id IN ({placeholders})", wanted
-            )
+            for row in conn.execute(f"SELECT id FROM binaries WHERE id IN ({placeholders})", wanted)
         }
         missing = [binary_id for binary_id in wanted if binary_id not in known]
         if missing:
