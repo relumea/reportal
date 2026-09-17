@@ -214,6 +214,30 @@ def list_auto_runs(
     ]
 
 
+def newest_auto_run_summary(
+    conn: sqlite3.Connection, *, binary_id: int | None = None
+) -> dict[str, Any] | None:
+    """The newest auto run without its task tree, or None before the first one."""
+    sql = "SELECT * FROM auto_runs"
+    params: list[Any] = []
+    if binary_id is not None:
+        sql += " WHERE binary_id = ?"
+        params.append(binary_id)
+    sql += " ORDER BY id DESC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
+    if row is None:
+        return None
+    return {
+        "id": int(row["id"]),
+        "binary_id": int(row["binary_id"]),
+        "status": str(row["status"]),
+        "config": _json_object(row["config_json"]),
+        "stats": _json_object(row["stats_json"]),
+        "created_at": str(row["created_at"]),
+        "finished_at": str(row["finished_at"]) if row["finished_at"] is not None else None,
+    }
+
+
 def delete_auto_run(conn: sqlite3.Connection, run_id: int) -> bool:
     """Delete a run and, by cascade, its tasks and attempts; False when unknown."""
     cur = conn.execute("DELETE FROM auto_runs WHERE id = ?", (run_id,))

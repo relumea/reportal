@@ -81,10 +81,7 @@ def _resolve_extract_collection(
 ) -> tuple[int, str]:
     """Return the collection an extraction joins, creating a default when none is named."""
     if collection_id:
-        row = next(
-            (entry for entry in store.list_collections(conn) if int(entry["id"]) == collection_id),
-            None,
-        )
+        row = store.get_collection(conn, collection_id)
         if row is None:
             raise ExtractError(
                 404, "collection not found", f"no collection with id {collection_id}"

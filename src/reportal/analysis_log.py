@@ -151,6 +151,17 @@ def count_entries(conn: sqlite3.Connection, analysis_id: int) -> int:
     return int(row["total"]) if row else 0
 
 
+def count_entries_by_severity(conn: sqlite3.Connection, analysis_id: int) -> dict[str, int]:
+    """How many log entries each severity holds for *analysis_id*."""
+    ensure_schema(conn)
+    rows = conn.execute(
+        f"SELECT severity AS severity, COUNT(*) AS n FROM {TABLE}"
+        " WHERE analysis_id = ? GROUP BY severity",
+        (analysis_id,),
+    ).fetchall()
+    return {str(row["severity"]): int(row["n"]) for row in rows}
+
+
 def list_entries(
     conn: sqlite3.Connection,
     analysis_id: int,

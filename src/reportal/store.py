@@ -1202,11 +1202,7 @@ def analysis_status(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any
     for row in scans:
         key = str(row["status"])
         by_scan_status[key] = by_scan_status.get(key, 0) + 1
-    entries, _ = analysis_log.list_entries(conn, analysis_id, limit=analysis_log.MAX_LOG_LIMIT)
-    by_severity: dict[str, int] = {}
-    for entry in entries:
-        key = str(entry["severity"])
-        by_severity[key] = by_severity.get(key, 0) + 1
+    by_severity = analysis_log.count_entries_by_severity(conn, analysis_id)
     return {
         "analysis_id": analysis_id,
         "binary_id": analysis["binary_id"],
@@ -1561,7 +1557,7 @@ def is_last_analysis_with_functions(conn: sqlite3.Connection, analysis_id: int) 
     binary_id = int(analysis["binary_id"])
     if count_analyses(conn, binary_id=binary_id) != 1:
         return False
-    return bool(list_functions(conn, analysis_id=analysis_id))
+    return count_functions(conn, analysis_id=analysis_id) > 0
 
 
 def update_analysis_status(
@@ -2113,6 +2109,61 @@ def count_functions(
         sql += " WHERE " + " AND ".join(clauses)
     row = conn.execute(sql, params).fetchone()
     return int(row["total"]) if row else 0
+
+
+def function_ids(
+    conn: sqlite3.Connection,
+    *,
+    analysis_id: int | None = None,
+    binary_id: int | None = None,
+) -> set[int]:
+    """The function ids in the scope, without loading full function rows.
+
+    Membership checks (signature copy, batch writes) need the id set, not the
+    joined listing :func:`list_functions` builds for the SPA.
+    """
+    sql = "SELECT f.id AS id FROM functions f JOIN analyses a ON f.analysis_id = a.id"
+    clauses: list[str] = []
+    params: list[Any] = []
+    if analysis_id is not None:
+        clauses.append("f.analysis_id = ?")
+        params.append(analysis_id)
+    if binary_id is not None:
+        clauses.append("a.binary_id = ?")
+        params.append(binary_id)
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    return {int(row["id"]) for row in conn.execute(sql, params)}
+
+
+def list_outstanding_functions(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Functions of *binary_id* whose status is not yet matched, smallest first.
+
+    Auto mode's selection path used to read every function then drop the matched
+    ones in Python; filtering and ordering in SQLite keeps a mostly-matched
+    binary from shipping its whole table into the planner.
+    """
+    statuses = sorted(MATCHED_STATUSES)
+    placeholders = ", ".join("?" for _ in statuses)
+    sql = (
+        "SELECT f.*, a.binary_id AS binary_id FROM functions f"
+        " JOIN analyses a ON f.analysis_id = a.id"
+        " WHERE a.binary_id = ?"
+        f" AND COALESCE(f.status, '') NOT IN ({placeholders})"
+        " ORDER BY f.size ASC, f.va ASC, f.id ASC"
+    )
+    params: list[Any] = [binary_id, *statuses]
+    if limit is not None:
+        if not 1 <= limit <= MAX_FUNCTION_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_FUNCTION_LIMIT}")
+        sql += " LIMIT ?"
+        params.append(limit)
+    return _rows(conn.execute(sql, params))
 
 
 def function_rollup(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
@@ -2705,8 +2756,11 @@ def list_scans(conn: sqlite3.Connection, analysis_id: int) -> list[dict[str, Any
     )
     rows = _rows(cur)
     for row in rows:
-        row["params"] = get_scan_params(conn, analysis_id, str(row["kind"]))
-        del row["params_json"]
+        try:
+            stored = json.loads(str(row.pop("params_json") or "{}"))
+        except json.JSONDecodeError:
+            stored = {}
+        row["params"] = dict(stored) if isinstance(stored, dict) else {}
     return rows
 
 
@@ -3238,6 +3292,30 @@ def collection_tags(conn: sqlite3.Connection, collection_id: int) -> list[dict[s
     return _rows(cur)
 
 
+def collection_tag_names(
+    conn: sqlite3.Connection, collection_ids: Sequence[int]
+) -> dict[int, list[str]]:
+    """Tag names for many collections in one query, keyed by collection id.
+
+    Missing ids are absent from the map; callers that need a name list for every
+    listed collection can fall back to ``.get(id, [])``.
+    """
+    ids = [int(collection_id) for collection_id in collection_ids]
+    if not ids:
+        return {}
+    placeholders = ", ".join("?" for _ in ids)
+    cur = conn.execute(
+        "SELECT ct.collection_id AS collection_id, t.name AS name FROM tags t"
+        " JOIN collection_tags ct ON ct.tag_id = t.id"
+        f" WHERE ct.collection_id IN ({placeholders}) ORDER BY t.name",
+        ids,
+    )
+    names: dict[int, list[str]] = {}
+    for row in cur:
+        names.setdefault(int(row["collection_id"]), []).append(str(row["name"]))
+    return names
+
+
 def get_collection(conn: sqlite3.Connection, collection_id: int) -> dict[str, Any] | None:
     """One collection with its member binaries and tags, or None."""
     row = conn.execute(
@@ -3321,13 +3399,20 @@ def replace_collection_binaries(
     raises ``ValueError`` naming it, so a typo cannot silently empty or half
     rewrite a collection.  Returns the ids added, removed and kept.
     """
-    known = {c["id"] for c in list_collections(conn)}
-    if collection_id not in known:
+    if get_collection(conn, collection_id) is None:
         raise KeyError(f"no collection with id {collection_id}")
     wanted = list(dict.fromkeys(binary_ids))
-    missing = [binary_id for binary_id in wanted if get_binary(conn, binary_id) is None]
-    if missing:
-        raise ValueError(f"no binary with id {missing[0]}")
+    if wanted:
+        placeholders = ", ".join("?" for _ in wanted)
+        known = {
+            int(row["id"])
+            for row in conn.execute(
+                f"SELECT id FROM binaries WHERE id IN ({placeholders})", wanted
+            )
+        }
+        missing = [binary_id for binary_id in wanted if binary_id not in known]
+        if missing:
+            raise ValueError(f"no binary with id {missing[0]}")
     current = {int(row["id"]) for row in collection_binaries(conn, collection_id)}
     target = set(wanted)
     added = sorted(target - current)
@@ -3629,6 +3714,16 @@ def list_messages(conn: sqlite3.Connection, conversation_id: int) -> list[dict[s
     return _rows(cur)
 
 
+def message_ids(conn: sqlite3.Connection, conversation_id: int) -> set[int]:
+    """The message ids of a conversation, without loading message bodies."""
+    return {
+        int(row["id"])
+        for row in conn.execute(
+            "SELECT id FROM messages WHERE conversation_id = ?", (conversation_id,)
+        )
+    }
+
+
 # ── Comments ───────────────────────────────────────────────────────
 
 
@@ -3894,6 +3989,37 @@ def list_documents(
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY d.id"
     return _rows(conn.execute(sql, params))
+
+
+def count_documents(
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str | None = None,
+    scope_id: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
+) -> int:
+    """How many documents the same filters :func:`list_documents` takes keep."""
+    sql = "SELECT COUNT(*) AS total FROM documents d"
+    clauses: list[str] = []
+    params: list[Any] = []
+    if scope_kind is not None:
+        clauses.append("d.scope_kind = ?")
+        params.append(scope_kind)
+    if scope_id is not None:
+        clauses.append("d.scope_id = ?")
+        params.append(scope_id)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, scope_params = scope
+        clauses.append(
+            f"(d.scope_kind != ? OR EXISTS (SELECT 1 FROM binaries b"
+            f" WHERE b.id = d.scope_id AND {clause}))"
+        )
+        params.extend(["binary", *scope_params])
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    row = conn.execute(sql, params).fetchone()
+    return int(row["total"]) if row is not None else 0
 
 
 def delete_document(conn: sqlite3.Connection, document_id: int) -> bool:
@@ -4578,6 +4704,15 @@ def list_graph_edges_for_node(conn: sqlite3.Connection, node_id: str) -> list[di
     return [_graph_edge_row(row) for row in cur.fetchall()]
 
 
+def count_graph_edges_for_node(conn: sqlite3.Connection, node_id: str) -> int:
+    """How many edges touch *node_id* at either end."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS total FROM graph_edges WHERE source = ? OR target = ?",
+        (node_id, node_id),
+    ).fetchone()
+    return int(row["total"]) if row is not None else 0
+
+
 def count_graph_nodes(conn: sqlite3.Connection, binary_id: int) -> int:
     """Number of stored nodes in one binary's graph."""
     row = conn.execute(
@@ -5097,8 +5232,15 @@ def section_byte_coverage(conn: sqlite3.Connection, binary_id: int) -> dict[str,
         return None
     image_base = int(stored.get("image_base") or 0)
     sections = [entry for entry in stored.get("sections") or [] if isinstance(entry, Mapping)]
-    functions = list_functions(conn, binary_id=binary_id)
-    zero_functions = not functions
+    function_extents = [
+        (int(row["va"]), int(row["size"]))
+        for row in conn.execute(
+            "SELECT f.va AS va, f.size AS size FROM functions f"
+            " JOIN analyses a ON f.analysis_id = a.id WHERE a.binary_id = ?",
+            (binary_id,),
+        )
+    ]
+    zero_functions = not function_extents
 
     entries: list[dict[str, Any]] = []
     total_bytes = 0
@@ -5108,9 +5250,9 @@ def section_byte_coverage(conn: sqlite3.Connection, binary_id: int) -> dict[str,
         size = int(section.get("virtual_size") or 0)
         end = start + size
         intervals = [
-            (max(int(function["va"]), start), min(int(function["va"]) + int(function["size"]), end))
-            for function in functions
-            if start <= int(function["va"]) < end
+            (max(va, start), min(va + extent, end))
+            for va, extent in function_extents
+            if start <= va < end
         ]
         covered = sum(stop - begin for begin, stop in _merge_intervals(intervals))
         total_bytes += size
@@ -5131,7 +5273,7 @@ def section_byte_coverage(conn: sqlite3.Connection, binary_id: int) -> dict[str,
     return {
         "binary_id": binary_id,
         "image_base": image_base,
-        "function_count": len(functions),
+        "function_count": len(function_extents),
         "sections": entries,
         "totals": {
             "size": total_bytes,

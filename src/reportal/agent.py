@@ -451,7 +451,7 @@ def start(
     """
     if store.get_conversation(conn, conversation_id) is None:
         raise KeyError(f"no conversation with id {conversation_id}")
-    before = {int(row["id"]) for row in store.list_messages(conn, conversation_id)}
+    before = store.message_ids(conn, conversation_id)
     store.add_message(
         conn, conversation_id=conversation_id, role=conversations.ROLE_USER, content=content
     )
@@ -576,7 +576,7 @@ def _drive(
     tools = tool_definitions()
     destructive = destructive_tools()
     if before is None:
-        before = {int(row["id"]) for row in store.list_messages(conn, conversation_id)}
+        before = store.message_ids(conn, conversation_id)
     while True:
         run = get_run(conn, run_id)
         if run["status"] == STATUS_CANCELLED:

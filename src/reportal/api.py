@@ -6197,7 +6197,7 @@ def post_conversation_message(
         client = _ai_client()
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            before = {int(row["id"]) for row in store.list_messages(conn, conversation_id)}
+            before = store.message_ids(conn, conversation_id)
             try:
                 result = conversations.send_message(
                     conn, conversation_id=conversation_id, content=content, client=client
@@ -6501,14 +6501,14 @@ def delete_analysis(analysis_id: int) -> Response:
                 404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
             )
         binary_id = int(analysis["binary_id"])
-        functions = store.list_functions(conn, analysis_id=analysis_id)
+        functions_removed = store.count_functions(conn, analysis_id=analysis_id)
         if store.is_last_analysis_with_functions(conn, analysis_id):
             return json_error(
                 409,
                 error="last-analysis",
                 detail=(
                     f"analysis {analysis_id} is binary {binary_id}'s only analysis and holds"
-                    f" {len(functions)} functions; deleting it would take them with it."
+                    f" {functions_removed} functions; deleting it would take them with it."
                     f" Delete binary {binary_id} instead."
                 ),
             )
@@ -6520,7 +6520,7 @@ def delete_analysis(analysis_id: int) -> Response:
             {
                 "deleted": analysis_id,
                 "binary_id": binary_id,
-                "functions_removed": len(functions),
+                "functions_removed": functions_removed,
             }
         )
     )
@@ -6622,8 +6622,7 @@ def create_collection(body: dict[str, Any] = Depends(json_body)) -> Response:
                 key=collection_id,
                 description=f"created collection {collection_id}",
             )
-            collections = store.list_collections(conn)
-    created = next((c for c in collections if c["id"] == collection_id), {})
+            created = store.get_collection(conn, collection_id) or {}
     return json_response(log.attach(created), status=201)
 
 
@@ -6633,8 +6632,7 @@ def add_collection_binary(
 ) -> Response:
     binary_id = _require_int(body, "binary_id")
     with contextlib.closing(_open()) as conn:
-        known = {c["id"] for c in store.list_collections(conn)}
-        if collection_id not in known:
+        if store.get_collection(conn, collection_id) is None:
             return json_error(
                 404,
                 error="collection not found",
@@ -7152,11 +7150,7 @@ def bulk_binaries(request: Request, body: dict[str, Any] = Depends(json_body)) -
         return json_error(400, error="invalid bulk request", detail="tag must be a string")
     with contextlib.closing(_open()) as conn:
         caller = _caller(request)
-        allowed = (
-            None
-            if caller is None
-            else {int(row["id"]) for row in store.list_binaries(conn, visible_to=caller)}
-        )
+        allowed = _visible_binary_ids(conn, caller)
         action_id = journal.new_action()
         with journal.journaled(conn, action_id) as log:
             try:
@@ -8067,15 +8061,12 @@ def _upload_batch(
             )
     directory = binaries_dir()
     with contextlib.closing(_open()) as conn:
-        known = {int(row["id"]) for row in store.list_collections(conn)}
         for entry in options:
-            unknown = [
-                cid for cid in _file_option_int_list(entry, "collection_ids") if cid not in known
-            ]
-            if unknown:
-                return json_error(
-                    404, error="collection not found", detail=f"no collection with id {unknown[0]}"
-                )
+            for cid in _file_option_int_list(entry, "collection_ids"):
+                if store.get_collection(conn, cid) is None:
+                    return json_error(
+                        404, error="collection not found", detail=f"no collection with id {cid}"
+                    )
         scopes: list[tuple[int | None, str] | None] = []
         try:
             scopes = [_upload_scope(request, conn, entry) for entry in options]
@@ -8276,10 +8267,9 @@ def _last_auto_run(conn: Any) -> dict[str, Any] | None:
 
     One SELECT over ``auto_runs``; the run's task tree is not read.
     """
-    runs = auto_store.list_auto_runs(conn)
-    if not runs:
+    run = auto_store.newest_auto_run_summary(conn)
+    if run is None:
         return None
-    run = runs[0]
     return {
         "run_id": int(run["id"]),
         "binary_id": int(run["binary_id"]),
@@ -8948,9 +8938,7 @@ def copy_analysis_signatures(
             return json_error(
                 404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
             )
-        function_ids = {
-            int(row["id"]) for row in store.list_functions(conn, analysis_id=analysis_id)
-        }
+        function_ids = store.function_ids(conn, analysis_id=analysis_id)
         if int(raw_source) not in function_ids:
             return json_error(
                 404,

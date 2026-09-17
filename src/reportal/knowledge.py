@@ -401,7 +401,7 @@ def ingest_document(
             "duplicate": True,
             "embedded": _is_embedded(conn, existing),
         }
-    if len(store.list_documents(conn, scope_kind=scope_kind, scope_id=scope_id)) >= (
+    if store.count_documents(conn, scope_kind=scope_kind, scope_id=scope_id) >= (
         MAX_DOCUMENTS_PER_SCOPE
     ):
         raise KnowledgeError(

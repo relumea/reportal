@@ -565,7 +565,11 @@ def call_trace(
     """Callees of *function*, named from the stored rows at their address."""
     names = {
         int(row["va"]): str(row["name"])
-        for row in store.list_functions(conn, binary_id=int(function["binary_id"]))
+        for row in conn.execute(
+            "SELECT f.va AS va, f.name AS name FROM functions f"
+            " JOIN analyses a ON f.analysis_id = a.id WHERE a.binary_id = ?",
+            (int(function["binary_id"]),),
+        )
     }
     seen: set[int] = set()
     callees: list[dict[str, Any]] = []
@@ -746,6 +750,37 @@ def _effect_resolve_names(ctx: Context) -> None:
                     "kind": str(proposal.get("kind") or ""),
                 },
             },
+        )
+        return
+    similar = ctx.get(NAME_SIMILAR_FUNCTIONS)
+    if isinstance(similar, dict):
+        candidates = similar.get("candidates")
+        best_row = next(
+            (
+                row
+                for row in (candidates if isinstance(candidates, list) else ())
+                if isinstance(row, dict) and str(row.get("name") or "").strip()
+            ),
+            None,
+        )
+        if best_row is not None:
+            ctx.provide(
+                NAME_PREDICTED_NAME,
+                {
+                    "name": str(best_row["name"]),
+                    "source": PREDICTED_NAME_SOURCE_MATCH,
+                    "confidence": float(best_row["confidence"]),
+                    "evidence": {
+                        "candidate_function_id": int(best_row["function_id"]),
+                        "candidate_va": int(best_row["va"]),
+                        "similarity": float(best_row["similarity"]),
+                    },
+                },
+            )
+            return
+        ctx.provide(
+            NAME_PREDICTED_NAME,
+            {"name": None, "source": "", "confidence": 0.0, "evidence": {}},
         )
         return
     best = next(
@@ -1817,16 +1852,20 @@ def run_pipeline_batch(
     """
     if limit < 1 or limit > MAX_BATCH_LIMIT:
         raise ValueError(f"limit must be between 1 and {MAX_BATCH_LIMIT}, got {limit}")
-    rows = store.list_functions(conn, binary_id=binary_id)
-    by_id = {int(row["id"]): row for row in rows}
     if function_ids is not None:
         wants = list(dict.fromkeys(int(value) for value in function_ids))
+        by_id = store.functions_by_ids(conn, wants)
         missing = [value for value in wants if value not in by_id]
         if missing:
             raise KeyError(f"no function of binary {binary_id} with id {missing[0]}")
+        outsiders = [value for value in wants if int(by_id[value]["binary_id"]) != binary_id]
+        if outsiders:
+            raise KeyError(f"no function of binary {binary_id} with id {outsiders[0]}")
         chosen = [by_id[value] for value in wants]
     else:
-        chosen = sorted(rows, key=lambda row: int(row["size"]), reverse=True)[:limit]
+        chosen = store.list_functions(
+            conn, binary_id=binary_id, sort="size", order="desc", limit=limit
+        )
     if not chosen:
         return {"binary_id": binary_id, "runs": [], "done": 0, "failed": 0, "total": 0}
 

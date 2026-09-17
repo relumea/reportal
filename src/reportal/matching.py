@@ -478,9 +478,8 @@ def resolve_scope(
             raise InvalidSettingsError("unknown binary", f"no binary with id {binary_id}")
         allowed.add(binary_id)
     if settings.collection_ids:
-        known = {int(row["id"]) for row in store.list_collections(conn)}
         for collection_id in settings.collection_ids:
-            if collection_id not in known:
+            if store.get_collection(conn, collection_id) is None:
                 raise InvalidSettingsError(
                     "unknown collection", f"no collection with id {collection_id}"
                 )
@@ -675,15 +674,34 @@ def match_binary(
     allowed = resolve_scope(conn, resolved, visible_to=visible_to)
     scoped = bool(resolved.binary_ids or resolved.collection_ids or visible_to is not None)
     scope_cache: dict[int, tuple[str, str]] = {}
-    functions = store.list_functions(conn)
-    sources = [function for function in functions if int(function["binary_id"]) == binary_id]
-    candidates = [
-        function
-        for function in functions
-        if (not scoped or int(function["binary_id"]) in allowed)
-        and (resolved.include_self or int(function["binary_id"]) != binary_id)
-        and _in_platform_architecture_scope(conn, int(function["binary_id"]), resolved, scope_cache)
-    ]
+    sources = store.list_functions(conn, binary_id=binary_id)
+    if scoped:
+        candidate_binary_ids = set(allowed)
+    else:
+        candidate_binary_ids = {int(row["id"]) for row in conn.execute("SELECT id FROM binaries")}
+    if not resolved.include_self:
+        candidate_binary_ids.discard(binary_id)
+    candidate_binary_ids = {
+        bid
+        for bid in candidate_binary_ids
+        if _in_platform_architecture_scope(conn, bid, resolved, scope_cache)
+    }
+    # Unscoped and unfiltered: one full scan beats one query per binary.
+    # Scoped or platform/arch filtered: load only the binaries that remain.
+    if not scoped and not resolved.platforms and not resolved.architectures:
+        functions = store.list_functions(conn)
+        candidates = [
+            function
+            for function in functions
+            if resolved.include_self or int(function["binary_id"]) != binary_id
+        ]
+    else:
+        candidates = []
+        for bid in candidate_binary_ids:
+            if bid == binary_id:
+                candidates.extend(sources)
+            else:
+                candidates.extend(store.list_functions(conn, binary_id=bid))
     # A scope that admits no candidate leaves nothing to score, so the run only
     # clears the sources' rows; disassembling them would be work with no reader.
     texts: dict[int, str | None] = {}

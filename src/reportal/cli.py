@@ -2282,7 +2282,7 @@ def signature_copy_command(
     with contextlib.closing(store.connect(portal_db)) as conn:
         if store.get_analysis(conn, analysis_id) is None:
             _fail(f"no analysis with id {analysis_id}", json_output)
-        members = {int(row["id"]) for row in store.list_functions(conn, analysis_id=analysis_id)}
+        members = store.function_ids(conn, analysis_id=analysis_id)
         if source_id not in members:
             _fail(f"function {source_id} is not in analysis {analysis_id}", json_output)
         outsiders = [target for target in target_id if target not in members]
@@ -3805,8 +3805,9 @@ def collections(
             rows = store.list_collections(conn, order=order, workspace=workspace or None)
         except ValueError as exc:
             _fail(str(exc), json_output)
+        tag_names = store.collection_tag_names(conn, [int(row["id"]) for row in rows])
         for row in rows:
-            row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
+            row["tags"] = tag_names.get(int(row["id"]), [])
     if json_output:
         typer.echo(
             json.dumps({"collections": rows, "order": order, "workspace": workspace or None})
@@ -5095,7 +5096,7 @@ def binaries(
             rows = store.list_binaries(
                 conn, search=search or None, tag=tag or None, fmt=fmt or None, order=order
             )
-            total = len(store.list_binaries(conn))
+            total = store.count_binaries(conn)
         except ValueError as exc:
             _fail(str(exc), json_output)
     if json_output:
@@ -7759,7 +7760,7 @@ def chat(
             _fail(f"no conversation with id {conversation_id}", json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            before = {int(row["id"]) for row in store.list_messages(conn, conversation_id)}
+            before = store.message_ids(conn, conversation_id)
             try:
                 result = conversations.send_message(
                     conn, conversation_id=conversation_id, content=message, client=client

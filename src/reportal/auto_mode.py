@@ -255,15 +255,7 @@ def select_functions(
     A function already in a matching status is not work; everything else (a
     STUB, a NEAR_MATCHING, an empty status) is selected.
     """
-    rows = [
-        row
-        for row in store.list_functions(conn, binary_id=binary_id)
-        if str(row["status"]) not in store.MATCHED_STATUSES
-    ]
-    rows.sort(key=lambda row: (int(row["size"]), int(row["va"])))
-    if limit is not None:
-        return rows[:limit]
-    return rows
+    return store.list_outstanding_functions(conn, binary_id=binary_id, limit=limit)
 
 
 def _batch_title(batch: Sequence[dict[str, Any]]) -> str:
@@ -649,11 +641,8 @@ def _run_batch(
         )
         return
     # Re-read the rows: a function may have changed (or gone) since planning.
-    functions = [
-        row
-        for row in (store.get_function(conn, int(entry["id"])) for entry in planned)
-        if row is not None
-    ]
+    by_id = store.functions_by_ids(conn, [int(entry["id"]) for entry in planned])
+    functions = [by_id[int(entry["id"])] for entry in planned if int(entry["id"]) in by_id]
     project_dir = store.get_rebrew_context(conn, int(binary["id"]))
     # The planned function list stays in the task result until the batch
     # finishes, so a run interrupted mid-batch keeps the work it had planned.
@@ -841,9 +830,9 @@ def _execute_batches(
 
 def _coverage(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
     """Matched-versus-total function coverage of one binary."""
-    rows = store.list_functions(conn, binary_id=binary_id)
-    total = len(rows)
-    matched = sum(1 for row in rows if str(row["status"]) in store.MATCHED_STATUSES)
+    rollup = store.function_rollup(conn, binary_id)
+    total = int(rollup["total"])
+    matched = int(rollup["matched"])
     return {
         "matched": matched,
         "total": total,
@@ -1129,9 +1118,10 @@ def recover_auto_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
             "uncertain_intents": [],
             "status": str(run["status"]),
         }
+    tasks = auto_store.list_auto_tasks(conn, run_id)
     stale = [
         task
-        for task in auto_store.list_auto_tasks(conn, run_id)
+        for task in tasks
         if task["kind"] == auto_store.AUTO_TASK_BATCH
         and task["status"] in (auto_store.AUTO_TASK_RUNNING, auto_store.AUTO_TASK_PENDING)
     ]
@@ -1149,7 +1139,7 @@ def recover_auto_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
             descriptors=descriptors,
         )
     stale_ids = {int(task["id"]) for task in stale}
-    for task in auto_store.list_auto_tasks(conn, run_id):
+    for task in tasks:
         if task["kind"] != auto_store.AUTO_TASK_BATCH or int(task["id"]) in stale_ids:
             continue
         if not auto_store.task_intents(task):
@@ -1157,6 +1147,7 @@ def recover_auto_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
         descriptors = _task_undo_descriptors(task)
         uncertain.extend(_pending_intent_descriptors(descriptors))
         added += _merge_task_descriptors(conn, run_id, descriptors)
+    # Stale rows were rewritten above; re-read once for the closed aggregate.
     tasks = auto_store.list_auto_tasks(conn, run_id)
     root_id = next(
         (int(task["id"]) for task in tasks if task["kind"] == auto_store.AUTO_TASK_ROOT), 0

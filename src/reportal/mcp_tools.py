@@ -3050,7 +3050,7 @@ def _tool_copy_signature(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         source = _require_function(conn, source_id)
         analysis_id = int(source["analysis_id"])
-        members = {int(row["id"]) for row in store.list_functions(conn, analysis_id=analysis_id)}
+        members = store.function_ids(conn, analysis_id=analysis_id)
         outsiders = [target for target in targets if target not in members]
         if outsiders:
             raise ToolError(
@@ -3687,7 +3687,7 @@ def _tool_send_conversation_message(arguments: dict[str, Any]) -> dict[str, Any]
             raise ToolError("llm-unavailable", llm.UNAVAILABLE_DETAIL)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            before = {int(row["id"]) for row in store.list_messages(conn, conversation_id)}
+            before = store.message_ids(conn, conversation_id)
             try:
                 result = conversations.send_message(
                     conn, conversation_id=conversation_id, content=content, client=client
@@ -4123,8 +4123,9 @@ def _tool_list_collections(arguments: dict[str, Any]) -> dict[str, Any]:
         with contextlib.closing(_open()) as conn:
             _binary_or_error(conn, binary)
             rows = store.collections_of_binary(conn, binary)
+            tag_names = store.collection_tag_names(conn, [int(row["id"]) for row in rows])
             for row in rows:
-                row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
+                row["tags"] = tag_names.get(int(row["id"]), [])
             return {"binary_id": binary, "collections": rows, "count": len(rows)}
     with contextlib.closing(_open()) as conn:
         try:
@@ -4134,8 +4135,9 @@ def _tool_list_collections(arguments: dict[str, Any]) -> dict[str, Any]:
             # code the route would.
             code = "invalid workspace" if "workspace" in str(exc) else "invalid order"
             raise ToolError(code, str(exc)) from exc
+        tag_names = store.collection_tag_names(conn, [int(row["id"]) for row in rows])
         for row in rows:
-            row["tags"] = [tag["name"] for tag in store.collection_tags(conn, int(row["id"]))]
+            row["tags"] = tag_names.get(int(row["id"]), [])
         return {
             "collections": rows,
             "count": len(rows),

@@ -297,7 +297,7 @@ def sqlite_query(
     if exact is not None:
         if visible is not None and int(exact["binary_id"]) not in visible:
             return {"backend": SQLITE_BACKEND_NAME, "query": text, "count": 0, "results": []}
-        degree = len(store.list_graph_edges_for_node(conn, text))
+        degree = store.count_graph_edges_for_node(conn, text)
         results = [_node_result(exact, degree)]
         return {
             "backend": SQLITE_BACKEND_NAME,
@@ -309,7 +309,7 @@ def sqlite_query(
     if visible is not None:
         matches = [node for node in matches if int(node["binary_id"]) in visible]
     results = [
-        _node_result(node, len(store.list_graph_edges_for_node(conn, str(node["id"]))))
+        _node_result(node, store.count_graph_edges_for_node(conn, str(node["id"])))
         for node in matches
     ]
     return {
