@@ -206,6 +206,35 @@ class TestReadTail:
 
 
 class TestReport:
+    def test_run_timestamps_follow_the_shared_clock(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stamp = "2001-02-03T04:05:06+00:00"
+        monkeypatch.setattr(store, "now", lambda: stamp)
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        run_id = sandbox.start_run(
+            conn,
+            analysis_id=analysis_id,
+            binary_id=binary_id,
+            sha256="aa" * 32,
+            runner="fake",
+            argv=[],
+            caps=sandbox.requested_caps(),
+        )
+        run = sandbox.get_run(conn, run_id)
+        assert run is not None
+        assert run["created_at"] == stamp
+        assert run["finished_at"] is None
+
+        created = stamp
+        stamp = "2001-02-03T04:05:09+00:00"
+        sandbox.finish_run(conn, run_id, {"status": sandbox.STATUS_FINISHED, "exit_code": 0})
+        run = sandbox.get_run(conn, run_id)
+        assert run is not None
+        assert run["created_at"] == created
+        assert run["finished_at"] == stamp
+
     def test_a_run_records_the_command_the_status_and_the_files(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

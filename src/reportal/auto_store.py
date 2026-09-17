@@ -19,7 +19,8 @@ import sqlite3
 from collections.abc import Sequence
 from typing import Any
 
-from reportal.store import _json_list, now
+from reportal import store
+from reportal.store import _json_list
 
 # Statuses an `auto_runs` row carries.  A run is created `running` and closed
 # `done` when every batch was decided, `failed` when the run itself could not
@@ -134,7 +135,7 @@ def create_auto_run(conn: sqlite3.Connection, *, binary_id: int, config: dict[st
     """Create a ``running`` auto run for *binary_id*; returns its id."""
     cur = conn.execute(
         "INSERT INTO auto_runs (binary_id, status, config_json, created_at) VALUES (?, ?, ?, ?)",
-        (binary_id, AUTO_RUN_RUNNING, json.dumps(config), now()),
+        (binary_id, AUTO_RUN_RUNNING, json.dumps(config), store.now()),
     )
     conn.commit()
     return int(cur.lastrowid or 0)
@@ -146,7 +147,7 @@ def finish_auto_run(
     """Close a run with its final *status* and the coverage numbers it measured."""
     cur = conn.execute(
         "UPDATE auto_runs SET status = ?, stats_json = ?, finished_at = ? WHERE id = ?",
-        (status, json.dumps(stats), now(), run_id),
+        (status, json.dumps(stats), store.now(), run_id),
     )
     conn.commit()
     return cur.rowcount > 0
@@ -271,7 +272,7 @@ def create_auto_task(
             va,
             AUTO_TASK_PENDING,
             worker,
-            now(),
+            store.now(),
         ),
     )
     conn.commit()
@@ -305,7 +306,7 @@ def update_auto_task(
         params.append(json.dumps(result))
     if finish:
         assignments.append("finished_at = ?")
-        params.append(now())
+        params.append(store.now())
     if not assignments:
         return False
     params.append(task_id)
@@ -331,7 +332,7 @@ def record_auto_task_outcome(
     together.  *attempts* is left alone when None.
     """
     assignments = ["status = ?", "result_json = ?", "finished_at = ?"]
-    params: list[Any] = [status, json.dumps(result), now()]
+    params: list[Any] = [status, json.dumps(result), store.now()]
     if attempts is not None:
         assignments.insert(1, "attempts = ?")
         params.insert(1, attempts)
@@ -371,7 +372,7 @@ def add_auto_attempt(
     cur = conn.execute(
         "INSERT INTO auto_attempts (task_id, attempt, worker, status, detail_json, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?)",
-        (task_id, attempt, worker, status, json.dumps(detail), now()),
+        (task_id, attempt, worker, status, json.dumps(detail), store.now()),
     )
     conn.commit()
     return int(cur.lastrowid or 0)

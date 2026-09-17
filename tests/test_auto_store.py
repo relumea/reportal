@@ -9,6 +9,50 @@ import pytest
 from reportal import auto_store, store
 
 
+@pytest.mark.parametrize("record_outcome", [False, True])
+def test_timestamps_follow_the_shared_clock(
+    conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, record_outcome: bool
+) -> None:
+    stamp = "2001-02-03T04:05:06+00:00"
+    monkeypatch.setattr(store, "now", lambda: stamp)
+    binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
+    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+    task_id = auto_store.create_auto_task(
+        conn, run_id=run_id, parent_id=None, depth=0, kind=auto_store.AUTO_TASK_ROOT
+    )
+    auto_store.add_auto_attempt(
+        conn, task_id=task_id, worker="offline", status="matched", detail={}
+    )
+    run = auto_store.get_auto_run(conn, run_id)
+    assert run is not None
+    assert run["created_at"] == stamp
+    assert run["finished_at"] is None
+    task = run["tasks"][0]
+    assert task["created_at"] == stamp
+    assert task["finished_at"] is None
+    assert task["attempt_log"][0]["created_at"] == stamp
+
+    created = stamp
+    stamp = "2001-02-03T04:05:09+00:00"
+    if record_outcome:
+        assert auto_store.record_auto_task_outcome(
+            conn, task_id, run_id=run_id, status=auto_store.AUTO_TASK_DONE, result={}, effects=[]
+        )
+    else:
+        assert auto_store.update_auto_task(
+            conn, task_id, status=auto_store.AUTO_TASK_DONE, finish=True
+        )
+    assert auto_store.finish_auto_run(conn, run_id, status=auto_store.AUTO_RUN_DONE, stats={})
+    run = auto_store.get_auto_run(conn, run_id)
+    assert run is not None
+    assert run["created_at"] == created
+    assert run["finished_at"] == stamp
+    task = run["tasks"][0]
+    assert task["created_at"] == created
+    assert task["finished_at"] == stamp
+    assert task["attempt_log"][0]["created_at"] == created
+
+
 class TestAutoRuns:
     def test_create_and_read_a_run(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")

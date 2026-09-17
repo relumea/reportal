@@ -48,7 +48,6 @@ from typing import Any
 
 from reportal import journal, store
 from reportal._paths import MARKER, WorkspaceNotFound, binaries_dir, project_root
-from reportal.store import now
 
 # The run table, its statuses, and the execution surface's error names.
 TABLE = "sandbox_runs"
@@ -613,7 +612,7 @@ def start_run(
             runner,
             json.dumps(list(argv)),
             json.dumps(caps.as_payload()),
-            now(),
+            store.now(),
         ),
     )
     conn.commit()
@@ -635,7 +634,7 @@ def finish_run(conn: sqlite3.Connection, run_id: int, report: Mapping[str, Any])
             str(report.get("stderr") or ""),
             json.dumps(list(report.get("files") or [])),
             json.dumps(list(report.get("notes") or [])),
-            now(),
+            store.now(),
             run_id,
         ),
     )
