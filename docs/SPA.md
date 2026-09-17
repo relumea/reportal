@@ -222,22 +222,27 @@ metric or the dashboard follows these names:
   `ENTROPY_MAX` and `PACKED_ENTROPY_THRESHOLD` (the entropy scale the packer
   card marks).  Every threshold and interval is a named module constant.
 
-The Integrations view (`views/IntegrationsView.tsx`, `#/components` and
-`#/integrations`) reads `GET /api/integrations` for every plugin seam and its
-parts, and ends with an Instance card from `GET /api/config`: the version, the
-engine's availability and origin, its decompiler backends, the LLM bridge's
-state and model, the database's table count, the feature flags and the MCP tool
-counts, over the table of every cap the server enforces.  A Readiness card from
-`GET /api/doctor` sits beside it: the report status, workspace, failures and
-warnings over the per-check table (name, status, detail and hint), which is the
-same pre-flight report a unit file gates on.
+The Integrations view (`views/IntegrationsView.tsx`, `#/integrations`) reads
+`GET /api/integrations` for every plugin seam and its parts, and ends with an
+Instance card from `GET /api/config`: the version, the engine's availability and
+origin, its decompiler backends, the LLM bridge's state and model, the
+database's table count, the feature flags and the MCP tool counts, over the
+table of every cap the server enforces.  A Readiness card from `GET /api/doctor`
+sits beside it: the report status, workspace, failures and warnings over the
+per-check table (name, status, detail and hint), which is the same pre-flight
+report a unit file gates on.  The Components view (`views/ComponentsView.tsx`,
+`#/components`) is separate: it lists the live pipeline component registry from
+`GET /api/components` and offers Reload / Reload all plus Withdraw (deactivate
+with revert) per row.
 
-Hash routes: `#/` (dashboard), `#/binaries`, `#/binaries/<id>`,
+Hash routes: `#/` (dashboard), `#/search`, `#/binaries`, `#/binaries/<id>`,
 `#/binaries/<id>/functions` (the functions list filtered to that binary),
 `#/functions`, `#/functions/<id>`, `#/diff/<id>/<candidate-id>`, `#/matches`,
-`#/analyses`, `#/auto`, `#/auto/<id>`, `#/collections`, `#/conversations`,
-`#/conversations/<id>`, `#/knowledge`, `#/graph`, `#/components`, `#/journal`,
-`#/journal/<action>` and `#/search`.  A route may carry a hash query
+`#/analyses`, `#/auto`, `#/auto/<id>`, `#/collections`, `#/tags`,
+`#/conversations`, `#/conversations/<id>`, `#/knowledge`, `#/graph`,
+`#/external`, `#/jobs`, `#/models`, `#/journal`, `#/journal/<action>`,
+`#/components`, `#/integrations`, `#/users`, `#/billing`, `#/docs`,
+`#/docs/<slug>` and `#/changelog`.  A route may carry a hash query
 (`#/analyses?status=failed`, `#/binaries/<id>/functions?sort=size&order=desc`):
 `router.parseQuery`/`formatQuery` turn it into `RouteState.query`, which the
 list views read as their filter state.
@@ -569,8 +574,6 @@ its verdict and carries Up, Down, a Note control and Clear per row, over
 verdict select prefilled with the stored verdict and a note input (capped at
 the route's 500 characters) posting `{rating, note}`, since a verdict recorded
 without a note is a bare badge; it says how many of the stored
-artifacts carry a verdict.
-`GET`/`PUT /api/binaries/<id>/ratings[/<kind>]`; it says how many of the stored
 artifacts carry a verdict.  The Integrations view ends with the "Connect an MCP
 client" card: the `claude mcp add` one-liner and the `~/.claude.json` snippet,
 each with a copy control, above the tool counts read from `GET /api/config`.
@@ -714,6 +717,14 @@ has it; each row's role select saves a `PATCH`, Disable/Enable flips the
 disabled flag, New token rotates and shows the replacement once, and Delete
 goes through the confirm pattern.  With auth off the page says so and the API is
 the local operator's, which is the honest reading of an empty user table.
+
+The Billing view (`views/BillingView.tsx`, `#/billing`, in the System group)
+reads the plan catalog (`GET /api/plans`), the organisations this install has,
+and each organisation's billing payload (`GET /api/organisations/<id>/billing`):
+plan, quota state per metered dimension, mirrored subscription and whether
+billing is configured.  Checkout and portal posts follow the provider URL the
+server returns; an install with no Stripe key still shows usage and says billing
+is off, which is the default.
 
 The Memory panel's `Whole binary` mode (`panels/MemoryPanel.tsx`) is the
 continuous hex dump: one scrollable region in virtual-address order whose span

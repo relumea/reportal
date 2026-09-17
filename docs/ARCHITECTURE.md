@@ -26,6 +26,10 @@ reportal/
 │   ├── cli.py                # Typer CLI (init, import-rebrew, add-binary, serve, ...)
 │   ├── server.py             # shared FastAPI app, JSON helpers, Host guard, db(),
 │   │                         #   the auth middleware (off unless configured)
+│   ├── observability.py      # request ids, structured completion lines, HTTP/job
+│   │                         #   counters on GET /api/health
+│   ├── jobs.py               # queued async operations: status, cancel, and the
+│   │                         #   in-process worker pool (off via REPORTAL_JOBS_POOL)
 │   ├── sandbox.py            # guarded sample detonation: the opt-in and runner guards,
 │   │                         #   the bounded bwrap argv, the run ledger and the runner
 │   │                         #   registry; the one module that executes a sample
@@ -45,17 +49,23 @@ reportal/
 │   ├── webapp.py             # composition root: includes the two routers
 │   ├── store.py              # SQLite schema + typed CRUD; typed search and the
 │   │                         #   upload/extract helpers
+│   ├── analysis_log.py       # structured analysis-log rows: severity, message, time
 │   ├── archive.py            # stdlib-only archive extraction: zip/apk, tar/tar.gz/tgz/
 │   │                         #   tar.bz2/tar.xz, single-member gz; per-member safety
 │   │                         #   refusals and named caps; `.rar`/`.7z` refused by name
 │   ├── binary_actions.py     # journaled extract/carve/unpack writes and download
 │   │                         #   filename sanitizer; shared by the API, CLI and MCP
+│   ├── surface.py            # shared pre-read/write checks and journal helpers for
+│   │                         #   the HTTP, CLI and MCP surfaces
 │   ├── engines.py            # rebrew adapter: in-process calls, JSON + text
 │   ├── firmware.py           # firmware carving: magic-based region detection, the
 │   │                         #   sampled entropy map and the region extents the
 │   │                         #   archive reader can unpack; nothing executed
 │   ├── components.py         # component framework: context, journal, registry, reload
 │   ├── effects.py            # undo dispatcher: kind-to-handler registry, plan replay
+│   ├── journal.py            # persisted action journal: every wired mutation records
+│   │                         #   its inverse for request-scoped revert
+│   ├── plugins.py            # shared entry-point discovery for every plugin registry
 │   ├── integrations.py       # plugin-seam inventory read from the live registries
 │   ├── pipeline.py           # AI decompilation pipeline: stages, loader, host, revert
 │   ├── auto_store.py         # auto runs, task tree and attempt rows (CRUD)
@@ -124,9 +134,8 @@ reportal/
 │   ├── secrets.py            # secrets scan: credential patterns, Shannon entropy, redaction
 │   ├── secret_store.py       # named credentials: workspace/team scope, redacted
 │   │                         #   reads and journaled writes
-│   ├── external.py            # external sources: the offline evidence answer and the
+│   ├── external.py           # external sources: the offline evidence answer and the
 │   │                         #   guarded, opt-in third-party fetch
-│   │                         #   reads and journaled writes
 │   ├── protocols.py          # protocol inference from imports, schemes, literals and ports
 │   ├── threat.py             # local threat report: IOC extraction, ATT&CK mapping, narrative,
 │   │                         #   software-type classification and the 0-100 threat score
@@ -134,6 +143,8 @@ reportal/
 │   ├── docs.py               # the in-app manual: resolve REPORTAL_DOCS/workspace/checkout/packaged,
 │   │                         #   the page index and the markdown-to-blocks reader
 │   ├── analytics.py          # the dashboard's bounded time series over stored rows
+│   ├── activity.py           # activity feed derived from the journal (not a stored table)
+│   ├── notifications.py      # notification feed derived from journal and analysis_log
 │   ├── ratings.py            # the analyst's verdict on a stored agent artifact
 │   ├── remediation.py        # remediation artifacts: YARA rule render, Snort rules, STIX bundle
 │   ├── knowledge.py          # ingestion, chunk search and retrieval: retrieve, as_context, TF-IDF
@@ -1073,7 +1084,6 @@ derived counts as `unknown` rather than being dropped, so the counts still add
 up to the analyses in the window.
 
 ## Search
-## Search
 
 `store.search` is one function behind the search route, the CLI and the MCP tool,
 so the substring form and the opt-in regular-expression form cannot drift.  The
@@ -1800,8 +1810,8 @@ serves it back without touching the engine or the model. The payload's
 `reportal mcp [--json]` serves reportal's capabilities to local MCP clients
 over stdio: newline-delimited JSON-RPC 2.0 on stdin/stdout. `mcp_server.py`
 implements `initialize`, the `notifications/initialized` notification,
-`tools/list` and `tools/call`, reports protocol version `2025-06-18` and
-`serverInfo` `{"name", "title", "version"}`, and advertises a `tools`
+`tools/list` and `tools/call` at a protocol version the MCP SDK negotiates,
+reports `serverInfo` `{"name", "title", "version"}`, and advertises a `tools`
 capability. The protocol is the official `mcp` SDK's stdio transport (framing,
 version negotiation and dispatch); reportal supplies the tool registry and
 handlers. Only protocol JSON reaches stdout; the readiness line goes to stderr.
