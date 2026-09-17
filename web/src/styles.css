@@ -2542,7 +2542,7 @@ summary:hover {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-2);
   overflow: hidden;
 }
 
@@ -2725,7 +2725,7 @@ kbd.key {
 .search-kind {
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
@@ -2812,7 +2812,7 @@ kbd.key {
   gap: var(--space-1);
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   padding: 0 var(--space-1) 0 var(--space-2);
 }
