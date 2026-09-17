@@ -37,7 +37,7 @@ dependencies = [
     "python-multipart==0.0.32",
     "rebrew",
     "reportlab==5.0.1",
-    "rich>=13.0",
+    "rich==14.3.4",
     # Imported directly by `server`, `api`, and `ui`; do not rely on the
     # transitive pin through `fastapi`.
     "starlette==1.6.0",
