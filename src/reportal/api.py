@@ -7058,7 +7058,7 @@ def replace_collection_binaries(
                 change = store.replace_collection_binaries(conn, collection_id, binary_ids)
             except ValueError as exc:
                 return json_error(404, error="binary not found", detail=str(exc))
-            _record_link_change(log, "collection_binaries", before, collection_id)
+            _record_link_change(conn, log, "collection_binaries", before, collection_id)
     return json_response(log.attach({"collection_id": collection_id, **change}))
 
 
@@ -7102,7 +7102,7 @@ def remove_collection_binaries(
                 if int(row["id"]) not in set(binary_ids)
             ]
             change = store.replace_collection_binaries(conn, collection_id, kept)
-            _record_link_change(log, "collection_binaries", before, collection_id)
+            _record_link_change(conn, log, "collection_binaries", before, collection_id)
     return json_response(log.attach({"collection_id": collection_id, **change}))
 
 
@@ -7123,7 +7123,7 @@ def replace_collection_tags(
                 conn, table="collection_tags", where="collection_id = ?", params=(collection_id,)
             )
             change = store.set_collection_tags(conn, collection_id, names)
-            _record_link_change(log, "collection_tags", before, collection_id)
+            _record_link_change(conn, log, "collection_tags", before, collection_id)
     return json_response(log.attach({"collection_id": collection_id, **change}))
 
 
@@ -7135,13 +7135,26 @@ def _no_collection(collection_id: int) -> Response:
 
 
 def _record_link_change(
-    log: journal.Journal, table: str, before: list[dict[str, Any]], collection_id: int
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    table: str,
+    before: list[dict[str, Any]],
+    collection_id: int,
 ) -> None:
     """Journal a collection's links: what was there is restored on revert."""
     log.record(
         effects.EFFECT_ROW_RESTORE,
         f"links of collection {collection_id} in {table}",
         journal.row_restore_descriptor(table, before),
+    )
+    journal.journaled_new_rows(
+        conn,
+        log,
+        table=table,
+        where="collection_id = ?",
+        params=(collection_id,),
+        before=before,
+        key=("collection_id", "binary_id" if table == "collection_binaries" else "tag_id"),
     )
 
 

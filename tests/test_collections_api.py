@@ -6,6 +6,7 @@ import json
 import sqlite3
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 
 from reportal import auth, journal, store
@@ -318,6 +319,46 @@ class TestCollectionTags:
 
         assert status.startswith("400")
         assert payload["error"] == "tags must be a list of strings"
+
+
+@pytest.mark.parametrize("resource", ["binaries", "tags"])
+@pytest.mark.parametrize("initial", [[], ["keep", "drop"]])
+@pytest.mark.parametrize("replacement", [[], ["keep", "added"]])
+def test_reverting_replacement_restores_collection_links(
+    conn: sqlite3.Connection, resource: str, initial: list[str], replacement: list[str]
+) -> None:
+    collection_id = store.create_collection(conn, name="revertible-links")
+    other_id = store.create_collection(conn, name="untouched-links")
+    ids = {name: _binary(conn, name) for name in ["keep", "drop", "added", "later"]}
+    key = "binary_ids" if resource == "binaries" else "tags"
+    if resource == "binaries":
+        store.replace_collection_binaries(conn, collection_id, [ids[name] for name in initial])
+        store.replace_collection_binaries(conn, other_id, [ids["added"]])
+        body: dict[str, Any] = {key: [ids[name] for name in replacement]}
+    else:
+        store.set_collection_tags(conn, collection_id, initial)
+        store.set_collection_tags(conn, other_id, ["added"])
+        body = {key: replacement}
+
+    status, before = _request("GET", f"/api/collections/{collection_id}")
+    assert status.startswith("200")
+    status, changed = _request("PATCH", f"/api/collections/{collection_id}/{resource}", body)
+    assert status.startswith("200")
+
+    if resource == "binaries":
+        store.add_collection_binary(conn, collection_id, ids["later"])
+    else:
+        store.set_collection_tags(conn, collection_id, [*replacement, "later"])
+
+    status, _ = _request("POST", "/api/journal/revert", {"action": changed["journal_action"]})
+    assert status.startswith("200")
+    status, restored = _request("GET", f"/api/collections/{collection_id}")
+    assert status.startswith("200")
+    assert sorted(row["name"] for row in restored[resource]) == sorted([*initial, "later"])
+    assert [row for row in restored[resource] if row["name"] != "later"] == before[resource]
+    status, other = _request("GET", f"/api/collections/{other_id}")
+    assert status.startswith("200")
+    assert [row["name"] for row in other[resource]] == ["added"]
 
 
 class TestStoreRules:
