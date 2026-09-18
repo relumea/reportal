@@ -10,6 +10,7 @@ file they want and assert what reportal says about it.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,13 @@ from typer.testing import CliRunner
 from reportal import _paths, auth, cli, doctor, external, graph_backends, llm, profiles, settings
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """CLI capture includes Rich colour codes; tests assert the glyphs."""
+    return _ANSI.sub("", text)
 
 
 def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str = "") -> None:
@@ -71,21 +79,22 @@ class TestProfiles:
             '[deployment]\nprofile = "unknown"',
         ],
     )
-    def test_invalid_config_does_not_disable_auth(
+    def test_invalid_config_reads_as_personal(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
     ) -> None:
         _workspace(tmp_path, monkeypatch, body)
         monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
-        with pytest.raises(ValueError):
-            auth.required()
+        monkeypatch.delenv(auth.REQUIRED_ENV, raising=False)
+        assert profiles.current() == profiles.PROFILE_PERSONAL
+        assert not auth.required()
+        assert _row("deployment.profile")["value"] == profiles.PROFILE_PERSONAL
 
-    def test_unknown_environment_profile_is_rejected(
+    def test_unknown_environment_profile_reads_as_personal(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _workspace(tmp_path, monkeypatch)
         monkeypatch.setenv(profiles.PROFILE_ENV, "unknown")
-        with pytest.raises(ValueError, match="profile"):
-            profiles.current()
+        assert profiles.current() == profiles.PROFILE_PERSONAL
 
 
 class TestSurface:
@@ -191,7 +200,7 @@ class TestDeploymentProfile:
             'deployment = "saas"\n',
         ],
     )
-    def test_invalid_profile_is_not_personal(
+    def test_invalid_profile_reads_as_personal(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
     ) -> None:
         from reportal import profiles
@@ -199,10 +208,9 @@ class TestDeploymentProfile:
         monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
         _workspace(tmp_path, monkeypatch, body)
 
-        with pytest.raises(ValueError, match="deployment"):
-            profiles.current()
+        assert profiles.current() == profiles.PROFILE_PERSONAL
 
-    def test_invalid_environment_is_not_personal(
+    def test_invalid_environment_reads_as_personal(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         from reportal import profiles
@@ -210,8 +218,7 @@ class TestDeploymentProfile:
         _workspace(tmp_path, monkeypatch)
         monkeypatch.setenv(profiles.PROFILE_ENV, "sass")
 
-        with pytest.raises(ValueError, match="deployment.profile"):
-            profiles.current()
+        assert profiles.current() == profiles.PROFILE_PERSONAL
 
     def test_no_workspace(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
@@ -229,6 +236,7 @@ class TestDeploymentProfile:
         monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
         monkeypatch.setenv(auth.REQUIRED_ENV, "off")
         assert auth.required() is True
+
 
 class TestAgreement:
     """Each resolved value is the one the module that reads it resolves."""
@@ -304,29 +312,26 @@ class TestAgreement:
         assert auth.required() is (expected == "saas")
 
     @pytest.mark.parametrize(
-        ("configured", "override", "message"),
+        ("configured", "override"),
         [
-            ("", "saaz", "unknown deployment profile"),
-            ('[deployment]\nprofile = "saaz"\n', "", "unknown deployment profile"),
-            ("[deployment]\nprofile = true\n", "", "deployment profile must be a string"),
-            ('deployment = "saas"\n', "", "deployment must be a table"),
+            ("", "saaz"),
+            ('[deployment]\nprofile = "saaz"\n', ""),
+            ("[deployment]\nprofile = true\n", ""),
+            ('deployment = "saas"\n', ""),
         ],
     )
-    def test_invalid_deployment_profile_cannot_disable_auth(
+    def test_invalid_deployment_profile_reads_as_personal(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         configured: str,
         override: str,
-        message: str,
     ) -> None:
         _workspace(tmp_path, monkeypatch, configured)
         monkeypatch.setenv("REPORTAL_PROFILE", override)
         monkeypatch.setenv("REPORTAL_AUTH", "off")
-        with pytest.raises(ValueError, match=message):
-            profiles.current()
-        with pytest.raises(ValueError, match=message):
-            auth.required()
+        assert profiles.current() == profiles.PROFILE_PERSONAL
+        assert not auth.required()
 
     def test_the_job_pool_reads_its_falsey_value(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -593,7 +598,7 @@ class TestCli:
         _workspace(tmp_path, monkeypatch, '[llm]\nendpoind = "http://x"\n')
         result = runner.invoke(cli.app, ["config"])
         assert result.exit_code == 0, result.output
-        assert "[llm] endpoind" in result.output
+        assert "[llm] endpoind" in _plain(result.output)
 
     def test_an_unparsable_file_exits_nonzero(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -1,0 +1,15 @@
+# Keep text LF so a Windows checkout cannot break shell shebangs or Make.
+* text=auto eol=lf
+*.sh text eol=lf
+Makefile text eol=lf
+deploy/*.service text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary

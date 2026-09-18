@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- Restore the deployment-profile module, backup systemd units, and the SPA
+  precompress / packaged-docs scripts that the Makefile and settings registry
+  already call.
+- Add contributor, security, funding, and research-roadmap docs, plus fuzz
+  tests for gobuildinfo and symbols.
+
 ## 2.0.0
 
 ### Breaking changes

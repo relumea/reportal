@@ -1,3 +1,13 @@
+# Daily timer for deploy/reportal-backup.service.
+#
+# Template: copy with the oneshot unit, replace paths if needed, then
+# `systemctl enable --now reportal-backup.timer`.  The calendar is pinned to
+# UTC so a host TZ (or a DST spring-forward that skips local midnight) cannot
+# shift the schedule or the oneshot's `date -u` archive name.  Persistent=true
+# catches up after a host that was down at the scheduled time.  A missed or
+# failed run shows in `systemctl list-timers` / `systemctl --failed` and the
+# journal; there is no separate pager hook in-tree.
+
 [Unit]
 Description=Daily reportal workspace backup
 Documentation=https://github.com/relumea/reportal/blob/main/docs/DR_RUNBOOK.md
