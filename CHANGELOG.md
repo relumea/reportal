@@ -7,6 +7,33 @@ view renders it from here.
 
 ## Unreleased
 
+## 2.1.0
+
+Tenant onboarding, restored packaging, and the hardening that landed after
+2.0.0.
+
+### Additions
+
+- Team invites: a team owner or admin mints a single-use code (`POST
+  /api/teams/<id>/invites`, `reportal team-invite`) that expires after seven
+  days; `POST /api/teams/join` redeems it. Unused invites revoke; used and
+  expired rows answer 410.
+- Named extra API keys sit beside the login token (`GET`/`POST /api/iam/keys`,
+  `reportal api-key-add`). The plaintext is shown once, keys count toward the
+  plan's `max_api_keys`, and a successful authenticate stamps `last_used_at`.
+- Quota enforcement and actor ownership on tenant writes, so a plan cap
+  refuses work before it runs and journal rows name who did it.
+- Binary notes, language and compiler filters, decoded strings, and
+  cross-architecture match labels on the register, the match list, and the
+  binary detail.
+- Contributor, security, funding, and research-roadmap docs, plus fuzz tests
+  for gobuildinfo and symbols.
+- Restore the deployment-profile module, backup systemd units, and the SPA
+  precompress / packaged-docs scripts the Makefile and settings registry
+  already call.
+
+### Fixes
+
 - CLI human errors keep config table names and numeric ids copyable: Rich no
   longer auto-highlights digits and brackets on stderr.
 - Doctor's `port must be between 0 and 65535` is catalogued with the other
@@ -15,11 +42,15 @@ view renders it from here.
   already sends, instead of expecting untrusted analysis in the system prompt.
 - `make test` keeps pytest temps on disk under `~/.cache/reportal-pytest`, not
   `/tmp` (tmpfs) and not inside the tree (workspace-root walks).
-- Restore the deployment-profile module, backup systemd units, and the SPA
-  precompress / packaged-docs scripts that the Makefile and settings registry
-  already call.
-- Add contributor, security, funding, and research-roadmap docs, plus fuzz
-  tests for gobuildinfo and symbols.
+- Pointer-array typedef targets are sized by their element width.
+- Job submit reuses a live job under one transaction.
+- Credits no longer pick up extra charges from floating-point rounding.
+- Backups publish atomically across filesystem layouts.
+- UTF-8 BOMs are consumed during document ingestion.
+- STIX timestamps reject invalid calendar dates.
+- Token allowances hold at decimal budget boundaries.
+- MCP fingerprint reads stay stored-only; replay history is bounded across
+  streams.
 
 ## 2.0.0
 
