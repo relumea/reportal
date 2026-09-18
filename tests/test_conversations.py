@@ -6,6 +6,7 @@ either directly into `send_message` or process-wide through `llm.set_client`.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -131,10 +132,12 @@ class TestSendMessage:
         assert result["assistant"]["content"] == "It returns 1."
         assert len(fake_llm.calls) == 1
         sent = fake_llm.calls[0]
-        assert [message["role"] for message in sent] == ["system", "user"]
+        assert [message["role"] for message in sent] == ["system", "user", "user"]
         assert conversations.SYSTEM_PROMPT in sent[0]["content"]
-        assert FUNCTION_CODE in sent[0]["content"]
-        assert sent[1]["content"] == "what does this do?"
+        assert FUNCTION_CODE not in sent[0]["content"]
+        stored_context = json.loads(sent[1]["content"])
+        assert FUNCTION_CODE in stored_context["stored_context"]
+        assert sent[2]["content"] == "what does this do?"
         assert fake_llm.temperatures == [llm.DEFAULT_TEMPERATURE]
         messages = store.list_messages(conn, conversation_id)
         assert [message["content"] for message in messages] == [

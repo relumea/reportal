@@ -71,7 +71,8 @@ string). Wrap the payload in an object.
 
 `400`. The shared section for per-field validation messages: a body field of
 the wrong type (`narrative must be a boolean`, `limit must be an integer`,
-`name must be a string`), a value outside its bound (`top must be positive`), or
+`name must be a string`), a value outside its bound (`top must be positive`,
+`port must be between 0 and 65535`), or
 a value outside its closed vocabulary (`invalid params` for the auto-mode
 bounds, `invalid override`, `invalid rating`, `invalid line-comment`,
 `invalid kind`, `invalid backend`, `invalid severity`, `invalid format`

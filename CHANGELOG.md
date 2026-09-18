@@ -7,6 +7,14 @@ view renders it from here.
 
 ## Unreleased
 
+- CLI human errors keep config table names and numeric ids copyable: Rich no
+  longer auto-highlights digits and brackets on stderr.
+- Doctor's `port must be between 0 and 65535` is catalogued with the other
+  field-level bounds under `invalid-params`.
+- Conversation tests assert the stored-context user turn the prompt isolation
+  already sends, instead of expecting untrusted analysis in the system prompt.
+- `make test` keeps pytest temps on disk under `~/.cache/reportal-pytest`, not
+  `/tmp` (tmpfs) and not inside the tree (workspace-root walks).
 - Restore the deployment-profile module, backup systemd units, and the SPA
   precompress / packaged-docs scripts that the Makefile and settings registry
   already call.

@@ -488,8 +488,10 @@ class TestRuns:
                 ),
             )
             stored = agent._stored_messages(conn, int(paused["run_id"]))
-            assert [row["role"] for row in stored] == ["system", "user", "assistant"]
-            assert stored[2]["tool_calls"][0]["function"]["name"] == "tag_binary"
+            assert [row["role"] for row in stored] == ["system", "user", "user", "assistant"]
+            assert "stored_context" in json.loads(stored[1]["content"])
+            assert stored[2]["content"] == "go"
+            assert stored[3]["tool_calls"][0]["function"]["name"] == "tag_binary"
 
             resumed = _journaled(
                 conn,

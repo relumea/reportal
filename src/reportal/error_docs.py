@@ -14,7 +14,8 @@ every heading is an anchor the catalogue names.  A code with no entry gets no
 what keeps the field honest.
 
 A handful of the codes are built per field at the call site
-(``f"{key} must be an integer"``, ``f"invalid {name}"``), so their exact text
+(``f"{key} must be an integer"``, ``f"invalid {name}"``,
+``f"{key} must be between {lo} and {hi}"``), so their exact text
 depends on the request.  Those match :data:`PARAMETRIZED_DOC_ANCHORS` and share
 the :data:`INVALID_PARAMS_ANCHOR` section, which documents the whole family.
 """
@@ -212,6 +213,7 @@ PARAMETRIZED_DOC_ANCHORS: tuple[tuple[re.Pattern[str], str], ...] = (
         INVALID_PARAMS_ANCHOR,
     ),
     (re.compile(r"[a-z_]+ must be positive"), INVALID_PARAMS_ANCHOR),
+    (re.compile(r"[a-z_]+ must be between \d+ and \d+"), INVALID_PARAMS_ANCHOR),
     (re.compile(r"invalid [a-z_-]+"), INVALID_PARAMS_ANCHOR),
 )
 

@@ -5,11 +5,18 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import gzip
+import os
 import sqlite3
 from collections.abc import Iterator, Sequence
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
+
+# Set before any reportal import so `cli.console` is constructed without colour.
+# CliRunner still captures a TTY-backed stderr on a developer machine; without
+# this, Rich markup splits glyphs tests assert on (`[knowledge]`, `id 404`).
+os.environ["NO_COLOR"] = "1"
+os.environ["TERM"] = "dumb"
 
 import pytest
 

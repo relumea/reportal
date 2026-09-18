@@ -10,7 +10,6 @@ file they want and assert what reportal says about it.
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -22,13 +21,6 @@ from typer.testing import CliRunner
 from reportal import _paths, auth, cli, doctor, external, graph_backends, llm, profiles, settings
 
 runner = CliRunner()
-
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
-
-
-def _plain(text: str) -> str:
-    """CLI capture includes Rich colour codes; tests assert the glyphs."""
-    return _ANSI.sub("", text)
 
 
 def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str = "") -> None:
@@ -598,7 +590,7 @@ class TestCli:
         _workspace(tmp_path, monkeypatch, '[llm]\nendpoind = "http://x"\n')
         result = runner.invoke(cli.app, ["config"])
         assert result.exit_code == 0, result.output
-        assert "[llm] endpoind" in _plain(result.output)
+        assert "[llm] endpoind" in result.output
 
     def test_an_unparsable_file_exits_nonzero(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

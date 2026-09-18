@@ -88,7 +88,8 @@ locally registered malware families, ``family-add`` registers one from a
 reference binary, ``family-rm`` deletes one and ``detect`` matches a binary
 against them.
 Human output goes to stderr through Rich; ``--json`` payloads go to stdout so
-they can be piped.
+they can be piped.  The console does not auto-highlight: a config table name
+such as ``[knowledge]`` or an id in an error must stay copyable.
 """
 
 from __future__ import annotations
@@ -208,7 +209,10 @@ from reportal.surface import journaled_signup as _journal_signup
 EXIT_ERROR = 1
 EXIT_DECLINED = EXIT_ERROR
 
-console = Console(stderr=True)
+# highlight=False: ReprHighlighter would wrap digits and brackets in ANSI,
+# so a message that names `[knowledge]` or `id 404` would no longer match
+# the glyphs an operator copies.  Markup (`[red]…[/red]`) still applies.
+console = Console(stderr=True, highlight=False)
 
 # Engine label recorded on analyses produced by `import-rebrew`; it is what
 # makes a re-import find and refresh its own analysis instead of adding one.
@@ -354,6 +358,8 @@ def _fail(message: str, json_output: bool) -> NoReturn:
 
     The human form escapes *message*: it can carry a path or a config table
     name, and Rich would otherwise read a bracket as markup and drop it.
+    Highlighting is off on the console, so digits and remaining brackets stay
+    in the printed glyphs.
     JSON errors go to stdout so ``--json`` pipes stay a single parseable stream;
     human errors go to stderr with the rest of the human output.
     """

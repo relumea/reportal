@@ -286,10 +286,11 @@ class TestSendMessage:
         result = conversations.send_message(
             conn, conversation_id=conversation_id, content="what is the timer callback"
         )
-        system = fake_llm.calls[0][0]["content"]
-        assert conversations.DOCUMENT_SECTION_HEADER in system
-        assert NOTE_BODY in system
-        assert conversations.SYSTEM_PROMPT in system
+        sent = fake_llm.calls[0]
+        assert conversations.SYSTEM_PROMPT in sent[0]["content"]
+        stored_context = json.loads(sent[1]["content"])["stored_context"]
+        assert conversations.DOCUMENT_SECTION_HEADER in stored_context
+        assert NOTE_BODY in stored_context
         assert result["sources"]
         assert result["sources"][0]["title"] == "notes"
 

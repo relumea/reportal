@@ -27,6 +27,10 @@ SYNC_EXTRAS ?= --extra dev
 # The coverage floor the `test` target enforces; keep it equal to
 # `[tool.coverage.report] fail_under` in pyproject.toml.
 COVERAGE_MIN ?= 92
+# pytest's tmp_path follows TMPDIR.  /tmp is tmpfs here and fills during the
+# suite; a path inside this repo is found by workspace-root walks, so the
+# gate keeps temps on disk outside the tree.
+PYTEST_TMP ?= $(HOME)/.cache/reportal-pytest
 # Reproducible SPA/wheel timestamps: honour an explicit SOURCE_DATE_EPOCH,
 # else the tree's HEAD commit time, else a fixed zero (gzip/zip mtimes).
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || printf '0')
@@ -117,15 +121,18 @@ test: venv-check ## pytest with coverage (fails under COVERAGE_MIN)
 	# shortfall but does not fail the run on it (it prints "FAIL Required test
 	# coverage ... not reached" and still exits 0), so the floor is passed as the
 	# flag that enforces it.  COVERAGE_MIN mirrors that key; a raise moves both.
-	$(PY) -m pytest --cov --cov-fail-under=$(COVERAGE_MIN)
+	mkdir -p $(PYTEST_TMP)
+	TMPDIR=$(abspath $(PYTEST_TMP)) $(PY) -m pytest --cov --cov-fail-under=$(COVERAGE_MIN)
 
 test-fast: venv-check ## pytest without coverage (quicker)
-	$(PY) -m pytest --no-cov -q
+	mkdir -p $(PYTEST_TMP)
+	TMPDIR=$(abspath $(PYTEST_TMP)) $(PY) -m pytest --no-cov -q
 
 # Example: make test-one ARGS='tests/test_disclosure.py -k operator'
 test-one: venv-check ## One pytest node or file: make test-one ARGS='tests/foo.py'
 	@test -n "$(ARGS)" || { echo "usage: make test-one ARGS='tests/test_foo.py[::name]'" >&2; exit 1; }
-	$(PY) -m pytest --no-cov -q $(ARGS)
+	mkdir -p $(PYTEST_TMP)
+	TMPDIR=$(abspath $(PYTEST_TMP)) $(PY) -m pytest --no-cov -q $(ARGS)
 
 ui: spa ## Build the SPA, then run the headless-Chrome smoke and audit
 	$(PY) tools/smoke_spa.py

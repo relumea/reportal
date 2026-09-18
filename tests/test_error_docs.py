@@ -103,6 +103,7 @@ class TestCatalogue:
             "scope_id must be an integer",
             "name must be a string",
             "top must be positive",
+            "port must be between 0 and 65535",
             "invalid third_party_field",
             "invalid params",
         ],
