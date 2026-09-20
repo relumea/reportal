@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { Link } from "react-router";
 
 import { BINARY_OPTIONS_PATH, api } from "../api";
+import "./covmap.css";
+import "./verdict.css";
 import {
   Badge,
   Button,

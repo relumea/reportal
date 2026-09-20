@@ -12,6 +12,7 @@ import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
+import "./analyses.css";
 import {
   Badge,
   Button,

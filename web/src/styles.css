@@ -1120,115 +1120,6 @@ input[type="file"]::file-selector-button:hover {
   font-size: var(--text-xs);
 }
 
-/* ── Match settings sheet ─────────────────────────────────────────── */
-
-.settings-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.settings-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-  margin: 0;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-
-.settings-group > legend {
-  padding: 0 var(--space-1);
-  color: var(--text-faint);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-/* A long register scrolls inside its own box rather than stretching the sheet. */
-.settings-scroll {
-  max-height: 12rem;
-  overflow-y: auto;
-}
-
-/* ── Stacked quality bar ──────────────────────────────────────────── */
-
-.quality-bar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.entropy-strip {
-  display: flex;
-  gap: var(--meter-gap);
-  min-width: 0;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--ramp-track);
-}
-
-.entropy-strip-cell {
-  flex: 1 1 0;
-  min-width: 2px;
-  height: var(--meter-height);
-  border-radius: 1px;
-  background: var(--meter-unlit);
-}
-
-.entropy-strip-cell[data-hue] {
-  background: var(--hue-ink);
-}
-
-.entropy-strip-cell[data-packed="true"] {
-  background: var(--hue-ink, var(--status-fail));
-}
-
-.quality-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  min-width: 0;
-}
-
-.quality-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin: 0;
-  min-height: 24px;
-  padding: 2px var(--space-1);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--text-xs);
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.quality-legend-item[data-selected="true"] {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.quality-legend-item[data-empty="true"] {
-  color: var(--text-faint);
-}
-
-.quality-swatch {
-  width: 0.6em;
-  height: 0.6em;
-  border-radius: 2px;
-  background: var(--hue-ink, var(--meter-unlit));
-}
-
 /* Hue-scoped tokens.  Setting `data-hue` on any container exposes the family's
    ink, soft fill and border tint to that subtree, so a panel, a card and the
    badges inside it share one hue without repeating colours. */
@@ -1361,105 +1252,6 @@ input[type="file"]::file-selector-button:hover {
 
 .badge[data-hue="severity"][data-level="low"] {
   --badge-ink: var(--sev-low);
-}
-
-/* ── Coverage map: one cell per address range, the defrag view ────── */
-
-.covmap-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-}
-
-.covmap-key {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.covmap {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-
-.covmap-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.covmap-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2);
-}
-
-.covmap-name {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--text);
-}
-
-.covmap-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1px;
-}
-
-.covmap-cell {
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
-  background: var(--surface-3);
-  flex: none;
-}
-
-a.covmap-cell:hover {
-  outline: 1px solid var(--text);
-}
-
-a.covmap-cell:focus-visible {
-  outline: 2px solid var(--accent);
-}
-
-/* Cell ink per status entity: the same tokens the badges use, so a status
-   keeps one colour across the map, the legend and the tables. */
-.covmap-cell[data-state="exact"] {
-  background: var(--st-exact);
-}
-
-.covmap-cell[data-state="reloc"] {
-  background: var(--st-reloc);
-}
-
-.covmap-cell[data-state="proven"] {
-  background: var(--st-proven);
-}
-
-.covmap-cell[data-state="thunk"] {
-  background: var(--st-thunk);
-}
-
-.covmap-cell[data-state="near"] {
-  background: var(--st-near);
-}
-
-.covmap-cell[data-state="stub"] {
-  background: var(--st-stub);
-}
-
-.covmap-cell[data-state="idle"] {
-  background: var(--st-idle);
-}
-
-.covmap-cell[data-state="fail"] {
-  background: var(--st-fail);
 }
 
 /* ── Instruments: segmented meters and readouts ───────────────────── */
@@ -1605,30 +1397,6 @@ a.covmap-cell:focus-visible {
   color: var(--text-muted);
 }
 
-/* ── Threat verdict: the software-type badge and the threat-score meter ── */
-
-.verdict {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-  gap: var(--space-3);
-  align-items: start;
-  min-width: 0;
-}
-
-.verdict-cell {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-}
-
-.verdict-type {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin: 0;
-}
-
 .readout {
   display: flex;
   flex-direction: column;
@@ -1712,6 +1480,43 @@ a.covmap-cell:focus-visible {
 
 .data-table tbody tr.flash td {
   animation: flash-fade var(--flash-duration) ease-out;
+}
+
+/* The dashboard's 30-day series: one bar per day, over a shared peak. */
+.series {
+  margin-bottom: 0.6rem;
+}
+
+.series-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+}
+
+.series-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 48px;
+  border-bottom: 1px solid var(--border);
+}
+
+.series-bar {
+  flex: 1 1 0;
+  min-height: 1px;
+  background: var(--hue-stub);
+}
+
+.series-bar.series-a {
+  background: var(--hue-live);
+}
+
+.series-bar.series-b {
+  background: var(--hue-match);
+}
+
+.series-bar.series-c {
+  background: var(--hue-near);
 }
 
 /* ── Cockpit ──────────────────────────────────────────────────────── */
@@ -1989,135 +1794,6 @@ pre.code {
   white-space: pre;
 }
 
-/* ── Control-flow graph ───────────────────────────────────────────── */
-
-/* The Disassembly / Control Flow toggle: two toggle buttons that read as one
-   segmented control, with the active view on the primary fill. */
-.code-view-toggle {
-  display: inline-flex;
-  gap: var(--space-1);
-}
-
-.cfg-blocks {
-  list-style: none;
-  margin: 0;
-  padding-left: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/* One basic block, in address order.  The block is focusable (not tabbable)
-   so an edge's jump lands the keyboard where the viewport lands. */
-.cfg-block {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-}
-
-.cfg-block:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.cfg-block-head {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
-}
-
-.cfg-block-index {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  font-weight: 600;
-  color: var(--accent);
-}
-
-.cfg-block-head .muted {
-  margin: 0;
-  font-size: var(--text-xs);
-}
-
-.cfg-instrs {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 1px var(--space-2);
-  margin: var(--space-1) 0 0;
-}
-
-.cfg-instr-label {
-  margin: 0;
-  font-size: var(--text-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.cfg-instr {
-  overflow-wrap: anywhere;
-}
-
-.cfg-edges {
-  list-style: none;
-  margin: var(--space-1) 0 0;
-  padding-left: 0;
-}
-
-/* An outgoing edge: the arrow, the target (a jump control when the target is
-   a block in the payload), the target's index and the back-edge label. */
-.cfg-edge {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
-  padding: 1px 0;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-}
-
-/* A back edge closes a loop, so it carries the warn ink on the row itself and
-   the labelled badge beside the target. */
-.cfg-edge[data-back="true"] {
-  color: var(--warn);
-  border-left: 2px solid var(--warn);
-  padding-left: var(--space-2);
-}
-
-.cfg-edge-arrow {
-  color: var(--text-faint);
-}
-
-.cfg-edge[data-back="true"] .cfg-edge-arrow {
-  color: var(--warn);
-}
-
-.cfg-edge-jump {
-  padding: 0 2px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
-}
-
-.cfg-edge-jump:hover {
-  color: var(--accent-hover);
-  text-decoration: underline;
-}
-
-.cfg-edge-jump:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.cfg-no-edge {
-  margin: var(--space-1) 0 0;
-  font-size: var(--text-xs);
-}
-
 /* ── Key/value ────────────────────────────────────────────────────── */
 
 .kv {
@@ -2374,66 +2050,6 @@ pre.code {
 
 .back-link:hover {
   color: var(--accent);
-}
-
-/* ── Diff ─────────────────────────────────────────────────────────── */
-
-.diff-table {
-  table-layout: fixed;
-  width: 100%;
-  border-collapse: collapse;
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  line-height: 1.5;
-}
-
-.diff-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  text-align: left;
-  font-weight: 600;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--border-strong);
-  padding: var(--space-2) var(--space-3);
-}
-
-.diff-table td {
-  padding: 0 var(--space-3);
-  vertical-align: top;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-.diff-line {
-  display: inline-block;
-  width: 3.5em;
-  padding-right: var(--space-2);
-  color: var(--text-faint);
-  text-align: right;
-  user-select: none;
-}
-
-.diff-row.diff-delete {
-  background: var(--diff-delete-soft);
-}
-
-.diff-row.diff-delete .diff-text {
-  color: var(--diff-delete);
-}
-
-.diff-row.diff-insert {
-  background: var(--diff-insert-soft);
-}
-
-.diff-row.diff-insert .diff-text {
-  color: var(--diff-insert);
-}
-
-.diff-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
 }
 
 /* ── Messages, tasks, hits, neighbors ─────────────────────────────── */
@@ -3095,26 +2711,6 @@ kbd.key {
     grid-template-columns: 1fr;
   }
 
-  /* The manual reads as one column: the on-this-page list becomes a strip
-     above the body rather than a column beside it. */
-  .doc-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .doc-toc {
-    position: static;
-    max-height: none;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-    padding: 0 0 var(--space-2);
-  }
-
-  .doc-toc-label {
-    flex: 1 1 100%;
-  }
 
   .kv-key {
     border-bottom: none;
@@ -3169,378 +2765,6 @@ kbd.key {
     width: 24px;
     height: 24px;
   }
-}
-
-/* ── Full-file memory page ────────────────────────────────────────────
-   One row per 16 backed bytes (address, file offset, byte grid, ASCII
-   gutter) and one row per stated gap.  A zero byte is dimmed to --text-muted,
-   which still clears WCAG AA on the surface, so a non-zero region stands out
-   without the zeroes disappearing. */
-.memory-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  line-height: 1.5;
-}
-
-.memory-row {
-  display: grid;
-  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
-  gap: 12px;
-  align-items: baseline;
-  padding: 1px 4px;
-  white-space: nowrap;
-}
-
-.memory-address,
-.memory-offset {
-  color: var(--text-muted);
-}
-
-.memory-ascii {
-  color: var(--text);
-  display: inline-flex;
-}
-
-.memory-ascii .byte {
-  padding: 0;
-}
-
-.memory-gap {
-  color: var(--text-muted);
-  background: var(--surface-2);
-}
-
-.memory-gap .memory-bytes {
-  font-style: italic;
-}
-
-.memory-bytes {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.memory-bytes > :nth-child(8) {
-  margin-right: 12px;
-}
-
-.byte {
-  padding: 0 2px;
-  border: 0;
-  border-radius: 2px;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-}
-
-.byte-zero {
-  color: var(--text-muted);
-}
-
-.byte-selected {
-  background: var(--accent-soft);
-  color: var(--accent-hover);
-}
-
-/* The continuous dump: the scroll container is the viewport and the inner
-   spacer is the whole address span, so the rows absolutely positioned inside it
-   are the only ones the browser has to lay out.  The row height here and
-   ROW_HEIGHT in MemoryPanel.tsx are one number. */
-.memory-scroll {
-  height: 380px;
-  overflow: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2);
-  background: var(--surface-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-}
-
-.memory-scroll-inner {
-  position: relative;
-}
-
-.memory-scroll-row {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 18px;
-  line-height: 18px;
-}
-
-.memory-pending {
-  color: var(--text-faint);
-}
-
-.byte-pending {
-  color: var(--text-faint);
-}
-
-/* The dashboard's 30-day series: one bar per day, over a shared peak. */
-.series {
-  margin-bottom: 0.6rem;
-}
-
-.series-head {
-  display: flex;
-  justify-content: space-between;
-  font-size: var(--text-sm);
-}
-
-.series-bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 48px;
-  border-bottom: 1px solid var(--border);
-}
-
-.series-bar {
-  flex: 1 1 0;
-  min-height: 1px;
-  background: var(--hue-stub);
-}
-
-.series-bar.series-a {
-  background: var(--hue-live);
-}
-
-.series-bar.series-b {
-  background: var(--hue-match);
-}
-
-.series-bar.series-c {
-  background: var(--hue-near);
-}
-
-/* ── Documentation reader ─────────────────────────────────────────────
-   The in-app manual: the index cards, the on-this-page column and one rule
-   per block kind the server emits.  Every document is read, so the type is
-   the body size rather than a caption. */
-
-.doc-index {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-  gap: var(--space-2);
-}
-
-.doc-card {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2);
-  background: var(--surface-2);
-  text-decoration: none;
-  color: var(--text);
-}
-
-.doc-card:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-hover);
-}
-
-.doc-card-slug {
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  color: var(--accent);
-}
-
-.doc-card-title {
-  font-size: var(--text-base);
-}
-
-.doc-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
-  gap: var(--space-4);
-  align-items: start;
-}
-
-.doc-toc {
-  position: sticky;
-  top: var(--space-2);
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 70vh;
-  overflow-y: auto;
-  padding-right: var(--space-2);
-  border-right: 1px solid var(--border);
-}
-
-.doc-toc-label {
-  font-size: var(--text-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.doc-toc-link {
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-  text-decoration: none;
-  padding: 2px 4px;
-  border-radius: var(--radius-1);
-}
-
-.doc-toc-link:hover,
-.doc-toc-link.active {
-  color: var(--accent-hover);
-  background: var(--accent-soft);
-}
-
-.doc-body {
-  min-width: 0;
-}
-
-/* The reading-order pair at the foot of a page; the empty side keeps the one
-   link on the side it belongs to rather than centring it. */
-.doc-pager {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px solid var(--border);
-}
-
-.doc-pager-link {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-width: 45%;
-  font-size: var(--text-base);
-  color: var(--accent-hover);
-  text-decoration: none;
-}
-
-.doc-pager-link.next {
-  text-align: right;
-  align-items: flex-end;
-}
-
-.doc-pager-link:hover {
-  text-decoration: underline;
-}
-
-.doc-pager-label {
-  font-size: var(--text-xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-
-.doc-heading {
-  margin: var(--space-4) 0 var(--space-2);
-  font-size: var(--text-lg);
-  color: var(--text);
-}
-
-.doc-heading[data-level="3"] {
-  font-size: var(--text-base);
-}
-
-.doc-paragraph,
-.doc-list p,
-.doc-quote {
-  margin: 0 0 var(--space-2);
-  font-size: var(--text-base);
-  line-height: 1.55;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-
-.doc-list p {
-  display: flex;
-  gap: var(--space-2);
-}
-
-/* The bullet is a fixed gutter and the text takes the rest; a flex item that
-   may not shrink is what made a long item overrun its column. */
-.doc-bullet {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-  font-family: var(--font-mono);
-  min-width: 1.2rem;
-}
-
-.doc-item-text {
-  min-width: 0;
-}
-
-.doc-quote {
-  padding-left: var(--space-3);
-  border-left: 2px solid var(--border-strong);
-  color: var(--text-muted);
-}
-
-.doc-code {
-  margin: 0 0 var(--space-2);
-  padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-2);
-  background: var(--surface-2);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  overflow-x: auto;
-}
-
-.doc-body code {
-  font-family: var(--font-mono);
-  font-size: 0.84em;
-  padding: 1px 4px;
-  border-radius: var(--radius-1);
-  background: var(--surface-3);
-}
-
-.doc-code code {
-  padding: 0;
-  background: none;
-  font-size: inherit;
-}
-
-.doc-table-wrap {
-  overflow-x: auto;
-  margin-bottom: var(--space-2);
-}
-
-.doc-table {
-  border-collapse: collapse;
-  font-size: var(--text-sm);
-}
-
-.doc-table th,
-.doc-table td {
-  border: 1px solid var(--border);
-  padding: 4px 8px;
-  text-align: left;
-  vertical-align: top;
-}
-
-.doc-table th {
-  background: var(--surface-2);
-  color: var(--text-muted);
-}
-
-/* The conversation prompt library: one ghost button per canned opener. */
-.prompt-library {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-
-/* The analyses status multi-select: one toggle per status, which fits a
-   toolbar row better than a multi-line list box. */
-.chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
 }
 
 /* ── Upload drop zone ─────────────────────────────────────────────────
@@ -3645,74 +2869,6 @@ kbd.key {
 
 .sidebar-collapsed .sidebar-toggle {
   margin-left: 0;
-}
-
-/* ── Billing: the plan catalog as cards ────────────────────────────── */
-
-.plan-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--space-3);
-  align-items: stretch;
-}
-
-.plan-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-4);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-
-.plan-card[data-current="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.plan-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.plan-card-head h3 {
-  margin: 0;
-  font-size: var(--text-lg);
-}
-
-.plan-card-price {
-  font-size: var(--text-2xl);
-  font-weight: 600;
-  line-height: 1.1;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.plan-card-price small {
-  font-size: var(--text-sm);
-  font-weight: 400;
-  color: var(--text-muted);
-}
-
-.plan-card-features {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  flex: 1;
-}
-
-.plan-card-features li {
-  padding: var(--space-1) 0;
-  border-top: 1px solid var(--border);
-  font-size: var(--text-base);
-  color: var(--text-muted);
-}
-
-.plan-card-features li:first-child {
-  border-top: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

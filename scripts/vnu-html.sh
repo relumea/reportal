@@ -4,7 +4,10 @@ set -euo pipefail
 # around vnu.jar, so it needs a JVM.  Missing tooling and findings both fail:
 # this step is part of the gate, never a warning.
 HTML="web/index.html"
-CSS="web/src/styles.css"
+# Entry stylesheet plus every lazy-route CSS chunk co-imported by a view/panel.
+# A split that leaves a chunk out of this list fails the gate the same way a
+# hand edit of styles.css used to.
+mapfile -t CSS_FILES < <(find web/src -name '*.css' -print | sort)
 VNU_JAR_VERSION="${VNU_JAR_VERSION:-26.8.21}"
 
 if ! command -v vnu >/dev/null 2>&1; then
@@ -25,7 +28,11 @@ if [ -z "${java_ver}" ] || [ "${java_ver}" -lt 17 ]; then
   echo "VNU: Java 17+ is required (found ${java_ver:-unknown}); apt: openjdk-17-jre-headless" >&2
   exit 1
 fi
+if [ "${#CSS_FILES[@]}" -eq 0 ]; then
+  echo "VNU: no CSS under web/src" >&2
+  exit 1
+fi
 
 vnu --format text "$HTML"
-vnu --css --format text "$CSS"
-echo "VNU: HTML + CSS OK" >&2
+vnu --css --format text "${CSS_FILES[@]}"
+echo "VNU: HTML + ${#CSS_FILES[@]} CSS file(s) OK" >&2

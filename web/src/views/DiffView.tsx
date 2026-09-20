@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
+import "./diff.css";
 import {
   Badge,
   Button,

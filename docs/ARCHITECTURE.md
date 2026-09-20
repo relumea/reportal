@@ -3319,7 +3319,7 @@ uv run --python .venv/bin/python ruff check src/ tests/ tools/
 cd web && bun install && bun run build                      # typecheck + Vite build
 cd web && bunx tsc --noEmit && bun run lint                 # types and oxlint
 vnu --format text web/index.html                            # source HTML
-vnu --css --format text web/src/styles.css                  # source stylesheet
+vnu --css --format text web/src/**/*.css                    # source stylesheets
 uv run --python .venv/bin/python tools/smoke_spa.py         # builds web/ if needed, then every route
 uv run --python .venv/bin/python tools/audit_ui.py          # UI gate: layout, contrast, names at both viewports
 cd web && bun run test:ui                                   # Playwright: seed + serve + browser specs

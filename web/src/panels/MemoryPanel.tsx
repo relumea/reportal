@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { api } from "../api";
+import "./memory.css";
 import {
   Button,
   DataTable,

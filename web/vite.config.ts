@@ -14,16 +14,20 @@ const precompressScript = fileURLToPath(
   new URL("../scripts/precompress_spa.py", import.meta.url),
 );
 
-/** Move stylesheets ahead of module scripts so CSS fetch and first paint do not
- * wait behind the entry/vendor module tags Vite injects first by default. */
-function cssBeforeModules(): Plugin {
+/** Order the head so first paint is not gated on the wrong tag: modulepreloads
+ * first (vendor/runtime start in parallel with CSS), then the stylesheet with
+ * `fetchpriority="high"`, then the entry module.  Vite injects the entry script
+ * before its modulepreloads by default; without this, the vendor fetch waits on
+ * discovering imports inside the entry chunk. */
+function criticalHeadOrder(): Plugin {
   return {
-    name: "reportal-css-before-modules",
+    name: "reportal-critical-head-order",
     transformIndexHtml: {
       order: "post",
       handler(html) {
         const styles: string[] = [];
-        const withoutStyles = html.replace(
+        const preloads: string[] = [];
+        let without = html.replace(
           /\s*<link[^>]*\brel=["']stylesheet["'][^>]*>/gi,
           (tag) => {
             const withPriority = /\bfetchpriority=/.test(tag)
@@ -33,17 +37,21 @@ function cssBeforeModules(): Plugin {
             return "";
           },
         );
-        if (styles.length === 0) {
+        without = without.replace(/\s*<link[^>]*\brel=["']modulepreload["'][^>]*>/gi, (tag) => {
+          preloads.push(tag.trim());
+          return "";
+        });
+        if (styles.length === 0 && preloads.length === 0) {
           return html;
         }
-        const block = `\n    ${styles.join("\n    ")}`;
-        if (/<script\b[^>]*\btype=["']module["']/.test(withoutStyles)) {
-          return withoutStyles.replace(
+        const block = `\n    ${[...preloads, ...styles].join("\n    ")}`;
+        if (/<script\b[^>]*\btype=["']module["']/.test(without)) {
+          return without.replace(
             /<script\b[^>]*\btype=["']module["'][^>]*>/,
             (script) => `${block}\n    ${script}`,
           );
         }
-        return withoutStyles.replace(/<\/head>/i, `${block}\n  </head>`);
+        return without.replace(/<\/head>/i, `${block}\n  </head>`);
       },
     },
   };
@@ -66,7 +74,7 @@ function precompressDist(): Plugin {
 export default defineConfig({
   root: rootDir,
   base: "/static/",
-  plugins: [react(), cssBeforeModules(), precompressDist()],
+  plugins: [react(), criticalHeadOrder(), precompressDist()],
   build: {
     outDir: "../src/reportal/assets/dist",
     emptyOutDir: true,

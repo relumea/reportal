@@ -18,6 +18,7 @@ import { api } from "../api";
 import { Button, ErrorNote, Loading, Muted, Panel } from "../components";
 import type { DocBlock, DocIndex, DocListItem, DocPage, DocPageBody } from "../types";
 import { useAsync } from "../useAsync";
+import "./documentation.css";
 
 /** The changelog is a page like any other, so its slug is the changelog route. */
 const CHANGELOG_SLUG = "changelog";

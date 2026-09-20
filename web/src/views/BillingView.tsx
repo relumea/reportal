@@ -33,6 +33,7 @@ import {
   SegmentMeter,
   Toolbar,
 } from "../components";
+import "./billing.css";
 import type { BadgeTone } from "../components";
 import type {
   BillingPayload,

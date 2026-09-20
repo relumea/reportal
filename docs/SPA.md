@@ -51,14 +51,20 @@ body to a client that cannot decode it.  The Vite build itself runs that
 precompress step (`web/vite.config.ts`), so `bun run build` and `make spa`
 both leave `.gz`/`.br` siblings next to the hashed bundles.
 
-The entry HTML lists the stylesheet before the module scripts (and marks it
-`fetchpriority="high"`), so CSS fetch and first paint are not gated on the
-entry or vendor chunk tags Vite would otherwise inject first.  `tools/smoke_spa.py`
-fails when that order regresses or when the entry JS/CSS lack a `.gz` sibling.
+The entry HTML lists `modulepreload` for the vendor and runtime, then the
+stylesheet (with `fetchpriority="high"`), then the entry module, so the vendor
+fetch starts in parallel with CSS rather than waiting for the entry chunk to be
+downloaded and parsed.  View-only CSS (matches quality bar, coverage map,
+control-flow graph, diff, memory dump, documentation reader, billing cards) is
+co-imported by the lazy chunk that needs it, so the entry stylesheet stays the
+shell and shared instruments.  `tools/smoke_spa.py` fails when that head order
+regresses, when the entry JS/CSS lack a `.gz` sibling, or when the entry CSS
+grows past its budget.
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-about 51 kB (under a 64 kB smoke budget) and the vendor chunk about 289 kB
+about 51 kB (under a 64 kB smoke budget), the entry CSS about 41 kB (under a
+48 kB smoke budget; ~8.4 kB gzip), and the vendor chunk about 289 kB
 (91 kB gzip, ~78 kB brotli), with the view and shell-dialog chunks behind them.
 On the wire that is what `ui.py` actually sends when compression is accepted;
 without it the browser downloads the raw sizes.  `make run`, `make ui` and

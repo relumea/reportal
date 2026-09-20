@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router";
 import type { ReactNode } from "react";
 
 import { BINARY_OPTIONS_PATH, api } from "../api";
+import "./matches.css";
 import {
   Badge,
   Button,
