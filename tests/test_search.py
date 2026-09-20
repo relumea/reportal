@@ -329,6 +329,18 @@ class TestRegexSearch:
         assert bad.startswith("400")
         assert json_body(body, headers)["error"] == "invalid regex"
 
+        typo, headers, body = wsgi_request("GET", "/api/search?q=beta&regex=maybe")
+        assert typo.startswith("400")
+        assert json_body(body, headers)["error"] == "regex must be a boolean"
+
+        bare, headers, body = wsgi_request("GET", "/api/search?q=beta&regex")
+        assert bare.startswith("200"), body
+        assert json_body(body, headers)["regex"] is False
+
+        off, headers, body = wsgi_request("GET", "/api/search?q=beta&regex=false")
+        assert off.startswith("200"), body
+        assert json_body(body, headers)["regex"] is False
+
 
 class TestStringFilter:
     def _filtered(self, conn: sqlite3.Connection, *needles: str, regex: bool = False) -> Any:

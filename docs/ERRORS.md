@@ -927,8 +927,10 @@ A personal install already has an operator; create a user with
 
 `402` (`quota-exceeded`). The tenant's allowance cannot cover the call: the
 free tier at zero remaining, or a past-due subscription. Paid plans past
-their allowance are covered by overage and keep working. The body names the
-plan, the usage, and the `/pricing` upgrade path.
+their allowance are covered by overage and keep working. The body carries the
+shared `{"error", "detail", "doc_url"}` envelope plus `plan_id`, `kind`,
+`limit`, `used`, `remaining`, and the `/pricing` upgrade path (credit-priced
+refusals also name `task` and `cost`).
 
 ### invalid-region
 

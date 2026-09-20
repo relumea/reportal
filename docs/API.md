@@ -243,6 +243,7 @@ scope as its own 404; `docs/THREAT_MODEL.md` carries the residuals.
 | `/api/functions/<id>/type-suggestions` | DELETE | discard the stored type suggestions; journaled; 404 `no-artifact` without any |
 | `/api/functions/<id>/renames` | GET | stored identifier rename suggestions; 404 `no-artifact` without any; never calls the LLM |
 | `/api/functions/<id>/renames` | POST | ask the configured LLM for identifier renames on the stored decompilation and store them |
+| `/api/functions/<id>/renames` | DELETE | discard the stored rename suggestions; journaled, so the action's revert restores them; 404 `no-artifact` without any |
 | `/api/functions/<id>/renames/apply` | POST | rewrite whole-token identifiers in the stored decompilation (refusing keywords and short names), journaling the previous text; body `{"applied": [...], "rename_function": bool}`, both optional and an omitted `applied` applies every stored suggestion |
 | `/api/functions/<id>/renames/revert` | POST | restore the decompilation text the last apply journaled and drop the journal |
 | `/api/functions/<id>/ai-decompilation` | GET | the stored AI decompilation rendered with its overrides, plus its token map, per-line attributions, rating and line comments; 404 `no-artifact` without one; never calls the LLM |
@@ -261,8 +262,8 @@ scope as its own 404; `docs/THREAT_MODEL.md` carries the residuals.
 | `/api/functions/<id>/pipeline` | POST | run the AI decompilation component composition; body `{"disabled": [...]}` optional; 404 unknown function, 503 `pipeline-unavailable` only when the composition cannot be assembled (a skipped or failed stage is a step on the run) |
 | `/api/functions/<id>/pipeline` | GET | stored latest run with its steps and the function's durable artifacts; 404 `no-run` before the first run |
 | `/api/pipeline/runs/<id>` | GET | one pipeline run with its steps; 404 `run not found` |
-| `/api/search` | GET | the typed search; `?q=`, `?kind=all\|sha256\|binary\|collection\|tag`, `?limit=`, and `?regex=true` to match the query as a bounded, cached regular expression (400 `invalid regex` for one that does not compile, and for `kind=sha256`, which is a literal hash prefix by definition) |
-| `/api/binaries/<id>/functions` | GET | the function list; `?string=` may repeat, and every value is combined as any-of against the stored decompilation, with `?regex=true` treating each as a bounded regular expression (400 `invalid regex`; at most `MAX_FUNCTION_STRINGS` values, else 400 `invalid string`) |
+| `/api/search` | GET | the typed search; `?q=`, `?kind=all\|sha256\|binary\|collection\|tag`, `?limit=`, and `?regex=true` to match the query as a bounded, cached regular expression (400 `invalid regex` for one that does not compile, and for `kind=sha256`, which is a literal hash prefix by definition; 400 `regex must be a boolean` outside the shared true/false vocabulary) |
+| `/api/binaries/<id>/functions` | GET | the function list; `?string=` may repeat, and every value is combined as any-of against the stored decompilation, with `?regex=true` treating each as a bounded regular expression (400 `invalid regex`; 400 `regex must be a boolean` for a non-boolean flag; at most `MAX_FUNCTION_STRINGS` values, else 400 `invalid string`) |
 | `/api/functions/signatures` | GET | signatures for many functions in one read; `?ids=1,2,3` (at most 200), in the caller's order, with `signature: null` for a function that has none and `found: false` for an unknown id; 400 `invalid ids` |
 | `/api/analyses/<id>/signatures/copy` | POST | copy one function's signature onto others in the analysis; body `{"source_function_id", "targets"}`; journaled, with a per-target `applied`/`skipped` report; 400 `invalid source`/`invalid targets`, 404 unknown analysis or a function outside it |
 | `/api/analyses/<id>/data-types` | POST | create or update an analysis's data types from C declarations; body `{"types": [<declaration>...]}` or one header string, split at top-level semicolons; one journaled action with per-entry results; 400 `invalid types` |
@@ -793,7 +794,9 @@ The rename routes (`renames.py`) reuse that shape.  `POST
 `no-decompilation`), a configured endpoint (503 `llm-unavailable`) and an
 usable model response (502 `llm-error`), and returns the stored envelope with
 the suggestion `count`.  `GET` is stored-only and answers 404 `no-artifact`
-with the `reportal suggest-renames` hint.  `POST .../renames/apply` reads
+with the `reportal suggest-renames` hint.  `DELETE` discards the stored
+suggestions (journaled; 404 `no-artifact` without any), matching the other AI
+artifact clears.  `POST .../renames/apply` reads
 `{"applied": [...], "rename_function": bool}` (400 `invalid applied` for a
 non-list or non-object element, 400 `rename_function must be a boolean`), needs
 the stored decompilation (404 `no-decompilation`), answers 404 `no-artifact`

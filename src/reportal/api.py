@@ -66,6 +66,7 @@ from reportal import (
     doctor,
     effects,
     engines,
+    error_docs,
     exploitability,
     external,
     families,
@@ -295,11 +296,22 @@ def _query_list(request: Request, name: str, limit: int) -> tuple[list[str], Res
 
 
 def _query_flag(request: Request, name: str) -> bool:
-    """Return a boolean query parameter, defaulting to false when absent."""
+    """Return a boolean query flag, defaulting to false when absent or blank.
+
+    A bare ``?regex`` (empty value) stays false, matching the prior flag
+    contract.  A non-empty value must be in the shared true/false vocabulary or
+    the route answers 400 ``{name} must be a boolean``, the same envelope
+    ``_query_bool`` uses for typed toggles.
+    """
     raw = request.query_params.get(name)
     if raw is None or not str(raw).strip():
         return False
-    return str(raw).strip().lower() in _QUERY_TRUE
+    value = str(raw).strip().lower()
+    if value in _QUERY_TRUE:
+        return True
+    if value in _QUERY_FALSE:
+        return False
+    raise json_error(400, error=f"{name} must be a boolean")
 
 
 def _query_text(request: Request, name: str) -> str | None:
@@ -6199,6 +6211,27 @@ def _request_organisation_id(conn: sqlite3.Connection, request: Request) -> int:
     return int(row["organisation_id"])
 
 
+def _quota_exceeded_response(check: Mapping[str, Any], *, kind: str, **extra: Any) -> Response:
+    """402 ``quota-exceeded`` with the shared error envelope plus quota fields.
+
+    Extra keys (``task``, ``cost``) ride beside ``error``/``detail``/``doc_url``
+    so a caller can branch on the code and still read the plan numbers.
+    """
+    payload: dict[str, Any] = {
+        "error": "quota-exceeded",
+        "detail": str(check["reason"]),
+        "doc_url": error_docs.doc_url("quota-exceeded"),
+        "plan_id": check["plan_id"],
+        "kind": kind,
+        "limit": check["limit"],
+        "used": check["used"],
+        "remaining": check["remaining"],
+        "upgrade": "/pricing",
+    }
+    payload.update(extra)
+    return json_response(payload, status=402)
+
+
 def _refuse_over_quota(request: Request, kind: str, units: int = 1) -> Response | None:
     """402 when the SaaS tenant behind *request* is past its *kind* allowance.
 
@@ -6216,19 +6249,7 @@ def _refuse_over_quota(request: Request, kind: str, units: int = 1) -> Response 
         check = metering.quota_check(conn, organisation_id, kind, units)
     if check["allowed"]:
         return None
-    return json_response(
-        {
-            "error": "quota-exceeded",
-            "detail": str(check["reason"]),
-            "plan_id": check["plan_id"],
-            "kind": kind,
-            "limit": check["limit"],
-            "used": check["used"],
-            "remaining": check["remaining"],
-            "upgrade": "/pricing",
-        },
-        status=402,
-    )
+    return _quota_exceeded_response(check, kind=kind)
 
 
 def _refuse_over_credits(request: Request, task: str, prompt_text: str) -> Response | None:
@@ -6250,21 +6271,7 @@ def _refuse_over_credits(request: Request, task: str, prompt_text: str) -> Respo
         check = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, units)
     if check["allowed"]:
         return None
-    return json_response(
-        {
-            "error": "quota-exceeded",
-            "detail": str(check["reason"]),
-            "plan_id": check["plan_id"],
-            "kind": metering.KIND_CREDITS,
-            "task": task,
-            "cost": units,
-            "limit": check["limit"],
-            "used": check["used"],
-            "remaining": check["remaining"],
-            "upgrade": "/pricing",
-        },
-        status=402,
-    )
+    return _quota_exceeded_response(check, kind=metering.KIND_CREDITS, task=task, cost=units)
 
 
 def _triage_batch_size(
@@ -6288,21 +6295,7 @@ def _refuse_over_batch(request: Request, task: str, calls: int) -> Response | No
         check = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, units)
     if check["allowed"]:
         return None
-    return json_response(
-        {
-            "error": "quota-exceeded",
-            "detail": str(check["reason"]),
-            "plan_id": check["plan_id"],
-            "kind": metering.KIND_CREDITS,
-            "task": task,
-            "cost": units,
-            "limit": check["limit"],
-            "used": check["used"],
-            "remaining": check["remaining"],
-            "upgrade": "/pricing",
-        },
-        status=402,
-    )
+    return _quota_exceeded_response(check, kind=metering.KIND_CREDITS, task=task, cost=units)
 
 
 def _record_auto_run_charge(request: Request) -> None:

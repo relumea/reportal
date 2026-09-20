@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from conftest import FakeLlmClient, json_body, wsgi_request
 
-from reportal import api, auth, clock, journal, metering, profiles, store
+from reportal import api, auth, clock, error_docs, journal, metering, profiles, store
 
 
 def _send(
@@ -244,6 +244,7 @@ class TestQuotaGate:
         assert status.startswith("402")
         assert payload["error"] == "quota-exceeded"
         assert payload["upgrade"] == "/pricing"
+        assert payload["doc_url"] == f"{error_docs.DOC_BASE_URL}#quota-exceeded"
 
     def test_personal_profile_ignores_quota(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
