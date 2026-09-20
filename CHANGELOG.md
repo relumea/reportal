@@ -9,6 +9,10 @@ view renders it from here.
 
 ### Added
 
+- Queued jobs store the submit request's `X-Request-Id`; a pool-thread
+  `job failed` / `job slow` line still carries it after the HTTP request
+  ended. `GET /api/health` uses `ok`/`degraded` (same as `reportal doctor`)
+  when the database is not writable or fails to open, while HTTP stays 200.
 - MCP `logging/setLevel` sets the reportal stderr logger. Protocol JSON stays
   on stdout; `notifications/message` is not pushed.
 - Filetype table names MEW, Upack, kkrunchy, ASProtect, ConfuserEx,
@@ -49,6 +53,9 @@ view renders it from here.
 - Function Matches carries View function matching, which opens Match /
   Diff for that function (`#/matches?function=`).
 - Function header name is click-to-rename (Enter saves, Escape discards).
+- Function list J/K focus draws the same left border as a checked row.
+- Function list referrer filter is a removable chip.
+- Analyses search waits `SEARCH_DEBOUNCE_MS` before the hash updates.
 - Search binary and collection hits show their stored `created_at`.
 - Function header signature hover shows return, parameters and convention.
   Named types in that hover link the type list.

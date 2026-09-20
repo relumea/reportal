@@ -7,7 +7,7 @@
 // single-user loopback tool with no account model, and who changed what is what
 // the Journal view records, which this view links to.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
@@ -38,6 +38,7 @@ import {
   DEFAULT_ANALYSIS_LIMIT,
   DEFAULT_ANALYSIS_LOG_LIMIT,
   MAX_ANALYSIS_LIMIT,
+  SEARCH_DEBOUNCE_MS,
 } from "../constants";
 import { logSeverityLevel } from "../design";
 import type {
@@ -391,6 +392,9 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
   const navigate = useNavigate();
   const filters = filtersFromQuery(query);
   const [draft, setDraft] = useState(filters.search);
+  useEffect(() => {
+    setDraft(filters.search);
+  }, [filters.search]);
   const [logFor, setLogFor] = useState<number | null>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
@@ -455,6 +459,14 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
       ).toString(),
     });
   };
+  useEffect(() => {
+    const next = draft.trim();
+    if (next === filters.search) return undefined;
+    const handle = window.setTimeout(() => apply({ search: next }), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+    // apply is recreated every render; the draft is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, filters.search]);
 
   /** Toggle one status in the any-of set; the last one off means any status. */
   const toggleStatus = (value: string): void => {

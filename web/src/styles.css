@@ -2223,7 +2223,8 @@ pre.code {
   cursor: pointer;
 }
 
-.data-table tr.row-selected {
+.data-table tr.row-selected,
+.data-table tr.clickable:focus {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 

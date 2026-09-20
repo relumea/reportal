@@ -3,11 +3,12 @@
 uvicorn's access log is off (``server.run``), so the middleware records what an
 operator needs from journalctl: a request id on every ``/api`` response, a
 structured completion line when the call is interesting, and a cheap counter
-snapshot ``GET /api/health`` exposes.  Background jobs feed the same health
-payload with done/failed counts and latency, so a queue that is failing is
-visible without scraping SQLite.  No remote collector and no new dependency:
-the signals an incident needs (did it succeed, how long, which request, recent
-error rate, job queue health) stay in one process.
+snapshot ``GET /api/health`` exposes.  Background jobs store that request id at
+submit and feed the same health payload with done/failed counts and latency, so
+a queue that is failing is visible without scraping SQLite and a pool-thread
+failure still greps back to the submit request.  No remote collector and no new
+dependency: the signals an incident needs (did it succeed, how long, which
+request, recent error rate, job queue health) stay in one process.
 """
 
 from __future__ import annotations

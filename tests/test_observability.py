@@ -279,6 +279,32 @@ class TestJobObservability:
             for record in caplog.records
         )
 
+    def test_a_queued_job_keeps_the_submit_request_id_for_the_pool(
+        self, conn: sqlite3.Connection, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A pool thread has no HTTP ContextVar; the row still carries the id."""
+        observability.reset_job_stats()
+        binary_path = tmp_path / "demo.exe"
+        binary_path.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="dd" * 32, name="demo.exe", size=2, path=str(binary_path)
+        )
+        token = observability.set_request_id("queued-submit-trace")
+        try:
+            job = jobs.submit(conn, kind="secrets", binary_id=binary_id, params={})
+        finally:
+            observability.reset_request_id(token)
+        assert job["request_id"] == "queued-submit-trace"
+        assert observability.current_request_id() == ""
+        with caplog.at_level(logging.ERROR, logger="reportal.jobs"):
+            jobs.run_pending(conn, limit=1)
+        assert any(
+            "job failed" in record.getMessage()
+            and f"id={job['id']}" in record.getMessage()
+            and "request_id=queued-submit-trace" in record.getMessage()
+            for record in caplog.records
+        )
+
     def test_a_wedged_worker_tick_is_logged(
         self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
     ) -> None:

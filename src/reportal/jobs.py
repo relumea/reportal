@@ -135,7 +135,8 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
     started_at  TEXT NOT NULL DEFAULT '',
     finished_at TEXT NOT NULL DEFAULT '',
     submitted_by TEXT NOT NULL DEFAULT '',
-    submitted_by_user_id INTEGER
+    submitted_by_user_id INTEGER,
+    request_id TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON {TABLE}(status, id);
 CREATE INDEX IF NOT EXISTS idx_jobs_binary ON {TABLE}(binary_id);
@@ -150,6 +151,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN submitted_by TEXT NOT NULL DEFAULT ''")
     if "submitted_by_user_id" not in columns:
         conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN submitted_by_user_id INTEGER")
+    if "request_id" not in columns:
+        conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN request_id TEXT NOT NULL DEFAULT ''")
     conn.commit()
 
 
@@ -951,6 +954,7 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "finished_at": str(row["finished_at"]),
         "submitted_by": str(row["submitted_by"]) if "submitted_by" in columns else "",
         "submitted_by_user_id": None if raw_submitter_id is None else int(raw_submitter_id),
+        "request_id": str(row["request_id"]) if "request_id" in columns else "",
         "live": str(row["status"]) in LIVE_STATUSES,
     }
 
@@ -1113,7 +1117,10 @@ def submit(
     (``ai-enrich``) and writers must not run twice for one double-click.
     *submitted_by* names who queued it (and the stable id behind the name),
     so the worker thread that later runs it records the submitter's identity
-    on the journal entries it writes.
+    on the journal entries it writes.  The active HTTP ``request_id`` (when
+    any) is stored on the row so a later pool thread can still emit
+    ``job failed`` / ``job slow`` lines an operator can grep back to the
+    submit request.
 
     Raises :class:`KeyError` for an unknown binary, :class:`ValueError` for an
     unknown kind, for a parameter a kind does not take, for a parameter a kind
@@ -1323,10 +1330,11 @@ def submit(
         )
         if queued >= MAX_QUEUED_JOBS:
             raise ValueError(f"the queue is full: {queued} jobs are waiting")
+        request_id = observability.current_request_id()
         cur = conn.execute(
             f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
-            " params_json, created_at, submitted_by, submitted_by_user_id)"
-            " VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?)",
+            " params_json, created_at, submitted_by, submitted_by_user_id, request_id)"
+            " VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?)",
             (
                 kind,
                 binary_id,
@@ -1336,6 +1344,7 @@ def submit(
                 store.now(),
                 submitted_by,
                 submitted_by_user_id,
+                request_id,
             ),
         )
         _prune(conn)
@@ -1425,7 +1434,10 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     An operation that fails records the failure and a bounded message; it never
     raises, because a failed job is a result the caller polls for.  The worker
     thread re-enters the submitter's identity, so the entries carry who queued
-    the work rather than an empty actor.
+    the work rather than an empty actor.  When the row carries a stored
+    ``request_id`` and this thread has none, it is bound for the run so
+    completion lines still correlate to the submit request after the pool
+    picked the job up.
     """
     spec = JOB_KINDS[job["kind"]]
     binary_id = int(job["binary_id"])
@@ -1434,54 +1446,62 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     raw_user_id = job.get("submitted_by_user_id")
     submitter_id = int(raw_user_id) if isinstance(raw_user_id, int) else None
     submitter = str(job.get("submitted_by") or "")
+    stored_request_id = str(job.get("request_id") or "")
+    request_id_token: Any | None = None
+    if stored_request_id and not observability.current_request_id():
+        request_id_token = observability.set_request_id(stored_request_id)
     started = _monotonic()
-    with journal.acting_as(submitter, user_id=submitter_id):
-        try:
-            scan_kind = spec.scan_kind_for(params)
-            if spec.perform_progress is not None:
-                payload = spec.perform_progress(
-                    conn, binary_id, params, progress=_progress_sink(conn, job_id)
-                )
-            elif spec.perform is not None:
-                payload = spec.perform(conn, binary_id, params)
-            elif scan_kind is None:  # pragma: no cover - every other kind stores a scan
-                payload = spec.run(conn, binary_id, params)
-            else:
-                action = journal.new_action()
-                with journal.journaled(conn, action) as log:
-                    payload = journal.journaled_scan(
-                        conn,
-                        log,
-                        binary_id,
-                        scan_kind,
-                        lambda: spec.run(conn, binary_id, params),
+    try:
+        with journal.acting_as(submitter, user_id=submitter_id):
+            try:
+                scan_kind = spec.scan_kind_for(params)
+                if spec.perform_progress is not None:
+                    payload = spec.perform_progress(
+                        conn, binary_id, params, progress=_progress_sink(conn, job_id)
                     )
-                payload = log.attach(payload)
-            failure = ""
-            failure_exc: BaseException | None = None
-        except Exception as exc:
-            payload = None
-            failure = f"{type(exc).__name__}: {exc}"
-            failure_exc = exc
-    duration_ms = int((_monotonic() - started) * 1000)
-    status = STATUS_FAILED if failure else STATUS_DONE
-    observability.record_job(failed=bool(failure), duration_ms=duration_ms)
-    if failure_exc is not None:
-        _log_job_failure(
-            job_id=job_id,
-            kind=str(job["kind"]),
-            binary_id=binary_id,
-            duration_ms=duration_ms,
-            error=failure[:200],
-            exc=failure_exc,
-        )
-    elif duration_ms >= observability.SLOW_JOB_MS:
-        _log_job_slow(
-            job_id=job_id,
-            kind=str(job["kind"]),
-            binary_id=binary_id,
-            duration_ms=duration_ms,
-        )
+                elif spec.perform is not None:
+                    payload = spec.perform(conn, binary_id, params)
+                elif scan_kind is None:  # pragma: no cover - every other kind stores a scan
+                    payload = spec.run(conn, binary_id, params)
+                else:
+                    action = journal.new_action()
+                    with journal.journaled(conn, action) as log:
+                        payload = journal.journaled_scan(
+                            conn,
+                            log,
+                            binary_id,
+                            scan_kind,
+                            lambda: spec.run(conn, binary_id, params),
+                        )
+                    payload = log.attach(payload)
+                failure = ""
+                failure_exc: BaseException | None = None
+            except Exception as exc:
+                payload = None
+                failure = f"{type(exc).__name__}: {exc}"
+                failure_exc = exc
+        duration_ms = int((_monotonic() - started) * 1000)
+        status = STATUS_FAILED if failure else STATUS_DONE
+        observability.record_job(failed=bool(failure), duration_ms=duration_ms)
+        if failure_exc is not None:
+            _log_job_failure(
+                job_id=job_id,
+                kind=str(job["kind"]),
+                binary_id=binary_id,
+                duration_ms=duration_ms,
+                error=failure[:200],
+                exc=failure_exc,
+            )
+        elif duration_ms >= observability.SLOW_JOB_MS:
+            _log_job_slow(
+                job_id=job_id,
+                kind=str(job["kind"]),
+                binary_id=binary_id,
+                duration_ms=duration_ms,
+            )
+    finally:
+        if request_id_token is not None:
+            observability.reset_request_id(request_id_token)
     conn.execute(
         f"UPDATE {TABLE} SET status = ?, progress = ?, message = ?, result_json = ?,"
         " error = ?, finished_at = ? WHERE id = ?",

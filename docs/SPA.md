@@ -564,7 +564,8 @@ symbol (name, signature, or both via `POST /api/functions/<id>/apply-match`),
 a Suggested names list of every recorded candidate (click applies the name),
 the similarity and the summary counts, loading through the diff route.
 The Functions view's filters draw a removable chip per active control
-(source, capability, match, size, name, VA), and carry several decompilation
+(source, capability, match, size, name, VA, referrers), and carry several
+decompilation
 needles at once: each
 one is added with Enter, drawn as a chip with its own Remove control, and sent as
 repeated `string` parameters (any-of); an adjacent `regular expressions`
@@ -764,7 +765,8 @@ and the toolbar carries Run pipeline/Re-run and Revert run (which posts the
 revert route and refreshes the history panel).  The Functions view
 (`views/FunctionsView.tsx`, `#/functions` and `#/binaries/<id>/functions`)
 picks a binary, lists its functions with per-row Matches, History and Rename
-actions, and carries a filter panel plus sortable headers: a coloured
+actions, a left border on the focused or checked row, and carries a
+filter panel plus sortable headers: a coloured
 name-source dot beside each name, a name search whose placeholder states
 the total (`Search N functions`) and which narrows as you type, one address
 (decimal or `0x` hex, which is how an analyst has a function they have no
@@ -1094,7 +1096,8 @@ the cell carries an add field, both of which post the whole set through
 `PATCH /api/analyses/<id>/tags` (the binary's tags are what reportal tags, so a
 change here and a change in the binary's Tags panel are one write).  A status
 select, an order select and a search box (the binary's name, its SHA-256 or
-the engine label) write the hash query
+the engine label, which waits `SEARCH_DEBOUNCE_MS` as you type) write the
+hash query
 (`#/analyses?status=failed&search=notepad`), the table states
 `N of M analyses` so a filter is distinguishable from a small project, and a
 filter that matched nothing says so instead of rendering an empty table.  Each

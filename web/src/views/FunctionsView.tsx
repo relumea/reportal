@@ -569,18 +569,16 @@ export function FunctionsView({
             {filters.va ? (
               <FilterChip label={`VA ${filters.va}`} onClear={() => apply({ va: "" })} />
             ) : null}
+            {filters.refersTo ? (
+              <FilterChip
+                label={`Referrers of ${filters.refersTo}`}
+                onClear={() => apply({ refersTo: "" })}
+              />
+            ) : null}
           </div>
         ) : null}
         {binariesResult.error ? (
           <ErrorNote error={binariesResult.error} onRetry={binariesResult.reload} />
-        ) : null}
-        {filters.refersTo !== "" ? (
-          <Note>
-            Referrers of {filters.refersTo}.{" "}
-            <Button size="sm" tone="ghost" onClick={() => apply({ refersTo: "" })}>
-              Clear referrer filter
-            </Button>
-          </Note>
         ) : null}
         {filters.strings.length > 0 ? (
           <Note>

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from unittest import mock
 from urllib.parse import unquote
 
 import pytest
@@ -127,10 +128,23 @@ class TestHealth:
         status, headers, body = wsgi_request("GET", "/api/health")
         assert status.startswith("200")
         payload = json_body(body, headers)
-        assert payload["status"] == "ok"
+        assert payload["status"] == "degraded"
         assert payload["dependencies"]["database"]["writable"] is False
         assert payload["dependencies"]["database"]["detail"]
         assert payload["failures"] == ["database"]
+
+    def test_health_reports_a_database_open_failure(
+        self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            store, "connect", mock.Mock(side_effect=sqlite3.OperationalError("disk I/O error"))
+        )
+        status, headers, body = wsgi_request("GET", "/api/health")
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert payload["status"] == "degraded"
+        assert payload["failures"] == ["database"]
+        assert "OperationalError" in payload["dependencies"]["database"]["detail"]
 
     def test_health_reports_the_last_auto_run(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)

@@ -155,6 +155,10 @@ test("j and k move through the rows of the view's table", async ({ page }) => {
   expect(await page.evaluate<boolean>(`document.activeElement === document.querySelector("table.data-table tbody tr[tabindex='0']")`)).toBe(
     true,
   );
+  await expect(page.locator("table.data-table tbody tr[tabindex='0']").first()).toHaveCSS(
+    "box-shadow",
+    /inset/,
+  );
   await page.keyboard.press("j");
   expect(await page.evaluate<boolean>(`document.activeElement === document.querySelectorAll("table.data-table tbody tr[tabindex='0']")[1]`)).toBe(
     true,

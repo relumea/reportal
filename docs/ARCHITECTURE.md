@@ -322,8 +322,11 @@ access log.  Finished background jobs feed matching process counters
 (`observability.record_job`, surfaced as `jobs` on the same health payload)
 and `dependencies.jobs` reports the live queue depth plus whether this
 process's pool is draining it; a failed or slow job also emits a structured
-line (`job failed` / `job slow`) carrying `duration_ms` and, when the run was
-inline under an HTTP request, `request_id`.  The middleware resolves the bearer token to a user
+line (`job failed` / `job slow`) carrying `duration_ms` and `request_id`
+(stored on the job at submit so a pool thread can still correlate after the
+HTTP request ended).  Health `status` is `ok` or `degraded` when `failures`
+names a dependency (same vocabulary as `reportal doctor`); HTTP stays 200.
+The middleware resolves the bearer token to a user
 (`auth.authenticate`, constant-time digest comparison), refuses a disabled user,
 computes the permission the method and path need (`auth.required_permission`:
 `read`, `write`, or `admin` for `/api/users*`) and compares it with the role's

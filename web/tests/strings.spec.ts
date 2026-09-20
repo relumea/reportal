@@ -25,6 +25,7 @@ test("clicking a string opens the functions that reference it", async ({ page })
   await expect(page).toHaveURL(/refers_to=/);
   const functions = panelByTitle(page, "Functions");
   await expect(functions.getByText(/Referrers of /)).toBeVisible({ timeout: 60_000 });
+  await expect(functions.locator(".chip").filter({ hasText: /Referrers of / })).toBeVisible();
   // Either the filter kept rows or it says plainly that nobody references it.
   await expect(
     functions.getByText(/of \d+ functions|No function references/),

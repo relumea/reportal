@@ -8729,21 +8729,24 @@ def health() -> Response:
     """Liveness plus dependency readiness: version, db path, counts, deps.
 
     The pre-existing keys (``status``, ``version``, ``db``, ``counts``) are
-    unchanged, and a live server always answers 200: a degraded dependency is
-    reported under ``dependencies`` and named in ``failures`` rather than
-    turned into an error, because the process is still serving.  ``http`` is
-    the process-local request counters since start (rate, 4xx/5xx, latency
-    sum and max), and ``jobs`` is the matching done/failed/latency snapshot
-    for background work, so an operator can read RED for both the request
-    path and the queue without a separate metrics scrape.
+    unchanged in shape, and a live server always answers 200: a degraded
+    dependency is reported under ``dependencies`` and named in ``failures``
+    rather than turned into an HTTP error, because the process is still
+    serving.  ``status`` is ``ok`` when nothing failed and ``degraded`` when
+    ``failures`` is non-empty (the same vocabulary as ``reportal doctor``).
+    ``http`` is the process-local request counters since start (rate, 4xx/5xx,
+    latency sum and max), and ``jobs`` is the matching done/failed/latency
+    snapshot for background work, so an operator can read RED for both the
+    request path and the queue without a separate metrics scrape.
     ``dependencies.jobs`` is the live queue depth (queued/running) and whether
     this process's pool is draining it.
 
     Every probe is cheap and side-effect free.  The database check is a
-    permission test (no query, no write, no SQLite lock); the engine is read
-    from the process-wide cached ``engines.get_engine()``, whose availability
-    probe imports nothing and spawns nothing; the last auto run is a single
-    SELECT.  The request adds no subprocess and no write.
+    permission test (no query, no write, no SQLite lock) plus a one-shot open
+    for counts; the engine is read from the process-wide cached
+    ``engines.get_engine()``, whose availability probe imports nothing and
+    spawns nothing; the last auto run is a single SELECT.  The request adds
+    no subprocess and no write.
     """
     path = db_path()
     # Open without init_db: health must not upgrade schema, and a read-only
@@ -8753,12 +8756,14 @@ def health() -> Response:
         "running": 0,
         "pool": not jobs.pool_disabled(),
     }
+    open_detail = ""
     try:
         with contextlib.closing(store.connect(path)) as conn:
             counts = store.counts(conn)
             last_run = _last_auto_run(conn)
             jobs_dep = _jobs_health(conn)
-    except (sqlite3.Error, OSError):
+    except (sqlite3.Error, OSError) as exc:
+        open_detail = f"{type(exc).__name__}: {exc}"
         counts = {
             "binaries": 0,
             "analyses": 0,
@@ -8773,16 +8778,20 @@ def health() -> Response:
         }
         last_run = None
     database = _database_health(path)
+    if open_detail and not database["detail"]:
+        database = {**database, "detail": open_detail}
     dependencies = {
         "database": database,
         "engine": _engine_health(),
         "auto": {"last_run": last_run},
         "jobs": jobs_dep,
     }
-    failures = [] if database["writable"] else ["database"]
+    failures: list[str] = []
+    if not database["writable"] or open_detail:
+        failures.append("database")
     return json_response(
         {
-            "status": "ok",
+            "status": "ok" if not failures else "degraded",
             "version": __version__,
             "db": str(path),
             "counts": counts,
