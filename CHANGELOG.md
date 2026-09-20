@@ -31,15 +31,57 @@ view renders it from here.
   pre-flight DNS alone.  The test-only `allow_loopback=True` seam still admits
   an unverifiable peer; operators who hit this on a real transport need a
   client that exposes the connected peer address.
+- **Falsey gate env vars force the feature off over the workspace file.**
+  Through 2.1.0 only a truthy `REPORTAL_AUTH`, `REPORTAL_ALLOW_EXTERNAL`,
+  `REPORTAL_ALLOW_REMOTE_INGEST`, or `REPORTAL_SANDBOX` overrode
+  `reportal.toml`; a falsey value (`0`, `false`, `no`, `off`, `disabled`) was
+  ignored and the workspace table still won.  Those falsey values now force
+  the gate off (SaaS profile still requires auth).  Operators who set e.g.
+  `REPORTAL_AUTH=0` while `[auth] required = true` must drop the env var or
+  accept auth off.
+- **MCP tools mirror HTTP object and secret scope.**  Through 2.1.0 an MCP
+  caller could read or mutate team-scoped binaries, collections, analyses, and
+  secrets without membership.  Tools now 404 out-of-scope objects (like the
+  HTTP path gate) and 403 writes the caller may not perform; secret list/put/
+  delete use the same `may_read` / `may_write` rules as the HTTP secret
+  routes.  Agents that relied on unscoped access need a token whose teams
+  cover the objects.
+- **Tag, collection, and zip-password labels refuse control characters.**
+  Names that carried ASCII C0 / DEL, Unicode format characters (zero-width,
+  bidi), or line/paragraph separators used to store; they now raise
+  `ValueError` / 400.  Binary display names and those labels are also
+  NFC-normalized on write so an NFD spelling matches the NFC row.  Strip
+  hostile characters before create/rename; expect NFC equality on lookup.
+- **`GET /api/journal` out-of-range `?limit=` is `invalid limit`.**  Through
+  2.1.0 a non-positive limit answered 400 `limit must be positive`.  It now
+  matches the other list routes: 400 `invalid limit` with detail naming the
+  1..`journal.MAX_LIST_LIMIT` band (a non-integer is still `limit must be an
+  integer`).  Clients that switched on the old error string must accept
+  `invalid limit`.
 
 ### Fixed
 
 - `make package-wheel` runs `scripts/check_wheel.py` under the same
   `SOURCE_DATE_EPOCH` as precompress, so a reproducible gzip mtime no longer
   fails the wheel gate when the epoch is the HEAD commit time rather than `0`.
+- `POST /api/binaries/<id>/unstrip/apply` and
+  `POST /api/binaries/<id>/flirt/apply` refuse a `function_id` that is unknown
+  or belongs to another binary (404 `function not found`) instead of renaming
+  across binaries.  A non-string name override is 400 `invalid name`.
+- Empty JSON bodies are accepted on match, structs, and decompile POSTs that
+  previously required a JSON object (`optional_json_body`).
+- Changing a binary's rebrew project directory, or refreshing a function whose
+  size changed, clears that function's stored decompilation and AI artifacts
+  along with the disassembly cache, so a later read cannot serve text from the
+  previous engine input.
 
 ### Added
 
+- `reportal backup-prune [--dir DIR] [--keep-days N] [--dry-run]` deletes dated
+  archives older than the retention window (default 14 days).  The packaged
+  `reportal-backup.service` runs it after a successful write.  `reportal
+  doctor` warns when the backup directory is missing or the newest archive is
+  older than 48 hours.
 - Wheel packaging ships the systemd unit templates under `reportal/deploy/`
   (mirrored from repository `deploy/` at build time).  `reportal deploy-units`
   prints their paths, or copies them with `--write DIR`, so a host that
@@ -206,7 +248,7 @@ view renders it from here.
   compiled `.sig` file with its content hash, one digest over the enabled blobs
   of an architecture as the library's identity, and the matches of a binary
   cached under `(binary_sha256, sigset_key, arch)`, so a binary already matched
-  is served from the cache instead of re-matched. The catalog is global — a
+  is served from the cache instead of re-matched. The catalog is global: a
   signature set is a fact about a toolchain, not a tenant's object. `GET
   /api/flirt/sigsets`, `POST /api/flirt/sigsets/refresh` (indexes the checkout
   named by `REPORTAL_FLIRT_SIGS_DIR`, and only that path) and the
@@ -257,13 +299,6 @@ view renders it from here.
   heading of the enclosing `Panel` or `Card`, and the hand-written tables name
   themselves. The type panel's paste, import and signature results also sit in
   one status region, so the last outcome badges that were silent now announce.
-
-### Fixes
-
-- Changing a binary's rebrew project directory, or refreshing a function whose
-  size changed, clears that function's stored decompilation and AI artifacts
-  along with the disassembly cache, so a later read cannot serve text from the
-  previous engine input.
 
 ## 2.1.0
 
