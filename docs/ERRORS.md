@@ -38,7 +38,7 @@ under the hyphenated heading.
 - Stored-only reads: [no-scan](#no-scan), [no-flirt-scan](#no-flirt-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [no-signature-dir](#no-signature-dir), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
 - Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
 - Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [mcp-unavailable](#mcp-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
-- Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
+- Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [blocked-target](#blocked-target), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
@@ -733,6 +733,16 @@ body that could not be read. Nothing was stored.
 ### unresolvable-host
 
 `400`. The target host does not resolve, or resolves to no usable address.
+
+### blocked-target
+
+`400`. The target resolves to a blocked address (loopback, private, link-local,
+multicast, unspecified or reserved, including IPv4-mapped IPv6), the connection
+peer is on a blocked range, or the transport exposes no verifiable peer address
+so production callers refuse to trust pre-flight DNS alone.  The test-only
+`allow_loopback=True` seam still admits an unverifiable peer.  Use a public
+`http`/`https` URL on an allowed port, or a transport that reports the connected
+peer.
 
 ### unsupported-content-type
 

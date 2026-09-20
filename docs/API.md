@@ -135,7 +135,7 @@ scope as its own 404; `docs/THREAT_MODEL.md` carries the residuals.
 | `/api/binaries/<id>/data-types` | GET | the editable type model with each type's kind, namespace, size, members, enum values, target and padded `as_c` declaration, plus the namespace tree; always answers; optional `kind` (400 `invalid kind` outside `data_types.KINDS`), `namespace` (the path and every descendant, `Binary` for program-defined types, an unknown path an empty list), `search` (a substring of the name, the namespace, `namespace::name`, a member name or an enum value name) and `source` (one of `data_types.SOURCE_LABELS`, 400 `invalid source` outside them), `sort` (`name`, the default, or `size`; 400 `invalid sort`) and `direction` (`asc`, the default, or `desc`; 400 `invalid direction`), where a type whose size the model states as zero (an unknown one) sorts last in either direction; the body carries `count` (filtered), `total` (unfiltered), the `sort`/`direction` it applied, `sources` (the count per provenance label over the whole model) and `kinds` (the count per declaration kind over the whole model) |
 | `/api/data-types/<id>/references` | GET | the two reverse indices: `referenced_by` (each type naming it as a member, a typedef target, a pointee, an array element, a function parameter or a return type) and `used_by_functions` (each function whose stored signature names it), matched by name with the payload's `note` stating so; 404 `data-type-not-found` |
 | `/api/binaries/<id>/data-types/import` | POST | parse the stored structs scan into the model; 404 `no-scan` without one; stored-only, never runs the engine |
-| `/api/binaries/<id>/data-types/export` | POST | render the model as one C header; body `{"path", "force"}`; 409 `export-exists` without `force`, 400 `invalid path` when the parent cannot be created |
+| `/api/binaries/<id>/data-types/export` | POST | render the model as one C header; body `{"path", "force"}`; path must resolve under the workspace; 409 `export-exists` without `force`, 400 `invalid path` when the path is outside the workspace or the parent cannot be created |
 | `/api/data-types/<id>` | PATCH | edit the type's level fields or one member; body `{"name"\|"kind"\|"namespace"\|"size"}` (one write, one history entry; 400 `invalid kind` outside `data_types.KINDS` listing the known ones, 400 `invalid size` for a non-integer) or `{"member": {"name"\|"index", "new_name", "new_type", "new_pointer"\|null, "new_count"\|null, "new_bits"\|null}}`; the member edit is 400 `invalid request` beside any type-level field, and a retype leaves a hand-set `bits` alone |
 | `/api/data-types/<id>` | DELETE | delete one data type; 404 `data-type-not-found` for an unknown id |
 | `/api/data-types/<id>/values` | POST | append one enum constant; body `{"name", "value"}` (an integer or a decimal/`0x` literal; omitted, it increments from the last constant and the payload's `note` names the number); 400 `duplicate member` for a duplicate name or value, 400 `invalid member` on a kind without values or a bad literal |
@@ -149,7 +149,7 @@ scope as its own 404; `docs/THREAT_MODEL.md` carries the residuals.
 | `/api/data-types/<id>/members/<member>/ungap` | POST | turn a padding member back into a named, typed member; body `{"name", "type"}` plus the optional `"pointer"`, `"count"`, `"bits"`; 400 `invalid member` when the member is not a gap |
 | `/api/binaries/<id>/signatures` | GET | the binary's stored function signatures, ordered by name; always answers |
 | `/api/binaries/<id>/signatures/import` | POST | parse the binary's stored decompilations into the model; always answers a summary (created/updated/skipped); stored-only, never runs the engine |
-| `/api/binaries/<id>/signatures/export` | POST | render one C prototype header; body `{"path", "force"}`; 409 `export-exists` without `force`, 400 `invalid path` when the parent cannot be created |
+| `/api/binaries/<id>/signatures/export` | POST | render one C prototype header; body `{"path", "force"}`; path must resolve under the workspace; 409 `export-exists` without `force`, 400 `invalid path` when the path is outside the workspace or the parent cannot be created |
 | `/api/functions/<id>/signature` | GET | one function's signature plus its rendered `prototype` (each parameter also carries the derived `default_at`); 404 `signature-not-found` without one |
 | `/api/functions/<id>/signature` | PATCH | set the return type and/or calling convention; body `{"return_type"?, "calling_convention"?}`; 400 `invalid request` when neither is given |
 | `/api/functions/<id>/signature` | DELETE | delete one function's signature; 404 `signature-not-found` without one |
@@ -502,8 +502,9 @@ name-matched reverse indices with their `note`; `POST .../data-types/import` is
 stored-only (404 `no-scan` without a stored structs scan), and
 `POST .../data-types/export` takes
 `{"path", "force"}` and answers 409 `export-exists` for an existing target
-without `force` and 400 `invalid path` when the parent directory cannot be
-created.  The `PATCH /api/data-types/<id>` and member routes answer 404
+without `force` and 400 `invalid path` when the path is outside the workspace
+or the parent directory cannot be created (the CLI may still write anywhere
+the operator's shell can).  The `PATCH /api/data-types/<id>` and member routes answer 404
 `data-type-not-found`/`member-not-found`, 400 `invalid name` for a
 non-identifier, 400 `invalid kind` listing the known kinds, 400 `invalid size`
 for a negative or non-integer declared size, 400 `duplicate name`/`duplicate
@@ -564,7 +565,8 @@ engine: `GET /api/binaries/<id>/signatures` always answers with the model,
 `POST .../signatures/import` parses the binary's stored decompilations (a
 binary with none answers a zero summary, not an error), and
 `POST .../signatures/export` takes `{"path", "force"}` (409 `export-exists`,
-400 `invalid path`).  `GET /api/functions/<id>/signature` returns the row plus
+400 `invalid path` when the path is outside the workspace or the parent cannot
+be created; the CLI may still write anywhere the operator's shell can).  `GET /api/functions/<id>/signature` returns the row plus
 its rendered `prototype` and answers 404 `signature-not-found` without one;
 each parameter also carries `default_at`, the arrival location its calling
 convention implies (a derived value, never the model's `at`), which stays

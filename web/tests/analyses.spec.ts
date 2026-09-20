@@ -15,6 +15,7 @@ test("the list filters to the seeded analysis and its log opens on demand", asyn
   await page.goto("/#/analyses");
   const panel = panelByTitle(page, "Analyses");
   await expect(panel.getByRole("button", { name: "Upload File" })).toBeVisible();
+  await expect(panel.getByLabel("Search", { exact: true })).toHaveAttribute("type", "search");
   await panel.getByLabel("Search", { exact: true }).fill("notepad.exe");
   await panel.getByRole("button", { name: "Search" }).click();
   await expect(page).toHaveURL(/search=notepad/);

@@ -7,12 +7,36 @@ view renders it from here.
 
 ## Unreleased
 
+### Breaking changes
+
+- **`GET /api/health` `status` is `ok` or `degraded`.**  Through 2.1.0 the field
+  stayed `"ok"` even when `failures` named a dependency (for example a database
+  that was not writable or failed to open).  It now mirrors `reportal doctor`:
+  `"ok"` when `failures` is empty and `"degraded"` otherwise.  HTTP stays 200
+  either way.  Clients that treated `status == "ok"` as "no dependency
+  problems" must also accept `"degraded"` or read `failures` / `dependencies`.
+- **HTTP and MCP type/signature exports must land under the workspace.**
+  `POST /api/binaries/<id>/data-types/export`,
+  `POST /api/binaries/<id>/signatures/export`, and the MCP
+  `export_data_types` / `export_signatures` tools used to accept any host path
+  the process could write.  They now answer 400 `invalid path` (MCP:
+  `ToolError` `"invalid path"`) unless the path resolves under the workspace.
+  Pass a workspace-relative path, or keep using the CLI (`reportal
+  types-export` / `signatures-export`), which still writes wherever the
+  operator's shell can.
+- **Remote URL ingest refuses an unverifiable peer in production.**
+  `remote_ingest.fetch` used to continue when the transport exposed no peer
+  address and report `peer_address` as `PEER_UNVERIFIED`.  Production callers
+  now raise `RemoteIngestError` (`blocked-target`) instead of trusting
+  pre-flight DNS alone.  The test-only `allow_loopback=True` seam still admits
+  an unverifiable peer; operators who hit this on a real transport need a
+  client that exposes the connected peer address.
+
 ### Added
 
 - Queued jobs store the submit request's `X-Request-Id`; a pool-thread
   `job failed` / `job slow` line still carries it after the HTTP request
-  ended. `GET /api/health` uses `ok`/`degraded` (same as `reportal doctor`)
-  when the database is not writable or fails to open, while HTTP stays 200.
+  ended.
 - MCP `logging/setLevel` sets the reportal stderr logger. Protocol JSON stays
   on stdout; `notifications/message` is not pushed.
 - Filetype table names MEW, Upack, kkrunchy, ASProtect, ConfuserEx,
@@ -56,6 +80,7 @@ view renders it from here.
 - Function list J/K focus draws the same left border as a checked row.
 - Function list referrer filter is a removable chip.
 - Analyses search waits `SEARCH_DEBOUNCE_MS` before the hash updates.
+- Analyses Search is `type="search"` (`/` focuses it; the field's × clears).
 - Analyses active filters are removable chips.
 - Analyses row Ctrl/⌘-click opens the binary in a new tab.
 - Memory dump splits each 16-byte row into two groups of eight.
@@ -202,6 +227,13 @@ view renders it from here.
   heading of the enclosing `Panel` or `Card`, and the hand-written tables name
   themselves. The type panel's paste, import and signature results also sit in
   one status region, so the last outcome badges that were silent now announce.
+
+### Fixes
+
+- Changing a binary's rebrew project directory, or refreshing a function whose
+  size changed, clears that function's stored decompilation and AI artifacts
+  along with the disassembly cache, so a later read cannot serve text from the
+  previous engine input.
 
 ## 2.1.0
 

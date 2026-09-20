@@ -115,7 +115,10 @@ it is written out in full below.
    to `remote_ingest.ALLOWED_PORTS`.  `remote_ingest.fetch` re-validates each
    redirect hop, bounds the body at `MAX_BYTES`, and checks the address the
    connection actually reached (the peer check); a transport that exposes no
-   peer reports `PEER_UNVERIFIED`.
+   peer is refused in production (`RemoteIngestError` / `blocked-target`)
+   rather than trusting pre-flight DNS alone.  The test-only
+   `allow_loopback=True` seam still admits that case and reports
+   `PEER_UNVERIFIED` so in-process mocks can exercise the rest of the path.
 6. **Model to stored artifact.**  The optional LLM bridge sends decompiled code
    and retrieved documents as untrusted data (labelled in the prompt by
    `llm._messages` and `llm.function_triage_messages`) and validates the answer

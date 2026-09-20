@@ -1064,7 +1064,9 @@ order, a
 platform and an architecture select built from the values the payload reports
 the register actually holds, an Order select over `store.ANALYSIS_ORDERS`, a
 Show field for the page size (bounded by `store.MAX_ANALYSIS_LIMIT`, and left
-out of the hash while it is the default) and a Clear control; every one of them
+out of the hash while it is the default) and a Clear control.  Search is
+`type="search"` so `/` focuses it and the field's × clears the draft;
+every one of them
 is in the route hash, so a filtered list is shareable.  The count line reads
 `N of M analyses` and, while the bound is hiding rows, says so and names the
 Show control that lists the rest.  Clicking a row (not a control) opens the

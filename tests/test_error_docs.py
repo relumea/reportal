@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import api, engines, error_docs, matching, store
+from reportal import api, engines, error_docs, matching, remote_ingest, store
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "reportal"
 DOC = Path(__file__).resolve().parents[1] / error_docs.DOC_PATH
@@ -29,6 +29,16 @@ EXCEPTION_TABLES: frozenset[str] = frozenset(
     {code for _kind, _status, code in api._DATA_TYPE_ERRORS}
     | {code for _kind, _status, code in api._SIGNATURE_ERRORS}
     | {code for _status, code in matching.TRANSFER_FAILURE_RESPONSE.values()}
+    | {
+        remote_ingest.ERROR_DISABLED,
+        remote_ingest.ERROR_INVALID_URL,
+        remote_ingest.ERROR_BLOCKED_TARGET,
+        remote_ingest.ERROR_UNRESOLVABLE,
+        remote_ingest.ERROR_UNSUPPORTED_CONTENT_TYPE,
+        remote_ingest.ERROR_FETCH_FAILED,
+        remote_ingest.ERROR_TOO_MANY_REDIRECTS,
+        remote_ingest.ERROR_TOO_LARGE,
+    }
 )
 
 

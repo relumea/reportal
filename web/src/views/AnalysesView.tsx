@@ -625,6 +625,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
           </Field>
           <Field label="Search">
             <input
+              type="search"
               placeholder="binary, engine or hash"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}

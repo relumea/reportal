@@ -48,6 +48,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "billing-error": "billing-error",
     "binary not found": "binary-not-found",
     "binary not on disk": "binary-not-on-disk",
+    "blocked-target": "blocked-target",
     "candidate not found": "candidate-not-found",
     "candidate-has-no-name": "candidate-has-no-name",
     "candidate-has-no-signature": "candidate-has-no-signature",
