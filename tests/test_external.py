@@ -312,7 +312,18 @@ class TestConfiguration:
             f"[{external.CONFIG_TABLE}]\n{external.CONFIG_ALLOW_REMOTE} = true\n", encoding="utf-8"
         )
         monkeypatch.setattr(external, "project_root", lambda: tmp_path)
+        monkeypatch.delenv(external.ALLOW_REMOTE_ENV, raising=False)
         assert external.remote_enabled() is True
+
+    def test_env_falsey_forces_off_over_the_workspace_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "reportal.toml").write_text(
+            f"[{external.CONFIG_TABLE}]\n{external.CONFIG_ALLOW_REMOTE} = true\n", encoding="utf-8"
+        )
+        monkeypatch.setattr(external, "project_root", lambda: tmp_path)
+        monkeypatch.setenv(external.ALLOW_REMOTE_ENV, "false")
+        assert external.remote_enabled() is False
 
     def test_a_malformed_table_is_not_a_gate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

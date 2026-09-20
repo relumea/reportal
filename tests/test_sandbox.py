@@ -99,6 +99,14 @@ class TestGuards:
         monkeypatch.setenv(sandbox.ENABLED_ENV, "0")
         assert sandbox.enabled() is False
 
+        # A falsey env forces off even when the workspace still asks for it.
+        (tmp_path / "reportal.toml").write_text("[sandbox]\nenabled = true\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(sandbox.ENABLED_ENV, "off")
+        assert sandbox.enabled() is False
+        monkeypatch.delenv(sandbox.ENABLED_ENV, raising=False)
+        assert sandbox.enabled() is True
+
     def test_the_caps_are_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         caps = sandbox.requested_caps(timeout=3, memory_mb=128)
 

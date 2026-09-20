@@ -483,6 +483,9 @@ export const DATA_TYPE_KINDS = [
   "function",
 ] as const;
 
+/** Empty namespace: the binary's own types. Mirrors `data_types.PROGRAM_NAMESPACE`. */
+export const PROGRAM_NAMESPACE = "Binary";
+
 // Kind labels the filter and the per-type card show.
 export const DATA_TYPE_KIND_LABELS: Record<DataTypeKind, string> = {
   struct: "struct",

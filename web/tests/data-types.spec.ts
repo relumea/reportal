@@ -26,6 +26,8 @@ test("the kind filter narrows the type list", async ({ page }) => {
 
   await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
   await expect(types.locator(".name-source-dot").first()).toBeVisible();
+  const headerCard = types.locator(".card").filter({ hasText: /NP_HEADER struct/ }).first();
+  await expect(headerCard.getByText(/Binary · \d+ bytes/)).toBeVisible();
   const typeLink = types.getByRole("link", { name: "NP_ENTRY" }).first();
   await expect(typeLink).toHaveAttribute("href", /search=NP_ENTRY/);
   await expect(types.getByText(/3 members · \d+ bytes/).first()).toBeVisible();
@@ -82,6 +84,7 @@ test("the namespace tree filters by branch and collapses", async ({ page }) => {
   const types = panelTypes(page);
 
   await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
+  await expect(types.getByPlaceholder("Search namespaces...")).toBeVisible();
   await types.getByRole("button", { name: /^winnt / }).click();
 
   await expect(types.getByText(NAMESPACED_TYPEDEF, { exact: false }).first()).toBeVisible();

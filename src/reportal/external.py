@@ -82,8 +82,10 @@ VIRUSTOTAL_KEY_ENV = "REPORTAL_VIRUSTOTAL_KEY"
 # environment nor the workspace table carries one.
 VIRUSTOTAL_KEY_SECRET = "virustotal.api_key"
 
-# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+# Keep in sync with ``settings.FLAG_TRUTHY`` / ``FLAG_FALSEY`` (and the other
+# flag readers). A falsey env value forces remote sources off over the file.
 _TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
+_FALSEY = frozenset({"0", "false", "no", "off", "disabled"})
 
 # The one host a remote source calls, and the path its file report lives at.
 VIRUSTOTAL_HOST = "www.virustotal.com"
@@ -199,8 +201,17 @@ class ExternalFetchError(ExternalError, RuntimeError):
 # ── Configuration ──────────────────────────────────────────────────
 
 
-def _truthy(value: str) -> bool:
-    return value.strip().lower() in _TRUTHY
+def _env_flag(name: str) -> bool | None:
+    """True/False when *name* forces on/off; None when unset or unrecognized."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered in _TRUTHY:
+        return True
+    if lowered in _FALSEY:
+        return False
+    return None
 
 
 def _workspace_table() -> dict[str, Any]:
@@ -221,11 +232,14 @@ def _workspace_table() -> dict[str, Any]:
 def remote_enabled() -> bool:
     """Whether the remote sources are enabled: the environment, then the config.
 
-    The workspace table must carry a real boolean ``true``: a quoted string is
-    ignored (the same rule ``settings.problems`` reports for every flag).
+    A falsey ``REPORTAL_ALLOW_EXTERNAL`` forces off even when the workspace
+    asks for remote sources. The workspace table must carry a real boolean
+    ``true``: a quoted string is ignored (the same rule ``settings.problems``
+    reports for every flag).
     """
-    if _truthy(os.environ.get(ALLOW_REMOTE_ENV, "")):
-        return True
+    forced = _env_flag(ALLOW_REMOTE_ENV)
+    if forced is not None:
+        return forced
     return _workspace_table().get(CONFIG_ALLOW_REMOTE) is True
 
 

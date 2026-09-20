@@ -63,8 +63,10 @@ from reportal._paths import MARKER, WorkspaceNotFound, project_root
 
 # Environment variable that enables remote ingestion; any truthy spelling works.
 ALLOW_REMOTE_ENV = "REPORTAL_ALLOW_REMOTE_INGEST"
-# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+# Keep in sync with ``settings.FLAG_TRUTHY`` / ``FLAG_FALSEY`` (and the other
+# flag readers). A falsey env value forces URL ingest off over the workspace.
 _TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
+_FALSEY = frozenset({"0", "false", "no", "off", "disabled"})
 
 # Workspace reportal.toml table and key that also enable it.
 CONFIG_TABLE = "knowledge"
@@ -131,9 +133,17 @@ class TooLargeError(RemoteIngestError):
     """The fetched body passed :data:`MAX_BYTES`."""
 
 
-def _truthy(value: str) -> bool:
-    """True when *value* is a truthy env spelling."""
-    return value.strip().lower() in _TRUTHY
+def _env_flag(name: str) -> bool | None:
+    """True/False when *name* forces on/off; None when unset or unrecognized."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered in _TRUTHY:
+        return True
+    if lowered in _FALSEY:
+        return False
+    return None
 
 
 def _workspace_allow_remote() -> bool:
@@ -154,9 +164,14 @@ def _workspace_allow_remote() -> bool:
 
 
 def remote_enabled() -> bool:
-    """True when the environment or the workspace config enables URL ingestion."""
-    if _truthy(os.environ.get(ALLOW_REMOTE_ENV, "")):
-        return True
+    """True when the environment or the workspace config enables URL ingestion.
+
+    A falsey ``REPORTAL_ALLOW_REMOTE_INGEST`` forces off even when the
+    workspace file asks for URL ingestion.
+    """
+    forced = _env_flag(ALLOW_REMOTE_ENV)
+    if forced is not None:
+        return forced
     return _workspace_allow_remote()
 
 

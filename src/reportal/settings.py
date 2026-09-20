@@ -92,11 +92,6 @@ SECRET_STORE_NAMES: dict[str, str] = {
 }
 
 
-def _truthy(value: Any) -> bool:
-    """Whether *value* is one of the spellings the flags accept as on."""
-    return str(value).strip().lower() in FLAG_TRUTHY
-
-
 @dataclass(frozen=True)
 class Setting:
     """One setting: where it can come from, what it defaults to, who reads it."""
@@ -110,8 +105,10 @@ class Setting:
     key: str = ""
     default: str = ""
     # A falsey environment variable that still counts as the origin.  The job
-    # pool is switched off by one (``REPORTAL_JOBS_POOL=0``), while every other
-    # flag falls through a falsey value to the workspace table.
+    # pool is switched off by one (``REPORTAL_JOBS_POOL=0``), and any non-empty
+    # value counts as the environment's answer even when unrecognized.  Ordinary
+    # flags honour falsey spellings the same way, but an unrecognized value
+    # falls through to the workspace (and ``problems`` warns).
     env_presence_wins: bool = False
 
     @property
@@ -444,14 +441,20 @@ _MISSING = _Missing()
 def origin_of(setting: Setting, tables: Mapping[str, dict[str, Any]]) -> str:
     """Where the value in force comes from: the environment, the file, the store, the default.
 
-    The rule is the one the reading module applies: a truthy environment
-    variable wins, a falsey one falls through to the workspace file (except for
-    the job pool, whose falsey value *is* the setting), and a secret falls back
+    The rule is the one the reading module applies: a truthy or falsey
+    environment variable wins (so ``REPORTAL_SANDBOX=0`` forces the sandbox
+    off over ``[sandbox] enabled = true``), an unrecognized non-empty flag
+    spelling falls through to the workspace file (except for the job pool,
+    whose any non-empty value *is* the setting), and a secret falls back
     to the workspace secret store before its default.
     """
     raw = os.environ.get(setting.env, "").strip() if setting.env else ""
-    if raw and (setting.kind != KIND_FLAG or setting.env_presence_wins or _truthy(raw)):
-        return ORIGIN_ENVIRONMENT
+    if raw:
+        if setting.kind != KIND_FLAG:
+            return ORIGIN_ENVIRONMENT
+        lowered = raw.lower()
+        if setting.env_presence_wins or lowered in FLAG_TRUTHY or lowered in FLAG_FALSEY:
+            return ORIGIN_ENVIRONMENT
     carried = _carried(setting, tables)
     if isinstance(carried, _Missing):
         if setting.secret and setting.read():
@@ -532,7 +535,7 @@ def problems() -> list[dict[str, str]]:
                 "problem": str(exc),
                 "hint": "run 'reportal init' in the directory that should hold the workspace",
             },
-            *_environment_problems(),
+            *_environment_problems({}),
         ]
     except (OSError, tomllib.TOMLDecodeError) as exc:
         return [
@@ -542,7 +545,7 @@ def problems() -> list[dict[str, str]]:
                 "problem": f"cannot be read, so every setting falls back to its default: {exc}",
                 "hint": "fix the file, then run 'reportal config' again",
             },
-            *_environment_problems(),
+            *_environment_problems({}),
         ]
     found: list[dict[str, str]] = []
     for name, table in document.items():
@@ -595,7 +598,8 @@ def problems() -> list[dict[str, str]]:
             secret_problem = _secret_in_workspace(setting, carried)
             if secret_problem:
                 found.append(secret_problem)
-    found.extend(_environment_problems())
+    tables = {str(name): dict(table) for name, table in document.items() if isinstance(table, dict)}
+    found.extend(_environment_problems(tables))
     return found
 
 
@@ -618,10 +622,11 @@ def _secret_in_workspace(setting: Setting, carried: Any) -> dict[str, str] | Non
     }
 
 
-def _environment_problems() -> list[dict[str, str]]:
+def _environment_problems(tables: Mapping[str, dict[str, Any]]) -> list[dict[str, str]]:
     """Env spellings that look set but the reader will not honour."""
     found: list[dict[str, str]] = []
     found.extend(_flag_environment_problems())
+    found.extend(_profile_problems(tables))
     provider = billing.configured_provider()
     if provider not in billing.PROVIDERS:
         found.append(
@@ -682,6 +687,40 @@ def _environment_problems() -> list[dict[str, str]]:
     return found
 
 
+def _profile_problems(tables: Mapping[str, dict[str, Any]]) -> list[dict[str, str]]:
+    """Warn when a profile spelling is set but reads as personal by fallback."""
+    known = ", ".join(profiles.PROFILES)
+    raw = os.environ.get(profiles.PROFILE_ENV, "").strip()
+    if raw and raw.lower() not in profiles.PROFILES:
+        return [
+            {
+                "level": LEVEL_WARN,
+                "where": profiles.PROFILE_ENV,
+                "problem": f"is not a profile reportal knows ({raw!r})",
+                "hint": f"use one of {known}; unknown values read as personal",
+            }
+        ]
+    if raw:
+        return []
+    table = tables.get(profiles.CONFIG_TABLE)
+    if not isinstance(table, dict):
+        return []
+    carried = table.get(profiles.CONFIG_PROFILE)
+    if not isinstance(carried, str):
+        return []
+    value = carried.strip().lower()
+    if not value or value in profiles.PROFILES:
+        return []
+    return [
+        {
+            "level": LEVEL_WARN,
+            "where": f"[{profiles.CONFIG_TABLE}] {profiles.CONFIG_PROFILE}",
+            "problem": f"is not a profile reportal knows ({carried!r})",
+            "hint": f"use one of {known}; unknown values read as personal",
+        }
+    ]
+
+
 def _loopback_public_base_url(url: str) -> bool:
     """True when *url* would send a paying customer back to this host only."""
     lowered = url.strip().lower()
@@ -691,14 +730,14 @@ def _loopback_public_base_url(url: str) -> bool:
 def _flag_environment_problems() -> list[dict[str, str]]:
     """Flag env values that are set but the reader will not treat as on or off.
 
-    A non-empty, non-truthy spelling for an ordinary flag is ignored and the
-    workspace (or default) wins; an operator who wrote ``REPORTAL_AUTH=false``
-    or ``REPORTAL_SANDBOX=0`` to force a posture never gets it.  The job pool
-    is the exception: its falsey spellings *are* the setting, so only a value
-    outside both the truthy and falsey sets is reported.
+    A non-empty spelling outside both the truthy and falsey sets is ignored
+    and the workspace (or default) wins, except for the job pool whose any
+    non-empty value is still the setting.  An operator who wrote
+    ``REPORTAL_SANDBOX=maybe`` never got a posture change.
     """
     found: list[dict[str, str]] = []
-    accepted = ", ".join(sorted(FLAG_TRUTHY))
+    accepted_on = ", ".join(sorted(FLAG_TRUTHY))
+    accepted_off = ", ".join(sorted(FLAG_FALSEY))
     for setting in SETTINGS:
         if setting.kind != KIND_FLAG or not setting.env:
             continue
@@ -706,35 +745,23 @@ def _flag_environment_problems() -> list[dict[str, str]]:
         if not raw:
             continue
         lowered = raw.lower()
+        if lowered in FLAG_TRUTHY or lowered in FLAG_FALSEY:
+            continue
         if setting.env_presence_wins:
-            if lowered in FLAG_TRUTHY or lowered in FLAG_FALSEY:
-                continue
-            found.append(
-                {
-                    "level": LEVEL_WARN,
-                    "where": setting.env,
-                    "problem": f"is not an on/off spelling reportal accepts ({raw!r})",
-                    "hint": (
-                        f"use one of {accepted} to leave the pool on, or"
-                        f" {', '.join(sorted(FLAG_FALSEY))} to switch it off"
-                    ),
-                }
+            hint = (
+                f"use one of {accepted_on} to leave the pool on, or {accepted_off} to switch it off"
             )
-            continue
-        if _truthy(raw):
-            continue
+        else:
+            hint = (
+                f"use one of {accepted_on} to force it on, or"
+                f" {accepted_off} to force it off from the environment"
+            )
         found.append(
             {
                 "level": LEVEL_WARN,
                 "where": setting.env,
-                "problem": (
-                    f"is ignored: {raw!r} is not a truthy spelling,"
-                    " so the workspace or default still applies"
-                ),
-                "hint": (
-                    f"use one of {accepted} to force it on from the environment;"
-                    " there is no env spelling that forces it off"
-                ),
+                "problem": f"is not an on/off spelling reportal accepts ({raw!r})",
+                "hint": hint,
             }
         )
     return found

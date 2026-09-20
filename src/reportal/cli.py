@@ -306,6 +306,11 @@ db = "reportal.db"
 
 # [auth]
 # required = true
+# REPORTAL_AUTH=0 / false / off forces auth off over this table
+# (except REPORTAL_PROFILE=saas, which always requires it).
+
+# [deployment]
+# profile = "personal"   # or "saas"
 
 # [llm]
 # endpoint = "http://127.0.0.1:11434/v1"

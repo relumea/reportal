@@ -94,8 +94,10 @@ _SELF_PATHS: tuple[str, ...] = (
 REQUIRED_ENV = "REPORTAL_AUTH"
 CONFIG_TABLE = "auth"
 CONFIG_REQUIRED = "required"
-# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+# Keep in sync with ``settings.FLAG_TRUTHY`` / ``FLAG_FALSEY`` (and the other
+# flag readers). A falsey env value forces auth off over the workspace file.
 _TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
+_FALSEY = frozenset({"0", "false", "no", "off", "disabled"})
 
 # Token shape: a greppable prefix plus 32 bytes of randomness.  A token is shown
 # to the caller once and only its digest is kept.
@@ -354,8 +356,17 @@ def invite_is_expired(row: Mapping[str, Any], *, at: str | None = None) -> bool:
     return _as_utc(at or now()) >= _as_utc(expires)
 
 
-def _truthy(value: str) -> bool:
-    return value.strip().lower() in _TRUTHY
+def _env_flag(name: str) -> bool | None:
+    """True/False when *name* forces on/off; None when unset or unrecognized."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered in _TRUTHY:
+        return True
+    if lowered in _FALSEY:
+        return False
+    return None
 
 
 def _workspace_required() -> bool:
@@ -393,8 +404,9 @@ def required() -> bool:
     """
     if profiles.is_saas():
         return True
-    if _truthy(os.environ.get(REQUIRED_ENV, "")):
-        return True
+    forced = _env_flag(REQUIRED_ENV)
+    if forced is not None:
+        return forced
     return _workspace_required()
 
 

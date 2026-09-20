@@ -732,7 +732,8 @@ placeholder states `Search N types or namespaces`, the needle matches
 the name, the namespace or `namespace::name`, and typing waits
 `SEARCH_DEBOUNCE_MS` before the hash updates),
 a Sort select (name or size) with an asc/desc Direction select, a
-namespace tree whose descendants grey out when a branch is ticked, a
+namespace tree (`Search namespaces...`, Collapse) whose descendants grey
+out when a branch is ticked, empty namespace reads Binary, a
 References control whose Referenced-by names link the type list, a
 pointer/typedef/array target that walks each hop's kind and size, a
 function type's Returns row and parameter table, Clear

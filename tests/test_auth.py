@@ -235,6 +235,15 @@ class TestStore:
 
         assert auth.required() is True
 
+    def test_env_falsey_forces_auth_off_over_the_workspace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "reportal.toml").write_text("[auth]\nrequired = true\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "off")
+
+        assert auth.required() is False
+
     def test_an_unreadable_workspace_config_logs_before_falling_back(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:

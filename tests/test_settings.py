@@ -134,9 +134,13 @@ class TestSurface:
         from reportal import api, jobs, remote_ingest, sandbox
 
         assert auth._TRUTHY == settings.FLAG_TRUTHY
+        assert auth._FALSEY == settings.FLAG_FALSEY
         assert sandbox._TRUTHY == settings.FLAG_TRUTHY
+        assert sandbox._FALSEY == settings.FLAG_FALSEY
         assert external._TRUTHY == settings.FLAG_TRUTHY
+        assert external._FALSEY == settings.FLAG_FALSEY
         assert remote_ingest._TRUTHY == settings.FLAG_TRUTHY
+        assert remote_ingest._FALSEY == settings.FLAG_FALSEY
         assert api._QUERY_TRUE == settings.FLAG_TRUTHY
         assert "off" in api._QUERY_FALSE
         assert jobs._FALSEY == settings.FLAG_FALSEY
@@ -246,22 +250,31 @@ class TestAgreement:
         assert _row("knowledge.allow_remote")["value"] is True
         assert _row("auth.required")["origin"] == settings.ORIGIN_ENVIRONMENT
 
-    def test_a_falsey_flag_falls_through_to_the_file_but_the_report_says_so(
+    def test_a_falsey_flag_forces_off_over_the_workspace_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _workspace(tmp_path, monkeypatch, "[sandbox]\nenabled = true\n")
         monkeypatch.setenv("REPORTAL_SANDBOX", "0")
 
-        # The reader tests the environment for truth and then the file, so the
-        # file wins over a falsey value; the origin has to say the file.
+        # The environment wins: an operator who wrote ``0`` to kill the
+        # sandbox must get that, not a silent fall-through to the file.
+        row = _row("sandbox.enabled")
+        assert row["value"] is sandbox_enabled() is False
+        assert row["origin"] == settings.ORIGIN_ENVIRONMENT
+        assert settings.problems() == []
+
+    def test_an_unrecognized_flag_spelling_falls_through_and_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch, "[sandbox]\nenabled = true\n")
+        monkeypatch.setenv("REPORTAL_SANDBOX", "maybe")
+
         row = _row("sandbox.enabled")
         assert row["value"] is sandbox_enabled() is True
         assert row["origin"] == settings.ORIGIN_WORKSPACE
-        # And the ignored spelling is a problem: an operator who wrote ``0``
-        # to force the sandbox off never got that.
         problems = settings.problems()
         assert any(
-            problem["where"] == "REPORTAL_SANDBOX" and "ignored" in problem["problem"]
+            problem["where"] == "REPORTAL_SANDBOX" and "on/off" in problem["problem"]
             for problem in problems
         )
 
@@ -555,6 +568,18 @@ class TestProblems:
             problem["where"] == "REPORTAL_JOBS_POOL" and "on/off" in problem["problem"]
             for problem in problems
         )
+
+    def test_an_unknown_profile_spelling_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv("REPORTAL_PROFILE", "sass")
+        problems = settings.problems()
+        assert any(
+            problem["where"] == "REPORTAL_PROFILE" and "sass" in problem["problem"]
+            for problem in problems
+        )
+        assert profiles.current() == profiles.PROFILE_PERSONAL
 
 
 class TestCli:

@@ -71,8 +71,10 @@ RUNNER_ENV = "REPORTAL_SANDBOX_RUNNER"
 
 # Entry-point group third-party sandbox runners register in.
 RUNNER_ENTRY_POINT_GROUP = "reportal.sandbox_runners"
-# Keep in sync with ``settings.FLAG_TRUTHY`` (and the other flag readers).
+# Keep in sync with ``settings.FLAG_TRUTHY`` / ``FLAG_FALSEY`` (and the other
+# flag readers). A falsey env value forces detonation off over the workspace.
 _TRUTHY = frozenset({"1", "true", "yes", "on", "enabled", "required"})
+_FALSEY = frozenset({"0", "false", "no", "off", "disabled"})
 
 # The fixed detail every disabled or unavailable path reports.
 DISABLED_DETAIL = "set REPORTAL_SANDBOX=enabled or [sandbox] enabled = true to allow detonation"
@@ -183,8 +185,17 @@ def requested_caps(*, timeout: int | None = None, memory_mb: int | None = None) 
     )
 
 
-def _truthy(value: str) -> bool:
-    return value.strip().lower() in _TRUTHY
+def _env_flag(name: str) -> bool | None:
+    """True/False when *name* forces on/off; None when unset or unrecognized."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered in _TRUTHY:
+        return True
+    if lowered in _FALSEY:
+        return False
+    return None
 
 
 def _workspace_config() -> dict[str, Any]:
@@ -203,9 +214,15 @@ def _workspace_config() -> dict[str, Any]:
 
 
 def enabled() -> bool:
-    """True when the environment or the workspace config allows detonation."""
-    if _truthy(os.environ.get(ENABLED_ENV, "")):
-        return True
+    """True when the environment or the workspace config allows detonation.
+
+    A falsey ``REPORTAL_SANDBOX`` forces off even when the workspace file asks
+    for detonation: an operator who wrote ``0`` to kill the sandbox must get
+    that, not a silent fall-through to ``[sandbox] enabled = true``.
+    """
+    forced = _env_flag(ENABLED_ENV)
+    if forced is not None:
+        return forced
     return _workspace_config().get(CONFIG_ENABLED) is True
 
 

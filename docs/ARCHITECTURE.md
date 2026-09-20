@@ -309,7 +309,9 @@ binary and returns the same streamed response
 Token auth is off unless `REPORTAL_AUTH` is a truthy value (`1`, `true`,
 `yes`, `on`, `enabled`, or `required`) or the workspace
 `[auth] required = true` turns it on (`auth.required`, a pure configuration
-read), so a loopback install behaves exactly as before and no request pays for
+read). A falsey `REPORTAL_AUTH` (`0`, `false`, `no`, `off`, `disabled`) forces
+auth off over the workspace file; the SaaS profile still requires it. A
+loopback install behaves exactly as before and no request pays for
 a check it does not need.  With it on, the `server._reportal_headers`
 middleware is the one place the gate lives: a route added later is behind it
 without being told, and a route cannot opt out by omission.  The same

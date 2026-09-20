@@ -26,6 +26,7 @@ import {
   DATA_TYPE_KINDS,
   DECOMPILER_BACKENDS,
   DEFAULT_DECOMPILER_BACKEND,
+  PROGRAM_NAMESPACE,
   SEARCH_DEBOUNCE_MS,
   typeSourceLabel,
 } from "../constants";
@@ -711,7 +712,7 @@ function NamespaceTree({
         <Field label="Search namespaces">
           <input
             type="search"
-            placeholder="namespace"
+            placeholder="Search namespaces..."
             value={needle}
             onChange={(event) => setNeedle(event.target.value)}
           />
@@ -909,7 +910,7 @@ function DataTypeCard({
           <Badge mono title={kindLabel(dataType.kind)}>
             {DATA_TYPE_KIND_TAGS[dataType.kind]}
           </Badge>{" "}
-          {dataType.namespace ? dataType.namespace : "program-defined"} · {dataType.size} bytes ·{" "}
+          {dataType.namespace ? dataType.namespace : PROGRAM_NAMESPACE} · {dataType.size} bytes ·{" "}
           {dataType.kind === "enum"
             ? `${dataType.values.length} values`
             : `${dataType.members.length} members`}{" "}
@@ -961,7 +962,7 @@ function DataTypeCard({
         <Field label="Namespace">
           <input
             type="text"
-            placeholder="program-defined"
+            placeholder={PROGRAM_NAMESPACE}
             value={namespace}
             onChange={(event) => setNamespace(event.target.value)}
             {...restoreOnFocus(() => {
@@ -1514,7 +1515,7 @@ function TypeReferences({
                     </a>
                   </td>
                   <td>{reference.kind}</td>
-                  <td>{reference.namespace || "program-defined"}</td>
+                  <td>{reference.namespace || PROGRAM_NAMESPACE}</td>
                   <td>{reference.relationships.join(", ")}</td>
                 </tr>
               ))}

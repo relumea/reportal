@@ -106,11 +106,11 @@ bypass auth/sandbox/remote guards to make a check pass; fix the code.
 | Concern | Env / table | Default |
 |---------|-------------|---------|
 | LLM endpoint / key / model | `REPORTAL_LLM_*` / `[llm]` | AI disabled |
-| Remote URL ingest | `REPORTAL_ALLOW_REMOTE_INGEST` / `[knowledge] allow_remote` | off → 403 |
+| Remote URL ingest | `REPORTAL_ALLOW_REMOTE_INGEST` (falsey forces off) / `[knowledge] allow_remote` | off → 403 |
 | Job pool | `REPORTAL_JOBS_POOL` (falsey disables) | on |
-| Token auth | `REPORTAL_AUTH` / `[auth] required` | off (loopback operator) |
-| External sources (e.g. VT) | `REPORTAL_ALLOW_EXTERNAL` / `[external]` | off → 403 |
-| Sandbox detonation | `REPORTAL_SANDBOX` / `[sandbox]` | off |
+| Token auth | `REPORTAL_AUTH` (falsey forces off) / `[auth] required` | off (loopback operator) |
+| External sources (e.g. VT) | `REPORTAL_ALLOW_EXTERNAL` (falsey forces off) / `[external]` | off → 403 |
+| Sandbox detonation | `REPORTAL_SANDBOX` (falsey forces off) / `[sandbox]` | off |
 | Graph backend | `REPORTAL_GRAPH_BACKEND` / `[knowledge] graph_backend` | `sqlite` |
 | Billing | `REPORTAL_BILLING_*` / Stripe keys | off without key |
 

@@ -537,6 +537,14 @@ class TestEnableGate:
         monkeypatch.chdir(tmp_path)
         assert remote_ingest.remote_enabled() is True
 
+    def test_env_falsey_forces_off_over_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / MARKER).write_text("[knowledge]\nallow_remote = true\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv(remote_ingest.ALLOW_REMOTE_ENV, "0")
+        assert remote_ingest.remote_enabled() is False
+
     def test_config_false_does_not_enable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
