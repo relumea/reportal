@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { api, isApiErrorCode } from "../api";
@@ -25,6 +25,7 @@ import {
   DATA_TYPE_KINDS,
   DECOMPILER_BACKENDS,
   DEFAULT_DECOMPILER_BACKEND,
+  SEARCH_DEBOUNCE_MS,
   typeSourceLabel,
 } from "../constants";
 import { useNavigate } from "react-router";
@@ -204,7 +205,17 @@ export function DataTypesPanel({
   const setNamespace = (value: string): void => apply({ namespace: value });
   const filterCount = [kind, namespace, source].filter(Boolean).length;
   const clearFilters = (): void => apply({ kind: "", namespace: "", source: "" });
-  const setSearch = (value: string): void => apply({ search: value });
+  const [draftSearch, setDraftSearch] = useState(search);
+  useEffect(() => {
+    setDraftSearch(search);
+  }, [search]);
+  useEffect(() => {
+    if (draftSearch === search) return undefined;
+    const handle = window.setTimeout(() => apply({ search: draftSearch }), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+    // apply is recreated every render; the draft is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftSearch, search]);
   const setSource = (value: string): void => apply({ source: value });
   const setSort = (value: string): void => apply({ sort: value });
   const setDirection = (value: string): void => apply({ direction: value });
@@ -530,8 +541,8 @@ export function DataTypesPanel({
                 ? `Search ${entry.data.total} types or namespaces`
                 : "name, member or enum value"
             }
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            value={draftSearch}
+            onChange={(event) => setDraftSearch(event.target.value)}
           />
         </Field>
         {filterCount > 0 ? (

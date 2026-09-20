@@ -119,7 +119,9 @@ RETRY_JITTER_HIGH = 1.25
 # Jitter source and sleep indirection.  A test patches `_retry_jitter` to pin
 # the schedule and `_sleep` to record it, so the suite asserts the delay
 # sequence without waiting for it; production draws from `_RETRY_RNG` and
-# calls `time.sleep`.
+# calls `time.sleep`.  ``seed_retry_rng`` reseeds `_RETRY_RNG` so a simulation
+# can replay the same jitter sequence from one seed.  ``_wait_for`` is the
+# attempt-timeout wait; a test patches it to pin timeouts without wall time.
 _RETRY_RNG = random.Random()
 _sleep = time.sleep
 
@@ -427,6 +429,17 @@ def _retry_jitter() -> float:
     return _RETRY_RNG.uniform(RETRY_JITTER_LOW, RETRY_JITTER_HIGH)
 
 
+def seed_retry_rng(seed: int | None = None) -> None:
+    """Reseed the retry jitter RNG for a reproducible delay schedule."""
+    global _RETRY_RNG
+    _RETRY_RNG = random.Random(seed)
+
+
+def _wait_for(event: threading.Event, timeout: float) -> bool:
+    """Block until *event* is set or *timeout* elapses; True when set."""
+    return event.wait(timeout)
+
+
 def _retry_delay(attempt: int) -> float:
     """Seconds to wait after *attempt* (1-based) before the next attempt.
 
@@ -483,7 +496,7 @@ def _call_with_timeout(
     except BaseException:
         _attempt_slots.release()
         raise
-    if not finished.wait(timeout):
+    if not _wait_for(finished, timeout):
         return _failed_attempt(ctx, REASON_TIMEOUT)
     if "error" in box:
         return _failed_attempt(ctx, REASON_INTERNAL_ERROR, str(box["error"]))

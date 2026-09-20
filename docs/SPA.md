@@ -722,8 +722,9 @@ carrying the count over the whole model), a kind strip (one toggle per
 declaration kind, carrying the count over the whole model), a coloured source
 dot on each type
 card, a Source filter beside the search filters (the search
-placeholder states `Search N types or namespaces`, and the needle matches
-the name, the namespace or `namespace::name`),
+placeholder states `Search N types or namespaces`, the needle matches
+the name, the namespace or `namespace::name`, and typing waits
+`SEARCH_DEBOUNCE_MS` before the hash updates),
 a Sort select (name or size) with an asc/desc Direction select, a
 namespace tree whose descendants grey out when a branch is ticked, a
 References control whose Referenced-by names link the type list, a

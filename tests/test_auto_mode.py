@@ -295,16 +295,19 @@ class TestRunAuto:
         assert run["matched"] == 6
         assert probe.peak_live <= 2
 
-    def test_a_wedged_worker_times_out_without_hanging(self, conn: sqlite3.Connection) -> None:
+    def test_a_wedged_worker_times_out_without_hanging(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),))
         probe = WorkerProbe(sleep=5.0)
         auto_workers.register_worker(probe.make(), origin="test")
+        monkeypatch.setattr(auto_mode, "_wait_for", lambda _event, _timeout: False)
         started = time.monotonic()
         run = auto_mode.run_auto(
             conn, binary_id=ids["binary"], worker="probe", max_attempts=1, task_timeout=1.0
         )
         elapsed = time.monotonic() - started
-        assert elapsed < 4
+        assert elapsed < 1
         assert run["failed"] == 1
         batch = run["tree"][0]["children"][0]
         assert batch["attempt_log"][0]["detail"]["reason"] == auto_mode.REASON_TIMEOUT
@@ -319,6 +322,7 @@ class TestRunAuto:
         probe = WorkerProbe(sleep=5.0)
         auto_workers.register_worker(probe.make(), origin="test")
         monkeypatch.setattr(auto_mode, "_attempt_slots", threading.BoundedSemaphore(1))
+        monkeypatch.setattr(auto_mode, "_wait_for", lambda _event, _timeout: False)
         run = auto_mode.run_auto(
             conn,
             binary_id=ids["binary"],

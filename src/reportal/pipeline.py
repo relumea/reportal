@@ -149,6 +149,10 @@ RENAME_ACTOR = "pipeline"
 DEFAULT_BATCH_LIMIT = 25
 MAX_BATCH_LIMIT = 500
 
+# Monotonic clock for step duration_ms.  A test patches ``_monotonic`` to pin
+# recorded durations so a failing run replays without freezing the process.
+_monotonic = time.monotonic
+
 # Reason a live host records when it withdraws a component for a reload.
 REASON_WITHDRAWN = "withdrawn"
 # Reasons a withdrawal is refused: the component offers nothing to withdraw,
@@ -1520,7 +1524,7 @@ class ComponentHost:
 
     def _run(self, component: Component) -> dict[str, Any]:
         """Run one component's effect and record the decision it produced."""
-        started = time.monotonic()
+        started = _monotonic()
         try:
             component.effect(self._ctx)
         except Exception as exc:  # a failing component is a failed step, not a failed host
@@ -1659,8 +1663,8 @@ def _failure_reason(exc: BaseException) -> str:
 
 
 def _duration_ms(started: float) -> int:
-    """Milliseconds elapsed since a :func:`time.monotonic` reading."""
-    return int((time.monotonic() - started) * 1000)
+    """Milliseconds elapsed since a :func:`_monotonic` reading."""
+    return int((_monotonic() - started) * 1000)
 
 
 def _stored_plan(effects: Sequence[Effect]) -> list[dict[str, Any]]:
@@ -1768,7 +1772,7 @@ def run_pipeline(
             # change it makes to the context is evaluated against the others only.
             watch.decide(component)
             started_at = store.now()
-            started = time.monotonic()
+            started = _monotonic()
             try:
                 component.effect(ctx)
             except Exception as exc:  # a failing component is a failed step, not a failed run

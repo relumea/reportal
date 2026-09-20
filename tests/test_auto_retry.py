@@ -54,6 +54,15 @@ class TestRetryDelay:
             delay = auto_mode._retry_delay(attempt)
             assert 0.0 < delay <= auto_mode.RETRY_MAX_SECONDS
 
+    def test_a_seed_replays_the_same_jitter_sequence(self) -> None:
+        auto_mode.seed_retry_rng(42)
+        first = [auto_mode._retry_jitter() for _ in range(8)]
+        auto_mode.seed_retry_rng(42)
+        second = [auto_mode._retry_jitter() for _ in range(8)]
+        assert first == second
+        auto_mode.seed_retry_rng(7)
+        assert [auto_mode._retry_jitter() for _ in range(8)] != first
+
 
 class TestRetrySchedule:
     def test_delays_are_applied_between_attempts_only(

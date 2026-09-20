@@ -256,6 +256,18 @@ class TestReport:
         assert payload["journal_action"], "the run row is journaled"
         assert sandbox.count_runs(conn, int(payload["analysis_id"])) == 1
 
+    def test_run_duration_comes_from_the_clock_seam(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The recorded duration is pinned by ``sandbox._monotonic``, not wall time."""
+        sample = _script(tmp_path, "exit 0\n")
+        fake = _FakeRunner()
+        ticks = iter([100.0, 102.5])
+        monkeypatch.setattr(sandbox, "_monotonic", lambda: next(ticks))
+        report = sandbox.execute(sample, runner=fake)
+        assert report["status"] == sandbox.STATUS_FINISHED
+        assert report["duration_ms"] == 2500
+
     def test_the_run_row_reverts(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

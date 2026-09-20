@@ -74,6 +74,7 @@ view renders it from here.
 - Code listings (As C, prototypes, dumps) copy on click.
 - Clicking an Analyses row (not a control) opens that binary, or
   the log when the row failed. Each row downloads the stored binary.
+- Data type search waits `SEARCH_DEBOUNCE_MS` before the hash updates.
 - Data type member and target names that exist in the model link to
   that type.
 - Data type Referenced-by names link the type list.

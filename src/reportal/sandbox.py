@@ -89,6 +89,10 @@ DEFAULT_FILE_MB = 64
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_FILES = 200
 
+# Monotonic clock for run duration_ms.  A test patches ``_monotonic`` to pin
+# the recorded duration so a failing detonation replays without wall time.
+_monotonic = time.monotonic
+
 # Where the writable directory lands inside the sandbox, and the name the
 # sample is mounted under inside it.  The mount point has to sit in the
 # writable bind: bwrap cannot create it on the read-only root, and a directory
@@ -481,7 +485,7 @@ def execute(
     status = STATUS_FINISHED
     exit_code: int | None = None
     timed_out = False
-    started = time.monotonic()
+    started = _monotonic()
     try:
         # cordis-boundary: detonation is an emission, not a restorable effect.  What
         # the sample did to the world outside this process group cannot be undone;
@@ -522,7 +526,7 @@ def execute(
         except OSError as exc:
             status = STATUS_FAILED
             notes.append(f"the runner could not be started: {exc}")
-        duration_ms = int((time.monotonic() - started) * 1000)
+        duration_ms = int((_monotonic() - started) * 1000)
         stdout, stdout_cut = _read_tail(out_path, MAX_OUTPUT_BYTES)
         stderr, stderr_cut = _read_tail(err_path, MAX_OUTPUT_BYTES)
         files, files_cut = _list_work(work)

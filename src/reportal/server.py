@@ -46,6 +46,10 @@ from reportal import (
 )
 from reportal._paths import WorkspaceNotFound, db_path
 
+# High-resolution clock for request duration_ms.  A test patches
+# ``_perf_counter`` to pin recorded latencies without wall time.
+_perf_counter = time.perf_counter
+
 
 @contextlib.asynccontextmanager
 async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -680,7 +684,7 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
     request_id_token = observability.set_request_id(request_id)
     request.state.request_id = request_id
     failed = False
-    started = time.perf_counter()
+    started = _perf_counter()
     actor = journal.LOCAL_ACTOR
     actor_user_id: int | None = None
     response: Response | None = None
@@ -734,7 +738,7 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
         failed = True
         raise
     finally:
-        duration_ms = int((time.perf_counter() - started) * 1000)
+        duration_ms = int((_perf_counter() - started) * 1000)
         if (response is not None or failed) and (
             request.url.path.startswith("/api") or _is_mcp_path(request.url.path)
         ):

@@ -163,6 +163,26 @@ class TestRun:
         assert _steps(run)["decompile"]["provides"] == ["decompilation"]
         assert run["started_at"] and run["finished_at"]
 
+    def test_step_duration_comes_from_the_clock_seam(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fake_engine: FakeEngine,
+    ) -> None:
+        """The recorded duration is pinned by ``pipeline._monotonic``, not wall time."""
+        ids = seed_portal(tmp_path, monkeypatch)
+        clock = [0.0]
+
+        def tick() -> float:
+            clock[0] += 1.0
+            return clock[0]
+
+        monkeypatch.setattr(pipeline, "_monotonic", tick)
+        run = _run(conn, ids, engine=fake_engine, llm_client=ScriptedLlmClient())
+        assert run["status"] == pipeline.RUN_DONE
+        assert all(step["duration_ms"] == 1000 for step in run["steps"])
+
     def test_persists_run_and_steps(
         self,
         conn: sqlite3.Connection,

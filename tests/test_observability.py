@@ -72,6 +72,21 @@ class TestHttpCounters:
         assert http["duration_ms_sum"] >= 0
         assert http["duration_ms_max"] >= 0
 
+    def test_request_duration_comes_from_the_clock_seam(
+        self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The recorded duration is pinned by ``server._perf_counter``, not wall time."""
+        from reportal import server
+
+        observability.reset_http_stats()
+        ticks = iter([10.0, 10.25])
+        monkeypatch.setattr(server, "_perf_counter", lambda: next(ticks))
+        wsgi_request("GET", "/api/binaries")
+        snapshot = observability.http_snapshot()
+        assert snapshot["requests"] >= 1
+        assert snapshot["duration_ms_sum"] == 250
+        assert snapshot["duration_ms_max"] == 250
+
     def test_a_client_error_increments_4xx(self, portal_db: Path) -> None:
         observability.reset_http_stats()
         wsgi_request("GET", "/api/binaries/999999")
