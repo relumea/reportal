@@ -550,9 +550,27 @@ class TestCli:
         result = backup.prune(directory=directory, keep_days=backup.DEFAULT_KEEP_DAYS)
         assert result["removed_count"] == 1
         assert result["kept_count"] == 1
+        assert result["keep_min"] == backup.DEFAULT_KEEP_MIN
         assert not stale.exists()
         assert fresh.exists()
         assert other.exists()
+
+    def test_prune_keeps_the_newest_archive_when_all_are_stale(self, tmp_path: Path) -> None:
+        directory = tmp_path / "backups"
+        directory.mkdir()
+        older = directory / "reportal-20200101T000000Z.tar.gz"
+        newer = directory / "reportal-20200102T000000Z.tar.gz"
+        older.write_bytes(b"older")
+        newer.write_bytes(b"newer")
+        old = time.time() - (backup.DEFAULT_KEEP_DAYS + 5) * 86400
+        newer_age = time.time() - (backup.DEFAULT_KEEP_DAYS + 2) * 86400
+        os.utime(older, (old, old))
+        os.utime(newer, (newer_age, newer_age))
+        result = backup.prune(directory=directory, keep_days=backup.DEFAULT_KEEP_DAYS, keep_min=1)
+        assert result["removed_count"] == 1
+        assert result["kept_count"] == 1
+        assert not older.exists()
+        assert newer.exists()
 
     def test_prune_refuses_the_workspace_directory(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path / "one")
@@ -567,9 +585,12 @@ class TestCli:
         directory = tmp_path / "reportal-backups"
         directory.mkdir()
         stale = directory / "reportal-old.tar.gz"
+        newer = directory / "reportal-newer.tar.gz"
         stale.write_bytes(b"stale")
+        newer.write_bytes(b"newer")
         old = time.time() - (backup.DEFAULT_KEEP_DAYS + 2) * 86400
         os.utime(stale, (old, old))
+        os.utime(newer, (old + 60, old + 60))
         result = runner.invoke(
             cli.app,
             ["backup-prune", "--dir", str(directory), "--dry-run", "--json"],
@@ -578,4 +599,6 @@ class TestCli:
         payload = json.loads(result.stdout)
         assert payload["dry_run"] is True
         assert payload["removed_count"] == 1
+        assert payload["keep_min"] == backup.DEFAULT_KEEP_MIN
         assert stale.exists()
+        assert newer.exists()

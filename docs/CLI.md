@@ -89,7 +89,7 @@ reportal restore ARCHIVE [--overwrite] [--yes] [--json]
                                            #   (same as other deletes)
 reportal backup-info ARCHIVE [--json]      # one archive's manifest, without
                                            #   restoring it
-reportal backup-prune [--dir PATH] [--keep-days N] [--dry-run] [--json]
+reportal backup-prune [--dir PATH] [--keep-days N] [--keep-min N] [--dry-run] [--json]
                                            # delete reportal archives older than
                                            #   N days (default 14); only filenames
                                            #   that look like reportal archives

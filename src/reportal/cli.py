@@ -662,6 +662,12 @@ def backup_prune_command(
         min=0,
         help="Delete archives older than this many days",
     ),
+    keep_min: int = typer.Option(
+        backup.DEFAULT_KEEP_MIN,
+        "--keep-min",
+        min=0,
+        help="Always keep this many newest archives, even when older than --keep-days",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="List what would be removed without deleting"
     ),
@@ -672,6 +678,8 @@ def backup_prune_command(
     Only filenames that look like reportal archives are touched.  The scheduled
     backup unit runs this after a successful write so logical-corruption
     recovery keeps a bounded window of dated snapshots without filling the disk.
+    The newest ``--keep-min`` archives are always retained so a stalled schedule
+    cannot prune away the last recovery point.
     """
     target = directory
     if target is None:
@@ -681,7 +689,9 @@ def backup_prune_command(
             _fail(f"no-workspace: {exc}", json_output)
         target = root.parent / backup.DEFAULT_BACKUP_DIRNAME
     try:
-        result = backup.prune(directory=target, keep_days=keep_days, dry_run=dry_run)
+        result = backup.prune(
+            directory=target, keep_days=keep_days, keep_min=keep_min, dry_run=dry_run
+        )
     except backup.BackupError as exc:
         _fail(f"{exc.code}: {exc.detail}", json_output)
     if json_output:
@@ -691,7 +701,7 @@ def backup_prune_command(
     console.print(
         f"[green]{action}[/green] {result['removed_count']} archive(s),"
         f" kept {result['kept_count']} under {result['directory']}"
-        f" (keep-days={result['keep_days']})"
+        f" (keep-days={result['keep_days']}, keep-min={result['keep_min']})"
     )
     for entry in result["removed"]:
         console.print(f"  - {entry['path']}")

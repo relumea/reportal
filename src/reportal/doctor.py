@@ -185,12 +185,14 @@ def _port_check(port: int) -> dict[str, str]:
 
 
 def _backup_check(root: Path | None) -> dict[str, str]:
-    """Whether a recent workspace archive exists beside this install.
+    """Whether a recent readable workspace archive exists beside this install.
 
     A warn never blocks serve: backups are an operator schedule, not a start
     gate.  Silence means the newest archive under the sibling
     ``reportal-backups/`` or ``/srv/backups`` is younger than
-    :data:`backup.FRESH_SECONDS` (two daily intervals).
+    :data:`backup.FRESH_SECONDS` (two daily intervals), non-empty, and passes
+    :func:`backup.read_manifest`.  Age alone is not enough: a zero-byte or
+    truncated write would otherwise look healthy until restore day.
     """
     if root is None:
         return _check("backup", STATUS_WARN, "no workspace to locate archives beside", BACKUP_HINT)
@@ -209,6 +211,31 @@ def _backup_check(root: Path | None) -> dict[str, str]:
             "backup",
             STATUS_WARN,
             f"no reportal archives under {listed}",
+            BACKUP_HINT,
+        )
+    try:
+        size = newest.stat().st_size
+    except OSError as exc:
+        return _check(
+            "backup",
+            STATUS_WARN,
+            f"cannot read {newest}: {exc}",
+            BACKUP_HINT,
+        )
+    if size <= 0:
+        return _check(
+            "backup",
+            STATUS_WARN,
+            f"newest archive is empty: {newest}",
+            BACKUP_HINT,
+        )
+    try:
+        backup.read_manifest(newest)
+    except backup.BackupError as exc:
+        return _check(
+            "backup",
+            STATUS_WARN,
+            f"newest archive is unreadable: {newest} ({exc.detail})",
             BACKUP_HINT,
         )
     age = max(0.0, time.time() - newest.stat().st_mtime)

@@ -11,8 +11,9 @@
 # The unit fails loud on a zero-byte archive or a file whose manifest
 # `reportal backup-info` refuses, so a silent credential, disk, or truncate
 # failure shows up in `systemctl --failed` and the journal.  After a good
-# write it prunes archives older than 14 days so logical-corruption recovery
-# keeps a bounded window without filling the volume.
+# write it prunes archives older than 14 days while always keeping the newest
+# one, so logical-corruption recovery keeps a bounded window without wiping
+# the last recovery point when the schedule stalls.
 
 [Unit]
 Description=reportal workspace backup
@@ -31,7 +32,7 @@ LimitCORE=0
 # instant (not just the calendar day) keeps a same-day re-run from overwriting
 # the earlier archive that logical-corruption recovery may still need.
 # OnCalendar=... UTC on the timer matches the -u clock.
-ExecStart=/bin/sh -c 'out=/srv/backups/reportal-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).tar.gz; bin=/srv/reportal/.venv/bin/reportal; "$bin" backup --output "$out" && test -s "$out" && "$bin" backup-info "$out" >/dev/null && "$bin" backup-prune --dir /srv/backups --keep-days 14'
+ExecStart=/bin/sh -c 'out=/srv/backups/reportal-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).tar.gz; bin=/srv/reportal/.venv/bin/reportal; "$bin" backup --output "$out" && test -s "$out" && "$bin" backup-info "$out" >/dev/null && "$bin" backup-prune --dir /srv/backups --keep-days 14 --keep-min 1'
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

@@ -49,6 +49,7 @@ from reportal._paths import (
     DB_NAME,
     MARKER,
     REPORTS_DIR,
+    WORKSPACE_DIRS,
     WorkspaceNotFound,
     database_path,
     db_path,
@@ -71,6 +72,11 @@ ARCHIVE_SUFFIXES = (".tar.gz", ".tgz")
 # logical corruption that sits unnoticed past a few daily cycles; shorter than
 # that and a bad write that lasted a week has no older snapshot to land on.
 DEFAULT_KEEP_DAYS = 14
+
+# Floor on how many newest archives prune always keeps, even when every file is
+# older than keep_days.  Age-only prune otherwise deletes the last recovery
+# point the moment the retention window elapses with no fresh write.
+DEFAULT_KEEP_MIN = 1
 
 # How old the newest archive may be before ``reportal doctor`` warns.  Twice the
 # daily timer interval, so one missed night is a warning and a healthy schedule
@@ -166,12 +172,12 @@ def _snapshot(source: Path, target: Path) -> None:
 def _members(root: Path) -> list[tuple[str, Path]]:
     """Every file the archive carries, as ``(archive name, path)``.
 
-    Only the workspace's own directories are walked: a stored binary's suffix
-    stays what its registration gave it, and a missing directory is simply
-    absent rather than an error.
+    Walks :data:`reportal._paths.WORKSPACE_DIRS` so a directory added to the
+    workspace contract is archived without a second edit here.  A missing
+    directory is simply absent rather than an error.
     """
     found: list[tuple[str, Path]] = []
-    for directory in (BINARIES_DIR, REPORTS_DIR, symbols.SYMBOLS_DIR):
+    for directory in WORKSPACE_DIRS:
         base = root / directory
         if not base.is_dir():
             continue
@@ -251,7 +257,19 @@ def create(
             staged.replace(target)
     except OSError as exc:
         raise BackupError(ERROR_INVALID_ARCHIVE, f"cannot write {target}: {exc}") from exc
-    return {"path": str(target), "manifest": manifest, "bytes": target.stat().st_size}
+    size = target.stat().st_size
+    if size <= 0:
+        raise BackupError(ERROR_INVALID_ARCHIVE, f"wrote an empty archive at {target}")
+    # Re-open through the same gate a restore uses, so a truncate or a
+    # corrupted gzip fails the write instead of leaving a silent hypothesis.
+    try:
+        read_manifest(target)
+    except BackupError as exc:
+        raise BackupError(
+            ERROR_INVALID_ARCHIVE,
+            f"wrote an unreadable archive at {target}: {exc.detail}",
+        ) from exc
+    return {"path": str(target), "manifest": manifest, "bytes": size}
 
 
 def read_manifest(archive: Path) -> dict[str, Any]:
@@ -413,7 +431,7 @@ def restore(
             raise BackupError(ERROR_INVALID_ARCHIVE, "the archive carries no database")
         moved = _rewrite_paths(staged_db, old_root=old_root, new_root=root.resolve())
         _rewrite_paths(staged_db, old_root=old_root, new_root=root.resolve(), table=symbols.TABLE)
-        for directory in (BINARIES_DIR, REPORTS_DIR, symbols.SYMBOLS_DIR):
+        for directory in WORKSPACE_DIRS:
             source = staged / directory
             if source.is_dir():
                 destination = root / directory
@@ -528,6 +546,7 @@ def prune(
     *,
     directory: Path,
     keep_days: int = DEFAULT_KEEP_DAYS,
+    keep_min: int = DEFAULT_KEEP_MIN,
     dry_run: bool = False,
     workspace: Path | None = None,
 ) -> dict[str, Any]:
@@ -537,10 +556,14 @@ def prune(
     shared backup volume's other tenants are left alone.  Refuses a directory
     inside the workspace for the same wipe-domain reason as :func:`create`.
     A *keep_days* of zero keeps nothing older than this instant (everything
-    already written is eligible); negative values are refused.
+    already written is eligible); negative values are refused.  The newest
+    *keep_min* archives are always retained so a stalled schedule cannot prune
+    away the last recovery point.
     """
     if keep_days < 0:
         raise BackupError(ERROR_INVALID_ARCHIVE, f"keep_days must be >= 0, got {keep_days}")
+    if keep_min < 0:
+        raise BackupError(ERROR_INVALID_ARCHIVE, f"keep_min must be >= 0, got {keep_min}")
     target = Path(directory).expanduser()
     if not target.is_dir():
         raise BackupError(ERROR_INVALID_ARCHIVE, f"no backup directory at {target}")
@@ -563,16 +586,18 @@ def prune(
                     f"refusing to prune {target} inside the workspace",
                 )
     cutoff = time.time() - timedelta(days=keep_days).total_seconds()
+    archives = list_archives(target)
+    protected = set(archives[-keep_min:]) if keep_min else set()
     removed: list[dict[str, Any]] = []
     kept: list[dict[str, Any]] = []
-    for path in list_archives(target):
+    for path in archives:
         age = path.stat()
         entry = {
             "path": str(path),
             "bytes": age.st_size,
             "mtime": datetime.fromtimestamp(age.st_mtime, tz=UTC).isoformat(),
         }
-        if age.st_mtime >= cutoff:
+        if path in protected or age.st_mtime >= cutoff:
             kept.append(entry)
             continue
         if not dry_run:
@@ -581,6 +606,7 @@ def prune(
     return {
         "directory": str(target),
         "keep_days": keep_days,
+        "keep_min": keep_min,
         "dry_run": dry_run,
         "kept": kept,
         "removed": removed,

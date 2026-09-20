@@ -21,7 +21,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, backup, cli, doctor, graph_backends, sandbox
+from reportal import auth, backup, cli, doctor, graph_backends, sandbox, store
 
 runner = CliRunner()
 
@@ -462,6 +462,7 @@ class TestUnit:
         assert "backup-info" in text
         assert "backup-prune" in text
         assert "--keep-days 14" in text
+        assert "--keep-min 1" in text
         assert "ReadWritePaths=/srv/reportal /srv/backups" in text
         assert "Environment=PYTHONUNBUFFERED=1" in text
         assert "LimitCORE=0" in text
@@ -476,14 +477,48 @@ class TestUnit:
         ws = tmp_path / "workspace"
         ws.mkdir()
         _workspace(ws, monkeypatch)
+        store.init_db(ws / "reportal.db")
         archive_dir = tmp_path / "reportal-backups"
         archive_dir.mkdir()
-        archive = archive_dir / "reportal-backup-fresh.tar.gz"
-        archive.write_bytes(b"not a real archive; age is what matters")
+        result = backup.create(workspace=ws, output=archive_dir / "reportal-backup-fresh.tar.gz")
+        archive = Path(result["path"])
         payload = doctor.report()
         row = _check(payload, "backup")
         assert row["status"] == "ok"
         assert str(archive) in row["detail"]
+
+    def test_an_unreadable_archive_warns_without_failing(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
+    ) -> None:
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        _workspace(ws, monkeypatch)
+        archive_dir = tmp_path / "reportal-backups"
+        archive_dir.mkdir()
+        archive = archive_dir / "reportal-backup-fresh.tar.gz"
+        archive.write_bytes(b"not a real archive")
+        payload = doctor.report()
+        assert payload["status"] == "ok"
+        assert payload["failures"] == []
+        row = _check(payload, "backup")
+        assert row["status"] == "warn"
+        assert "unreadable" in row["detail"]
+        assert "DR_RUNBOOK" in row["hint"]
+
+    def test_an_empty_archive_warns_without_failing(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
+    ) -> None:
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        _workspace(ws, monkeypatch)
+        archive_dir = tmp_path / "reportal-backups"
+        archive_dir.mkdir()
+        archive = archive_dir / "reportal-backup-empty.tar.gz"
+        archive.write_bytes(b"")
+        payload = doctor.report()
+        row = _check(payload, "backup")
+        assert row["status"] == "warn"
+        assert "empty" in row["detail"]
 
     def test_a_missing_archive_warns_without_failing(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any

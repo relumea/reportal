@@ -56,7 +56,11 @@ the live files still must include those sidecars or stop the server first.
 - `deploy/reportal-backup.service` plus `deploy/reportal-backup.timer` are the
   scheduled form: daily into `/srv/backups/` with a UTC instant filename, failing
   the unit when the archive is missing, empty, or refused by
-  `reportal backup-info`, then pruning archives older than 14 days.
+  `reportal backup-info`, then pruning archives older than 14 days while always
+  keeping the newest one (`--keep-min 1`).
+- `reportal backup` re-opens the archive through `read_manifest` before it
+  returns, so a truncate or bad gzip fails the write instead of leaving a silent
+  file.  `reportal doctor`'s backup check does the same for the newest archive.
 
 ## Failure domains (accepted unless the operator moves the archive)
 
@@ -129,7 +133,7 @@ Not revertible, with the reason:
    file is damaged).
 3. Inspect the archive without writing: `reportal backup-info /path/to/archive.tar.gz`.
 4. Restore into the workspace directory (destructive):
-   `cd /srv/reportal && reportal restore /srv/backups/reportal-YYYY-MM-DD.tar.gz --overwrite --yes`.
+   `cd /srv/reportal && reportal restore /srv/backups/reportal-YYYYMMDDTHHMMSSZ.tar.gz --overwrite --yes`.
    Paths that lived under the archived root are rewritten; imported binaries
    whose files lived outside that root are reported and left pointing where they
    were.
@@ -234,9 +238,11 @@ journalctl -u reportal-backup.service -n 50
 A successful run leaves a non-empty
 `/srv/backups/reportal-YYYYMMDDTHHMMSSZ.tar.gz` named for the UTC instant.  The
 oneshot runs `test -s` and `reportal backup-info` on that path so a zero-byte or
-corrupt write fails the unit, then `reportal backup-prune --keep-days 14`.
-`reportal doctor` warns when no archive under `../reportal-backups/` or
-`/srv/backups` is younger than 48 hours.
+corrupt write fails the unit, then
+`reportal backup-prune --keep-days 14 --keep-min 1`.  Age-only prune cannot
+delete the newest archive, so a stalled schedule still leaves one recovery
+point.  `reportal doctor` warns when no archive under `../reportal-backups/` or
+`/srv/backups` is younger than 48 hours, empty, or refused by `read_manifest`.
 
 ## Known gaps
 

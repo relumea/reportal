@@ -2710,10 +2710,14 @@ restored marker (or `REPORTAL_DB`) names.
 
 The default output path is a dated file under a sibling `reportal-backups/`
 directory; an `--output` inside the workspace is refused so the archive does not
-share the workspace wipe domain.  `deploy/reportal-backup.timer` is the
+share the workspace wipe domain.  `create` re-opens the finished archive through
+`read_manifest` before returning.  `deploy/reportal-backup.timer` is the
 scheduled form that writes under `/srv/backups/` with a UTC instant filename,
 fails on a zero-byte or manifest-invalid file, and prunes archives older than
-14 days.  `reportal backup-prune` is the same retention for a hand-run schedule.
+14 days while always keeping the newest one (`--keep-min 1`).
+`reportal backup-prune` is the same retention for a hand-run schedule.
+Workspace file members come from `_paths.WORKSPACE_DIRS`, so a directory added
+to the workspace contract is archived without a second edit in `backup.py`.
 
 The manifest records the format and version, the reportal version, the time, the
 absolute workspace root, the live database path and every member name.
@@ -2793,11 +2797,12 @@ permission, the schema (the four tables the reads need, then `store.counts`), th
 auth posture and the enabled users a non-loopback bind needs, the engine's
 availability and origin, the SPA build, every optional path as one row, whether
 a workspace archive under `../reportal-backups/` or `/srv/backups` is younger
-than two daily intervals, and a port probe that binds loopback with
-`SO_REUSEADDR` and closes again (uvicorn binds that way, so a socket in
-`TIME_WAIT` is not reported as a conflict).  A missing workspace is a reported
-failure, never a directory reportal creates.  A missing or stale archive is a
-warning only: backups are an operator schedule, not a start gate.
+than two daily intervals and readable through `read_manifest`, and a port probe
+that binds loopback with `SO_REUSEADDR` and closes again (uvicorn binds that
+way, so a socket in `TIME_WAIT` is not reported as a conflict).  A missing
+workspace is a reported failure, never a directory reportal creates.  A missing,
+stale, empty or unreadable archive is a warning only: backups are an operator
+schedule, not a start gate.
 
 A check is `ok` (the path works), `warn` (it works, with a caveat) or `fail`
 (the portal cannot serve correctly).  A warning never changes the exit code, a
