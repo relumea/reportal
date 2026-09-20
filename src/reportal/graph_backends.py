@@ -39,6 +39,7 @@ import inspect
 import json
 import os
 import sqlite3
+import threading
 import tomllib
 from collections.abc import Callable, Coroutine, Iterable, Mapping
 from dataclasses import dataclass
@@ -473,6 +474,7 @@ _registry: dict[str, GraphBackend] = {}
 _origins: dict[str, str] = {}
 _builtins_loaded = False
 _entry_points_loaded = False
+_registry_lock = threading.RLock()
 
 
 def register_graph_backend(backend: GraphBackend, *, origin: str = BUILTIN_ORIGIN) -> None:
@@ -493,20 +495,22 @@ def register_graph_backend(backend: GraphBackend, *, origin: str = BUILTIN_ORIGI
             f"bad graph backend registration {backend.name!r} from {origin}:"
             " available and sync must be callable"
         )
-    if backend.name in _registry:
-        raise RegistryError(
-            f"duplicate graph backend registration {backend.name!r}: {origin} conflicts"
-            f" with {_origins[backend.name]} (single-source discipline)"
-        )
-    _registry[backend.name] = backend
-    _origins[backend.name] = origin
+    with _registry_lock:
+        if backend.name in _registry:
+            raise RegistryError(
+                f"duplicate graph backend registration {backend.name!r}: {origin} conflicts"
+                f" with {_origins[backend.name]} (single-source discipline)"
+            )
+        _registry[backend.name] = backend
+        _origins[backend.name] = origin
 
 
 def graph_backends() -> tuple[GraphBackend, ...]:
     """Every registered backend, built-ins first, in registration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return tuple(_registry.values())
+    with _registry_lock:
+        return tuple(_registry.values())
 
 
 def unregister_graph_backend(name: str) -> None:
@@ -518,10 +522,11 @@ def unregister_graph_backend(name: str) -> None:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    if name not in _registry:
-        raise RegistryError(f"no graph backend registration {name!r} to withdraw")
-    del _registry[name]
-    _origins.pop(name, None)
+    with _registry_lock:
+        if name not in _registry:
+            raise RegistryError(f"no graph backend registration {name!r} to withdraw")
+        del _registry[name]
+        _origins.pop(name, None)
 
 
 def refresh_graph_backends() -> tuple[GraphBackend, ...]:
@@ -531,10 +536,11 @@ def refresh_graph_backends() -> tuple[GraphBackend, ...]:
     is how a long-lived process picks up a plugin installed after startup.
     """
     global _builtins_loaded, _entry_points_loaded
-    _registry.clear()
-    _origins.clear()
-    _builtins_loaded = False
-    _entry_points_loaded = False
+    with _registry_lock:
+        _registry.clear()
+        _origins.clear()
+        _builtins_loaded = False
+        _entry_points_loaded = False
     return graph_backends()
 
 
@@ -542,9 +548,11 @@ def get_graph_backend(name: str) -> GraphBackend:
     """The backend registered under *name*; raises :class:`UnknownBackendError`."""
     _ensure_builtins()
     _ensure_entry_points()
-    backend = _registry.get(name)
+    with _registry_lock:
+        backend = _registry.get(name)
+        known = dict(_registry)
     if backend is None:
-        raise UnknownBackendError(name, _registry)
+        raise UnknownBackendError(name, known)
     return backend
 
 
@@ -600,22 +608,24 @@ def sync_graph(
 def _ensure_builtins() -> None:
     """Load the in-tree backends once."""
     global _builtins_loaded
-    if _builtins_loaded:
-        return
-    _builtins_loaded = True
-    for backend in builtin_graph_backends():
-        register_graph_backend(backend, origin=BUILTIN_ORIGIN)
+    with _registry_lock:
+        if _builtins_loaded:
+            return
+        _builtins_loaded = True
+        for backend in builtin_graph_backends():
+            register_graph_backend(backend, origin=BUILTIN_ORIGIN)
 
 
 def _ensure_entry_points() -> None:
     """Load third-party backends once, skipping a broken registration."""
     global _entry_points_loaded
-    if _entry_points_loaded:
-        return
-    _entry_points_loaded = True
-    for name, value, backend in plugins.load(
-        GRAPH_BACKEND_ENTRY_POINT_GROUP, GraphBackend, "GraphBackend"
-    ):
-        # A duplicate name is not skipped: two backends claiming one name is a
-        # registry error, and the RegistryError says which registration lost.
-        register_graph_backend(backend, origin=plugins.origin(name, value))
+    with _registry_lock:
+        if _entry_points_loaded:
+            return
+        _entry_points_loaded = True
+        for name, value, backend in plugins.load(
+            GRAPH_BACKEND_ENTRY_POINT_GROUP, GraphBackend, "GraphBackend"
+        ):
+            # A duplicate name is not skipped: two backends claiming one name is a
+            # registry error, and the RegistryError says which registration lost.
+            register_graph_backend(backend, origin=plugins.origin(name, value))

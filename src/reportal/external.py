@@ -43,6 +43,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -557,6 +558,7 @@ _registry: dict[str, Source] = {}
 _origins: dict[str, str] = {}
 _builtins_loaded = False
 _entry_points_loaded = False
+_registry_lock = threading.RLock()
 
 
 def register_source(source: Source, *, origin: str = BUILTIN_ORIGIN) -> None:
@@ -582,20 +584,22 @@ def register_source(source: Source, *, origin: str = BUILTIN_ORIGIN) -> None:
             f"bad external source registration {source.name!r} from {origin}:"
             " retrieve must be callable"
         )
-    if source.name in _registry:
-        raise plugins.RegistryError(
-            f"duplicate external source registration {source.name!r}: {origin} conflicts"
-            f" with {_origins[source.name]} (single-source discipline)"
-        )
-    _registry[source.name] = source
-    _origins[source.name] = origin
+    with _registry_lock:
+        if source.name in _registry:
+            raise plugins.RegistryError(
+                f"duplicate external source registration {source.name!r}: {origin} conflicts"
+                f" with {_origins[source.name]} (single-source discipline)"
+            )
+        _registry[source.name] = source
+        _origins[source.name] = origin
 
 
 def sources() -> tuple[Source, ...]:
     """Every registered source, built-ins first, in registration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return tuple(_registry.values())
+    with _registry_lock:
+        return tuple(_registry.values())
 
 
 def unregister_source(name: str) -> None:
@@ -606,9 +610,11 @@ def unregister_source(name: str) -> None:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    if name not in _registry:
-        raise plugins.RegistryError(f"no source registration {name!r} to withdraw")
-    del _registry[name]
+    with _registry_lock:
+        if name not in _registry:
+            raise plugins.RegistryError(f"no source registration {name!r} to withdraw")
+        del _registry[name]
+        _origins.pop(name, None)
 
 
 def refresh_sources() -> tuple[Source, ...]:
@@ -618,10 +624,11 @@ def refresh_sources() -> tuple[Source, ...]:
     configured after startup, and the entry-point group is scanned again.
     """
     global _builtins_loaded, _entry_points_loaded
-    _registry.clear()
-    _origins.clear()
-    _builtins_loaded = False
-    _entry_points_loaded = False
+    with _registry_lock:
+        _registry.clear()
+        _origins.clear()
+        _builtins_loaded = False
+        _entry_points_loaded = False
     return sources()
 
 
@@ -629,9 +636,11 @@ def get_source(name: str) -> Source:
     """The source registered under *name*; raises :class:`UnknownSourceError`."""
     _ensure_builtins()
     _ensure_entry_points()
-    source = _registry.get(name)
+    with _registry_lock:
+        source = _registry.get(name)
+        known = tuple(sorted(_registry))
     if source is None:
-        raise UnknownSourceError(name, tuple(sorted(_registry)))
+        raise UnknownSourceError(name, known)
     return source
 
 
@@ -650,21 +659,23 @@ def describe() -> dict[str, Any]:
 def _ensure_builtins() -> None:
     """Load the in-tree sources once."""
     global _builtins_loaded
-    if _builtins_loaded:
-        return
-    _builtins_loaded = True
-    for source in builtin_sources():
-        register_source(source, origin=BUILTIN_ORIGIN)
+    with _registry_lock:
+        if _builtins_loaded:
+            return
+        _builtins_loaded = True
+        for source in builtin_sources():
+            register_source(source, origin=BUILTIN_ORIGIN)
 
 
 def _ensure_entry_points() -> None:
     """Load third-party sources once, skipping a broken registration."""
     global _entry_points_loaded
-    if _entry_points_loaded:
-        return
-    _entry_points_loaded = True
-    for name, value, source in plugins.load(SOURCE_ENTRY_POINT_GROUP, Source, "Source"):
-        register_source(source, origin=plugins.origin(name, value))
+    with _registry_lock:
+        if _entry_points_loaded:
+            return
+        _entry_points_loaded = True
+        for name, value, source in plugins.load(SOURCE_ENTRY_POINT_GROUP, Source, "Source"):
+            register_source(source, origin=plugins.origin(name, value))
 
 
 # ── Running one source ─────────────────────────────────────────────

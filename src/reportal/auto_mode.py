@@ -122,7 +122,10 @@ RETRY_JITTER_HIGH = 1.25
 # calls `time.sleep`.  ``seed_retry_rng`` reseeds `_RETRY_RNG` so a simulation
 # can replay the same jitter sequence from one seed.  ``_wait_for`` is the
 # attempt-timeout wait; a test patches it to pin timeouts without wall time.
+# Concurrent batch workers share this RNG; ``random.Random`` is not thread-safe,
+# so draws and reseeds both run under ``_RETRY_RNG_LOCK``.
 _RETRY_RNG = random.Random()
+_RETRY_RNG_LOCK = threading.Lock()
 _sleep = time.sleep
 
 # SQLite settings for the connections auto mode opens per worker.  Batches run
@@ -434,13 +437,15 @@ def _failed_attempt(ctx: WorkerContext, reason: str, detail: str = "") -> Worker
 
 def _retry_jitter() -> float:
     """Return one jitter factor from the module RNG, for one retry delay."""
-    return _RETRY_RNG.uniform(RETRY_JITTER_LOW, RETRY_JITTER_HIGH)
+    with _RETRY_RNG_LOCK:
+        return _RETRY_RNG.uniform(RETRY_JITTER_LOW, RETRY_JITTER_HIGH)
 
 
 def seed_retry_rng(seed: int | None = None) -> None:
     """Reseed the retry jitter RNG for a reproducible delay schedule."""
     global _RETRY_RNG
-    _RETRY_RNG = random.Random(seed)
+    with _RETRY_RNG_LOCK:
+        _RETRY_RNG = random.Random(seed)
 
 
 def _wait_for(event: threading.Event, timeout: float) -> bool:

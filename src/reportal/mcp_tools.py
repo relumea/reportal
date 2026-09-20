@@ -21,6 +21,7 @@ import contextlib
 import os
 import sqlite3
 import tempfile
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
@@ -229,6 +230,7 @@ class Tool:
 _REGISTRY: dict[str, Tool] = {}
 _builtins_loaded = False
 _entry_points_loaded = False
+_registry_lock = threading.RLock()
 
 
 def register_tool(tool: Tool, *, origin: str = BUILTIN_ORIGIN) -> None:
@@ -258,19 +260,21 @@ def register_tool(tool: Tool, *, origin: str = BUILTIN_ORIGIN) -> None:
         raise RegistryError(
             f"bad tool registration {tool.name!r} from {origin}: handler is not callable"
         )
-    if tool.name in _REGISTRY:
-        raise RegistryError(
-            f"duplicate tool registration {tool.name!r}: {origin} conflicts"
-            " with an existing registration (single-source discipline)"
-        )
-    _REGISTRY[tool.name] = tool
+    with _registry_lock:
+        if tool.name in _REGISTRY:
+            raise RegistryError(
+                f"duplicate tool registration {tool.name!r}: {origin} conflicts"
+                " with an existing registration (single-source discipline)"
+            )
+        _REGISTRY[tool.name] = tool
 
 
 def tools() -> tuple[Tool, ...]:
     """Every registered tool, built-ins first, in declaration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return tuple(_REGISTRY.values())
+    with _registry_lock:
+        return tuple(_REGISTRY.values())
 
 
 def get_tool(name: str) -> Tool | None:
@@ -288,9 +292,10 @@ def unregister_tool(name: str) -> None:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    if name not in _REGISTRY:
-        raise RegistryError(f"no tool registration {name!r} to withdraw")
-    del _REGISTRY[name]
+    with _registry_lock:
+        if name not in _REGISTRY:
+            raise RegistryError(f"no tool registration {name!r} to withdraw")
+        del _REGISTRY[name]
 
 
 def refresh_tools() -> tuple[Tool, ...]:
@@ -300,32 +305,35 @@ def refresh_tools() -> tuple[Tool, ...]:
     is how a long-lived process picks up a plugin installed after startup.
     """
     global _builtins_loaded, _entry_points_loaded
-    _REGISTRY.clear()
-    _builtins_loaded = False
-    _entry_points_loaded = False
+    with _registry_lock:
+        _REGISTRY.clear()
+        _builtins_loaded = False
+        _entry_points_loaded = False
     return tools()
 
 
 def _ensure_builtins() -> None:
     """Load the in-tree tools once."""
     global _builtins_loaded
-    if _builtins_loaded:
-        return
-    _builtins_loaded = True
-    for tool in builtin_tools():
-        register_tool(tool, origin=BUILTIN_ORIGIN)
+    with _registry_lock:
+        if _builtins_loaded:
+            return
+        _builtins_loaded = True
+        for tool in builtin_tools():
+            register_tool(tool, origin=BUILTIN_ORIGIN)
 
 
 def _ensure_entry_points() -> None:
     """Load third-party tools once, skipping a broken registration."""
     global _entry_points_loaded
-    if _entry_points_loaded:
-        return
-    _entry_points_loaded = True
-    for name, value, tool in plugins.load(TOOL_ENTRY_POINT_GROUP, Tool, "Tool"):
-        # A duplicate name is not skipped: two tools claiming one name is a
-        # registry error, and the RegistryError says which registration lost.
-        register_tool(tool, origin=plugins.origin(name, value))
+    with _registry_lock:
+        if _entry_points_loaded:
+            return
+        _entry_points_loaded = True
+        for name, value, tool in plugins.load(TOOL_ENTRY_POINT_GROUP, Tool, "Tool"):
+            # A duplicate name is not skipped: two tools claiming one name is a
+            # registry error, and the RegistryError says which registration lost.
+            register_tool(tool, origin=plugins.origin(name, value))
 
 
 # ── Connection and error helpers ───────────────────────────────────

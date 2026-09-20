@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import sqlite3
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -243,6 +244,7 @@ _registry: dict[str, Model] = {}
 _origins: dict[str, str] = {}
 _builtins_loaded = False
 _entry_points_loaded = False
+_registry_lock = threading.RLock()
 
 
 def register_model(model: Model, *, origin: str = BUILTIN_ORIGIN) -> None:
@@ -267,20 +269,22 @@ def register_model(model: Model, *, origin: str = BUILTIN_ORIGIN) -> None:
             f"bad model registration {model.name!r} from {origin}:"
             " available and unavailable_reason must be callable"
         )
-    if model.name in _registry:
-        raise RegistryError(
-            f"duplicate model registration {model.name!r}: {origin} conflicts with"
-            f" {_origins[model.name]} (single-source discipline)"
-        )
-    _registry[model.name] = model
-    _origins[model.name] = origin
+    with _registry_lock:
+        if model.name in _registry:
+            raise RegistryError(
+                f"duplicate model registration {model.name!r}: {origin} conflicts with"
+                f" {_origins[model.name]} (single-source discipline)"
+            )
+        _registry[model.name] = model
+        _origins[model.name] = origin
 
 
 def models() -> tuple[Model, ...]:
     """Every registered model, built-ins first, in registration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return tuple(_registry.values())
+    with _registry_lock:
+        return tuple(_registry.values())
 
 
 def unregister_model(name: str) -> None:
@@ -291,9 +295,11 @@ def unregister_model(name: str) -> None:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    if name not in _registry:
-        raise RegistryError(f"no model registration {name!r} to withdraw")
-    del _registry[name]
+    with _registry_lock:
+        if name not in _registry:
+            raise RegistryError(f"no model registration {name!r} to withdraw")
+        del _registry[name]
+        _origins.pop(name, None)
 
 
 def refresh_models() -> tuple[Model, ...]:
@@ -304,10 +310,11 @@ def refresh_models() -> tuple[Model, ...]:
     group is scanned again.
     """
     global _builtins_loaded, _entry_points_loaded
-    _registry.clear()
-    _origins.clear()
-    _builtins_loaded = False
-    _entry_points_loaded = False
+    with _registry_lock:
+        _registry.clear()
+        _origins.clear()
+        _builtins_loaded = False
+        _entry_points_loaded = False
     return models()
 
 
@@ -315,11 +322,11 @@ def get_model(name: str) -> Model:
     """The model registered under *name*; raises :class:`UnknownModelError`."""
     _ensure_builtins()
     _ensure_entry_points()
-    model = _registry.get(name)
+    with _registry_lock:
+        model = _registry.get(name)
+        known = ", ".join(sorted(_registry)) or "none"
     if model is None:
-        raise UnknownModelError(
-            f"unknown model {name!r}; known models: {', '.join(sorted(_registry)) or 'none'}"
-        )
+        raise UnknownModelError(f"unknown model {name!r}; known models: {known}")
     return model
 
 
@@ -360,21 +367,23 @@ def upgradeable_model(name: Any) -> Model:
 def _ensure_builtins() -> None:
     """Load the in-tree models once."""
     global _builtins_loaded
-    if _builtins_loaded:
-        return
-    _builtins_loaded = True
-    for model in builtin_models():
-        register_model(model, origin=BUILTIN_ORIGIN)
+    with _registry_lock:
+        if _builtins_loaded:
+            return
+        _builtins_loaded = True
+        for model in builtin_models():
+            register_model(model, origin=BUILTIN_ORIGIN)
 
 
 def _ensure_entry_points() -> None:
     """Load third-party models once, skipping a broken registration."""
     global _entry_points_loaded
-    if _entry_points_loaded:
-        return
-    _entry_points_loaded = True
-    for name, value, model in plugins.load(MODEL_ENTRY_POINT_GROUP, Model, "Model"):
-        register_model(model, origin=plugins.origin(name, value))
+    with _registry_lock:
+        if _entry_points_loaded:
+            return
+        _entry_points_loaded = True
+        for name, value, model in plugins.load(MODEL_ENTRY_POINT_GROUP, Model, "Model"):
+            register_model(model, origin=plugins.origin(name, value))
 
 
 # ── The upgrade ────────────────────────────────────────────────────

@@ -89,3 +89,29 @@ class TestRetrySchedule:
         auto_mode.run_auto(conn, binary_id=ids["binary"], worker="probe", max_attempts=3)
         assert len(probe.calls) == 1
         assert delays == []
+
+
+class TestRetryRngConcurrency:
+    def test_concurrent_draws_stay_in_range(self) -> None:
+        """Batch workers share the jitter RNG; draws must not corrupt its state."""
+        import threading
+
+        errors: list[BaseException] = []
+        values: list[float] = []
+
+        def draw() -> None:
+            try:
+                for _ in range(200):
+                    values.append(auto_mode._retry_jitter())
+            except BaseException as exc:  # surface a torn RNG as a test failure
+                errors.append(exc)
+
+        threads = [threading.Thread(target=draw) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert errors == []
+        assert len(values) == 1600
+        low, high = auto_mode.RETRY_JITTER_LOW, auto_mode.RETRY_JITTER_HIGH
+        assert all(low <= value <= high for value in values)

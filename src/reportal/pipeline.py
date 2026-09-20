@@ -228,6 +228,11 @@ MAX_SYMBOL_INDEXES = 4
 # ASGI thread pool, so lookup and eviction run under ``_live_state_lock``.
 _symbol_indexes: dict[str, dict[int, str]] = {}
 _live_state_lock = threading.Lock()
+# Serializes mutations of the process-wide live host (sync / deactivate /
+# seed).  Kept separate from ``_live_state_lock`` so a withdrawal can call
+# ``components.components()`` without nesting the registry lock under the
+# symbol-index lock (and the reverse path never takes this lock).
+_live_host_op_lock = threading.RLock()
 
 
 class StepFailure(RuntimeError):  # noqa: N818  # name fixed by the step contract
@@ -1637,12 +1642,13 @@ def withdraw_component(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
     :class:`NotWithdrawableError` when the component provides nothing and
     declares no revert, or was already withdrawn by this process.
     """
-    host = live_host()
-    host.sync()
-    host.context.seed(SEED_CONN, conn)
-    before = len(host.context.effects())
-    payload = host.deactivate(name)
-    effects = host.context.effects()[before:]
+    with _live_host_op_lock:
+        host = live_host()
+        host.sync()
+        host.context.seed(SEED_CONN, conn)
+        before = len(host.context.effects())
+        payload = host.deactivate(name)
+        effects = host.context.effects()[before:]
     with journal.journaled(conn, journal.new_action()) as log:
         for effect in effects:
             if effect.undo is not None:

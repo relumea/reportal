@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import CodeType
@@ -367,6 +368,7 @@ class Registration:
 _registry: dict[str, Registration] = {}
 _builtins_loaded = False
 _entry_points_loaded = False
+_registry_lock = threading.RLock()
 
 
 def register_component(
@@ -402,25 +404,27 @@ def register_component(
         raise RegistryError(
             f"bad component registration {component.name!r} from {origin}: effect is not callable"
         )
-    if component.name in _registry:
-        raise RegistryError(
-            f"duplicate component registration {component.name!r}: {origin} conflicts"
-            f" with an existing registration (single-source discipline)"
+    with _registry_lock:
+        if component.name in _registry:
+            raise RegistryError(
+                f"duplicate component registration {component.name!r}: {origin} conflicts"
+                f" with an existing registration (single-source discipline)"
+            )
+        _registry[component.name] = Registration(
+            component=component,
+            origin=origin,
+            module_name=module_name,
+            reloadable=reloadable,
+            entry_point=entry_point,
         )
-    _registry[component.name] = Registration(
-        component=component,
-        origin=origin,
-        module_name=module_name,
-        reloadable=reloadable,
-        entry_point=entry_point,
-    )
 
 
 def components() -> tuple[Component, ...]:
     """Every registered component, built-ins first, in declaration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return tuple(entry.component for entry in _registry.values())
+    with _registry_lock:
+        return tuple(entry.component for entry in _registry.values())
 
 
 def assert_unique_providers(registered: Iterable[Component]) -> None:
@@ -451,7 +455,8 @@ def registrations() -> tuple[Registration, ...]:
     """Every registry entry with its origin and reloadability, in declaration order."""
     _ensure_builtins()
     _ensure_entry_points()
-    return tuple(_registry.values())
+    with _registry_lock:
+        return tuple(_registry.values())
 
 
 def unregister_component(name: str) -> None:
@@ -465,9 +470,10 @@ def unregister_component(name: str) -> None:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    if name not in _registry:
-        raise RegistryError(f"no component registration {name!r} to withdraw")
-    del _registry[name]
+    with _registry_lock:
+        if name not in _registry:
+            raise RegistryError(f"no component registration {name!r} to withdraw")
+        del _registry[name]
 
 
 def refresh_components() -> tuple[Component, ...]:
@@ -481,9 +487,10 @@ def refresh_components() -> tuple[Component, ...]:
     of the registry untouched.
     """
     global _builtins_loaded, _entry_points_loaded
-    _registry.clear()
-    _builtins_loaded = False
-    _entry_points_loaded = False
+    with _registry_lock:
+        _registry.clear()
+        _builtins_loaded = False
+        _entry_points_loaded = False
     return components()
 
 
@@ -504,10 +511,11 @@ def reload_component(name: str) -> dict[str, Any]:
     """
     _ensure_builtins()
     _ensure_entry_points()
-    entry = _registry.get(name)
-    if entry is None:
-        raise KeyError(name)
-    return _reload_entry(name, entry, reloaded_modules=set())
+    with _registry_lock:
+        entry = _registry.get(name)
+        if entry is None:
+            raise KeyError(name)
+        return _reload_entry(name, entry, reloaded_modules=set())
 
 
 def reload_all() -> dict[str, Any]:
@@ -523,11 +531,12 @@ def reload_all() -> dict[str, Any]:
     reloaded: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
     modules: set[str] = set()
-    for name, entry in list(_registry.items()):
-        if not entry.reloadable or entry.module_name is None:
-            skipped.append({"name": name, "reason": _not_reloadable_reason(entry)})
-            continue
-        reloaded.append(_reload_entry(name, entry, reloaded_modules=modules))
+    with _registry_lock:
+        for name, entry in list(_registry.items()):
+            if not entry.reloadable or entry.module_name is None:
+                skipped.append({"name": name, "reason": _not_reloadable_reason(entry)})
+                continue
+            reloaded.append(_reload_entry(name, entry, reloaded_modules=modules))
     return {
         "reloaded": reloaded,
         "skipped": skipped,
@@ -660,29 +669,33 @@ def _change_fingerprint(component: Component) -> tuple[Any, ...]:
 def _ensure_builtins() -> None:
     """Load the in-tree components once."""
     global _builtins_loaded
-    if _builtins_loaded:
-        return
-    _builtins_loaded = True
-    module = importlib.import_module(BUILTIN_MODULE)
-    for component in module.builtin_components():
-        register_component(
-            component, origin=BUILTIN_ORIGIN, module_name=BUILTIN_MODULE, reloadable=True
-        )
+    with _registry_lock:
+        if _builtins_loaded:
+            return
+        _builtins_loaded = True
+        module = importlib.import_module(BUILTIN_MODULE)
+        for component in module.builtin_components():
+            register_component(
+                component, origin=BUILTIN_ORIGIN, module_name=BUILTIN_MODULE, reloadable=True
+            )
 
 
 def _ensure_entry_points() -> None:
     """Load third-party components once, skipping a broken registration."""
     global _entry_points_loaded
-    if _entry_points_loaded:
-        return
-    _entry_points_loaded = True
-    for name, value, component in plugins.load(COMPONENT_ENTRY_POINT_GROUP, Component, "Component"):
-        # A duplicate name is not skipped: two components claiming one name is a
-        # composition error, and the RegistryError says which registration lost.
-        register_component(
-            component,
-            origin=plugins.origin(name, value),
-            module_name=value.partition(":")[0],
-            reloadable=True,
-            entry_point=name,
-        )
+    with _registry_lock:
+        if _entry_points_loaded:
+            return
+        _entry_points_loaded = True
+        for name, value, component in plugins.load(
+            COMPONENT_ENTRY_POINT_GROUP, Component, "Component"
+        ):
+            # A duplicate name is not skipped: two components claiming one name is a
+            # composition error, and the RegistryError says which registration lost.
+            register_component(
+                component,
+                origin=plugins.origin(name, value),
+                module_name=value.partition(":")[0],
+                reloadable=True,
+                entry_point=name,
+            )

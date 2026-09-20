@@ -39,6 +39,7 @@ import signal
 import sqlite3
 import subprocess
 import tempfile
+import threading
 import time
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -349,6 +350,7 @@ class BwrapRunner(Runner):
 
 # The runners reportal ships, in the order :func:`available_runner` tries them.
 RUNNERS: list[Runner] = [BwrapRunner()]
+_RUNNERS_LOCK = threading.RLock()
 
 # The in-tree runner name.  Withdrawing it is refused: a workspace with no
 # plugin still needs a runner, and the refresh path documents it as unremovable.
@@ -361,9 +363,10 @@ def register_runner(runner: Runner) -> Runner:
     Replacement (rather than the :class:`RegistryError` the other registries
     raise) keeps :func:`refresh_runners` idempotent across re-scans.
     """
-    RUNNERS[:] = [existing for existing in RUNNERS if existing.name != runner.name]
-    RUNNERS.append(runner)
-    return runner
+    with _RUNNERS_LOCK:
+        RUNNERS[:] = [existing for existing in RUNNERS if existing.name != runner.name]
+        RUNNERS.append(runner)
+        return runner
 
 
 def unregister_runner(name: str) -> None:
@@ -375,24 +378,27 @@ def unregister_runner(name: str) -> None:
     """
     from reportal.plugins import RegistryError
 
-    if name not in [runner.name for runner in RUNNERS]:
-        raise RegistryError(f"no runner registration {name!r} to withdraw")
-    if name == BUILTIN_RUNNER:
-        raise RegistryError(f"cannot withdraw the built-in runner {name!r}")
-    RUNNERS[:] = [runner for runner in RUNNERS if runner.name != name]
+    with _RUNNERS_LOCK:
+        if name not in [runner.name for runner in RUNNERS]:
+            raise RegistryError(f"no runner registration {name!r} to withdraw")
+        if name == BUILTIN_RUNNER:
+            raise RegistryError(f"cannot withdraw the built-in runner {name!r}")
+        RUNNERS[:] = [runner for runner in RUNNERS if runner.name != name]
 
 
 def registered_runners() -> list[Runner]:
     """Every registered runner, installed or not."""
-    return list(RUNNERS)
+    with _RUNNERS_LOCK:
+        return list(RUNNERS)
 
 
 def get_runner(name: str) -> Runner | None:
     """One registered runner by name, or None."""
-    for runner in RUNNERS:
-        if runner.name == name:
-            return runner
-    return None
+    with _RUNNERS_LOCK:
+        for runner in RUNNERS:
+            if runner.name == name:
+                return runner
+        return None
 
 
 def available_runner() -> Runner | None:
@@ -408,7 +414,9 @@ def available_runner() -> Runner | None:
         if runner is None or not runner.available():
             return None
         return runner
-    for runner in RUNNERS:
+    with _RUNNERS_LOCK:
+        runners = list(RUNNERS)
+    for runner in runners:
         if runner.available():
             return runner
     return None
@@ -419,7 +427,8 @@ def unavailable_detail() -> str:
     wanted = configured_runner_name()
     if wanted:
         return f"the configured sandbox runner {wanted!r} is not registered or not installed"
-    hints = [runner.hint for runner in RUNNERS if runner.hint]
+    with _RUNNERS_LOCK:
+        hints = [runner.hint for runner in RUNNERS if runner.hint]
     return "no sandbox runner is installed; " + ("; ".join(hints) or "register one")
 
 
@@ -760,7 +769,8 @@ def refresh_runners() -> list[str]:
 
     for _name, _value, plugin in plugins.load(RUNNER_ENTRY_POINT_GROUP, Runner, "Runner"):
         register_runner(plugin)
-    return [runner.name for runner in RUNNERS]
+    with _RUNNERS_LOCK:
+        return [runner.name for runner in RUNNERS]
 
 
 def detonate_binary(
