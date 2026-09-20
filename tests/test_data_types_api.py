@@ -322,6 +322,21 @@ class TestExport:
         assert json_body(body, headers)["error"] == "invalid path"
         assert not target.exists()
 
+    def test_export_refuses_a_path_outside_the_workspace(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _seed_binary(conn)
+        _seed_type(conn, binary_id)
+        outside = tmp_path.parent / f"outside-{tmp_path.name}" / "types.h"
+        status, headers, body = _post(
+            f"/api/binaries/{binary_id}/data-types/export", {"path": str(outside)}
+        )
+        assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid path"
+        assert "workspace" in payload["detail"]
+        assert not outside.exists()
+
     def test_export_without_a_path_is_400(self, conn: sqlite3.Connection) -> None:
         binary_id = _seed_binary(conn)
         status, headers, body = _post(f"/api/binaries/{binary_id}/data-types/export", {})

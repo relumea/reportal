@@ -123,7 +123,7 @@ from reportal import (
 from reportal import (
     plans as plans_mod,
 )
-from reportal._paths import binaries_dir, db_path, reports_dir
+from reportal._paths import binaries_dir, db_path, reports_dir, under_workspace
 from reportal.binary_actions import (
     ExtractError,
     download_filename,
@@ -149,6 +149,21 @@ from reportal.surface import store_lineage as _store_lineage
 def _fail(status: int, error: str, detail: str) -> Exception:
     """The HTTP answer to a shared-helper failure: the JSON error envelope."""
     return json_error(status, error=error, detail=detail)
+
+
+def _require_workspace_export_path(path: str) -> str | Response:
+    """Return *path* when it resolves under the workspace, else a 400 response.
+
+    Network-facing export routes must not write an arbitrary host path; the CLI
+    still may, because the operator already has a shell on the machine.
+    """
+    if under_workspace(path):
+        return path
+    return json_error(
+        400,
+        error="invalid path",
+        detail="export path must be under the workspace",
+    )
 
 
 def _family_error(exc: families.FamilyError) -> Response:
@@ -1865,6 +1880,10 @@ def export_binary_data_types(
 ) -> Response:
     """Render the type model to the explicit path the caller names."""
     path = _require_str(body, "path")
+    scoped = _require_workspace_export_path(path)
+    if isinstance(scoped, Response):
+        return scoped
+    path = scoped
     force = _optional_bool(body, "force", False)
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
@@ -2471,6 +2490,10 @@ def export_binary_signatures(
 ) -> Response:
     """Render the signature model to the explicit path the caller names."""
     path = _require_str(body, "path")
+    scoped = _require_workspace_export_path(path)
+    if isinstance(scoped, Response):
+        return scoped
+    path = scoped
     force = _optional_bool(body, "force", False)
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()

@@ -155,6 +155,14 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("Referrer-Policy", "no-referrer"),
     ("Cross-Origin-Opener-Policy", "same-origin"),
     ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+    # Frame/base/form/object only: the SPA shell carries a small inline theme
+    # script, so a full default-src policy would need a nonce path the build
+    # does not yet wire.  These directives still close clickjacking and
+    # base-tag / plugin injection without breaking that first paint.
+    (
+        "Content-Security-Policy",
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
+    ),
 )
 
 # The current request's ``Accept-Encoding``, so ``json_response`` can decide on
@@ -693,8 +701,8 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
             host = request.headers.get("host", "")
             if host and _hostname_of(host) not in ALLOWED_HOSTS:
                 _log.warning(
-                    "Rejected request with Host header %r request_id=%s",
-                    host,
+                    "Rejected request with Host header %s request_id=%s",
+                    _safe_log_token(host),
                     request_id,
                 )
                 response = json_error(
@@ -819,8 +827,8 @@ async def _handle_error(request: Request, exc: Exception) -> Response:
     request_id = getattr(request.state, "request_id", observability.current_request_id())
     _log.error(
         "Unhandled error serving %s %s request_id=%s",
-        request.method,
-        request.url.path,
+        _safe_log_token(request.method),
+        _safe_log_token(request.url.path),
         request_id,
         exc_info=exc,
     )

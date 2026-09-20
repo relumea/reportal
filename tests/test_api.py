@@ -2102,6 +2102,16 @@ class TestSearchAndErrors:
         assert status.startswith("400")
         assert json_body(body, headers)["error"] == "unexpected Host header"
 
+    def test_responses_carry_security_headers(self, portal_db: Path) -> None:
+        status, headers, _body = wsgi_request("GET", "/api/health")
+        assert status.startswith("200")
+        assert headers.get("X-Content-Type-Options") == "nosniff"
+        assert headers.get("X-Frame-Options") == "DENY"
+        csp = headers.get("Content-Security-Policy") or ""
+        assert "frame-ancestors 'none'" in csp
+        assert "base-uri 'self'" in csp
+        assert "object-src 'none'" in csp
+
 
 class TestUi:
     """The built SPA served from ``assets/dist`` (built by Vite into ``web/``)."""

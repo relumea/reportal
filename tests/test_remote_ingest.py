@@ -77,12 +77,13 @@ def _admit_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Those surfaces cannot pass the ``allow_loopback`` test seam, so the
     pre-flight check is replaced with an answer that admits the server and the
-    peer check is told the transport exposes no peer address: the same
-    unverifiable case an in-process transport produces, where the pre-flight
-    answer stands.
+    peer check is told the connected address is loopback and not blocked: the
+    same outcome a production transport reports for an admitted peer, without
+    leaving the body on an unverifiable connection.
     """
     monkeypatch.setattr(remote_ingest, "validate_target", lambda url, **kwargs: (url, "127.0.0.1"))
-    monkeypatch.setattr(remote_ingest, "_peer_address", lambda response: None)
+    monkeypatch.setattr(remote_ingest, "_peer_address", lambda response: "127.0.0.1")
+    monkeypatch.setattr(remote_ingest, "_peer_blocked_detail", lambda *args, **kwargs: None)
 
 
 def _seed_binary(conn: sqlite3.Connection) -> int:
@@ -382,7 +383,7 @@ class TestPeerAddress:
         assert excinfo.value.code == remote_ingest.ERROR_BLOCKED_TARGET
         assert "127.0.0.1" in excinfo.value.detail
 
-    def test_a_transport_with_no_stream_is_marked_unverified(
+    def test_a_transport_with_no_stream_is_refused_without_the_loopback_seam(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _static_resolver(monkeypatch, PUBLIC_ADDRESS)
@@ -397,7 +398,29 @@ class TestPeerAddress:
             return real_client(*args, transport=transport, **kwargs)
 
         monkeypatch.setattr(httpx, "Client", factory)
-        result = remote_ingest.fetch("http://example.com/notes.md", max_bytes=4096, timeout=5)
+        with pytest.raises(remote_ingest.RemoteIngestError) as excinfo:
+            remote_ingest.fetch("http://example.com/notes.md", max_bytes=4096, timeout=5)
+        assert excinfo.value.code == remote_ingest.ERROR_BLOCKED_TARGET
+        assert "no verifiable peer address" in excinfo.value.detail
+
+    def test_the_loopback_seam_admits_an_unverifiable_peer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _static_resolver(monkeypatch, PUBLIC_ADDRESS)
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"content-type": "text/markdown"}, content=NOTE_TEXT.encode()
+            )
+        )
+        real_client = httpx.Client
+
+        def factory(*args: Any, **kwargs: Any) -> httpx.Client:
+            return real_client(*args, transport=transport, **kwargs)
+
+        monkeypatch.setattr(httpx, "Client", factory)
+        result = remote_ingest.fetch(
+            "http://example.com/notes.md", allow_loopback=True, max_bytes=4096, timeout=5
+        )
         assert result["peer_address"] == remote_ingest.PEER_UNVERIFIED
         assert result["data"] == NOTE_TEXT.encode()
 

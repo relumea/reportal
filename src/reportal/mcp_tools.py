@@ -99,7 +99,7 @@ from reportal import (
     user_strings,
     zipcrypto,
 )
-from reportal._paths import WorkspaceNotFound, reports_dir
+from reportal._paths import WorkspaceNotFound, reports_dir, under_workspace
 from reportal.plugins import RegistryError as RegistryError
 from reportal.server import db
 from reportal.surface import classified as _classified
@@ -1191,6 +1191,8 @@ def _value_removal(value: Any) -> dict[str, Any]:
 def _tool_export_data_types(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     path = _arg_str(arguments, "path")
+    if not under_workspace(path):
+        raise ToolError("invalid path", "export path must be under the workspace")
     force = _arg_optional_bool(arguments, "force", False)
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
@@ -1569,6 +1571,8 @@ def _tool_edit_signature(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_export_signatures(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     path = _arg_str(arguments, "path")
+    if not under_workspace(path):
+        raise ToolError("invalid path", "export path must be under the workspace")
     force = _arg_optional_bool(arguments, "force", False)
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)

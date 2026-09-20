@@ -167,3 +167,33 @@ def stored_binary_path(path: str | Path) -> bool:
         return candidate.resolve().is_relative_to(root)
     except (OSError, WorkspaceNotFound):
         return False
+
+
+def workspace_root() -> Path:
+    """The directory network-facing writers treat as the install root.
+
+    ``REPORTAL_DB`` isolates a process onto one database; its parent is then the
+    bound for path checks, matching how tests and multi-root deploys pin the
+    DB.  Without the override, the marker walk answers.
+    """
+    override = os.environ.get(DB_ENV, "").strip()
+    if override:
+        return Path(override).expanduser().resolve().parent
+    return project_root().resolve()
+
+
+def under_workspace(path: str | Path) -> bool:
+    """True when *path* resolves under :func:`workspace_root`.
+
+    Used by network-facing writers (HTTP export, MCP export) so a caller cannot
+    name an arbitrary host path.  The CLI still writes wherever the operator
+    points; those callers do not go through this check.
+    """
+    candidate = Path(path).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    try:
+        root = workspace_root()
+        return candidate.resolve().is_relative_to(root)
+    except (OSError, WorkspaceNotFound):
+        return False

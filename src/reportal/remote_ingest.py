@@ -33,9 +33,12 @@ and before the body is read, it reads the peer address the transport carries
 peer exactly as the pre-flight check does.  The pre-flight check stays as the
 cheap early exit that fails before any request is sent; the peer check is what
 covers the connection.  A transport that exposes no stream or no peer address is
-unverifiable: the pre-flight answer stands and the returned payload reports the
-address as :data:`PEER_UNVERIFIED`, so a reader can tell a verified connection
-from an unverified one.
+unverifiable: production callers refuse that case rather than trusting the
+pre-flight DNS alone (a DNS answer can change between resolution and connect).
+The test-only ``allow_loopback`` seam still admits an unverifiable peer so an
+in-process mock transport can exercise the rest of the path, and the returned
+payload reports :data:`PEER_UNVERIFIED` so a reader can tell a verified
+connection from an unverified one.
 
 What the peer check still cannot cover: the request has already been sent by the
 time the peer is known, so only the body is withheld; an HTTPS connection has
@@ -345,16 +348,18 @@ def fetch(
 
     Returns ``{"url", "final_url", "content_type", "data", "bytes",
     "peer_address"}``, where ``peer_address`` is the connected peer's address or
-    :data:`PEER_UNVERIFIED` when the transport exposes none.  Raises
-    :class:`TooLargeError` for a body past *max_bytes*, a
-    :class:`RemoteIngestError` for a blocked target or an unsupported content
-    type, and the fetch-failed error for a transport failure or too many
-    redirects.
+    :data:`PEER_UNVERIFIED` when the transport exposes none and the loopback
+    seam admitted that case.  Raises :class:`TooLargeError` for a body past
+    *max_bytes*, a :class:`RemoteIngestError` for a blocked or unverifiable
+    target or an unsupported content type, and the fetch-failed error for a
+    transport failure or too many redirects.
 
     Each hop runs the pre-flight check first: it is the cheap early exit that
     fails before a request is sent.  The connection's own peer address is then
     read before the body is consumed, which is what closes the gap between the
-    resolution and the connection the pre-flight check cannot see.
+    resolution and the connection the pre-flight check cannot see.  Without a
+    peer address the body is refused unless ``allow_loopback`` is set, so a
+    production fetch cannot fall through on pre-flight DNS alone.
     """
     current = url
     with httpx.Client(follow_redirects=False, timeout=timeout, trust_env=False) as client:
@@ -366,6 +371,12 @@ def fetch(
                 ) as response:
                     peer_address = _peer_address(response)
                     if peer_address is None:
+                        if not allow_loopback:
+                            host = urllib.parse.urlsplit(normalized).hostname or ""
+                            raise RemoteIngestError(
+                                ERROR_BLOCKED_TARGET,
+                                f"target {host!r} connected with no verifiable peer address",
+                            )
                         peer_address = PEER_UNVERIFIED
                     else:
                         host = urllib.parse.urlsplit(normalized).hostname or ""
