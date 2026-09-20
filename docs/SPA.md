@@ -724,7 +724,8 @@ never runs an engine and cannot disagree with the lists beside it.
 
 The Data types panel opens with a provenance strip (one toggle per label,
 carrying the count over the whole model), a kind strip (one C tag per
-declaration kind, carrying the count, hover the full name), a coloured source
+declaration kind, carrying the count, hover the full name, Type alias for
+typedef), a coloured source
 dot on each type
 card (the kind badge is the C tag, hover the full name), a Source filter
 beside the search filters (the search

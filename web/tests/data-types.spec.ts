@@ -39,6 +39,10 @@ test("the kind filter narrows the type list", async ({ page }) => {
   ).toHaveAttribute("href", /search=NP_HEADER/);
   await expect(types.locator(".code-scroll").first()).toHaveAttribute("title", "Click to copy");
   await types.getByRole("button", { name: /^enum: / }).click();
+  await expect(types.getByRole("button", { name: /^typedef: / })).toHaveAttribute(
+    "title",
+    "Type alias",
+  );
   await expect(types.getByRole("button", { name: /^\*: / })).toHaveAttribute("title", "pointer *");
   await expect(types.getByRole("button", { name: /^\[\]: / })).toHaveAttribute("title", "array []");
   await expect(types.getByRole("button", { name: /^fn: / })).toHaveAttribute("title", "function ()");
@@ -74,7 +78,7 @@ test("the search matches a namespace", async ({ page }) => {
   const handleCard = types.locator(".card").filter({ hasText: NAMESPACED_POINTER }).first();
   await expect(handleCard.getByTitle("pointer *")).toHaveText("*");
   await expect(handleCard.getByRole("link", { name: NAMESPACED_TYPEDEF }).first()).toBeVisible();
-  await expect(handleCard.getByText(/typedef · \d+ bytes/)).toBeVisible();
+  await expect(handleCard.getByText(/Type alias · \d+ bytes/)).toBeVisible();
   await expect(types.getByText(STRUCT_NAME, { exact: false })).toHaveCount(0);
   await expect(types.getByRole("button", { name: /Clear/ })).toHaveCount(0);
 });

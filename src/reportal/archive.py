@@ -29,12 +29,18 @@ stable code the API and CLI map onto their own vocabulary.
 from __future__ import annotations
 
 import gzip
+import lzma
 import stat
 import tarfile
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Protocol
+
+# Stdlib readers raise these for a truncated or mutated stream.  They are
+# mapped onto ``corrupt-archive`` so an upload never escapes as a 500.
+_STREAM_ERRORS = (OSError, EOFError, zlib.error, lzma.LZMAError)
 
 
 # Anything with a binary ``read``: a zip entry, a tar member or a gzip stream.
@@ -306,6 +312,10 @@ def _extract_zip(archive: Path, destination: Path, password: str | None) -> Extr
         return Extraction(members=tuple(members), notes=tuple(notes))
     except zipfile.BadZipFile:
         raise ArchiveError("corrupt-archive", f"{archive.name} is not a readable zip") from None
+    except _STREAM_ERRORS:
+        # A mutated central directory can seek past the file (OSError) or a
+        # deflate stream can raise zlib.error mid-member; both are corrupt.
+        raise ArchiveError("corrupt-archive", f"{archive.name} is not a readable zip") from None
 
 
 def _zip_member(
@@ -370,6 +380,10 @@ def _extract_tar(archive: Path, destination: Path, password: str | None) -> Extr
             notes.extend(_size_ratio_note(total, archive_size))
     except tarfile.TarError:
         raise ArchiveError("corrupt-archive", f"{archive.name} is not a readable tar") from None
+    except _STREAM_ERRORS:
+        # ``r:*`` opens through gzip/bz2/xz; a truncated outer stream raises
+        # EOFError or zlib/lzma errors before TarError is produced.
+        raise ArchiveError("corrupt-archive", f"{archive.name} is not a readable tar") from None
     return Extraction(members=tuple(outcomes), notes=tuple(notes))
 
 
@@ -428,7 +442,7 @@ def _extract_gzip(archive: Path, destination: Path) -> Extraction:
             members=(MemberOutcome(name, 0, None, exc.reason),),
             notes=_ratio_note_parts(compressed),
         )
-    except (OSError, EOFError):
+    except _STREAM_ERRORS:
         raise ArchiveError("corrupt-archive", f"{archive.name} is not a readable gzip") from None
     return Extraction(
         members=(MemberOutcome(name, written, target),),

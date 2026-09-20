@@ -97,6 +97,7 @@ view renders it from here.
 - Data type cards use the same C kind tags as the kind strip.
 - Data type namespace tree placeholder reads `Search namespaces...`.
 - Data type empty namespace reads `Binary`.
+- Data type `typedef` hover reads Type alias.
 - Match / Diff toolbar reads `Found: N matches` for the loaded function.
 - Search binary and collection hits show their stored `created_at`.
 - Function header signature hover shows return, parameters and convention.

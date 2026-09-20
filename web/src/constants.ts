@@ -491,7 +491,7 @@ export const DATA_TYPE_KIND_LABELS: Record<DataTypeKind, string> = {
   struct: "struct",
   union: "union",
   enum: "enum",
-  typedef: "typedef",
+  typedef: "Type alias",
   pointer: "pointer *",
   array: "array []",
   function: "function ()",
