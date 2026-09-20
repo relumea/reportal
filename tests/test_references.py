@@ -192,6 +192,11 @@ class TestCli:
         function_id = self._seed(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["references", str(function_id)])
         assert result.exit_code == 0, result.output
+        assert f"function {function_id} @ 0x1000" in result.output
+        assert "Globals" in result.output
+        assert "Callers" in result.output
+        assert "Callees" in result.output
+        assert "0x408000" in result.output
 
     def test_references_command_with_nothing_resolved(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
@@ -203,6 +208,10 @@ class TestCli:
         function_id = self._seed(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["references", str(function_id)])
         assert result.exit_code == 0, result.output
+        assert "Globals (0)" in result.output
+        assert "Callers (0)" in result.output
+        assert "Callees (0)" in result.output
+        assert result.output.count("none") == 3
 
     def test_references_command_without_a_context_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine

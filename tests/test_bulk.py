@@ -319,6 +319,9 @@ class TestRoutes:
     def test_a_missing_id_parameter_is_400(self) -> None:
         status, headers, body = wsgi_request("GET", "/api/functions/signatures")
         assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid ids"
+        assert "comma-separated" in payload["detail"]
 
     def test_the_copy_route_applies_and_journals(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -360,24 +363,27 @@ class TestRoutes:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         ids = _seed(tmp_path, monkeypatch)
-        for body in (
-            {"source_function_id": "x", "targets": [1]},
-            {"source_function_id": 1},
-            {"source_function_id": 1, "targets": []},
-            {"source_function_id": 1, "targets": ["x"]},
-        ):
+        cases = (
+            ({"source_function_id": "x", "targets": [1]}, "invalid source"),
+            ({"source_function_id": 1}, "invalid targets"),
+            ({"source_function_id": 1, "targets": []}, "invalid targets"),
+            ({"source_function_id": 1, "targets": ["x"]}, "invalid targets"),
+        )
+        for body, error in cases:
             status, headers, response = wsgi_request(
                 "POST",
                 f"/api/analyses/{ids['analysis']}/signatures/copy",
                 body=json.dumps(body),
             )
             assert status.startswith("400"), body
+            assert json_body(response, headers)["error"] == error, body
         status, headers, response = wsgi_request(
             "POST",
             "/api/analyses/999/signatures/copy",
             body=json.dumps({"source_function_id": 1, "targets": [2]}),
         )
         assert status.startswith("404")
+        assert json_body(response, headers)["error"] == "analysis not found"
 
     def test_the_bulk_create_route(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ids = _seed(tmp_path, monkeypatch)

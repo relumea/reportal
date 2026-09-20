@@ -61,6 +61,7 @@ class TestSignaturesImportAndList:
         _seed(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["signatures", "4242"])
         assert result.exit_code != 0
+        assert "no binary with id 4242" in result.output
 
     def test_list_without_signatures_hints(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -94,6 +95,7 @@ class TestSignatureShowAndSet:
         _seed(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["signature", "4242"])
         assert result.exit_code != 0
+        assert "no function with id 4242" in result.output
 
     def test_set_return_type(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ids = _imported(tmp_path, monkeypatch)
@@ -120,6 +122,7 @@ class TestSignatureShowAndSet:
         ids = _imported(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["signature-set", str(ids["function"])])
         assert result.exit_code != 0
+        assert "one of --return-type or --convention is required" in result.output
 
     def test_set_empty_return_type_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -129,6 +132,7 @@ class TestSignatureShowAndSet:
             cli.app, ["signature-set", str(ids["function"]), "--return-type", " "]
         )
         assert result.exit_code != 0
+        assert "type is empty" in result.output
 
 
 class TestParameterCommands:
@@ -166,6 +170,7 @@ class TestParameterCommands:
         ids = _imported(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["signature-param", str(ids["function"]), "0"])
         assert result.exit_code != 0
+        assert "one of --type, --name, --at, --kind, --bits or --clear is required" in result.output
 
     def test_param_add_appends(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ids = _imported(tmp_path, monkeypatch)
@@ -211,6 +216,7 @@ class TestParameterCommands:
         ids = _imported(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["signature-param-rm", str(ids["function"]), "9"])
         assert result.exit_code != 0
+        assert "parameter index 9 is out of range" in result.output
 
     def test_param_sets_at_kind_and_bits(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -254,6 +260,7 @@ class TestParameterCommands:
             cli.app, ["signature-param", str(ids["function"]), "0", "--clear", "colour"]
         )
         assert result.exit_code != 0
+        assert "--clear names an unknown field: colour" in result.output
 
     def test_param_move_reorders(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ids = _imported(tmp_path, monkeypatch)
@@ -272,18 +279,22 @@ class TestParameterCommands:
         ids = _imported(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["signature-param-move", str(ids["function"]), "0", "9"])
         assert result.exit_code != 0
+        assert "parameter index 9 is out of range" in result.output
 
     def test_param_move_human(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ids = _imported(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["signature-param-move", str(ids["function"]), "0", "1"])
         assert result.exit_code == 0, result.output
+        assert "Moved parameter 0 to 1" in result.output
 
     def test_param_sets_at_human(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ids = _imported(tmp_path, monkeypatch)
         result = runner.invoke(
-            cli.app, ["signature-param", str(ids["function"]), "0", "--at", "[esp+4]"]
+            cli.app, ["signature-param", str(ids["function"]), "0", "--at", "ecx"]
         )
         assert result.exit_code == 0, result.output
+        assert "Updated parameter 0:" in result.output
+        assert "at ecx" in result.output
 
     def test_param_rejects_a_bad_at(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ids = _imported(tmp_path, monkeypatch)
@@ -291,6 +302,7 @@ class TestParameterCommands:
             cli.app, ["signature-param", str(ids["function"]), "0", "--at", "the third thing"]
         )
         assert result.exit_code != 0
+        assert "not an argument location" in result.output
 
 
 class TestSignaturesExport:

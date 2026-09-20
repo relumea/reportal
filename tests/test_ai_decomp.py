@@ -825,15 +825,17 @@ class TestCli:
         function_id = _seed(tmp_path, monkeypatch)
         _install_rewrite()
         runner.invoke(cli.app, ["ai-decompile", str(function_id)])
-        for argv in (
-            ["ai-decompilation", str(function_id)],
-            ["ai-decompilation-status", str(function_id)],
-            ["ai-tokens", str(function_id)],
-            ["ai-lines", str(function_id)],
-            ["ai-line-comments", str(function_id)],
-        ):
-            result = runner.invoke(cli.app, argv)
+        expected = {
+            ("ai-decompilation",): "read_config",
+            ("ai-decompilation-status",): "token_count",
+            ("ai-tokens",): "DAT_00402000",
+            ("ai-lines",): "rewritten",
+            ("ai-line-comments",): "No line comments stored.",
+        }
+        for argv, needle in expected.items():
+            result = runner.invoke(cli.app, [*argv, str(function_id)])
             assert result.exit_code == 0, (argv, result.output)
+            assert needle in result.output, (argv, result.output)
 
     def test_every_command_fails_without_a_database(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

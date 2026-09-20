@@ -190,6 +190,7 @@ class TestCommentRoutes:
             "PATCH", f"/api/comments/{created['id']}", body=json.dumps({"body": " "})
         )
         assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid comment"
 
     def test_comments_are_filtered_by_scope(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
@@ -344,6 +345,9 @@ class TestBulkBinaryRoutes:
             "/api/binaries/bulk", {"action": "add_tag", "binary_ids": [ids["binary"]]}
         )
         assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid bulk request"
+        assert "tag is required" in payload["detail"]
 
 
 class TestBulkFunctionRoutes:
@@ -433,12 +437,18 @@ class TestBulkFunctionRoutes:
             "/api/functions/bulk", {"action": "clear_matches", "function_ids": []}
         )
         assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid bulk request"
+        assert "at least one id is required" in payload["detail"]
 
     def test_unknown_action_is_400(self, conn: sqlite3.Connection) -> None:
         status, headers, body = _post(
             "/api/functions/bulk", {"action": "delete", "function_ids": [1]}
         )
         assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid bulk request"
+        assert "unsupported action" in payload["detail"]
 
     def test_rename_requires_a_prefix(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
@@ -447,6 +457,9 @@ class TestBulkFunctionRoutes:
             {"action": "rename", "function_ids": [ids["function"]], "prefix": "  "},
         )
         assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid bulk request"
+        assert "prefix is required" in payload["detail"]
 
     def test_a_non_member_skips_a_team_function(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch

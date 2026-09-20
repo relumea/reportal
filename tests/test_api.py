@@ -3972,8 +3972,17 @@ class TestUnstripRoutes:
         self, conn: sqlite3.Connection, fake_engine: FakeEngine
     ) -> None:
         ids = self._seed(conn)
-        status, _, _ = wsgi_request("POST", f"/api/binaries/{ids['binary']}/unstrip")
+        status, headers, body = wsgi_request("POST", f"/api/binaries/{ids['binary']}/unstrip")
         assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert payload["candidates"] == 2
+        assert [proposal["proposed_name"] for proposal in payload["proposals"]] == [
+            "ChooseFontW",
+            "GetOpenFileNameW",
+        ]
+        assert payload["applied"] is False
+        assert fake_engine.calls == ["identify_library"]
+        assert store.get_scan(conn, ids["analysis"], store.SCAN_KIND_UNSTRIP) is not None
 
     def test_post_min_confidence_filters_proposals(
         self,

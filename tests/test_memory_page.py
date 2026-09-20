@@ -326,8 +326,13 @@ class TestCli:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
     ) -> None:
         binary_id = self._seed(tmp_path, monkeypatch)
-        result = runner.invoke(cli.app, ["memory-page", str(binary_id), "--length", "16"])
+        result = runner.invoke(
+            cli.app, ["memory-page", str(binary_id), "--length", "16", "--json"]
+        )
         assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["start"] == hex(TEXT_VA)
+        assert _bytes_rows(payload)[0]["hex"] == PATTERN[:16].hex()
 
     def test_memory_page_command_rejects_a_bad_address(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
@@ -345,3 +350,4 @@ class TestCli:
             cli.app, ["memory-page", str(binary_id), hex(TEXT_VA), "--offset-kind", "physical"]
         )
         assert result.exit_code != 0
+        assert "--offset-kind must be one of" in result.output

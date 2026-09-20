@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -74,8 +74,9 @@ def test_newest_wheel_prefers_mtime(tmp_path: Path) -> None:
     older = tmp_path / "reportal-9.0.0-py3-none-any.whl"
     newer = tmp_path / "reportal-1.0.0-py3-none-any.whl"
     older.write_bytes(b"old")
-    time.sleep(0.02)
     newer.write_bytes(b"new")
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_100, 1_700_000_100))
     assert mod.newest_wheel(tmp_path) == newer  # type: ignore[attr-defined]
 
 
