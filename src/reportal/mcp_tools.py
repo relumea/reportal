@@ -5638,30 +5638,33 @@ def _tool_requeue_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
     analysis_id = _arg_int(arguments, "analysis_id")
     with contextlib.closing(_open()) as conn:
         _analysis_or_error(conn, analysis_id)
-        with journal.journaled(conn, journal.new_action()) as log:
-            journal.journaled_rows(
-                conn,
-                log,
-                table="analyses",
-                where="id = ?",
-                params=(analysis_id,),
-                description=f"requeued analysis {analysis_id}",
-            )
-            logged_before = journal.snapshot_rows(
-                conn, table=analysis_log.TABLE, where="analysis_id = ?", params=(analysis_id,)
-            )
-            updated = store.requeue_analysis(conn, analysis_id)
-            journal.journaled_new_rows(
-                conn,
-                log,
-                table=analysis_log.TABLE,
-                where="analysis_id = ?",
-                params=(analysis_id,),
-                before=logged_before,
-                key=["id"],
-                description=f"logged the requeue of analysis {analysis_id}",
-            )
-            queued = jobs.queue_stored_scans(conn, log, analysis_id)
+        try:
+            with journal.journaled(conn, journal.new_action()) as log:
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table="analyses",
+                    where="id = ?",
+                    params=(analysis_id,),
+                    description=f"requeued analysis {analysis_id}",
+                )
+                logged_before = journal.snapshot_rows(
+                    conn, table=analysis_log.TABLE, where="analysis_id = ?", params=(analysis_id,)
+                )
+                updated = store.requeue_analysis(conn, analysis_id)
+                journal.journaled_new_rows(
+                    conn,
+                    log,
+                    table=analysis_log.TABLE,
+                    where="analysis_id = ?",
+                    params=(analysis_id,),
+                    before=logged_before,
+                    key=["id"],
+                    description=f"logged the requeue of analysis {analysis_id}",
+                )
+                queued = jobs.queue_stored_scans(conn, log, analysis_id)
+        except ValueError as exc:
+            raise ToolError("invalid requeue", str(exc)) from exc
     assert updated is not None, "the row was just read"
     return log.attach({**updated, "jobs": queued})
 

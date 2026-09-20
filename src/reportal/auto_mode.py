@@ -1066,20 +1066,30 @@ def persist_undo_plan(conn: sqlite3.Connection, run_id: int) -> None:
     auto_store.set_auto_run_effects(conn, run_id, _merge_descriptors(existing, descriptors))
 
 
-def _recovered_run_status(batches: Sequence[dict[str, Any]]) -> str:
-    """The status a recovered run closes with, from its batches' recorded outcomes.
+def _auto_run_status_from_batches(batches: Sequence[dict[str, Any]]) -> str:
+    """The status a run closes with, from its batches' recorded outcomes.
 
-    Aligns with :func:`_close_root` and a normal finish: ``skipped`` is a
+    Shared by a live finish and recovery so both paths agree.  ``skipped`` is a
     finished success (nothing left to do), not an incomplete run.  ``partial``
-    is reserved for a mix of successful work and failed batches; an all-skipped
-    plan closes ``done`` the same way a live run would.
+    is a mix of successful work and failed batches; an all-skipped plan closes
+    ``done``.  A batch still ``pending`` or ``running`` counts as failed so an
+    incomplete run never closes as ``done``.
     """
     if not batches:
         return auto_store.AUTO_RUN_DONE
-    if all(task["status"] == auto_store.AUTO_TASK_FAILED for task in batches):
+    terminal = (
+        auto_store.AUTO_TASK_DONE,
+        auto_store.AUTO_TASK_FAILED,
+        auto_store.AUTO_TASK_SKIPPED,
+    )
+    statuses = [
+        auto_store.AUTO_TASK_FAILED if task["status"] not in terminal else str(task["status"])
+        for task in batches
+    ]
+    if all(status == auto_store.AUTO_TASK_FAILED for status in statuses):
         return auto_store.AUTO_RUN_FAILED
-    succeeded = any(task["status"] == auto_store.AUTO_TASK_DONE for task in batches)
-    failed = any(task["status"] == auto_store.AUTO_TASK_FAILED for task in batches)
+    succeeded = any(status == auto_store.AUTO_TASK_DONE for status in statuses)
+    failed = any(status == auto_store.AUTO_TASK_FAILED for status in statuses)
     if succeeded and failed:
         return auto_store.AUTO_RUN_PARTIAL
     return auto_store.AUTO_RUN_DONE
@@ -1194,7 +1204,7 @@ def recover_auto_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
     if root_id:
         _close_root(conn, root_id=root_id, tasks=tasks)
     batches = [task for task in tasks if task["kind"] == auto_store.AUTO_TASK_BATCH]
-    status = _recovered_run_status(batches)
+    status = _auto_run_status_from_batches(batches)
     auto_store.finish_auto_run(
         conn,
         run_id,
@@ -1225,13 +1235,19 @@ def execute_auto_run(
 
     Batches run on daemon worker threads, each with its own SQLite connection,
     so the run is persisted as it happens and never exceeds ``concurrency`` live
-    workers.  Raises :class:`KeyError` for an unknown run and :class:`ValueError`
-    when the database has no file behind it (the workers need their own
-    connection to it).
+    workers.  The run status uses the same batch aggregate as recovery
+    (:func:`_auto_run_status_from_batches`), so a mix of successful and failed
+    batches closes ``partial``.  Raises :class:`KeyError` for an unknown run and
+    :class:`ValueError` when the run is not ``running`` or the database has no
+    file behind it (the workers need their own connection to it).
     """
     run = auto_store.get_auto_run(conn, run_id)
     if run is None:
         raise KeyError(f"no auto run with id {run_id}")
+    if run["status"] != auto_store.AUTO_RUN_RUNNING:
+        raise ValueError(
+            f"auto run {run_id} is {run['status']}, expected {auto_store.AUTO_RUN_RUNNING}"
+        )
     binary_id = int(run["binary_id"])
     binary = store.get_binary(conn, binary_id)
     if binary is None:
@@ -1258,7 +1274,8 @@ def execute_auto_run(
         (int(task["id"]) for task in tasks if task["kind"] == auto_store.AUTO_TASK_ROOT), 0
     )
     persist_undo_plan(conn, run_id)
-    root_status = _close_root(conn, root_id=root_id, tasks=tasks)
+    if root_id:
+        _close_root(conn, root_id=root_id, tasks=tasks)
     counters = _summarize(tasks)
     coverage_after = _coverage(conn, binary_id)
     if not params.execute:
@@ -1273,9 +1290,8 @@ def execute_auto_run(
                 else 0.0
             ),
         }
-    status = auto_store.AUTO_RUN_DONE
-    if root_status == auto_store.AUTO_TASK_FAILED:
-        status = auto_store.AUTO_RUN_FAILED
+    batch_rows = [task for task in tasks if task["kind"] == auto_store.AUTO_TASK_BATCH]
+    status = _auto_run_status_from_batches(batch_rows)
     auto_store.finish_auto_run(
         conn,
         run_id,

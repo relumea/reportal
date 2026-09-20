@@ -1632,23 +1632,20 @@ def requeue_analysis(conn: sqlite3.Connection, analysis_id: int) -> dict[str, An
     """Put one analysis back to ``pending`` and clear its finish time.
 
     The hosted requeue re-runs the analysis. Locally this moves the lifecycle
-    row; the HTTP, CLI and MCP callers then queue a job for each stored scan
-    that has a job kind. A log entry records the transition.
+    row through :func:`update_analysis_status`; the HTTP, CLI and MCP callers
+    then queue a job for each stored scan that has a job kind.  Refuses while
+    the analysis is ``processing`` so a live scan cannot finish into ``done``
+    or ``failed`` after the requeue reset.  Raises :class:`ValueError` in that
+    case; returns None for an unknown id.
     """
     analysis = get_analysis(conn, analysis_id)
     if analysis is None:
         return None
-    conn.execute(
-        "UPDATE analyses SET status = ?, finished_at = NULL WHERE id = ?",
-        (ANALYSIS_STATUS_PENDING, analysis_id),
-    )
-    conn.commit()
-    analysis_log.append_entry(
-        conn,
-        analysis_id,
-        message=f"requeued from {analysis['status']}",
-        severity=analysis_log.SEVERITY_INFO,
-    )
+    if analysis["status"] == ANALYSIS_STATUS_PROCESSING:
+        raise ValueError(
+            f"analysis {analysis_id} is processing; wait for scans to finish before requeue"
+        )
+    update_analysis_status(conn, analysis_id, status=ANALYSIS_STATUS_PENDING)
     return get_analysis(conn, analysis_id)
 
 

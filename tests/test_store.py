@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from reportal import store
+from reportal import analysis_log, store
 
 
 def _seed_function(conn: sqlite3.Connection, *, va: int = 0x1000, name: str = "func_a") -> int:
@@ -291,6 +291,32 @@ class TestAnalyses:
         assert finished is not None
         assert finished["status"] == "done"
         assert finished["finished_at"] is not None
+
+    def test_requeue_clears_finish_time_and_logs_via_status_writer(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = store.add_binary(conn, sha256="ef" * 32, name="demo")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="rebrew-import")
+        store.update_analysis_status(conn, analysis_id, status="done")
+        updated = store.requeue_analysis(conn, analysis_id)
+        assert updated is not None
+        assert updated["status"] == "pending"
+        assert updated["finished_at"] is None
+        messages = [
+            entry["message"]
+            for entry in analysis_log.list_entries(conn, analysis_id=analysis_id)[0]
+        ]
+        assert any("status changed to pending" in message for message in messages)
+
+    def test_requeue_refuses_while_processing(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="ef" * 32, name="demo")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="rebrew-import")
+        store.update_analysis_status(conn, analysis_id, status="processing")
+        with pytest.raises(ValueError, match="processing"):
+            store.requeue_analysis(conn, analysis_id)
+
+    def test_requeue_unknown_returns_none(self, conn: sqlite3.Connection) -> None:
+        assert store.requeue_analysis(conn, 4242) is None
 
     def test_update_unknown_returns_false(self, conn: sqlite3.Connection) -> None:
         assert store.update_analysis_status(conn, 4242, status="done") is False

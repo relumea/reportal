@@ -258,6 +258,26 @@ class TestRunAuto:
         assert run["matched"] == 1
         assert run["failed"] == 1
 
+    def test_mixed_batch_outcomes_close_the_run_as_partial(self, conn: sqlite3.Connection) -> None:
+        # One batch succeeds (named function) and one fails (anonymous stub):
+        # the run must close partial, matching recovery's aggregate.
+        ids = seed_rows(
+            conn,
+            rows=((0x1000, "Marked", 8, "STUB"), (0x1100, "sub_1100", 4, "STUB")),
+        )
+        run = auto_mode.run_auto(conn, binary_id=ids["binary"], worker="offline")
+        statuses = sorted(child["status"] for child in run["tree"][0]["children"])
+        assert statuses == [auto_store.AUTO_TASK_DONE, auto_store.AUTO_TASK_FAILED]
+        assert run["status"] == auto_store.AUTO_RUN_PARTIAL
+        assert run["matched"] == 1
+        assert run["failed"] == 1
+
+    def test_execute_refuses_a_finished_run(self, conn: sqlite3.Connection) -> None:
+        ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),))
+        run = auto_mode.run_auto(conn, binary_id=ids["binary"], worker="offline")
+        with pytest.raises(ValueError, match="expected running"):
+            auto_mode.execute_auto_run(conn, run_id=run["run_id"], params=auto_mode.build_params())
+
     def test_a_batch_of_only_skips_is_skipped(self, conn: sqlite3.Connection) -> None:
         ids = seed_rows(conn, rows=((0x1000, "Matched", 8, "EXACT"),))
         # No function is selected, so the run has no batches at all.
