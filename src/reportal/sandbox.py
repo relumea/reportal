@@ -9,7 +9,7 @@ run: the command it issued, the caps in force, the exit status, how long it
 took, a stdout/stderr tail and the files the sample wrote into its one writable
 directory.
 
-Four guards stand between the route and an execution, and all four must hold:
+Five guards stand between the route and an execution, and all five must hold:
 
 1. the workspace opts in (``REPORTAL_SANDBOX=enabled`` or ``[sandbox] enabled =
    true``), so the default install still never runs anything (:func:`require_enabled`);
@@ -19,7 +19,10 @@ Four guards stand between the route and an execution, and all four must hold:
    journals anything);
 4. every run is bounded by :data:`DEFAULT_TIMEOUT_SECONDS` /
    :data:`MAX_TIMEOUT_SECONDS`, :data:`DEFAULT_MEMORY_MB` / :data:`MAX_MEMORY_MB`
-   and a CPU cap, and is recorded whether it finishes or times out.
+   and a CPU cap, and is recorded whether it finishes or times out;
+5. at most one ``running`` detonation per binary: a double-click or a racing
+   POST reuses the live row rather than executing the sample a second time
+   (:func:`detonate_binary`).
 
 The one shipped runner is `bwrap` (bubblewrap), which needs its user namespaces
 enabled; a third party registers another through the ``reportal.sandbox_runners``
@@ -113,28 +116,10 @@ SAMPLE_MOUNT = f"{WORKDIR_MOUNT}/{SAMPLE_NAME}"
 # The shell the caps are applied with, inside the sandbox's read-only root.
 _SHELL = "/bin/sh"
 
-_SCHEMA = f"""
-CREATE TABLE IF NOT EXISTS {TABLE} (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    analysis_id   INTEGER NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
-    binary_id     INTEGER NOT NULL REFERENCES binaries(id) ON DELETE CASCADE,
-    sha256        TEXT NOT NULL DEFAULT '',
-    status        TEXT NOT NULL DEFAULT '{STATUS_RUNNING}',
-    runner        TEXT NOT NULL DEFAULT '',
-    argv_json     TEXT NOT NULL DEFAULT '[]',
-    caps_json     TEXT NOT NULL DEFAULT '{{}}',
-    exit_code     INTEGER,
-    timed_out     INTEGER NOT NULL DEFAULT 0,
-    duration_ms   INTEGER NOT NULL DEFAULT 0,
-    stdout        TEXT NOT NULL DEFAULT '',
-    stderr        TEXT NOT NULL DEFAULT '',
-    files_json    TEXT NOT NULL DEFAULT '[]',
-    notes_json    TEXT NOT NULL DEFAULT '[]',
-    created_at    TEXT NOT NULL,
-    finished_at   TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_sandbox_runs_analysis ON {TABLE}(analysis_id);
-"""
+# A ``running`` row past the longest allowed wall-clock window plus this grace
+# cannot still be executing (the sample is killed at the timeout).  Closing it
+# lets a later detonation claim the binary after a crash left the row behind.
+LIVE_STALE_GRACE_S = 30
 
 
 class SandboxError(Exception):
@@ -603,8 +588,106 @@ def execute(
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the run table when the database predates it."""
-    conn.executescript(_SCHEMA)
+    """Create the run table when the database predates it.
+
+    Before the live-binary unique index applies, older duplicate ``running``
+    rows (possible before the index existed) are collapsed so the index can
+    be created on an upgraded database.
+    """
+    conn.execute(
+        f"CREATE TABLE IF NOT EXISTS {TABLE} ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " analysis_id INTEGER NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,"
+        " binary_id INTEGER NOT NULL REFERENCES binaries(id) ON DELETE CASCADE,"
+        " sha256 TEXT NOT NULL DEFAULT '',"
+        f" status TEXT NOT NULL DEFAULT '{STATUS_RUNNING}',"
+        " runner TEXT NOT NULL DEFAULT '',"
+        " argv_json TEXT NOT NULL DEFAULT '[]',"
+        " caps_json TEXT NOT NULL DEFAULT '{}',"
+        " exit_code INTEGER,"
+        " timed_out INTEGER NOT NULL DEFAULT 0,"
+        " duration_ms INTEGER NOT NULL DEFAULT 0,"
+        " stdout TEXT NOT NULL DEFAULT '',"
+        " stderr TEXT NOT NULL DEFAULT '',"
+        " files_json TEXT NOT NULL DEFAULT '[]',"
+        " notes_json TEXT NOT NULL DEFAULT '[]',"
+        " created_at TEXT NOT NULL,"
+        " finished_at TEXT)"
+    )
+    conn.execute(f"CREATE INDEX IF NOT EXISTS idx_sandbox_runs_analysis ON {TABLE}(analysis_id)")
+    # Keep the newest running row per binary; mark older siblings failed so the
+    # unique live index can apply on a database that predates it.
+    duplicates = conn.execute(
+        f"SELECT binary_id, MAX(id) AS keep_id FROM {TABLE}"
+        f" WHERE status = ? GROUP BY binary_id HAVING COUNT(*) > 1",
+        (STATUS_RUNNING,),
+    ).fetchall()
+    for row in duplicates:
+        conn.execute(
+            f"UPDATE {TABLE} SET status = ?, notes_json = ?, finished_at = ?"
+            " WHERE binary_id = ? AND status = ? AND id != ?",
+            (
+                STATUS_FAILED,
+                json.dumps(["abandoned: superseded by a newer live detonation"]),
+                store.now(),
+                int(row["binary_id"]),
+                STATUS_RUNNING,
+                int(row["keep_id"]),
+            ),
+        )
+    conn.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_sandbox_runs_live_binary"
+        f" ON {TABLE}(binary_id) WHERE status = '{STATUS_RUNNING}'"
+    )
+
+
+def find_live_run(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
+    """The in-progress detonation for *binary_id*, or None."""
+    ensure_schema(conn)
+    row = conn.execute(
+        f"SELECT * FROM {TABLE} WHERE binary_id = ? AND status = ? ORDER BY id LIMIT 1",
+        (binary_id, STATUS_RUNNING),
+    ).fetchone()
+    return _row(row) if row else None
+
+
+def abandon_stale_live_runs(conn: sqlite3.Connection, binary_id: int) -> int:
+    """Close ``running`` rows past the max detonation window; returns how many.
+
+    A process killed mid-run leaves ``running`` forever.  Past
+    :data:`MAX_TIMEOUT_SECONDS` plus :data:`LIVE_STALE_GRACE_S` that row cannot
+    still be executing, so a later detonation must be able to claim the binary.
+    """
+    ensure_schema(conn)
+    now = store.as_utc(store.now())
+    limit_s = MAX_TIMEOUT_SECONDS + LIVE_STALE_GRACE_S
+    closed = 0
+    for row in conn.execute(
+        f"SELECT id, created_at FROM {TABLE} WHERE binary_id = ? AND status = ?",
+        (binary_id, STATUS_RUNNING),
+    ).fetchall():
+        try:
+            created = store.as_utc(str(row["created_at"]))
+        except ValueError:
+            created = now
+        if (now - created).total_seconds() <= limit_s:
+            continue
+        finish_run(
+            conn,
+            int(row["id"]),
+            {
+                "status": STATUS_FAILED,
+                "timed_out": False,
+                "exit_code": None,
+                "duration_ms": 0,
+                "stdout": "",
+                "stderr": "",
+                "files": [],
+                "notes": ["abandoned: running past the maximum detonation window"],
+            },
+        )
+        closed += 1
+    return closed
 
 
 def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
@@ -639,30 +722,41 @@ def start_run(
     runner: str,
     argv: Sequence[str],
     caps: Caps,
-) -> int:
-    """Record a run as ``running`` before it starts; returns its id.
+) -> tuple[int, bool]:
+    """Claim a ``running`` row before the sample starts; returns ``(id, created)``.
 
     The row exists first so a caller reading the status route while the sandbox
     runs sees a run in progress, and a process that dies mid-run leaves the
-    ``running`` row behind rather than a silent gap.
+    ``running`` row behind rather than a silent gap.  A second claim for the
+    same binary while one is still live returns that row with ``created=False``:
+    the unique live-binary index is the lock, so a double-click cannot execute
+    the sample twice.
     """
     ensure_schema(conn)
-    cursor = conn.execute(
-        f"INSERT INTO {TABLE} (analysis_id, binary_id, sha256, status, runner,"
-        " argv_json, caps_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            analysis_id,
-            binary_id,
-            sha256,
-            STATUS_RUNNING,
-            runner,
-            json.dumps(list(argv)),
-            json.dumps(caps.as_payload()),
-            store.now(),
-        ),
-    )
-    conn.commit()
-    return int(cursor.lastrowid or 0)
+    abandon_stale_live_runs(conn, binary_id)
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                f"INSERT INTO {TABLE} (analysis_id, binary_id, sha256, status, runner,"
+                " argv_json, caps_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    analysis_id,
+                    binary_id,
+                    sha256,
+                    STATUS_RUNNING,
+                    runner,
+                    json.dumps(list(argv)),
+                    json.dumps(caps.as_payload()),
+                    store.now(),
+                ),
+            )
+        return int(cursor.lastrowid or 0), True
+    except sqlite3.IntegrityError:
+        existing = find_live_run(conn, binary_id)
+        if existing is not None:
+            return int(existing["id"]), False
+        raise
 
 
 def finish_run(conn: sqlite3.Connection, run_id: int, report: Mapping[str, Any]) -> None:
@@ -793,9 +887,11 @@ def detonate_binary(
 ) -> dict[str, Any]:
     """Run one stored binary under the sandbox and store the report.
 
-    Shared by the HTTP route, the CLI and the MCP tool, so the four guards are
-    checked once: the workspace opt-in, an installed runner, a file on disk, and
-    bounds inside the caps.  The run row is written before the sample starts and
+    Shared by the HTTP route, the CLI and the MCP tool, so the five guards are
+    checked once: the workspace opt-in, an installed runner, a file on disk,
+    bounds inside the caps, and at most one live detonation per binary.  A
+    second call while a run is still ``running`` returns that row without
+    executing again.  The run row is written before the sample starts and
     updated with the report after, so a reader sees a run in progress and a
     process that dies mid-run leaves the `running` row behind.  An exception
     from the runner closes the row as ``failed`` instead, so a Python failure
@@ -813,6 +909,10 @@ def detonate_binary(
             "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
         )
     caps = requested_caps(timeout=timeout, memory_mb=memory_mb)
+    abandon_stale_live_runs(conn, binary_id)
+    live = find_live_run(conn, binary_id)
+    if live is not None:
+        return live
     analysis_before = store.latest_analysis_for_binary(conn, binary_id)
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="sandbox")
     action = journal.new_action()
@@ -824,7 +924,7 @@ def detonate_binary(
                 key=analysis_id,
                 description=f"created analysis {analysis_id} for binary {binary_id}",
             )
-        run_id = start_run(
+        run_id, created = start_run(
             conn,
             analysis_id=analysis_id,
             binary_id=binary_id,
@@ -833,6 +933,10 @@ def detonate_binary(
             argv=runner.argv(stored, Path("/dev/null"), caps),
             caps=caps,
         )
+        if not created:
+            # Lost the live-row race: another detonation is already executing.
+            raced = get_run(conn, run_id)
+            return raced or {"id": run_id, "status": STATUS_RUNNING, "binary_id": binary_id}
         journal.journaled_create(
             log,
             table=TABLE,

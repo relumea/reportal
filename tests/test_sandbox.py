@@ -235,7 +235,7 @@ class TestReport:
         monkeypatch.setattr(store, "now", lambda: stamp)
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
         analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
-        run_id = sandbox.start_run(
+        run_id, created = sandbox.start_run(
             conn,
             analysis_id=analysis_id,
             binary_id=binary_id,
@@ -244,6 +244,7 @@ class TestReport:
             argv=[],
             caps=sandbox.requested_caps(),
         )
+        assert created is True
         run = sandbox.get_run(conn, run_id)
         assert run is not None
         assert run["created_at"] == stamp
@@ -277,6 +278,81 @@ class TestReport:
         assert payload["duration_ms"] >= 0
         assert payload["journal_action"], "the run row is journaled"
         assert sandbox.count_runs(conn, int(payload["analysis_id"])) == 1
+
+    def test_a_second_detonation_while_live_reuses_the_row(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A double-click must not execute the sample a second time."""
+        ids = _seed(conn, tmp_path, "exit 0\n")
+        analysis_id = store.ensure_analysis_for_binary(conn, ids["binary"], engine="sandbox")
+        fake = sandbox.register_runner(_FakeRunner())
+        monkeypatch.setenv(sandbox.ENABLED_ENV, "enabled")
+        monkeypatch.setenv(sandbox.RUNNER_ENV, fake.name)
+        run_id, created = sandbox.start_run(
+            conn,
+            analysis_id=analysis_id,
+            binary_id=ids["binary"],
+            sha256="a" * 64,
+            runner=fake.name,
+            argv=[],
+            caps=sandbox.requested_caps(),
+        )
+        assert created is True
+
+        status, payload = _post(f"/api/binaries/{ids['binary']}/dynamic-execution")
+
+        assert status.startswith("202"), payload
+        assert payload["id"] == run_id
+        assert payload["status"] == sandbox.STATUS_RUNNING
+        assert sandbox.count_runs(conn, analysis_id) == 1
+        second_id, second_created = sandbox.start_run(
+            conn,
+            analysis_id=analysis_id,
+            binary_id=ids["binary"],
+            sha256="a" * 64,
+            runner=fake.name,
+            argv=[],
+            caps=sandbox.requested_caps(),
+        )
+        assert second_created is False
+        assert second_id == run_id
+
+    def test_a_stale_live_row_is_abandoned_so_a_new_run_can_claim(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A crash-left ``running`` row past the max window must not block forever."""
+        binary_id = store.add_binary(conn, sha256="bb" * 32, name="stale.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        stale = "2000-01-01T00:00:00+00:00"
+        monkeypatch.setattr(store, "now", lambda: stale)
+        run_id, created = sandbox.start_run(
+            conn,
+            analysis_id=analysis_id,
+            binary_id=binary_id,
+            sha256="bb" * 32,
+            runner="fake",
+            argv=[],
+            caps=sandbox.requested_caps(),
+        )
+        assert created is True
+        monkeypatch.setattr(store, "now", lambda: "2000-01-01T00:05:00+00:00")
+        closed = sandbox.abandon_stale_live_runs(conn, binary_id)
+        assert closed == 1
+        abandoned = sandbox.get_run(conn, run_id)
+        assert abandoned is not None
+        assert abandoned["status"] == sandbox.STATUS_FAILED
+        assert sandbox.find_live_run(conn, binary_id) is None
+        fresh_id, fresh_created = sandbox.start_run(
+            conn,
+            analysis_id=analysis_id,
+            binary_id=binary_id,
+            sha256="bb" * 32,
+            runner="fake",
+            argv=[],
+            caps=sandbox.requested_caps(),
+        )
+        assert fresh_created is True
+        assert fresh_id != run_id
 
     def test_run_duration_comes_from_the_clock_seam(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

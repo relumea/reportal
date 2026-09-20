@@ -12242,8 +12242,9 @@ def run_binary_sandbox(
     can never raise them.  The run is refused unless the workspace opted in (403
     `sandbox-disabled`), a runner is installed (503 `sandbox-unavailable`) and
     the bounds are inside the caps (400 `invalid-sandbox`); 404 `binary not
-    found`, 400 `binary not on disk`.  The report is one journaled row, so a
-    revert removes the record.
+    found`, 400 `binary not on disk`.  A second POST while a detonation is still
+    `running` returns that live row (202) without executing the sample again.
+    A finished report is one journaled row, so a revert removes the record.
     """
     raw_timeout = body.get("timeout")
     if raw_timeout is not None and (
@@ -12260,7 +12261,8 @@ def run_binary_sandbox(
             )
         except sandbox.SandboxError as exc:
             return sandbox_failure(exc)
-    return json_response(report, status=201)
+    status = 202 if report.get("status") == sandbox.STATUS_RUNNING else 201
+    return json_response(report, status=status)
 
 
 @router.get("/api/binaries/{binary_id}/dynamic-execution")
