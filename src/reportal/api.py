@@ -6102,9 +6102,7 @@ MAX_BACKGROUND_AUTO_RUNS = 4
 _auto_run_slots = threading.BoundedSemaphore(MAX_BACKGROUND_AUTO_RUNS)
 
 
-def _execute_auto_run(
-    run_id: int, params: auto_mode.AutoParams, *, request_id: str = ""
-) -> None:
+def _execute_auto_run(run_id: int, params: auto_mode.AutoParams, *, request_id: str = "") -> None:
     """Run a planned auto run on its own connection in a background thread.
 
     A failure must not leave the run `running` forever: it is closed as failed

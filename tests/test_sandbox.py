@@ -251,12 +251,12 @@ class TestReport:
         assert run["created_at"] == stamp
         assert run["finished_at"] is None
 
-        created = stamp
+        created_at = stamp
         stamp = "2001-02-03T04:05:09+00:00"
         sandbox.finish_run(conn, run_id, {"status": sandbox.STATUS_FINISHED, "exit_code": 0})
         run = sandbox.get_run(conn, run_id)
         assert run is not None
-        assert run["created_at"] == created
+        assert run["created_at"] == created_at
         assert run["finished_at"] == stamp
 
     def test_a_run_records_the_command_the_status_and_the_files(

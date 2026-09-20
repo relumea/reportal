@@ -11,7 +11,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "lint": "oxlint --import-plugin --node-plugin --deny-warnings src tests playwright.config.ts",
+    "lint": "oxlint --import-plugin --node-plugin --deny-warnings -D suspicious/no-async-promise-executor -D suspicious/no-compare-neg-zero -D suspicious/no-control-regex -D suspicious/no-debugger -D suspicious/no-duplicate-case -D suspicious/no-empty-character-class -D suspicious/no-ex-assign -D suspicious/no-extra-boolean-cast -D suspicious/no-self-compare -D suspicious/no-sparse-arrays -D suspicious/no-unsafe-finally -D suspicious/no-unsafe-optional-chaining -D suspicious/no-with -D suspicious/use-isnan src tests playwright.config.ts",
     "typecheck": "tsc --noEmit",
     "test:ui": "playwright test",
     "test:ui:headed": "playwright test --headed"

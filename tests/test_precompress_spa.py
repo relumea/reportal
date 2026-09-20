@@ -141,7 +141,11 @@ def test_reportal_brotli_zero_disables_cli(
 ) -> None:
     """``REPORTAL_BROTLI=0`` forces gzip-only even when a brotli binary exists."""
     monkeypatch.setenv("REPORTAL_BROTLI", "0")
-    monkeypatch.setattr(precompress_mod.shutil, "which", lambda _name: "/usr/bin/brotli")
+    monkeypatch.setattr(
+        precompress_mod.shutil,  # type: ignore[attr-defined]
+        "which",
+        lambda _name: "/usr/bin/brotli",
+    )
     assert precompress_mod.brotli_bin() is None  # type: ignore[attr-defined]
     monkeypatch.delenv("REPORTAL_BROTLI")
     assert precompress_mod.brotli_bin() == "/usr/bin/brotli"  # type: ignore[attr-defined]

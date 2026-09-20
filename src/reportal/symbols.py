@@ -39,10 +39,18 @@ import struct
 import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from reportal import data_types, journal, pdb, store
 from reportal._paths import SYMBOLS_DIR
+
+ByteOrder = Literal["little", "big"]
+
+
+def _byteorder(value: object) -> ByteOrder:
+    """Normalize a stored endianness tag to the Literal ``int.from_bytes`` accepts."""
+    return "big" if value == "big" else "little"
+
 
 # The table the ingested symbol files live in (created on first use).
 TABLE = "symbol_files"
@@ -188,7 +196,7 @@ class _Elf:
         # EI_DATA: 1 little-endian, 2 big-endian.  Firmware and network
         # targets ship both; the host's own endianness is irrelevant.
         if data[5] == 1:
-            self.byteorder = "little"
+            self.byteorder: ByteOrder = "little"
             self.endian = "<"
         elif data[5] == 2:
             self.byteorder = "big"
@@ -434,7 +442,7 @@ def parse_dwarf(elf: _Elf) -> tuple[list[dict[str, Any]], list[dict[str, Any]], 
     return symbols, types, notes
 
 
-def _units(data: bytes, *, byteorder: str = "little") -> list[dict[str, Any]]:
+def _units(data: bytes, *, byteorder: ByteOrder = "little") -> list[dict[str, Any]]:
     """Every compilation unit header of a ``.debug_info`` section."""
     units: list[dict[str, Any]] = []
     offset = 0
@@ -554,7 +562,7 @@ def _form_value(
     """
     size = int(unit["address_size"])
     offset_size = int(unit["offset_size"])
-    byteorder = str(unit.get("byteorder") or "little")
+    byteorder = _byteorder(unit.get("byteorder"))
     if form in _FIXED_FORMS and offset + _fixed_width(form, size, offset_size) > len(data):
         raise UnreadableSymbolError("an attribute ran past the section")
     if form == 0x01:  # addr
@@ -677,7 +685,11 @@ _ADDRX_WIDTHS = {0x1B: 0, 0x29: 1, 0x2A: 2, 0x2B: 3, 0x2C: 4}
 
 
 def _indexed(
-    data: bytes, offset: int, form: int, widths: Mapping[int, int], byteorder: str = "little"
+    data: bytes,
+    offset: int,
+    form: int,
+    widths: Mapping[int, int],
+    byteorder: ByteOrder = "little",
 ) -> tuple[int, int]:
     """The index of a strx/addrx form, with its width taken from the form code."""
     width = widths.get(form, 0)
@@ -700,7 +712,7 @@ def _strx_string(unit: Mapping[str, Any], index: int) -> str:
     start = base + index * width
     if start < 0 or start + width > len(table):
         return ""
-    byteorder = str(unit.get("byteorder") or "little")
+    byteorder = _byteorder(unit.get("byteorder"))
     value = int.from_bytes(table[start : start + width], byteorder)
     return _string_at(unit["dwarf"].strings or b"", value)
 
@@ -715,7 +727,7 @@ def _addr_value(unit: Mapping[str, Any], index: int) -> int | None:
     start = base + index * size
     if start < 0 or start + size > len(table):
         return None
-    byteorder = str(unit.get("byteorder") or "little")
+    byteorder = _byteorder(unit.get("byteorder"))
     return int.from_bytes(table[start : start + size], byteorder)
 
 
