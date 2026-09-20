@@ -16,12 +16,12 @@ It is a **consumer and orchestrator** of sibling engines, never a reimplementati
 | `rebrew` | In-process binaries, coverage.db, disasm/decompile/xrefs/structs/security (`engines.py`) |
 | `resembl` | Optional `similarity` extra; assembly scores for `matches` |
 | `recoverage` | Shared `db/coverage.db` format |
-| RevEng.AI API | Optional remote; not required. Runtime network only when the user opts in: LLM bridge or guarded URL ingest (`remote_ingest.py`) |
 
 Sandbox detonation (`sandbox.py`) is off until the workspace opts in and a runner
 is installed (`docs/THREAT_MODEL.md` boundary 7). Static analysis never executes a
-sample. The LLM bridge (`llm.py`) is off until an endpoint is configured; without
-one every AI route is 503 `llm-unavailable`.
+sample. Runtime network only when the operator opts in: LLM bridge (`llm.py`) or
+guarded URL ingest (`remote_ingest.py`). Without an LLM endpoint every AI route
+is 503 `llm-unavailable`.
 
 ## Project structure
 
@@ -34,29 +34,30 @@ reportal/
 ├── deploy/                   # reportal.service, reportal-backup.service/.timer
 ├── docs/                    # see docs/README.md
 ├── tests/                   # pytest, tmp_path based (no tests/__init__.py)
-├── tools/                   # smoke_spa.py, audit_ui.py, seed_e2e.py, cdp.py
+├── tools/                   # smoke_spa.py, audit_ui.py, audit_scope.py, seed_e2e.py, cdp.py
 ├── web/                     # SPA (bun); src/views, src/panels
 └── src/reportal/            # package; module map: docs/ARCHITECTURE.md ("Process layout")
 ```
 
 ## Gate
 
-`make check` is the single done gate: ruff + format, oxlint, shellcheck on
-`scripts/`, VNU on `web/index.html` and `web/src/styles.css`, mypy, `tsc --noEmit`,
-pytest under the coverage floor, headless SPA smoke + audit, wheel packaging.
-CI runs `make check-ci` (`lint typecheck test package-check`); browsers are local
-only (smoke/audit seed `../rebrew-projects/notepad-rebrew`).
+`make check` is the single done gate: ruff + format, `tools/audit_scope.py`,
+oxlint, shellcheck on `scripts/`, VNU on `web/index.html` and `web/src/styles.css`,
+mypy, `tsc --noEmit`, pytest under the coverage floor, headless SPA smoke + audit,
+wheel packaging. CI runs `make check-ci` (`lint typecheck test package-check`);
+browsers are local only (smoke/audit seed `../rebrew-projects/notepad-rebrew`).
 `make check-fast` skips coverage, browsers, and the wheel.
 
-Every target uses `.venv/bin/python`; missing tools fail loud. External: `shellcheck`,
-`vnu` (needs Java 17+).
+Every target uses `.venv/bin/python`; missing tools fail loud. External:
+`shellcheck`, `vnu` (needs Java 17+).
 
 **mypy.** Config in `[tool.mypy]` (`python_version = "3.13"`, typed-defs flags,
 `warn_return_any`, `disallow_any_generics`, …). Do **not** add a
 `[[tool.mypy.overrides]]` that matches `*.*` to relax `tests/`: that pattern also
 matches `src/reportal` and would weaken the package. Plain `mypy` is the gate;
-`--strict` on `src/reportal` alone still reports five known attribute/return
-errors (`journal.py`, `pdf.py`, `engines.py`) and is not a compliance claim.
+`--strict` on `src/reportal` alone still reports ten known attribute/return
+errors (`engines.py`, `journal.py`, `backup.py`, `pdf.py`, `api.py`) and is not a
+compliance claim.
 
 **Coverage.** `make test` runs
 `pytest --cov --cov-fail-under=$(COVERAGE_MIN)` with `COVERAGE_MIN ?= 92`, kept
@@ -76,10 +77,8 @@ make setup
 # Optional Cognee graph backend: uv sync --extra cognee
 
 make spa                     # Vite build + .gz siblings into assets/dist
-(cd web && bun run dev)
-(cd web && bun run lint)
-(cd web && bun run typecheck)
-(cd web && bun run test:ui)
+(cd web && bun run dev)      # Vite HMR; not a make target
+(cd web && bun run test:ui)  # Playwright; not in make check / check-ci
 
 make run                     # build SPA, serve (PORT=8002)
 make serve                   # serve current build
@@ -87,23 +86,15 @@ make doctor                  # preflight; exits 1 on failure; docs/DEPLOY.md
 .venv/bin/reportal config
 .venv/bin/reportal doctor
 
-make check
-make check-ci
-make check-fast
+make check                   # full gate (includes browsers + wheel)
+make check-ci                # CI gate (no browsers)
+make check-fast              # no coverage, browsers, or wheel
 make test-one ARGS='tests/test_foo.py'
-
-.venv/bin/python -m pytest -q
-.venv/bin/python -m pytest --cov
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format --check .
-.venv/bin/python -m mypy
-.venv/bin/python tools/smoke_spa.py
-.venv/bin/python tools/audit_ui.py
-vnu --format text web/index.html
-vnu --css --format text web/src/styles.css
 ```
 
 CLI surface: `docs/CLI.md` / `.venv/bin/reportal --help` (after `make setup`).
+Lint/typecheck/pytest/VNU/smoke are make targets (`make lint`, `make typecheck`,
+`make test`); do not re-list them here.
 
 ## Configuration (defaults off)
 
@@ -149,7 +140,7 @@ Non-obvious:
 | Errors | `docs/ERRORS.md` |
 | Settings catalog | `docs/CONFIG.md` (generated) |
 | MCP tool catalog | `docs/MCP_TOOLS.md` (generated) |
-| Hosted parity / MCP counts | `docs/PARITY.md` |
+| Hosted parity | `docs/PARITY.md` |
 
 Generated catalogs are written by `.venv/bin/python scripts/gen_docs.py`;
 `tests/test_generated_docs.py` fails on a hand edit. Every module under
@@ -164,9 +155,8 @@ stream, `Last-Event-ID` resume), bearer-gated when auth is on; needs write.
 Tools are plugins in `mcp_tools.py`
 (`reportal.mcp_tools` entry points). Handlers call internals directly, never
 HTTP back into reportal. Read tools stay stored-only; writers carry
-`destructiveHint: true`. Counts are pinned by `tests/test_mcp.py` (currently
-262 / 122 read-only / 140 destructive); update the test when the registry
-changes, not a prose list here.
+`destructiveHint: true`. Counts are pinned by `tests/test_mcp.py`; update that
+test when the registry changes, never a prose count here or in docs.
 
 ## Engines and matching
 

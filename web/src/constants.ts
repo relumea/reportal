@@ -494,6 +494,17 @@ export const DATA_TYPE_KIND_LABELS: Record<DataTypeKind, string> = {
   function: "function ()",
 };
 
+// Compact C tags the kind strip shows; hover uses DATA_TYPE_KIND_LABELS.
+export const DATA_TYPE_KIND_TAGS: Record<DataTypeKind, string> = {
+  struct: "struct",
+  union: "union",
+  enum: "enum",
+  typedef: "typedef",
+  pointer: "*",
+  array: "[]",
+  function: "fn",
+};
+
 // Search query types, in the order the modal's toggles offer them; mirrors the
 // API's store.SEARCH_KINDS.  `all` is the substring search the route always
 // had, so a caller that picks nothing keeps today's behaviour.

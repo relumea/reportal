@@ -37,6 +37,9 @@ test("the kind filter narrows the type list", async ({ page }) => {
   ).toHaveAttribute("href", /search=NP_HEADER/);
   await expect(types.locator(".code-scroll").first()).toHaveAttribute("title", "Click to copy");
   await types.getByRole("button", { name: /^enum: / }).click();
+  await expect(types.getByRole("button", { name: /^\*: / })).toHaveAttribute("title", "pointer *");
+  await expect(types.getByRole("button", { name: /^\[\]: / })).toHaveAttribute("title", "array []");
+  await expect(types.getByRole("button", { name: /^fn: / })).toHaveAttribute("title", "function ()");
 
   await expect(types.getByText(ENUM_NAME, { exact: false }).first()).toBeVisible();
   await expect(types.getByText(STRUCT_NAME, { exact: false })).toHaveCount(0);

@@ -83,6 +83,7 @@ view renders it from here.
 - Clicking an Analyses row (not a control) opens that binary, or
   the log when the row failed. Each row downloads the stored binary.
 - Data type search waits `SEARCH_DEBOUNCE_MS` before the hash updates.
+- Data type kind strip uses C tags (`*`, `[]`, `fn`); hover the full name.
 - Data type member and target names that exist in the model link to
   that type.
 - Data type Referenced-by names link the type list.

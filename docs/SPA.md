@@ -719,8 +719,8 @@ software-type totals and any note the payload carries.  The bars read
 never runs an engine and cannot disagree with the lists beside it.
 
 The Data types panel opens with a provenance strip (one toggle per label,
-carrying the count over the whole model), a kind strip (one toggle per
-declaration kind, carrying the count over the whole model), a coloured source
+carrying the count over the whole model), a kind strip (one C tag per
+declaration kind, carrying the count, hover the full name), a coloured source
 dot on each type
 card, a Source filter beside the search filters (the search
 placeholder states `Search N types or namespaces`, the needle matches

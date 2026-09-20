@@ -22,6 +22,7 @@ import {
 } from "../components";
 import {
   DATA_TYPE_KIND_LABELS,
+  DATA_TYPE_KIND_TAGS,
   DATA_TYPE_KINDS,
   DECOMPILER_BACKENDS,
   DEFAULT_DECOMPILER_BACKEND,
@@ -634,7 +635,7 @@ function KindStrip({
           title={kindLabel(option)}
           onClick={() => onSelect(selected === option ? "" : option)}
         >
-          {kindLabel(option)}: {kinds[option] ?? 0}
+          {DATA_TYPE_KIND_TAGS[option]}: {kinds[option] ?? 0}
         </Button>
       ))}
       {selected ? (
