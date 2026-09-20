@@ -1311,7 +1311,7 @@ def _match_view(row: Mapping[str, Any]) -> dict[str, Any]:
 
 @router.post("/api/binaries/{binary_id}/match")
 def match_binary(
-    request: Request, binary_id: int, body: dict[str, Any] = Depends(json_body)
+    request: Request, binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Rank a binary's functions against the local corpus under Match Settings.
 
@@ -1673,7 +1673,9 @@ def get_binary_report_pdf(binary_id: int) -> Response:
 
 
 @router.post("/api/binaries/{binary_id}/structs")
-def store_binary_structs(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
+def store_binary_structs(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
     """Recover a binary's struct definitions through the engine and store the result."""
     decompiler = _optional_str(body, "decompiler", engines.DEFAULT_DECOMPILER_BACKEND)
     limit = _optional_int(body, "limit", DEFAULT_STRUCT_LIMIT)
@@ -3747,9 +3749,14 @@ def apply_binary_unstrip(
     function_id = _require_int(body, "function_id")
     override = body.get("name")
     if override is not None and not isinstance(override, str):
-        return json_error(400, error="name must be a string")
+        return json_error(400, error="invalid name", detail="name must be a string")
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
+        owned = store.get_function(conn, function_id)
+        if owned is None or int(owned["binary_id"]) != binary_id:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:
@@ -4890,7 +4897,7 @@ def function_decompilation(request: Request, function_id: int) -> Response:
 
 @router.post("/api/functions/{function_id}/decompilation")
 def store_function_decompilation(
-    function_id: int, body: dict[str, Any] = Depends(json_body)
+    function_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
     """Compute a function's decompiled source through the engine and store it."""
     backend = _optional_str(body, "backend", engines.DEFAULT_DECOMPILER_BACKEND)
@@ -7687,15 +7694,14 @@ def list_journal(request: Request) -> Response:
     SaaS non-admin (and the existing self-service activity rule): only its
     own entries. An admin, or auth off, keeps the workspace feed.
     """
-    raw_limit = request.query_params.get("limit")
-    limit = journal.DEFAULT_LIST_LIMIT
-    if raw_limit is not None:
-        try:
-            limit = int(raw_limit)
-        except ValueError:
-            return json_error(400, error="limit must be an integer")
-    if limit < 1:
-        return json_error(400, error="limit must be positive", detail="limit is at least 1")
+    limit = _query_int(request, "limit")
+    limit = journal.DEFAULT_LIST_LIMIT if limit is None else limit
+    if not 1 <= limit <= journal.MAX_LIST_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {journal.MAX_LIST_LIMIT}",
+        )
     raw_action = request.query_params.get("action")
     action = raw_action.strip() if isinstance(raw_action, str) and raw_action.strip() else None
     # An empty ``?actor=`` means CLI/MCP writes (actor stored as ""), matching
@@ -12421,6 +12427,11 @@ def apply_binary_flirt(
     name = _require_str(body, "name")
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
+        owned = store.get_function(conn, function_id)
+        if owned is None or int(owned["binary_id"]) != binary_id:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             try:

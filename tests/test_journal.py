@@ -610,7 +610,18 @@ class TestApiRoutes:
     def test_list_route_rejects_a_bad_limit(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("GET", "/api/journal?limit=0")
         assert status.startswith("400")
-        assert json_body(body, headers)["error"] == "limit must be positive"
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid limit"
+        assert "between 1 and" in payload["detail"]
+
+    def test_list_route_rejects_an_oversize_limit(self, portal_db: Path) -> None:
+        status, headers, body = wsgi_request(
+            "GET", f"/api/journal?limit={journal.MAX_LIST_LIMIT + 1}"
+        )
+        assert status.startswith("400")
+        payload = json_body(body, headers)
+        assert payload["error"] == "invalid limit"
+        assert str(journal.MAX_LIST_LIMIT) in payload["detail"]
 
     def test_action_route_unknown_is_404(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("GET", "/api/journal/never")

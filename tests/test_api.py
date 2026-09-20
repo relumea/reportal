@@ -988,6 +988,18 @@ class TestDecompilation:
         assert payload["named"] is False
         assert payload["va"] == 0x1000
 
+    def test_post_accepts_an_empty_body(
+        self, conn: sqlite3.Connection, fake_engine: FakeEngine
+    ) -> None:
+        ids = self._seed_with_context(conn)
+        status, headers, body = wsgi_request(
+            "POST", f"/api/functions/{ids['function']}/decompilation"
+        )
+        assert status.startswith("200")
+        payload = json_body(body, headers)
+        assert payload["backend"] == "kuna"
+        assert payload["named"] is False
+
     def test_get_named_query_reaches_engine(
         self, conn: sqlite3.Connection, fake_engine: FakeEngine
     ) -> None:
@@ -2619,6 +2631,18 @@ class TestStructsRoutes:
             DEFAULT_STRUCT_LIMIT,
         )
 
+    def test_post_accepts_an_empty_body(
+        self, conn: sqlite3.Connection, fake_engine: FakeEngine
+    ) -> None:
+        binary_id = self._context_binary(conn)
+        status, _, _ = wsgi_request("POST", f"/api/binaries/{binary_id}/structs")
+        assert status.startswith("200")
+        assert fake_engine.structs_args == (
+            "/projects/notepad-rebrew",
+            "kuna",
+            DEFAULT_STRUCT_LIMIT,
+        )
+
     def test_get_absent_404_no_scan(
         self, conn: sqlite3.Connection, fake_engine: FakeEngine
     ) -> None:
@@ -4104,7 +4128,26 @@ class TestUnstripRoutes:
             body=json.dumps({"function_id": ids["first"], "name": 5}),
         )
         assert status.startswith("400")
-        assert json_body(body, headers)["error"] == "name must be a string"
+        assert json_body(body, headers)["error"] == "invalid name"
+        assert json_body(body, headers)["detail"] == "name must be a string"
+
+    def test_apply_404_function_of_another_binary(
+        self, conn: sqlite3.Connection, fake_engine: FakeEngine
+    ) -> None:
+        ids = self._seed(conn)
+        other = store.add_binary(conn, name="other.bin", path="/tmp/other.bin", sha256="ab" * 32)
+        other_analysis = store.ensure_analysis_for_binary(conn, other, engine=store.SCAN_ENGINE)
+        other_fn = store.add_function(
+            conn, analysis_id=other_analysis, va=0x2000, name="sub_2000", name_source=""
+        )
+        status, headers, body = wsgi_request(
+            "POST",
+            f"/api/binaries/{ids['binary']}/unstrip/apply",
+            body=json.dumps({"function_id": other_fn, "name": "Stolen"}),
+        )
+        assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "function not found"
+        assert store.get_function(conn, other_fn)["name"] == "sub_2000"
 
     def test_apply_400_missing_function_id(
         self, conn: sqlite3.Connection, fake_engine: FakeEngine
