@@ -57,6 +57,7 @@ view renders it from here.
 - Function list referrer filter is a removable chip.
 - Analyses search waits `SEARCH_DEBOUNCE_MS` before the hash updates.
 - Analyses active filters are removable chips.
+- Analyses row Ctrl/⌘-click opens the binary in a new tab.
 - Search binary and collection hits show their stored `created_at`.
 - Function header signature hover shows return, parameters and convention.
   Named types in that hover link the type list.

@@ -95,7 +95,8 @@ def _message_of(message: str) -> str:
         raise ValueError("message must not be empty")
     if len(collapsed) <= MAX_MESSAGE_CHARS:
         return collapsed
-    return collapsed[: MAX_MESSAGE_CHARS - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+    keep = max(0, MAX_MESSAGE_CHARS - len(TRUNCATION_MARKER))
+    return collapsed[:keep] + TRUNCATION_MARKER
 
 
 def append_entry(

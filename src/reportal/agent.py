@@ -370,7 +370,8 @@ def _bounded(text: str, limit: int, marker: str) -> str:
     """Return *text* capped at *limit*, marked when it was cut."""
     if len(text) <= limit:
         return text
-    return text[: limit - len(marker)] + marker
+    keep = max(0, limit - len(marker))
+    return text[:keep] + marker
 
 
 def _tool_result_text(payload: Any, failed: bool) -> str:

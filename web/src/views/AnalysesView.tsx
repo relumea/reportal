@@ -826,9 +826,13 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               ]}
               rows={analyses}
               rowKey={(row) => row.id}
-              onRowClick={(row) => {
+              onRowClick={(row, event) => {
                 if (row.status === "failed") {
                   setLogFor(row.id);
+                  return;
+                }
+                if (event?.ctrlKey || event?.metaKey) {
+                  window.open(`#/binaries/${row.binary_id}`, "_blank", "noopener");
                   return;
                 }
                 navigate(`/binaries/${row.binary_id}`);

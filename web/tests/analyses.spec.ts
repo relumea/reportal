@@ -31,6 +31,13 @@ test("the list filters to the seeded analysis and its log opens on demand", asyn
   await expect(page).toHaveURL(new RegExp(`#/binaries/${state.ids.binary_id}`));
   await page.goBack();
   await expect(page).toHaveURL(/search=notepad/);
+  const [popup] = await Promise.all([
+    page.context().waitForEvent("page"),
+    rows.first().locator("td").nth(1).click({ modifiers: ["ControlOrMeta"] }),
+  ]);
+  await expect(popup).toHaveURL(new RegExp(`#/binaries/${state.ids.binary_id}`));
+  await popup.close();
+  await expect(page).toHaveURL(/search=notepad/);
 
   // The filter survives a reload through the hash.
   await page.reload();

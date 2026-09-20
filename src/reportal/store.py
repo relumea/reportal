@@ -4301,6 +4301,33 @@ def get_document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any] |
     return _document_row(conn, row) if row else None
 
 
+def _document_where(
+    conn: sqlite3.Connection,
+    *,
+    scope_kind: str | None = None,
+    scope_id: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
+) -> tuple[str, list[Any]]:
+    """Shared WHERE clause for :func:`list_documents` and :func:`count_documents`."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if scope_kind is not None:
+        clauses.append("d.scope_kind = ?")
+        params.append(scope_kind)
+    if scope_id is not None:
+        clauses.append("d.scope_id = ?")
+        params.append(scope_id)
+    scope = auth.visible_clause(conn, visible_to, prefix="b.")
+    if scope is not None:
+        clause, scope_params = scope
+        clauses.append(
+            f"(d.scope_kind != ? OR EXISTS (SELECT 1 FROM binaries b"
+            f" WHERE b.id = d.scope_id AND {clause}))"
+        )
+        params.extend(["binary", *scope_params])
+    return (" WHERE " + " AND ".join(clauses) if clauses else ""), params
+
+
 def list_documents(
     conn: sqlite3.Connection,
     *,
@@ -4320,24 +4347,10 @@ def list_documents(
         "  SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id"
         ") AS chunk_count FROM documents d"
     )
-    clauses: list[str] = []
-    params: list[Any] = []
-    if scope_kind is not None:
-        clauses.append("d.scope_kind = ?")
-        params.append(scope_kind)
-    if scope_id is not None:
-        clauses.append("d.scope_id = ?")
-        params.append(scope_id)
-    scope = auth.visible_clause(conn, visible_to, prefix="b.")
-    if scope is not None:
-        clause, scope_params = scope
-        clauses.append(
-            f"(d.scope_kind != ? OR EXISTS (SELECT 1 FROM binaries b"
-            f" WHERE b.id = d.scope_id AND {clause}))"
-        )
-        params.extend(["binary", *scope_params])
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
+    where, params = _document_where(
+        conn, scope_kind=scope_kind, scope_id=scope_id, visible_to=visible_to
+    )
+    sql += where
     sql += " ORDER BY d.id"
     return _rows(conn.execute(sql, params))
 
@@ -4350,26 +4363,10 @@ def count_documents(
     visible_to: Mapping[str, Any] | None = None,
 ) -> int:
     """How many documents the same filters :func:`list_documents` takes keep."""
-    sql = "SELECT COUNT(*) AS total FROM documents d"
-    clauses: list[str] = []
-    params: list[Any] = []
-    if scope_kind is not None:
-        clauses.append("d.scope_kind = ?")
-        params.append(scope_kind)
-    if scope_id is not None:
-        clauses.append("d.scope_id = ?")
-        params.append(scope_id)
-    scope = auth.visible_clause(conn, visible_to, prefix="b.")
-    if scope is not None:
-        clause, scope_params = scope
-        clauses.append(
-            f"(d.scope_kind != ? OR EXISTS (SELECT 1 FROM binaries b"
-            f" WHERE b.id = d.scope_id AND {clause}))"
-        )
-        params.extend(["binary", *scope_params])
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
-    row = conn.execute(sql, params).fetchone()
+    where, params = _document_where(
+        conn, scope_kind=scope_kind, scope_id=scope_id, visible_to=visible_to
+    )
+    row = conn.execute("SELECT COUNT(*) AS total FROM documents d" + where, params).fetchone()
     return int(row["total"]) if row is not None else 0
 
 

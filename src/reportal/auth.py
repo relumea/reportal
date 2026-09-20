@@ -545,7 +545,11 @@ def _unique_tenant_name(conn: sqlite3.Connection, *, table: str, base: str) -> s
     suffix = 2
     while True:
         extra = f"-{suffix}"
+        # A suffix longer than *limit* would make ``stem[:limit - len(extra)]``
+        # a negative slice and produce an over-long name; stop before that.
+        assert len(extra) <= limit, "tenant name suffixes exhausted"
         candidate = f"{stem[: limit - len(extra)]}{extra}"
+        assert len(candidate) <= limit, "tenant name must fit the column"
         if exists(conn, candidate) is None:
             return candidate
         suffix += 1

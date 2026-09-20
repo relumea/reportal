@@ -756,7 +756,7 @@ export function DataTable<T>({
 }: {
   columns: Array<Column<T>>;
   rows: T[];
-  onRowClick?: (row: T) => void;
+  onRowClick?: (row: T, event?: MouseEvent<HTMLTableRowElement>) => void;
   rowKey?: (row: T, index: number) => string | number;
   /** Extra classes for a row, e.g. the change flash. */
   rowClassName?: (row: T, index: number) => string | undefined;
@@ -857,7 +857,7 @@ export function DataTable<T>({
                 onRowClick
                   ? (event: MouseEvent<HTMLTableRowElement>) => {
                       if (isInteractive(event.target)) return;
-                      onRowClick(row);
+                      onRowClick(row, event);
                     }
                   : undefined
               }

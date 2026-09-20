@@ -235,7 +235,8 @@ metric or the dashboard follows these names:
   mark), `TypeNameLink` (a named type that exists in the model, linking to
   `?search=`), `CodeBlock` (click the listing to copy), and `NA` / `UNAVAILABLE`
   for the missing states.  `Panel`/`Card` take `hue` and `className`;
-  `DataTable` takes `rowClassName`.
+  `DataTable` takes `rowClassName`.  A clickable row's `onRowClick` receives
+  the mouse event, so a caller can open a new tab on Ctrl/⌘-click.
 - **Live edge** (`src/useAsync.ts`, `src/live.ts`): a poll is the query's own
   interval, so its rate lives beside the signal it follows (`useAsync`'s fourth
   argument, a number or a function of the data that stops when the run settles),
@@ -1063,7 +1064,9 @@ Show field for the page size (bounded by `store.MAX_ANALYSIS_LIMIT`, and left
 out of the hash while it is the default) and a Clear control; every one of them
 is in the route hash, so a filtered list is shareable.  The count line reads
 `N of M analyses` and, while the bound is hiding rows, says so and names the
-Show control that lists the rest.  Each row's Actions cell carries View log,
+Show control that lists the rest.  Clicking a row (not a control) opens the
+binary; Ctrl/⌘-click opens it in a new tab.  A failed row opens the log
+instead.  Each row's Actions cell carries View log,
 Re-analyse (the cluster D requeue, which puts the analysis back to pending and
 queues jobs for stored scans) and
 Delete, and the bulk toolbar adds Copy hashes beside Add tag, Remove tag and

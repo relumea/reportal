@@ -331,7 +331,8 @@ def _bounded(text: str) -> str:
     """Return *text* capped at :data:`MAX_CONTEXT_CHARS`, marked when cut."""
     if len(text) <= MAX_CONTEXT_CHARS:
         return text
-    return text[: MAX_CONTEXT_CHARS - len(TRUNCATION_MARKER)] + TRUNCATION_MARKER
+    keep = max(0, MAX_CONTEXT_CHARS - len(TRUNCATION_MARKER))
+    return text[:keep] + TRUNCATION_MARKER
 
 
 def _function_context(conn: sqlite3.Connection, function_id: int) -> str:
