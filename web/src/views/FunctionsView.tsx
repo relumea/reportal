@@ -718,7 +718,13 @@ export function FunctionsView({
               rows={functions}
               rowKey={(row) => row.id}
               rowClassName={(row) => (checked.has(row.id) ? "row-selected" : undefined)}
-              onRowClick={(row) => navigate(`/functions/${row.id}`)}
+              onRowClick={(row, event) => {
+                if (event?.ctrlKey || event?.metaKey) {
+                  window.open(`#/functions/${row.id}`, "_blank", "noopener");
+                  return;
+                }
+                navigate(`/functions/${row.id}`);
+              }}
               windowed
             />
           </>

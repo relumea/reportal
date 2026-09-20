@@ -4,7 +4,7 @@ A self-hosted clone of the [RevEng.AI](https://reveng.ai) portal: manage binarie
 
 ## Why it exists
 
-The RevEng.AI portal is a hosted service. Reverse-engineering projects that already run locally (rebrew compiles and matches, resembl scores assembly similarity, recoverage visualizes coverage) have no single local place to look at binaries and functions together. reportal is that place. It reads what the sibling engines produce and makes no network call of its own: no account, no hosted upload, no SaaS. There are two opted-in exceptions. The optional AI bridge talks only to the OpenAI-compatible endpoint you configure; leave it unconfigured and reportal makes no model call. Guarded URL ingestion fetches a URL you name, only after you enable it and only through the SSRF guards described under [Knowledge documents](#knowledge-documents); leave it disabled and reportal fetches nothing.
+The RevEng.AI portal is a hosted service. Reverse-engineering projects that already run locally (rebrew compiles and matches, resembl scores assembly similarity, recoverage visualizes coverage) have no single local place to look at binaries and functions together. reportal is that place. It reads what the sibling engines produce and makes no network call by default: no account, no hosted upload, no SaaS. Opt-in egress is off until configured: the AI bridge (OpenAI-compatible endpoint), guarded URL ingestion ([Knowledge documents](#knowledge-documents)), an external source such as VirusTotal (`REPORTAL_ALLOW_EXTERNAL` / a stored key), Stripe billing (when a secret key is set), and an optional Cognee graph backend. Leave each off and reportal stays on the local workspace.
 
 ## Install
 
@@ -68,11 +68,7 @@ Run it from a workspace directory (it resolves `reportal.toml` the same way ever
 }
 ```
 
-That is the shape Claude Desktop and other JSON-config clients use; a client that takes a shell command instead runs `cd /path/to/workspace && .venv/bin/reportal mcp`. The server reports 262 tools: reads such as `list_binaries`, `get_function`, `get_disasm`, `diff_functions`, `get_lineage`, `get_related_binaries`, `get_composition`, `list_families`, `get_detect_scan`, `list_data_types`, `get_data_type_history`, `list_signatures`, `get_signature`, `get_signature_history`, `read_memory`, `get_pipeline`, `list_components`, `list_integrations`, `get_auto_run`, `list_documents`, `search`, `search_knowledge`, `retrieve_knowledge`, `get_graph`, `graph_neighbors`, `list_graph_backends`, `get_threat_report`, `get_remediation`, `get_secrets_scan`, `get_protocols_scan`, `get_behavior_scan`, `get_hardening_scan`, `get_function_triage`, `get_pe_info`, `get_die_info`, `get_additional_details`, `get_details_status`, `get_filetype`, `get_pdf_status`, `get_renames`, `list_journal`, `list_jobs`, `get_job`, `get_analysis`, `get_analysis_params`, `get_analysis_func_maps`, `get_imported_functions`, `list_notifications`, `list_comments`, `get_ai_decompilation`, `get_ai_decompilation_status`, `list_ai_decompilation_tokens`, `get_ai_line_attributions`, `list_ai_line_comments`, `list_models`, `list_secrets`, `get_signature_batch`, `get_data_type_functions`, `get_symbols`, `list_docs`, `get_doc`, `list_organisations`, `get_library`, `export_sbom`, `get_unpack`, `get_benchmark`, `get_rename_benchmark`, `list_scans`, `get_stats_series`, `list_artifact_ratings`, `list_analyses`, `list_conversation_runs`, `get_conversation_run`, `get_indirect_call_sites`, `get_function_capabilities`, `get_function_strings`, `list_analysis_strings`, `list_function_edges`, `get_functions_callees_callers`, `get_function_matches`, `list_external_sources`, `get_external_report` and `get_external_status`, and mutations such as `create_api_key`, `rename_api_key`, `revoke_api_key`, `revoke_team_invite`, `rename_binary`, `rename_function`, `run_triage`, `run_function_triage`, `run_lineage`, `run_related_binaries`, `run_composition`, `register_family`, `delete_family`, `run_detect`, `run_capabilities`, `run_pe_info`, `run_filetype`, `run_threat_report`, `run_remediation`, `run_secrets_scan`, `run_protocols_scan`, `run_behavior_scan`, `run_hardening_scan`, `import_data_types`, `edit_data_type`, `export_data_types`, `revert_data_type_history`, `run_signature_import`, `edit_signature`, `export_signatures`, `revert_signature_history`, `suggest_renames`, `apply_renames`, `revert_renames`, `run_pipeline`, `reload_components`, `deactivate_components`, `run_auto`, `revert_auto_run`, `recover_auto_run`, `build_graph`, `sync_graph_backend`, `generate_pdf_report`, `ingest_document`, `ingest_url`, `delete_document`, `extract_archive`, `add_comment`, `update_comment`, `delete_comment`, `run_ai_decompilation`, `set_ai_decompilation_overrides`, `rate_ai_decompilation`, `add_ai_line_comment`, `update_ai_line_comment`, `delete_ai_line_comment`, `upgrade_analysis_model`, `set_secret`, `delete_secret`, `run_external_source`, `copy_signature`, `import_type_definitions`, `import_symbols`, `export_symbols`, `rate_artifact`, `run_conversation_agent`, `confirm_conversation_run`, `cancel_conversation_run`, `run_library`, `run_unpack`, `run_benchmark`, `set_team_member_role`, `create_organisation`, `delete_organisation`, `set_team_organisation`, `add_function_string`, `delete_function_string`, `replace_analysis_strings`, `add_function_edge`, `delete_function_edge`, `canonicalize_function_names`, `bulk_binaries`, `bulk_functions`, `bulk_analyses`, `add_user`, `rotate_user_token`,
-`update_user`, `delete_user`, `create_team`, `delete_team`, `add_team_member`,
-`remove_team_member`, `set_binary_scope`, `set_collection_scope`, `run_firmware_scan`, `extract_firmware_regions`,
-`add_feedback`, `run_sandbox_detonation` and
-`revert_journal_entry`. Mutations carry the MCP `destructiveHint` annotation, so a client can ask before running them, and a destructive tool that wrote rows returns a `journal_action` field in its JSON payload, the same id the routes carry, so an agent can revert it through `revert_journal_entry`. There is no auth: the server is a local, single-user pipe. Third parties can ship their own tools through the `reportal.mcp_tools` entry-point group.
+That is the shape Claude Desktop and other JSON-config clients use; a client that takes a shell command instead runs `cd /path/to/workspace && .venv/bin/reportal mcp`. The live tool catalog (names, read vs destructive, and the count pinned by `tests/test_mcp.py`) is [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md). Mutations carry the MCP `destructiveHint` annotation, so a client can ask before running them, and a destructive tool that wrote rows returns a `journal_action` field in its JSON payload, the same id the routes carry, so an agent can revert it through `revert_journal_entry`. There is no auth: the server is a local, single-user pipe. Third parties can ship their own tools through the `reportal.mcp_tools` entry-point group.
 
 ### Custom agents (MCP)
 
@@ -124,12 +120,13 @@ Conversations view), which send a bounded prompt built from stored local data
 and the recent turns; nothing else about them needs configuration.
 
 Resolution is first match wins per setting: the environment, then the
-`[llm]` table of the workspace `reportal.toml`.
+`[llm]` table of the workspace `reportal.toml`. The API key has one further
+fallback: the workspace secret store name `llm.api_key`.
 
 | Setting | Env var | `reportal.toml` key | Default |
 |---------|---------|---------------------|---------|
 | Endpoint | `REPORTAL_LLM_ENDPOINT` | `[llm] endpoint` | none, so AI is disabled |
-| API key | `REPORTAL_LLM_API_KEY` | `[llm] api_key` | none, so requests are anonymous |
+| API key | `REPORTAL_LLM_API_KEY` | `[llm] api_key` (else secret `llm.api_key`) | none, so requests are anonymous |
 | Model | `REPORTAL_LLM_MODEL` | `[llm] model` | `gpt-4o-mini` |
 
 ```toml
@@ -141,9 +138,10 @@ model = "qwen2.5-coder"
 
 A request is a JSON POST to `<endpoint>/chat/completions` (the path is not
 appended when the endpoint already carries it) with the body
-`{"model", "messages", "temperature"}` and `Authorization: Bearer <key>` only
-when a key is set. The key is never logged or returned. An endpoint that needs
-no key works: a local server accepts anonymous requests.
+`{"model", "messages", "temperature", "max_tokens"}` and
+`Authorization: Bearer <key>` only when a key is set. The key is never logged
+or returned. An endpoint that needs no key works: a local server accepts
+anonymous requests.
 
 ```bash
 reportal decompile 42
@@ -466,7 +464,7 @@ DWARF one renames the functions it places.
   topbar bell) reads the action journal and the analysis log into one feed, one item
   per action and per log entry, newest first, with each item's stable id and the
   latest time, and stores nothing: dismissal lives in the browser.
-- Local MCP server: `reportal mcp` serves 262 tools over stdio (newline-delimited JSON-RPC 2.0) for any MCP client, on the official `mcp` SDK and with no auth. See [MCP server](#mcp-server).
+- Local MCP server: `reportal mcp` serves the registry in [docs/MCP_TOOLS.md](docs/MCP_TOOLS.md) over stdio (newline-delimited JSON-RPC 2.0) for any MCP client, on the official `mcp` SDK and with no auth. See [MCP server](#mcp-server).
 
 Not built yet (see `docs/PARITY.md` for the full map):
 

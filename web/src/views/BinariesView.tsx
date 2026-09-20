@@ -1256,7 +1256,13 @@ export function BinariesView({
             ]}
             rows={binaries}
             rowKey={(row) => row.id}
-            onRowClick={(row) => navigate(`/binaries/${row.id}`)}
+            onRowClick={(row, event) => {
+              if (event?.ctrlKey || event?.metaKey) {
+                window.open(`#/binaries/${row.id}`, "_blank", "noopener");
+                return;
+              }
+              navigate(`/binaries/${row.id}`);
+            }}
             empty={
               <EmptyState>
                 No binaries yet. Upload one above, or import a rebrew project with{" "}

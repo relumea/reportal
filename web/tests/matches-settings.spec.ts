@@ -28,9 +28,17 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
   await expect(
     page.locator("table.data-table a[href^='#/binaries/']").first(),
   ).toBeVisible();
-  await page.locator("table.data-table tbody tr").first().locator("td").nth(3).click();
+  const matchRow = page.locator("table.data-table tbody tr").first();
+  await matchRow.locator("td").nth(3).click();
   await expect(page).toHaveURL(/#\/diff\/\d+\/\d+/);
   await page.goBack();
+  await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
+  const [popup] = await Promise.all([
+    page.context().waitForEvent("page"),
+    matchRow.locator("td").nth(3).click({ modifiers: ["ControlOrMeta"] }),
+  ]);
+  await expect(popup).toHaveURL(/#\/diff\/\d+\/\d+/);
+  await popup.close();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: /No Match/ }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();

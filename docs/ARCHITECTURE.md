@@ -2,12 +2,11 @@
 
 reportal is a self-hosted reverse-engineering portal: a local clone of the
 RevEng.AI web portal built on the sibling engines. It is a FastAPI (ASGI)
-JSON API plus a Vite-built React SPA over a SQLite store. It runs offline and calls the
-network only in two opted-in cases: the optional AI bridge, and only when an
-OpenAI-compatible LLM endpoint is explicitly configured, and guarded URL
-ingestion, and only when remote ingestion is enabled (both default off);
-`docs/PARITY.md` maps every hosted portal capability to its local status and
-backing engine.
+JSON API plus a Vite-built React SPA over a SQLite store. It runs offline by
+default. Opt-in egress (each off until configured) is the AI bridge, guarded URL
+ingestion, an external source such as VirusTotal, Stripe billing, and an optional
+Cognee graph backend; `docs/PARITY.md` maps every hosted portal capability to its
+local status and backing engine.
 
 ## Process layout
 
@@ -125,6 +124,8 @@ reportal/
 │   │                         #   engine, SPA build, optional paths and the port
 │   ├── settings.py           # every setting reportal reads: its env var, workspace
 │   │                         #   key, default, origin and the keys it ignores
+│   ├── profiles.py           # deployment profile: personal (loopback) or saas
+│   │                         #   (auth, tenants, metering); REPORTAL_PROFILE / [deployment]
 │   ├── function_extras.py    # per-function extras: indirect call sites, capabilities,
 │   │                         #   derived callees, analyst-declared edges, canonical names
 │   ├── user_strings.py       # analyst strings at function or analysis scope, plus
@@ -1914,8 +1915,8 @@ reads the journal entries and is read-only; `revert_journal_entry` replays one
 action's or one entry's stored inverses and is destructive. `get_auto_run`
 reads an auto run and is read-only; `run_auto`, `revert_auto_run` and
 `recover_auto_run` (which closes a stale run and merges what its unfinished
-tasks recorded) are destructive.  The registry
-declares 262 built-in tools, 122 read-only and 140 destructive.
+tasks recorded) are destructive.  The live count is generated into
+`docs/MCP_TOOLS.md` and pinned by `tests/test_mcp.py`; do not restate it here.
 
 Stdio (`reportal mcp`) is the local pipe; Streamable HTTP is `POST /mcp`
 (JSON replies) and `GET /mcp` (SSE session stream) on the same FastAPI

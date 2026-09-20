@@ -772,7 +772,9 @@ export function MatchesView({
                     size="sm"
                     onClick={() => setMetric(value)}
                   >
-                    Show {MATCH_METRIC_LABELS[value]}
+                    {value === "difference"
+                      ? "Show Difference"
+                      : `Show ${MATCH_METRIC_LABELS[value]}`}
                   </Button>
                 ))}
                 <span className="muted">
@@ -1008,8 +1010,13 @@ export function MatchesView({
                 rows={ranked}
                 windowed
                 rowKey={(row) => rowKey(row)}
-                onRowClick={(row) => {
+                onRowClick={(row, event) => {
                   if (!hasCandidate(row)) return;
+                  const href = `#/diff/${row.source_function_id}/${row.candidate_function_id}`;
+                  if (event?.ctrlKey || event?.metaKey) {
+                    window.open(href, "_blank", "noopener");
+                    return;
+                  }
                   navigate(`/diff/${row.source_function_id}/${row.candidate_function_id}`);
                 }}
                 empty={

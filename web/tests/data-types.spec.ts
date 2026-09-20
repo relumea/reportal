@@ -50,7 +50,7 @@ test("the kind filter narrows the type list", async ({ page }) => {
   await expect(types.getByText(ENUM_NAME, { exact: false }).first()).toBeVisible();
   await expect(types.getByText(STRUCT_NAME, { exact: false })).toHaveCount(0);
   await expect(types.getByText(`1 of ${state.types.length} types`, { exact: false })).toBeVisible();
-  await types.getByRole("button", { name: "Clear (1)", exact: true }).click();
+  await types.getByRole("button", { name: "Clear all filters", exact: true }).click();
   await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
   await expect(types.getByRole("button", { name: /Clear/ })).toHaveCount(0);
 });

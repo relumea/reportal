@@ -688,8 +688,8 @@ owning binary (linked), the similarity, its band, the confidence and the ISA
 pair (`source_arch` / `candidate_arch`, flagged when they differ).  A function
 with no recorded candidate is a `No match` row.  The list ranks by Show
 Similarity, Show Confidence or Show Difference.  Clicking a
-row (not a control) opens the
-diff.  Match settings opens the sheet the next run uses: the
+row (not a control) opens the diff; Ctrl/⌘-click opens it in a new
+tab.  Match settings opens the sheet the next run uses: the
 0-100 similarity floor, the 0-1 confidence floor, the most candidates kept per
 function (the API's `top`, 1 or more, default 10), whether the binary's own
 functions may be candidates, and the platform, architecture, binary and
@@ -738,9 +738,8 @@ namespace tree (`Search namespaces...`, Collapse) whose descendants grey
 out when a branch is ticked, empty namespace reads Binary, a
 References control whose Referenced-by names link the type list, a
 pointer/typedef/array target that walks each hop's kind and size, a
-function type's Returns row and parameter table, Clear
-when a filter is on (the count is how many, and it leaves the search
-text), and a
+function type's Returns row and parameter table, Clear all filters
+when a filter is on (it leaves the search text), and a
 page-at-a-time list with a Load more control; its six controls live in the
 route hash, so a filtered and ordered model is a link.  The order is the
 route's (`?sort=&direction=`; consecutive writes keep both), and a type
@@ -774,7 +773,8 @@ and the toolbar carries Run pipeline/Re-run and Revert run (which posts the
 revert route and refreshes the history panel).  The Functions view
 (`views/FunctionsView.tsx`, `#/functions` and `#/binaries/<id>/functions`)
 picks a binary, lists its functions with per-row Matches, History and Rename
-actions, a left border on the focused or checked row, and carries a
+actions, a left border on the focused or checked row, Ctrl/⌘-click opening
+the function in a new tab, and carries a
 filter panel plus sortable headers: a coloured
 name-source dot beside each name, a name search whose placeholder states
 the total (`Search N functions`) and which narrows as you type, one address
@@ -1018,7 +1018,8 @@ appended ones, so a deleted or renamed row never sits in a stale page.  Each row
 shows a hash identicon beside the name, a lock badge when the binary is
 team-scoped, a compact SHA-256 with a copy control, the stored `format`,
 `arch`, recovered `language` and recovered `compiler` (n/a when unknown),
-and the stored `created_at`.
+and the stored `created_at`.  Clicking a row (not a control) opens the
+binary; Ctrl/⌘-click opens it in a new tab.
 The register's own
 two pickers (the archive to extract, the family's reference binary) read the
 unfiltered list, so a filter narrows the table without hiding a binary from a

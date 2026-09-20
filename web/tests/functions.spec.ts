@@ -31,6 +31,14 @@ test("a filter narrows the row set and states the counts", async ({ page }) => {
   await expect(panel.locator(".name-source-dot").first()).toBeVisible();
   await panel.locator("table.data-table input[type='checkbox']").first().check();
   await expect(panel.locator("tr.row-selected")).toHaveCount(1);
+  const idCell = panel.locator("table.data-table tbody tr").first().locator("td").nth(1);
+  const [popup] = await Promise.all([
+    page.context().waitForEvent("page"),
+    idCell.click({ modifiers: ["ControlOrMeta"] }),
+  ]);
+  await expect(popup).toHaveURL(/#\/functions\/\d+/);
+  await popup.close();
+  await expect(page).toHaveURL(new RegExp(`#/binaries/${state.ids.binary_id}/functions`));
 
   await panel.getByLabel("Match").selectOption("unmatched");
   await expect(page).toHaveURL(/match=unmatched/);

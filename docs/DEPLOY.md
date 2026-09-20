@@ -2,9 +2,11 @@
 
 reportal is a single process over a single workspace directory: a SQLite
 database, the binaries it stored, the reports it generated and one
-`reportal.toml`.  There is no server to configure, no queue to run and no
-worker fleet: deploying it is placing that directory, installing the package
-into a virtual environment, and starting `reportal serve` under a supervisor.
+`reportal.toml`.  There is no separate queue service or worker fleet: the
+serving process runs an in-process job pool by default (`REPORTAL_JOBS_POOL`
+switches it off). Deploying it is placing that directory, installing the
+package into a virtual environment, and starting `reportal serve` under a
+supervisor.
 This page is that sequence, the readiness check that gates it, and the
 operational facts that matter afterwards.
 

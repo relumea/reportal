@@ -1,17 +1,17 @@
 """Optional OpenAI-compatible LLM bridge for reportal.
 
-The portal's AI extras (a function summary, inline comments and type
-suggestions, per-function triage summaries and scores, plus the threat report's
-optional narrative) are the only reportal
-features that reach a model.  The bridge is
+Every model call in reportal goes through this bridge: AI extras (summary,
+inline comments, type suggestions, triage, threat narrative), scoped chats,
+agent runs, pipeline LLM stages and auto-mode LLM workers.  The bridge is
 optional and off by default: with no endpoint configured every AI route answers
 503 ``llm-unavailable`` and the AI CLI commands exit non-zero, while the rest of
 reportal runs unchanged.
 
 Configuration resolves first from ``REPORTAL_LLM_ENDPOINT`` /
-``REPORTAL_LLM_API_KEY`` / ``REPORTAL_LLM_MODEL`` and then from the workspace
-``reportal.toml`` ``[llm]`` table (``endpoint``, ``api_key``, ``model``); the
-API key is never logged or returned.
+``REPORTAL_LLM_API_KEY`` / ``REPORTAL_LLM_MODEL``, then from the workspace
+``reportal.toml`` ``[llm]`` table (``endpoint``, ``api_key``, ``model``), and
+the API key finally from the secret store name ``llm.api_key``; the key is never
+logged or returned.
 
 Requests go through the official ``openai`` SDK as OpenAI-compatible chat
 completions: ``chat.completions.create`` with ``model``, ``messages``,
@@ -295,8 +295,9 @@ class LlmConfig:
         """Resolve the bridge config; None when no endpoint is configured.
 
         The environment wins over the workspace ``reportal.toml`` ``[llm]``
-        table.  A key is never required: a local endpoint may accept anonymous
-        requests.
+        table; the API key then falls back to the secret store name
+        ``llm.api_key``.  A key is never required: a local endpoint may accept
+        anonymous requests.
         """
         table = _workspace_llm_table()
         endpoint = os.environ.get(ENDPOINT_ENV, "").strip() or table.get("endpoint", "")

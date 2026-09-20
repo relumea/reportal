@@ -552,7 +552,7 @@ export function DataTypesPanel({
         </Field>
         {filterCount > 0 ? (
           <Button tone="ghost" onClick={clearFilters}>
-            Clear ({filterCount})
+            Clear all filters
           </Button>
         ) : null}
       </Toolbar>

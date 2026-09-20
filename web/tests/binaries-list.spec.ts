@@ -20,6 +20,13 @@ test("the register filters by name, hash and tag, and orders its rows", async ({
   // The table is named by its panel heading, so a reader entering it hears
   // which list it is.
   await expect(page.getByRole("table", { name: "Binaries" })).toBeVisible();
+  const [popup] = await Promise.all([
+    page.context().waitForEvent("page"),
+    rows.first().locator("td").nth(1).click({ modifiers: ["ControlOrMeta"] }),
+  ]);
+  await expect(popup).toHaveURL(/#\/binaries\/\d+/);
+  await popup.close();
+  await expect(page).toHaveURL(/#\/binaries$/);
   const search = panel.getByRole("searchbox", { name: /Search/ });
 
   // The name search, applied with Enter, narrows in place.

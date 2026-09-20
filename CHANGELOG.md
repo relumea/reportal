@@ -99,6 +99,10 @@ view renders it from here.
 - Data type empty namespace reads `Binary`.
 - Data type `typedef` hover reads Type alias.
 - Data type Sort and Direction keep both values when set together.
+- Data type Clear all filters leaves the search text.
+- Function list Ctrl/⌘-click opens the function in a new tab.
+- Binary register Ctrl/⌘-click opens the binary in a new tab.
+- Match / Diff Ctrl/⌘-click opens the candidate in a new tab.
 - Match / Diff toolbar reads `Found: N matches` for the loaded function.
 - Match / Diff metric toggle reads Show Similarity, Show Confidence,
   Show Difference.
