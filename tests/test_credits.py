@@ -244,7 +244,7 @@ class TestTheChargeSink:
         llm._report_charge("summary", [{"role": "user", "content": "x"}])
         assert seen == []
 
-    def test_a_failing_sink_never_breaks_the_call(self) -> None:
+    def test_a_failing_sink_never_breaks_the_call(self, caplog: pytest.LogCaptureFixture) -> None:
         """Billing is not allowed to take down the feature it bills for."""
         calls: list[tuple[str, int]] = []
 
@@ -252,6 +252,7 @@ class TestTheChargeSink:
             calls.append((task, size))
             raise RuntimeError("ledger is down")
 
-        with llm.charging(broken):
+        with llm.charging(broken), caplog.at_level("WARNING", logger="reportal.llm"):
             llm._report_charge("summary", [{"role": "user", "content": "x"}])
         assert calls == [("summary", 1)]
+        assert any("llm charge sink failed" in record.message for record in caplog.records)

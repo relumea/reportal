@@ -326,11 +326,14 @@ class TestConfiguration:
         assert external.remote_enabled() is False
 
     def test_a_malformed_table_is_not_a_gate(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
         (tmp_path / "reportal.toml").write_text("this is not toml", encoding="utf-8")
         monkeypatch.setattr(external, "project_root", lambda: tmp_path)
-        assert external.remote_enabled() is False
+        monkeypatch.delenv(external.ALLOW_REMOTE_ENV, raising=False)
+        with caplog.at_level("WARNING", logger="reportal.external"):
+            assert external.remote_enabled() is False
+        assert any("remote sources fall back to off" in record.message for record in caplog.records)
 
     def test_the_key_reads_the_environment_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(external.VIRUSTOTAL_KEY_ENV, "env-key")

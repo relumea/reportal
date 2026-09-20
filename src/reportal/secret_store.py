@@ -41,6 +41,7 @@ re-set instead.
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import sqlite3
 from collections.abc import Mapping, Sequence
@@ -48,6 +49,8 @@ from typing import Any
 
 from reportal import journal, store
 from reportal._paths import WorkspaceNotFound, db_path
+
+_log = logging.getLogger(__name__)
 
 # Scope a secret lives at.
 SCOPE_LOCAL = "local"
@@ -389,7 +392,8 @@ def resolve_from_workspace(name: str, *, team_id: int | None = None) -> str | No
     try:
         with contextlib.closing(store.connect(path)) as conn:
             return value_of(conn, name, team_id=team_id)
-    except (sqlite3.Error, SecretError):
+    except (sqlite3.Error, SecretError) as exc:
+        _log.warning("cannot read secret %r from workspace store: %s", name, exc)
         return None
 
 

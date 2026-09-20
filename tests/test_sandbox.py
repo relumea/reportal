@@ -107,6 +107,20 @@ class TestGuards:
         monkeypatch.delenv(sandbox.ENABLED_ENV, raising=False)
         assert sandbox.enabled() is True
 
+    def test_an_unreadable_workspace_config_logs_before_falling_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv(sandbox.ENABLED_ENV, raising=False)
+        (tmp_path / "reportal.toml").write_text("this is not [toml\n")
+        monkeypatch.chdir(tmp_path)
+
+        with caplog.at_level("WARNING", logger="reportal.sandbox"):
+            assert sandbox.enabled() is False
+
+        assert any(
+            "sandbox.enabled falls back to off" in record.message for record in caplog.records
+        )
+
     def test_the_caps_are_bounded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         caps = sandbox.requested_caps(timeout=3, memory_mb=128)
 

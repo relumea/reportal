@@ -300,6 +300,20 @@ class TestMatchBinary:
             for match in store.list_matches(conn, function_id):
                 assert match["candidate_name"] != "b2"
 
+    def test_source_without_text_keeps_prior_matches(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        _run(conn, ids["a"])
+        before = store.list_matches(conn, ids["a1"])
+        assert before
+
+        def blank_source(function: dict[str, Any]) -> str | None:
+            if function["name"] == "a1":
+                return None
+            return f"asm:{function['name']}"
+
+        _run(conn, ids["a"], disassembler=blank_source)
+        assert store.list_matches(conn, ids["a1"]) == before
+
     def test_scorer_none_without_extra_raises(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -383,7 +397,11 @@ class TestCachedDisassembler:
         assert fake_engine.calls == []
 
     def test_engine_error_returns_none(
-        self, conn: sqlite3.Connection, fake_engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+        self,
+        conn: sqlite3.Connection,
+        fake_engine: FakeEngine,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         ids = _seed(conn)
         store.set_rebrew_context(conn, ids["a"], "/projects/a")
@@ -394,8 +412,10 @@ class TestCachedDisassembler:
         monkeypatch.setattr(fake_engine, "disassemble", boom)
         function = store.get_function(conn, ids["a1"])
         assert function is not None
-        assert matching.cached_disassembler(conn, fake_engine)(function) is None
+        with caplog.at_level("WARNING", logger="reportal.matching"):
+            assert matching.cached_disassembler(conn, fake_engine)(function) is None
         assert store.get_disasm(conn, ids["a1"]) is None
+        assert any("match disasm failed" in record.message for record in caplog.records)
 
 
 # Real listings for the equivalence check, one per seeded function name.  They

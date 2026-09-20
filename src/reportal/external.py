@@ -41,6 +41,7 @@ is skipped with a warning, and a duplicate name is a :class:`RegistryError`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -53,6 +54,8 @@ import httpx2 as httpx
 
 from reportal import journal, plugins, secret_store, store
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
+
+_log = logging.getLogger(__name__)
 
 # Source kinds.  The kind tells a caller what the source can do: an `offline`
 # one reads stored rows, a `remote` one makes a request that has to be enabled.
@@ -224,7 +227,15 @@ def _workspace_table() -> dict[str, Any]:
     try:
         with marker.open("rb") as handle:
             document = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Readers fall back to defaults on a bad file (see settings.problems);
+        # without a log that fallback silently disables workspace remote sources.
+        _log.warning(
+            "cannot read %s for [%s]; remote sources fall back to off: %s",
+            marker,
+            CONFIG_TABLE,
+            exc,
+        )
         return {}
     table = document.get(CONFIG_TABLE)
     return table if isinstance(table, dict) else {}

@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import math
 import os
 import re
@@ -60,6 +61,8 @@ import httpx2
 from openai import OpenAI, OpenAIError
 
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
+
+_log = logging.getLogger(__name__)
 
 # Environment overrides, checked before the workspace reportal.toml table.
 ENDPOINT_ENV = "REPORTAL_LLM_ENDPOINT"
@@ -213,8 +216,12 @@ def _report_charge(task: str, messages: list[dict[str, Any]]) -> None:
         content = message.get("content", "")
         if isinstance(content, str):
             size += len(content)
-    with contextlib.suppress(Exception):
+    try:
         sink(task, math.ceil(size / CHARS_PER_TOKEN))
+    except Exception as exc:
+        # A broken meter must not fail a successful completion, but a silent
+        # miss leaves a tenant uncharged with no operator signal.
+        _log.warning("llm charge sink failed task=%s: %s", task, exc)
 
 
 def _report_usage(completion: Any, model: str) -> None:
@@ -234,8 +241,10 @@ def _report_usage(completion: Any, model: str) -> None:
     output = getattr(usage, "completion_tokens", None)
     if not isinstance(prompt, int) or not isinstance(output, int):
         return
-    with contextlib.suppress(Exception):
+    try:
         sink(prompt, output, model)
+    except Exception as exc:
+        _log.warning("llm usage sink failed model=%s: %s", model, exc)
 
 
 # Kind a type suggestion carries when the model omits it, and the confidence a

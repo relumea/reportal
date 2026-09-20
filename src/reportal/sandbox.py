@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import shutil
 import signal
@@ -49,6 +50,8 @@ from typing import Any
 
 from reportal import journal, store
 from reportal._paths import MARKER, WorkspaceNotFound, binaries_dir, project_root
+
+_log = logging.getLogger(__name__)
 
 # The run table, its statuses, and the execution surface's error names.
 TABLE = "sandbox_runs"
@@ -211,7 +214,15 @@ def _workspace_config() -> dict[str, Any]:
     try:
         with marker.open("rb") as handle:
             document = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Readers fall back to defaults on a bad file (see settings.problems);
+        # without a log that fallback silently disables workspace detonation.
+        _log.warning(
+            "cannot read %s for [%s]; sandbox.enabled falls back to off: %s",
+            marker,
+            CONFIG_TABLE,
+            exc,
+        )
         return {}
     table = document.get(CONFIG_TABLE)
     return table if isinstance(table, dict) else {}

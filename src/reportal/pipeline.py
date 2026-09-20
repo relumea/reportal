@@ -23,6 +23,7 @@ works from a later process.
 
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 import threading
@@ -62,6 +63,8 @@ from reportal.effects import (
     apply_descriptor,
     describe,
 )
+
+_log = logging.getLogger(__name__)
 
 # Names a component declares in ``requires``/``provides``.  The ``SEED_`` names
 # are bound by the runner before any component runs; the others are written by
@@ -449,9 +452,20 @@ def _skip_reason(
 def configured_disabled() -> frozenset[str]:
     """Component names the workspace ``reportal.toml`` ``[pipeline] disabled`` lists."""
     try:
-        with (project_root() / MARKER).open("rb") as handle:
+        marker = project_root() / MARKER
+        with marker.open("rb") as handle:
             document = tomllib.load(handle)
-    except (WorkspaceNotFound, OSError, tomllib.TOMLDecodeError):
+    except WorkspaceNotFound:
+        return frozenset()
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Readers fall back to an empty disabled set on a bad file; without a
+        # log that fallback silently re-enables every component the operator
+        # meant to turn off.
+        _log.warning(
+            "cannot read %s for [pipeline]; disabled components fall back to none: %s",
+            marker,
+            exc,
+        )
         return frozenset()
     table = document.get("pipeline")
     if not isinstance(table, dict):

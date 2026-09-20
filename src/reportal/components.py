@@ -35,6 +35,7 @@ already in flight: a caller holding a registry snapshot or a live
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 import threading
 from collections.abc import Callable, Iterable, Mapping
@@ -44,6 +45,8 @@ from typing import Any
 
 from reportal import plugins
 from reportal.plugins import RegistryError as RegistryError
+
+_log = logging.getLogger(__name__)
 
 # Entry-point group third-party components register in.
 COMPONENT_ENTRY_POINT_GROUP = "reportal.components"
@@ -309,10 +312,16 @@ class Context:
                 del self._effects[index]
                 try:
                     effect.inverse()
-                except Exception:
+                except Exception as exc:
                     # The binding is already taken off the journal, so a
                     # failing restore cannot be retried by a second take; the
                     # caller reports the miss instead of claiming a restore.
+                    _log.warning(
+                        "binding restore failed change=%s name=%s: %s",
+                        change,
+                        name,
+                        exc,
+                    )
                     return False
                 return True
         return False

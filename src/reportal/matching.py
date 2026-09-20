@@ -42,6 +42,7 @@ Jaccard floor proves nothing.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 import sqlite3
@@ -50,6 +51,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from reportal import engines, journal, similarity, store
+
+_log = logging.getLogger(__name__)
 
 # Default similarity floor, confidence floor, self-candidate permission and
 # candidate cap, mirrored by the CLI, the API and the MCP tool.  The defaults
@@ -547,7 +550,8 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
 
     A function without a rebrew context, or whose engine call fails, yields
     None instead of aborting the run: one unresolvable function must not cost
-    the whole corpus its matches.
+    the whole corpus its matches. An engine failure is logged so the skip is
+    visible; :func:`match_binary` leaves that function's prior rows alone.
     """
 
     def disassemble(function: dict[str, Any]) -> str | None:
@@ -561,7 +565,13 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
         extent_size = int(function["size"])
         try:
             text = engine.disassemble(project_dir, int(function["va"]), extent_size)
-        except engines.EngineError:
+        except engines.EngineError as exc:
+            _log.warning(
+                "match disasm failed function_id=%s va=%s: %s",
+                function_id,
+                function.get("va"),
+                exc,
+            )
             return None
         store.set_disasm(conn, function_id, text, extent_size=extent_size, project_dir=project_dir)
         return text
@@ -641,7 +651,9 @@ def match_binary(
     Writes at most ``settings.top`` candidates per source function whose
     similarity clears ``settings.min_similarity`` and whose softmax confidence
     clears ``settings.min_confidence``, replacing that function's previous
-    rows.  The candidate corpus is the whole register unless the settings name
+    rows when a listing is available.  A source with no listing is left alone
+    so a missing project or engine failure cannot wipe earlier matches.  The
+    candidate corpus is the whole register unless the settings name
     binaries, collections, platforms or architectures; the binary's own
     functions are candidates only while ``settings.include_self``, and the
     source function is never its own candidate.  Every recorded row carries the
@@ -719,15 +731,17 @@ def match_binary(
     total = len(sources)
     for index, source in enumerate(sources, start=1):
         source_id = int(source["id"])
-        # One transaction per source: clear plus its replacement edges, so a
-        # mid-run crash leaves prior sources durable without a fsync per edge.
-        store.clear_matches_for(conn, source_id, commit=False)
         source_text = texts.get(source_id)
         if not source_text:
-            conn.commit()
+            # No listing means this source cannot be rescored. Leave its
+            # previous rows alone: clearing them would read as "no matches"
+            # when the real cause was a missing project or an engine failure.
             if progress is not None:
                 progress(index, total)
             continue
+        # One transaction per source: clear plus its replacement edges, so a
+        # mid-run crash leaves prior sources durable without a fsync per edge.
+        store.clear_matches_for(conn, source_id, commit=False)
         scored: list[tuple[float, int]] = []
         for candidate_id in candidate_ids:
             if candidate_id == source_id:

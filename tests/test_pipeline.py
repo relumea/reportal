@@ -1284,6 +1284,22 @@ class TestConfiguredDisabled:
         monkeypatch.setattr(pipeline, "project_root", lambda: tmp_path)
         assert pipeline.configured_disabled() == frozenset()
 
+    def test_an_unreadable_config_logs_before_falling_back(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        seed_portal(tmp_path, monkeypatch)
+        (tmp_path / "reportal.toml").write_text("this is not [toml\n", encoding="utf-8")
+        monkeypatch.setattr(pipeline, "project_root", lambda: tmp_path)
+        with caplog.at_level("WARNING", logger="reportal.pipeline"):
+            assert pipeline.configured_disabled() == frozenset()
+        assert any(
+            "disabled components fall back to none" in record.message for record in caplog.records
+        )
+
 
 def _provider(name: str, *, requires: set[str] | None = None, provides: set[str]) -> Component:
     """A component whose effect binds every name it provides."""
