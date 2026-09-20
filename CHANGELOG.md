@@ -113,6 +113,8 @@ view renders it from here.
   Show Difference.
 - Search binary and collection hits show their stored `created_at`.
 - Search collection hits show `visibility` (`public` or `team`).
+- Search query type SHA-256 Hash matches the hosted toggle.
+- Function code toggle reads Control Flow.
 - Function header signature hover shows return, parameters and convention.
   Named types in that hover link the type list.
 - Diff copies each side's name and transfers the candidate's name,

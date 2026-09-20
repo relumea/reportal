@@ -1981,7 +1981,7 @@ pre.code {
 
 /* ── Control-flow graph ───────────────────────────────────────────── */
 
-/* The Disassembly / Control flow toggle: two toggle buttons that read as one
+/* The Disassembly / Control Flow toggle: two toggle buttons that read as one
    segmented control, with the active view on the primary fill. */
 .code-view-toggle {
   display: inline-flex;

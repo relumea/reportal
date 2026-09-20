@@ -131,7 +131,7 @@ function PlanCards({
             </ul>
             {canBuy ? (
               <Button onClick={() => onChoose(plan.id)} disabled={busy !== ""}>
-                {busy === plan.id ? "Starting..." : plan.trial_days > 0 ? "Start trial" : "Choose"}
+                {busy === plan.id ? "Starting..." : plan.trial_days > 0 ? "Start trial" : "Choose plan"}
               </Button>
             ) : null}
           </article>

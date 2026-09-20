@@ -91,7 +91,7 @@ test("Tab cycles the query type and keeps the focus trapped", async ({ page }) =
   await expect(all).toHaveAttribute("aria-selected", "true");
 
   await page.keyboard.press("Tab");
-  await expect(page.getByRole("tab", { name: "SHA-256" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "SHA-256 Hash" })).toHaveAttribute("aria-selected", "true");
   expect(await page.evaluate<boolean>(INPUT_FOCUSED)).toBe(true);
 
   await page.keyboard.press("Shift+Tab");
@@ -99,11 +99,11 @@ test("Tab cycles the query type and keeps the focus trapped", async ({ page }) =
   expect(await page.evaluate<boolean>(INPUT_FOCUSED)).toBe(true);
 });
 
-test("a 64-character hex paste selects the SHA-256 query type", async ({ page }) => {
+test("a 64-character hex paste selects the SHA-256 Hash query type", async ({ page }) => {
   await page.goto("/#/binaries");
   await openModal(page);
   await page.keyboard.insertText("a".repeat(64));
-  await expect(page.getByRole("tab", { name: "SHA-256" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "SHA-256 Hash" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("the arrow keys move the highlight and the tag query narrows the results", async ({ page }) => {

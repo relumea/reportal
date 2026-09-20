@@ -149,7 +149,7 @@ function DisasmPanel({
   );
 }
 
-/** The Disassembly / Control flow toggle both code panels carry. */
+/** The Disassembly / Control Flow toggle both code panels carry. */
 function CodeViewToggle({
   view,
   onChange,

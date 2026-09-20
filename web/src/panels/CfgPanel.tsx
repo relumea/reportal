@@ -195,7 +195,7 @@ export function CfgPanel({
 
   return (
     <Panel
-      title="Control flow"
+      title="Control Flow"
       subtitle="Basic blocks in address order with the edges the engine decodes from the target binary; a back edge closes a loop."
       actions={
         <Toolbar>

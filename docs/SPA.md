@@ -121,7 +121,7 @@ The shell's own bindings (`src/App.tsx`) are the sidebar collapse
 per-tab view history on `Alt+Left`/`Alt+Right` and `{`/`}` (`HISTORY_STORAGE_KEY`
 in `sessionStorage`, fifty entries), `[`/`]` section cycling
 (`keys.cycleViewSection`) and `Space` flipping a function's Disassembly and
-Control flow, or a diff's Disassembly and AI decompilation
+Control Flow, or a diff's Disassembly and AI decompilation
 (`toggleFunctionCodeView`, which the mounted `CodeSection` or `DiffView`
 publishes).  The router's own back and forward keep working beside the in-app
 history, and `stepHistory` marks its navigation so recording does not push the
@@ -165,13 +165,26 @@ renders one keyboard-navigable row.  The modal traps focus while open (Tab
 cycles the query type rather than leaving the dialog, and a `focusin` listener
 pulls focus back), moves a roving highlight with the arrow keys, opens the
 highlighted hit with Enter or a click and returns focus to where it was on
-Escape; a 64-character hex query selects the SHA-256 type.  A binary hit
+Escape; a 64-character hex query selects the SHA-256 Hash type.  A binary hit
 shows a 12-character SHA-256 with a copy control and the stored
 `created_at`.  A collection hit shows its member count, `visibility`
 (`public` or `team`) and `created_at`.
 The Search view
 keeps its three-group tables, which is why the two surfaces share the hit
 model and helpers rather than a single component.
+
+### Conversion copy
+
+Two UX-psychology rules from the uxpeak video "The UX Psychology Behind Apps
+People Cannot Stop Using" (`https://www.youtube.com/watch?v=2TlIg3VokY8`)
+shape the wording, applied without dark patterns: an empty state never
+starts the reader at zero but names what is already listed and the one
+action that moves it (MatchesView's no-matches hint, AutoView's no-run
+hint), and a destructive confirm names what is at stake rather than
+offering an easy out (AutoView's revert and recover, PipelinePanel's
+revert, JournalView's entry and action reverts state the restore they
+perform).  No urgency, scarcity or fake progress is used: a meter with no
+stored reading renders the explicit missing state, never a number.
 
 Below 900px the shell is one column: the sidebar becomes a sticky top bar and
 its nav keeps every group label and divider in a single horizontally scrollable
@@ -384,7 +397,7 @@ the count: one row per scan naming its kind, its status, the inputs it ran with
 result itself left to the panel that shows that scan, through the table
 `panels/ScansPanel.tsx` shares with the analyses log drawer); unpacked files (the unpack panel, see
 below); strings (loaded on demand,
-a client-side filter whose placeholder states `Search N strings` with
+a client-side filter whose placeholder states `Search N strings...` with
 the filtered-of-total count, capped at
 `MAX_STRINGS_SHOWN` with the true total stated, server-side `sort`/`order`
 controls over `value` or `length`, and each row's VA and text linking to the
@@ -525,9 +538,9 @@ toggle revealing the function's signature-edit history: one row per recorded
 version with its id, source, actor and timestamp, the prototype that version
 replaced, `created this signature` for the row whose previous state was nothing,
 and a Revert that restores it and refreshes the signature panel); the code panel
-(auto-loaded, a Disassembly / Control flow toggle; Disassembly renders the
+(auto-loaded, a Disassembly / Control Flow toggle; Disassembly renders the
 listing with the nasm/hex toggle wired to the `format` query and a Reload, and
-Control flow renders the engine's basic-block graph through
+Control Flow renders the engine's basic-block graph through
 `GET /api/functions/<id>/cfg` as an address-ordered block list, each block
 naming its address, byte size, instruction count and first/last instruction
 text, each outgoing edge a jump control that scrolls to and focuses the target
@@ -1233,7 +1246,7 @@ and asserts each view's markers.  After the route loop it opens the global searc
 the documented `⌘K` shortcut (`check_search_modal`), waits for React to mount
 the dialog, types a query into the controlled input and asserts a result row.
 It then switches the seeded loop function's code panel to its control-flow view
-(`check_cfg_view`), which clicks the Disassembly / Control flow toggle, waits
+(`check_cfg_view`), which clicks the Disassembly / Control Flow toggle, waits
 for the graph's markers (the panel title, the block summary and a labelled back
 edge) and activates an edge's jump control to assert the focus landed on the
 block it names; the loop function is pinned by VA
@@ -1288,7 +1301,7 @@ with its focus return, the rendered set matching the registered one, no binding
 firing inside a text field, `/` focusing the view's filter box, `j`/`k` walking
 a table's rows and the `g` prefix jumping to a view), the threat report's
 software-type badge and score meter with its MITRE link, the function page's
-control-flow view (the Disassembly / Control flow toggle swapping the panel,
+control-flow view (the Disassembly / Control Flow toggle swapping the panel,
 a block's address, byte size, instruction count and labelled instruction text,
 an edge's labelled jump control moving focus to its target block), the function
 page's cross-references panel (its on-demand engine scan settling on the

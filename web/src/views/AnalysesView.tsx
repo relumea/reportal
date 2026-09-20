@@ -184,7 +184,7 @@ function Lifecycle({ analysisId, onChanged }: { analysisId: number; onChanged: (
       ) : null}
       <Toolbar>
         <Field label="Log entry">
-          <input placeholder="what you did" value={note} onChange={(event) => setNote(event.target.value)} />
+          <input placeholder="short note for the log" value={note} onChange={(event) => setNote(event.target.value)} />
         </Field>
         <Field label="Severity">
           <select value={severity} onChange={(event) => setSeverity(event.target.value)}>
@@ -643,7 +643,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 navigate({ pathname: ANALYSES_PATH, search: "" });
               }}
             >
-              Clear
+              Clear filters
             </Button>
           ) : null}
         </Toolbar>

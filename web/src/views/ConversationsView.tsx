@@ -298,12 +298,17 @@ export function ConversationsView(): ReactNode {
   const [busy, setBusy] = useState("");
 
   const create = async (): Promise<void> => {
+    const id = Number(scopeId);
+    if (!Number.isFinite(id) || id <= 0) {
+      setActionError(new Error(`Enter a positive ${scopeKind} id.`));
+      return;
+    }
     setActionError(null);
     setBusy("create");
     try {
       const conversation = await api<Conversation>("/conversations", {
         method: "POST",
-        json: { scope_kind: scopeKind, scope_id: Number(scopeId), title },
+        json: { scope_kind: scopeKind, scope_id: id, title },
       });
       setScopeId("");
       setTitle("");
@@ -341,7 +346,7 @@ export function ConversationsView(): ReactNode {
           disabled={!scopeId.trim()}
           onClick={() => void create()}
         >
-          Create
+          Create conversation
         </Button>
       }
     >

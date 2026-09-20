@@ -734,8 +734,8 @@ def deploy_units_command(
         if json_output:
             typer.echo(json.dumps({"directory": str(write), "units": written}))
         else:
-            for name, target in written.items():
-                console.print(f"{name}: {target}")
+            for name, path_str in written.items():
+                console.print(f"{name}: {path_str}")
         return
     directory = doctor.deploy_units_dir()
     assert directory is not None

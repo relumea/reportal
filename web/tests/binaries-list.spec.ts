@@ -36,10 +36,10 @@ test("the register filters by name, hash and tag, and orders its rows", async ({
   await expect(rows).toHaveCount(1);
   await expect(panel.getByText(/^1 of \d+ binaries$/)).toBeVisible();
 
-  // Clear puts the whole register back.  The select's own value is waited for,
+  // Clear filters puts the whole register back.  The select's own value is waited for,
   // because the next control writes the hash from the render it is in: acting
   // while the cleared filters are still on screen would keep the old one.
-  await panel.getByRole("button", { name: "Clear" }).click();
+  await panel.getByRole("button", { name: "Clear filters" }).click();
   await expect(page).toHaveURL(/#\/binaries$/);
   await expect(panel.getByRole("combobox", { name: "Tag", exact: true })).toHaveValue("");
   await expect(rows.filter({ hasText: "wide.exe" })).toHaveCount(1);
@@ -57,7 +57,7 @@ test("the register filters by name, hash and tag, and orders its rows", async ({
   await expect(rows.first().locator(".copy-row .mono")).toHaveText(/…$/);
 
   // The tag filter, built from the tags the register holds.
-  await panel.getByRole("button", { name: "Clear" }).click();
+  await panel.getByRole("button", { name: "Clear filters" }).click();
   await expect(panel.getByRole("combobox", { name: "Tag", exact: true })).toHaveValue("");
   await panel
     .getByRole("combobox", { name: "Tag", exact: true })
@@ -66,7 +66,7 @@ test("the register filters by name, hash and tag, and orders its rows", async ({
   await expect(rows).toHaveCount(1);
 
   // The order: what the table draws is the order the route applied.
-  await panel.getByRole("button", { name: "Clear" }).click();
+  await panel.getByRole("button", { name: "Clear filters" }).click();
   await expect(panel.getByRole("combobox", { name: "Tag", exact: true })).toHaveValue("");
   await panel.getByRole("combobox", { name: "Order", exact: true }).selectOption("name-desc");
   await expect(page).toHaveURL(/order=name-desc/);

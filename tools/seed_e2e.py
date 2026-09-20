@@ -181,9 +181,7 @@ def seed(workspace: Path) -> dict[str, object]:
         # Every stored type name, not just the ones seeded here: the workspace
         # builder stores its own, and the panel lists all of them.
         stored_types = [row["name"] for row in store.list_data_types(conn, int(ids["binary_id"]))]
-        signatures.set_parameter(
-            conn, int(ids["function_id"]), index=0, type_text="WIN_DWORD"
-        )
+        signatures.set_parameter(conn, int(ids["function_id"]), index=0, type_text="WIN_DWORD")
         large_binary_id = _seed_large_binary(conn)
         stale_run = _seed_stale_run(conn, large_binary_id)
         team = auth.create_team(conn, name=TEAM_NAME)

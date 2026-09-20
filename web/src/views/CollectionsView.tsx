@@ -94,13 +94,19 @@ function CollectionDetailPanel({
       }),
     );
 
-  const addMember = (): Promise<void> =>
-    run("add", () =>
+  const addMember = (): Promise<void> => {
+    const id = Number(binaryId);
+    if (!Number.isFinite(id) || id <= 0) {
+      setActionError(new Error("Enter a positive binary id."));
+      return Promise.resolve();
+    }
+    return run("add", () =>
       api(`/collections/${collectionId}/binaries`, {
         method: "POST",
-        json: { binary_id: Number(binaryId) },
+        json: { binary_id: id },
       }),
     ).then(() => setBinaryId(""));
+  };
 
   const removeMember = (id: number): Promise<void> =>
     run(`remove-${id}`, () =>

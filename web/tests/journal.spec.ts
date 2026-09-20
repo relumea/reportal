@@ -69,10 +69,10 @@ test("the journal filters by actor and by page size", async ({ page }) => {
   const shown = await rows.locator("td:nth-child(5)").allTextContents();
   expect([...new Set(shown.map((text) => text.trim()))]).toEqual([actor]);
 
-  // The page size is a filter too, and Clear resets both.
+  // The page size is a filter too, and Clear filters resets both.
   await panel.getByRole("spinbutton", { name: /^Show/ }).fill("1");
   await expect(page).toHaveURL(/limit=1/);
   await expect(rows).toHaveCount(1);
-  await panel.getByRole("button", { name: "Clear" }).click();
+  await panel.getByRole("button", { name: "Clear filters" }).click();
   await expect(page).toHaveURL(/#\/journal$/);
 });

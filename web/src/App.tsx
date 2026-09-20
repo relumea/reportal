@@ -552,7 +552,7 @@ export function App(): ReactNode {
       registerShortcut({
         combo: "space",
         scope: "view",
-        description: "Toggle Disassembly and Control flow or AI decompilation",
+        description: "Toggle Disassembly and Control Flow or AI decompilation",
         handler: () => toggleFunctionCodeView(),
       }),
       registerShortcut({

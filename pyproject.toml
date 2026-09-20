@@ -166,17 +166,31 @@ extend-exclude = [".scratch", "docs"]
 
 [tool.ruff.lint]
 # Core groups (E/F/W/I/UP/B/SIM) plus correctness-oriented groups that stay
-# clean on this tree; every remaining rule is enforced (no blanket ignores).
-# ASYNC/LOG/FA/FLY/SLOT/PYI/INT/YTT/RSE are enabled because the tree already
-# passes them (RSE's two paren-on-raise hits were autofixed when added).
+# clean on this tree. ASYNC/LOG/FA/FLY/SLOT/PYI/INT/YTT/RSE/TD/FIX/ICN/RUF and
+# the listed PERF/S/PL* codes are enabled because the tree already passes them.
+# RUF ignores below are the subset that still fire; ignore stays empty for every
+# other selected group.
 select = [
     "E", "F", "W", "I", "UP", "B", "SIM",
-    "A", "DTZ", "G", "N", "PGH", "TID", "RUF006", "RUF100",
+    "A", "DTZ", "G", "N", "PGH", "TID", "RUF",
     "T10", "C4", "RET", "PIE", "ISC", "FURB", "T20",
     "ASYNC", "LOG", "FA", "FLY", "SLOT", "PYI", "INT", "YTT", "RSE", "PLE",
-    "PLW0711", "PLW1508", "PLW1510",
+    "TD", "FIX", "ICN",
+    "PERF102", "PERF203", "PERF403",
+    "S102", "S103", "S107", "S110", "S112",
+    "S301", "S302", "S306", "S307", "S308", "S310", "S312", "S323", "S324",
+    "S501", "S506", "S507", "S508", "S509",
+    "S601", "S602", "S604", "S605", "S606", "S607", "S609", "S612", "S701",
+    "PLC0208",
+    "PLR0133", "PLR0206", "PLR0402", "PLR1711", "PLR1722", "PLR5501",
+    "PLW0120", "PLW0127", "PLW0128", "PLW0129", "PLW0131", "PLW0177",
+    "PLW0211", "PLW0245", "PLW0406", "PLW0602", "PLW0604", "PLW0642",
+    "PLW0711", "PLW1501", "PLW1508", "PLW1510", "PLW1641", "PLW2101",
+    "PLW3301",
 ]
-ignore = []
+ignore = [
+    "RUF001", "RUF005", "RUF010", "RUF012", "RUF015", "RUF021", "RUF036", "RUF059",
+]
 
 [tool.ruff.lint.flake8-bugbear]
 # typer's idiom is `param = typer.Option(...)` in signature defaults, and
@@ -194,10 +208,11 @@ extend-immutable-calls = [
 [tool.mypy]
 # The project is annotated by convention but was never type-checked, so this is
 # a graduated set rather than `strict`: it catches every untyped def and body,
-# incomplete def, stale ignore, redundant cast, implicit Optional, non-
-# overlapping comparison, `Any` return and bare generic.  Plain `mypy` uses
-# this config; the `--strict` tail it does not cover is counted in AGENTS.md
-# and is a documented follow-up, not a claim of compliance.
+# incomplete def, untyped decorator, unimported Any, stale ignore, redundant
+# cast, implicit Optional, non-overlapping comparison, `Any` return and bare
+# generic.  Plain `mypy` uses this config; the `--strict` tail it does not
+# cover is counted in AGENTS.md and is a documented follow-up, not a claim of
+# compliance.
 python_version = "3.13"
 files = ["src/reportal", "tests"]
 # `tools/` is not part of the type-checked tree; `tests/test_smoke_seed.py`
@@ -207,6 +222,8 @@ follow_imports = "silent"
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
+disallow_untyped_decorators = true
+disallow_any_unimported = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 no_implicit_optional = true

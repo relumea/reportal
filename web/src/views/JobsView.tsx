@@ -7,7 +7,7 @@
 // never runs an operation itself, so what a client sees here is what the
 // server did.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
@@ -99,6 +99,11 @@ export function JobsView({
   const [minSimilarity, setMinSimilarity] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
+  // Draft the binary filter so typing does not re-fetch on every keystroke.
+  const [binaryFilterDraft, setBinaryFilterDraft] = useState(filters.binaryId);
+  useEffect(() => {
+    setBinaryFilterDraft(filters.binaryId);
+  }, [filters.binaryId]);
   const path = listPath(filters);
   const { data, error, reload } = useAsync(
     () => api<JobsPayload>(path),
@@ -134,7 +139,14 @@ export function JobsView({
 
   const submit = (): void => {
     const id = Number(binaryId);
-    if (!kind || !Number.isFinite(id) || id <= 0) return;
+    if (!kind) {
+      setActionError(new Error("Choose an operation first."));
+      return;
+    }
+    if (!Number.isFinite(id) || id <= 0) {
+      setActionError(new Error("Enter a positive binary id."));
+      return;
+    }
     const params: Record<string, unknown> = domain ? { domain } : {};
     if (kind === "match") {
       const floor = Number(minSimilarity);
@@ -183,12 +195,15 @@ export function JobsView({
             ))}
           </select>
         </Field>
-        <Field label="Binary filter" hint="job's binary id">
+        <Field label="Binary filter" hint="job's binary id; Enter applies">
           <input
             inputMode="numeric"
             placeholder="binary id"
-            value={filters.binaryId}
-            onChange={(event) => apply({ binaryId: event.target.value })}
+            value={binaryFilterDraft}
+            onChange={(event) => setBinaryFilterDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") apply({ binaryId: binaryFilterDraft });
+            }}
           />
         </Field>
         <Field label="Show" hint="how many jobs">
@@ -202,7 +217,7 @@ export function JobsView({
         </Field>
         {filtered ? (
           <Button tone="ghost" onClick={() => navigate({ pathname: "/jobs", search: "" })}>
-            Clear
+            Clear filters
           </Button>
         ) : null}
       </Toolbar>
@@ -242,7 +257,7 @@ export function JobsView({
           </Field>
         ) : null}
         <Button tone="primary" pending={busy} disabled={!kind || !binaryId} onClick={submit}>
-          Queue
+          Queue job
         </Button>
       </Toolbar>
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}

@@ -1165,7 +1165,7 @@ export function BinariesView({
               navigate({ pathname: "/binaries", search: "" });
             }}
           >
-            Clear
+            Clear filters
           </Button>
         </Toolbar>
         {error ? <ErrorNote error={error} onRetry={reload} /> : null}

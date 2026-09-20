@@ -32,7 +32,14 @@ function UpgradeForm({ models }: { models: ModelEntry[] }): ReactNode {
 
   const submit = (): void => {
     const id = Number(analysisId);
-    if (!model || !Number.isFinite(id) || id <= 0) return;
+    if (!model) {
+      setError(new Error("Choose a model first."));
+      return;
+    }
+    if (!Number.isFinite(id) || id <= 0) {
+      setError(new Error("Enter a positive analysis id."));
+      return;
+    }
     setBusy(true);
     setError(null);
     setResult(null);
@@ -76,7 +83,7 @@ function UpgradeForm({ models }: { models: ModelEntry[] }): ReactNode {
           />
         </Field>
         <Button tone="primary" pending={busy} disabled={!model || !analysisId} onClick={submit}>
-          Upgrade
+          Upgrade analysis
         </Button>
       </Toolbar>
       {error ? <ErrorNote error={error} onRetry={submit} /> : null}

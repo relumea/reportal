@@ -63,7 +63,10 @@ export function ExternalView(): ReactNode {
 
   const pull = (): void => {
     const id = Number(analysisId);
-    if (!Number.isFinite(id) || id <= 0) return;
+    if (!Number.isFinite(id) || id <= 0) {
+      setError(new Error("Enter a positive analysis id."));
+      return;
+    }
     setBusy(true);
     setError(null);
     setReport(null);
@@ -80,7 +83,10 @@ export function ExternalView(): ReactNode {
 
   const read = (): void => {
     const id = Number(analysisId);
-    if (!Number.isFinite(id) || id <= 0) return;
+    if (!Number.isFinite(id) || id <= 0) {
+      setError(new Error("Enter a positive analysis id."));
+      return;
+    }
     setBusy(true);
     setError(null);
     api<ExternalReport>(`/analyses/${id}/external/${encodeURIComponent(source)}`)

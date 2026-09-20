@@ -462,7 +462,7 @@ def render() -> str:
 
 <section id="features"><div class="wrap">
   <h2>Capabilities</h2>
-  <p class="lede">The same surfaces the workbench uses: binaries, matches, triage and the agent tools.</p>
+  <p class="lede">Workbench surfaces: binaries, matches, triage and agent tools.</p>
   <div class="features">{features}</div>
 </div></section>
 

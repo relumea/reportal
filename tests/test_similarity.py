@@ -45,8 +45,7 @@ class TestConfidenceScores:
 class TestAvailable:
     def test_matches_whether_the_probe_modules_are_importable(self) -> None:
         expected = all(
-            importlib.util.find_spec(name) is not None
-            for name in ("rapidfuzz", "resembl.scoring")
+            importlib.util.find_spec(name) is not None for name in ("rapidfuzz", "resembl.scoring")
         )
         assert similarity.available() is expected
 

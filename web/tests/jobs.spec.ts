@@ -22,11 +22,13 @@ test("a queued job is listed and the filters narrow the queue", async ({ page })
   await panel
     .getByRole("textbox", { name: "Binary", exact: true })
     .fill(String(state.ids.binary_id));
-  await panel.getByRole("button", { name: "Queue", exact: true }).click();
+  await panel.getByRole("button", { name: "Queue job", exact: true }).click();
 
   // The binary filter narrows the queue to that job, and the view polls until
   // it is terminal, so the status it carries is read rather than assumed.
-  await panel.getByRole("textbox", { name: "Binary filter" }).fill(String(state.ids.binary_id));
+  const binaryFilter = panel.getByRole("textbox", { name: "Binary filter" });
+  await binaryFilter.fill(String(state.ids.binary_id));
+  await binaryFilter.press("Enter");
   await expect(page).toHaveURL(new RegExp(`binary_id=${state.ids.binary_id}`));
   await expect(rows.first()).toBeVisible();
   await expect
@@ -58,8 +60,8 @@ test("a queued job is listed and the filters narrow the queue", async ({ page })
   await expect(rows).toHaveCount(0);
   await expect(panel.getByText("0 shown of 0")).toBeVisible();
 
-  // Clear puts the whole queue back, and the Show control is a filter too.
-  await panel.getByRole("button", { name: "Clear" }).click();
+  // Clear filters puts the whole queue back, and the Show control is a filter too.
+  await panel.getByRole("button", { name: "Clear filters" }).click();
   await expect(page).toHaveURL(/#\/jobs$/);
   await panel.getByRole("spinbutton", { name: "Show" }).fill("5");
   await expect(page).toHaveURL(/limit=5/);
@@ -78,7 +80,7 @@ test("the queue form offers the match settings the kind takes", async ({ page })
 
   await expect(panel.getByRole("textbox", { name: "Similarity floor" })).toBeVisible();
   // A match run still needs the binary it matches.
-  await expect(panel.getByRole("button", { name: "Queue", exact: true })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "Queue job", exact: true })).toBeDisabled();
 });
 
 test("a running job keeps the table polling until it finishes", async ({ page }) => {

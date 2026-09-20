@@ -148,7 +148,7 @@ export function JournalView({
               })
             }
           >
-            Clear
+            Clear filters
           </Button>
         ) : null}
       </Toolbar>

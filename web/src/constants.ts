@@ -17,7 +17,7 @@ export type FunctionCodeView = (typeof FUNCTION_CODE_VIEWS)[number];
 export const DEFAULT_FUNCTION_CODE_VIEW: FunctionCodeView = "disassembly";
 export const FUNCTION_CODE_VIEW_LABELS: Record<FunctionCodeView, string> = {
   disassembly: "Disassembly",
-  cfg: "Control flow",
+  cfg: "Control Flow",
 };
 
 // Minimum confidence an Auto-unstrip run accepts; mirrors the API's
@@ -514,7 +514,7 @@ export const DATA_TYPE_KIND_TAGS: Record<DataTypeKind, string> = {
 export const SEARCH_KINDS = ["all", "sha256", "binary", "collection", "tag"] as const;
 export const SEARCH_KIND_LABELS: Record<SearchKind, string> = {
   all: "All",
-  sha256: "SHA-256",
+  sha256: "SHA-256 Hash",
   binary: "Binary",
   collection: "Collection",
   tag: "Tag",

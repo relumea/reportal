@@ -1,4 +1,4 @@
-// The function detail page's control-flow view: the Disassembly / Control flow
+// The function detail page's control-flow view: the Disassembly / Control Flow
 // toggle, the address-ordered block list with each block's address, size,
 // instruction count and first/last instruction text, and the per-block edge
 // list whose jump controls move focus to the target block.  The graph comes
@@ -17,8 +17,8 @@ async function openControlFlow(page: Page): Promise<Locator> {
   await page.goto(`/#/functions/${state.ids.function_id}`);
   const disassembly = panelByTitle(page, "Disassembly");
   await expect(disassembly.getByText("bits 32", { exact: false })).toBeVisible();
-  await disassembly.getByRole("button", { name: "Control flow", exact: true }).click();
-  const cfg = panelByTitle(page, "Control flow");
+  await disassembly.getByRole("button", { name: "Control Flow", exact: true }).click();
+  const cfg = panelByTitle(page, "Control Flow");
   await expect(cfg.locator(".cfg-block").first()).toBeVisible();
   return cfg;
 }
@@ -28,12 +28,12 @@ test("the toggle swaps the code panel between the listing and the graph", async 
   const disassembly = panelByTitle(page, "Disassembly");
   await expect(disassembly.getByText("bits 32", { exact: false })).toBeVisible();
 
-  const toggle = disassembly.getByRole("button", { name: "Control flow", exact: true });
+  const toggle = disassembly.getByRole("button", { name: "Control Flow", exact: true });
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await toggle.click();
 
   // The graph replaces the listing rather than stacking below it.
-  const cfg = panelByTitle(page, "Control flow");
+  const cfg = panelByTitle(page, "Control Flow");
   await expect(cfg.getByText(/\d+ basic blocks, \d+ edges?/)).toBeVisible();
   await expect(panelByTitle(page, "Disassembly")).toHaveCount(0);
 
