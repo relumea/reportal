@@ -347,6 +347,8 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
             {binary.format || NA}
           </Badge>
           <Badge mono>{binary.arch || NA}</Badge>
+          <Badge mono>{binary.language || NA}</Badge>
+          <Badge mono>{binary.compiler || NA}</Badge>
           <Badge mono>{binary.size.toLocaleString()} bytes</Badge>
           <Badge mono>{binary.function_count} functions</Badge>
           <Badge mono>

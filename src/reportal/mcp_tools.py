@@ -2751,8 +2751,6 @@ def _tool_refresh_flirt_sigsets(_arguments: dict[str, Any]) -> dict[str, Any]:
         )
     with contextlib.closing(_open()) as conn:
         result = flirt_sigs.refresh(conn, root)
-        if result["added"] or result["updated"] or result["pruned"]:
-            flirt_sigs.forget_matchers()
     return {"sigs_dir": str(root), **result}
 
 

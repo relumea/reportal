@@ -40,6 +40,7 @@ view renders it from here.
 - Binary details entry point links to the function at that VA, or the
   function list filtered to it.
 - Binary header and register show the stored `created_at`.
+- Binary header shows recovered language and compiler.
 - Composition analysis carries Open matching view, which opens Match /
   Diff for the first composition function (`#/matches?function=`).
 - Packer detection shows a per-section entropy strip; hover a cell for
@@ -68,6 +69,7 @@ view renders it from here.
 - Memory dump Enter jumps and clears; Esc dismisses without jumping.
 - Memory dump Esc clears the byte selection.
 - Memory paged dump copies a selection as ASCII.
+- Memory dump Ctrl+C copies the selection as hex.
 - Section file-offset cells open Memory at that offset.
 - Code listings (As C, prototypes, dumps) copy on click.
 - Clicking an Analyses row (not a control) opens that binary, or
@@ -141,6 +143,14 @@ view renders it from here.
   /api/flirt/sigsets`, `POST /api/flirt/sigsets/refresh` (indexes the checkout
   named by `REPORTAL_FLIRT_SIGS_DIR`, and only that path) and the
   `POST`/`GET /api/binaries/{id}/flirt` pair expose it.
+- FLIRT matching as a stored scan: `POST /api/binaries/{id}/flirt` writes the
+  reading into `scans` under kind `flirt` (journaled, and queued through the
+  `flirt` job kind), the CLI gains `flirt`, `flirt-refresh` and `flirt-apply`,
+  and the MCP registry gains `get_flirt_sigsets`, `refresh_flirt_sigsets`,
+  `get_flirt`, `run_flirt` and `apply_flirt`. `POST
+  /api/binaries/{id}/flirt/apply` promotes a matched symbol onto a function,
+  recording the rename with source `flirt`; it refuses (400 `manual-name`) a
+  function whose name a person authored.
 
 ### Performance
 

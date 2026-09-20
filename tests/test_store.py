@@ -263,10 +263,15 @@ class TestRebrewContext:
         function_id = store.add_function(conn, analysis_id=analysis_id, va=0x1000, size=16)
         store.set_rebrew_context(conn, binary_id, "/first")
         store.set_disasm(conn, function_id, "bits 32\n")
+        store.set_decompilation(conn, function_id, "void a(void) {}", "kuna")
+        store.set_ai_artifact(conn, function_id, "summary", {"text": "old"}, "test")
         store.set_rebrew_context(conn, binary_id, "/first")
         assert store.get_disasm(conn, function_id) == "bits 32\n"
+        assert store.get_decompilation(conn, function_id) is not None
         store.set_rebrew_context(conn, binary_id, "/second")
         assert store.get_disasm(conn, function_id) is None
+        assert store.get_decompilation(conn, function_id) is None
+        assert store.get_ai_artifact(conn, function_id, "summary") is None
 
     def test_unknown_binary_returns_none(self, conn: sqlite3.Connection) -> None:
         assert store.get_rebrew_context(conn, 999) is None
@@ -323,10 +328,16 @@ class TestFunctions:
             conn, analysis_id=analysis_id, va=0x1000, name="a", size=16
         )
         store.set_disasm(conn, function_id, "bits 32\n")
+        store.set_decompilation(conn, function_id, "void a(void) {}", "kuna")
+        store.set_ai_artifact(conn, function_id, "summary", {"text": "old"}, "test")
         store.upsert_function(conn, analysis_id=analysis_id, va=0x1000, name="a", size=16)
         assert store.get_disasm(conn, function_id) == "bits 32\n"
+        assert store.get_decompilation(conn, function_id) is not None
+        assert store.get_ai_artifact(conn, function_id, "summary") is not None
         store.upsert_function(conn, analysis_id=analysis_id, va=0x1000, name="a", size=32)
         assert store.get_disasm(conn, function_id) is None
+        assert store.get_decompilation(conn, function_id) is None
+        assert store.get_ai_artifact(conn, function_id, "summary") is None
 
     def test_list_by_binary(self, conn: sqlite3.Connection) -> None:
         _seed_function(conn)

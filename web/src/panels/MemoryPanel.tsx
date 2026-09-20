@@ -516,6 +516,7 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
                   setSelection(null);
                   setCopied("");
                 }}
+                onCopyHex={() => void copy("hex")}
               />
             </>
           )}
@@ -534,11 +535,13 @@ function PageRows({
   selection,
   onSelect,
   onClear,
+  onCopyHex,
 }: {
   page: MemoryPage;
   selection: Selection | null;
   onSelect: (address: number, extend: boolean) => void;
   onClear: () => void;
+  onCopyHex: () => void;
 }): ReactNode {
   return (
     <div
@@ -550,6 +553,13 @@ function PageRows({
         if (event.key === "Escape" && selection !== null) {
           event.preventDefault();
           onClear();
+        } else if (
+          (event.ctrlKey || event.metaKey) &&
+          event.key.toLowerCase() === "c" &&
+          selection !== null
+        ) {
+          event.preventDefault();
+          onCopyHex();
         }
       }}
     >
@@ -922,6 +932,13 @@ function ContinuousMode({
       setAnchor(null);
       setSelection(null);
       setCopied("");
+    } else if (
+      (event.ctrlKey || event.metaKey) &&
+      event.key.toLowerCase() === "c" &&
+      selection !== null
+    ) {
+      event.preventDefault();
+      void copy("hex");
     }
   };
 
@@ -1064,8 +1081,8 @@ function ContinuousMode({
       </div>
       <Muted>
         Press G to focus the address box, Tab to switch the offset and virtual columns, Enter
-        to jump and clear, Esc to dismiss without jumping, and Esc on the dump to
-        clear a selection. The
+        to jump and clear, Esc to dismiss without jumping, Esc on the dump to
+        clear a selection, and Ctrl+C to copy the selection as hex. The
         choice is remembered across sessions. Only the rows on screen are rendered and the bytes
         arrive {CONTINUOUS_WINDOW} at a time, so a large binary scrolls without loading whole.
       </Muted>

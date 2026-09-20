@@ -12497,8 +12497,6 @@ def flirt_refresh(
         _fail(f"set {flirt_sigs.SIGS_DIR_ENV} to a signature checkout", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         result = flirt_sigs.refresh(conn, root)
-        if result["added"] or result["updated"] or result["pruned"]:
-            flirt_sigs.forget_matchers()
     payload = {"sigs_dir": str(root), **result}
     if json_output:
         typer.echo(json.dumps(payload))

@@ -1183,8 +1183,9 @@ def set_rebrew_context(conn: sqlite3.Connection, binary_id: int, project_dir: st
     """Store the rebrew project directory backing *binary_id*, replacing any earlier one.
 
     A changed project directory is a different engine input for every function of
-    the binary, so the disassembly cache for those functions is dropped; a
-    write that keeps the same path leaves the cache alone.
+    the binary, so the disassembly cache for those functions is dropped together
+    with stored decompilations and AI artifacts that came from the previous
+    project; a write that keeps the same path leaves those alone.
     """
     previous = get_rebrew_context(conn, binary_id)
     conn.execute(
@@ -1195,6 +1196,21 @@ def set_rebrew_context(conn: sqlite3.Connection, binary_id: int, project_dir: st
     conn.commit()
     if previous is not None and previous != project_dir:
         clear_disasm_for_binary(conn, binary_id)
+        conn.execute(
+            "DELETE FROM decompilations WHERE function_id IN ("
+            " SELECT f.id FROM functions f"
+            " JOIN analyses a ON a.id = f.analysis_id"
+            " WHERE a.binary_id = ?)",
+            (binary_id,),
+        )
+        conn.execute(
+            "DELETE FROM ai_artifacts WHERE function_id IN ("
+            " SELECT f.id FROM functions f"
+            " JOIN analyses a ON a.id = f.analysis_id"
+            " WHERE a.binary_id = ?)",
+            (binary_id,),
+        )
+        conn.commit()
 
 
 def get_rebrew_context(conn: sqlite3.Connection, binary_id: int) -> str | None:
@@ -1994,8 +2010,9 @@ def upsert_function(
     Returns ``(id, created)``.  Re-importing a workspace refreshes existing
     rows instead of duplicating them, which is what makes ``import-rebrew``
     idempotent.  A size change widens or shrinks the engine's disassembly
-    window, so the cached listing for that function is dropped; a refresh
-    that keeps the same size leaves the cache alone.
+    window, so the cached listing for that function is dropped together with
+    any stored decompilation and AI artifacts derived from the old extent; a
+    refresh that keeps the same size leaves those alone.
     """
     row = conn.execute(
         "SELECT id, size FROM functions WHERE analysis_id = ? AND va = ?", (analysis_id, va)
@@ -2011,6 +2028,9 @@ def upsert_function(
         conn.commit()
         if previous_size != size:
             clear_disasm(conn, function_id)
+            clear_decompilation(conn, function_id)
+            conn.execute("DELETE FROM ai_artifacts WHERE function_id = ?", (function_id,))
+            conn.commit()
         return function_id, False
     return (
         add_function(

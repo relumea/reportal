@@ -12258,10 +12258,9 @@ def refresh_flirt_sigsets() -> Response:
     if not isinstance(root, Path):
         return root
     with contextlib.closing(_open()) as conn:
+        # refresh invalidates the compiled engines and prunes orphaned scan rows
+        # itself when the library moved.
         result = flirt_sigs.refresh(conn, root)
-        if result["added"] or result["updated"] or result["pruned"]:
-            # The library changed, so every compiled engine is stale.
-            flirt_sigs.forget_matchers()
     return json_response({"sigs_dir": str(root), **result})
 
 

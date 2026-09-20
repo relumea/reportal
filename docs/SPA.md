@@ -320,7 +320,8 @@ finished times, status badge and the importer's log line, the scoped
 `count of total` line, an `All analyses` link to the workspace-wide view and a
 nothing-stored state for a binary no analysis exists for); binary header name
 is click-to-rename (Enter saves, Escape discards) and the header shows
-the stored `created_at`, Download serves
+the stored `format`, `arch`, recovered `language` and `compiler`, and
+`created_at`, Download serves
 `GET /api/binaries/<id>/download`, PDF serves
 `GET /api/binaries/<id>/report/pdf`, Symbols serves
 `GET /api/binaries/<id>/symbols/export`, Logs and Tags jump to those panels,
@@ -843,7 +844,8 @@ and the bytes read 256 at a time as the viewport approaches a window.  A region
 no section backs is a stated `gap` row, the same one the paged mode renders, so
 the dump never shows invented zeros.  Zero bytes in the window dump and the
 paged dump are dimmed (`.byte-zero`).  A selected range copies as hex, a C
-array, or ASCII (printable, else a dot).  The window dump names Offset and
+array, or ASCII (printable, else a dot).  Ctrl+C on a dump copies the
+selection as hex.  The window dump names Offset and
 Virtual per row (a file read fills Offset; a VA read fills Virtual).
 Enter on the window address box reads the window; Esc clears it.
 The `Columns` control switches the virtual

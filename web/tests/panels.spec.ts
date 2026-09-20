@@ -81,6 +81,8 @@ test("the binary header name is click-to-rename", async ({ page }) => {
   );
   await expect(page.getByLabel("scope of notepad.exe")).toHaveValue("public");
   await expect(page.locator(".detail-facts").first()).toContainText(/\d{2}:\d{2}/);
+  await expect(page.locator(".detail-facts").first()).toContainText(/PE/);
+  await expect(page.locator(".detail-facts").first()).toContainText(/x86_32/);
   await page.getByRole("button", { name: "Tags", exact: true }).click();
   await expect(page.locator("#content section.panel:focus")).toContainText("Tags");
   const nameButton = page.getByRole("button", { name: "notepad.exe", exact: true });
