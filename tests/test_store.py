@@ -1209,26 +1209,38 @@ class TestScans:
                     "SELECT name FROM sqlite_master WHERE type = 'index'"
                 ).fetchall()
             }
-        assert "idx_analyses_binary_engine" in names
-        assert "idx_matches_candidate" in names
-        assert "idx_collection_binaries_binary" in names
-        assert "idx_binaries_owner_team" in names
-        assert "idx_collections_owner_team" in names
-        assert "idx_feedback_user" in names
-        assert "idx_users_active_team" in names
-        assert "idx_functions_analysis_name_source" in names
-        assert "idx_binary_tags_tag" in names
-        assert "idx_collection_tags_tag" in names
-        assert "idx_chunks_document_ordinal" in names
-        assert "idx_auto_attempts_task_attempt" in names
-        assert "idx_binaries_name_path_null_sha" in names
-        assert "idx_team_members_user" in names
-        assert "idx_jobs_binary" in names
-        assert "idx_analyses_binary" not in names
-        assert "idx_functions_analysis" not in names
-        assert "idx_binary_tags_binary" not in names
-        assert "idx_chunks_document" not in names
-        assert "idx_auto_attempts_task" not in names
+            assert "idx_analyses_binary_engine" in names
+            assert "idx_matches_candidate" in names
+            assert "idx_collection_binaries_binary" in names
+            assert "idx_binaries_owner_team" in names
+            assert "idx_collections_owner_team" in names
+            assert "idx_feedback_user" in names
+            assert "idx_users_active_team" in names
+            assert "idx_functions_analysis_name_source" in names
+            assert "idx_binary_tags_tag" in names
+            assert "idx_collection_tags_tag" in names
+            assert "idx_chunks_document_ordinal" in names
+            assert "idx_auto_attempts_task_attempt" in names
+            assert "idx_binaries_name_path_null_sha" in names
+            assert "idx_team_members_user" in names
+            assert "idx_jobs_binary" in names
+            assert "idx_jobs_live_dedupe" in names
+            assert "idx_analyses_created_at" in names
+            assert "idx_auto_runs_created_at" in names
+            assert "idx_functions_status" in names
+            assert "idx_analyses_binary" not in names
+            assert "idx_functions_analysis" not in names
+            assert "idx_binary_tags_binary" not in names
+            assert "idx_chunks_document" not in names
+            assert "idx_auto_attempts_task" not in names
+            unique = {
+                str(row[0])
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'index' AND sql LIKE '%UNIQUE%'"
+                ).fetchall()
+            }
+            assert "idx_binaries_name_path_null_sha" in unique
+            assert "idx_jobs_live_dedupe" in unique
 
     def test_chunk_ordinal_and_auto_attempt_are_unique(self, tmp_path: Path) -> None:
         db = tmp_path / "unique.db"
@@ -1304,6 +1316,49 @@ class TestScans:
         assert set(ids) == {ids[0]}
         with contextlib.closing(store.connect(portal_db)) as conn:
             assert store.count_binaries(conn) == 1
+
+    def test_null_sha_binary_name_path_is_unique(self, tmp_path: Path) -> None:
+        db = tmp_path / "null-sha.db"
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            first = store.add_binary(conn, sha256=None, name="import.bin", path="/src/a")
+            again = store.add_binary(conn, sha256=None, name="import.bin", path="/src/a")
+            assert again == first
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO binaries (sha256, name, path, size, format, arch, created_at)"
+                    " VALUES (NULL, ?, ?, 0, '', '', ?)",
+                    ("import.bin", "/src/a", store.now()),
+                )
+
+    def test_init_db_collapses_null_sha_duplicates(self, tmp_path: Path) -> None:
+        db = tmp_path / "legacy-null-sha.db"
+        with sqlite3.connect(db) as raw:
+            raw.execute(
+                "CREATE TABLE binaries ("
+                " id INTEGER PRIMARY KEY AUTOINCREMENT, sha256 TEXT UNIQUE,"
+                " name TEXT NOT NULL, path TEXT NOT NULL DEFAULT '',"
+                " size INTEGER NOT NULL DEFAULT 0, format TEXT NOT NULL DEFAULT '',"
+                " arch TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)"
+            )
+            raw.execute(
+                "INSERT INTO binaries (sha256, name, path, created_at) VALUES (NULL, ?, ?, ?)",
+                ("dup.bin", "/old", "2020-01-01T00:00:00+00:00"),
+            )
+            raw.execute(
+                "INSERT INTO binaries (sha256, name, path, created_at) VALUES (NULL, ?, ?, ?)",
+                ("dup.bin", "/old", "2020-01-02T00:00:00+00:00"),
+            )
+            raw.commit()
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            assert conn.execute("SELECT COUNT(*) FROM binaries").fetchone()[0] == 1
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO binaries (sha256, name, path, size, format, arch, created_at)"
+                    " VALUES (NULL, ?, ?, 0, '', '', ?)",
+                    ("dup.bin", "/old", store.now()),
+                )
 
 
 class TestSearchAndCounts:

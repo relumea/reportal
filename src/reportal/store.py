@@ -538,6 +538,11 @@ CREATE INDEX IF NOT EXISTS idx_graph_edges_source ON graph_edges(source);
 CREATE INDEX IF NOT EXISTS idx_graph_edges_target ON graph_edges(target);
 CREATE INDEX IF NOT EXISTS idx_families_reference ON families(reference_binary_id);
 CREATE INDEX IF NOT EXISTS idx_data_types_binary ON data_types(binary_id);
+-- Dashboard series filter analyses and auto runs by created_at window.
+CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses(created_at);
+CREATE INDEX IF NOT EXISTS idx_auto_runs_created_at ON auto_runs(created_at);
+-- Health ``matched`` count filters functions by status.
+CREATE INDEX IF NOT EXISTS idx_functions_status ON functions(status);
 """
     + _DATA_TYPE_HISTORY_DDL
 )
@@ -728,15 +733,37 @@ _ADDED_INDEXES: tuple[tuple[str, str | None, str], ...] = (
         "CREATE INDEX IF NOT EXISTS idx_collections_owner_team ON collections(owner_team_id)",
     ),
     ("users", None, "CREATE INDEX IF NOT EXISTS idx_users_active_team ON users(active_team_id)"),
-    (
-        "binaries",
-        "sha256",
-        (
-            "CREATE INDEX IF NOT EXISTS idx_binaries_name_path_null_sha"
-            " ON binaries(name, path) WHERE sha256 IS NULL"
-        ),
-    ),
 )
+
+# Unique ``(name, path)`` for rows with no content hash.  Built after a
+# duplicate collapse so an upgrade of a database that raced before the
+# constraint existed can still take the index.
+_NULL_SHA_UNIQUE_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_binaries_name_path_null_sha"
+    " ON binaries(name, path) WHERE sha256 IS NULL"
+)
+
+
+def _upgrade_null_sha_unique(conn: sqlite3.Connection) -> None:
+    """Collapse raced null-sha binaries, then enforce unique ``(name, path)``."""
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'binaries'"
+    ).fetchone():
+        return
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(binaries)")}
+    if "sha256" not in columns:
+        return
+    duplicates = conn.execute(
+        "SELECT name, path, MIN(id) AS keep_id FROM binaries"
+        " WHERE sha256 IS NULL GROUP BY name, path HAVING COUNT(*) > 1"
+    ).fetchall()
+    for row in duplicates:
+        conn.execute(
+            "DELETE FROM binaries WHERE sha256 IS NULL AND name = ? AND path = ? AND id != ?",
+            (row["name"], row["path"], int(row["keep_id"])),
+        )
+    conn.execute("DROP INDEX IF EXISTS idx_binaries_name_path_null_sha")
+    conn.execute(_NULL_SHA_UNIQUE_INDEX)
 
 
 def _upgrade_schema(conn: sqlite3.Connection) -> None:
@@ -759,6 +786,7 @@ def _upgrade_schema(conn: sqlite3.Connection) -> None:
             if required_column not in columns:
                 continue
         conn.execute(statement)
+    _upgrade_null_sha_unique(conn)
     conn.commit()
 
 
@@ -833,10 +861,12 @@ def add_binary(
     :func:`_find_binary`).  ``sha256`` stays NULL when the binary bytes are
     not available, so two unknown binaries never collide on an empty string.
     The insert is atomic: two concurrent uploads of the same bytes race on
-    the UNIQUE index and the loser reads back the winner's row instead of
-    raising ``IntegrityError``.  The display name is NFC-normalized so an NFD
-    upload name (typical of macOS) matches a later NFC rename of the same
-    spelling when sha256 is absent and dedupe falls back to ``(name, path)``.
+    the UNIQUE ``sha256`` index, and two concurrent imports of the same
+    off-disk ``(name, path)`` race on the partial unique null-sha index; the
+    loser reads back the winner's row instead of raising ``IntegrityError``.
+    The display name is NFC-normalized so an NFD upload name (typical of
+    macOS) matches a later NFC rename of the same spelling when sha256 is
+    absent and dedupe falls back to ``(name, path)``.
     """
     name = unicodedata.normalize("NFC", name)
     if sha256:

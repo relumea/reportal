@@ -302,6 +302,40 @@ class TestSubmit:
         assert again["id"] != first["id"]
         assert again["status"] == jobs.STATUS_QUEUED
 
+    def test_ensure_schema_collapses_duplicate_live_jobs(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        jobs.ensure_schema(conn)
+        conn.execute("DROP INDEX IF EXISTS idx_jobs_live_dedupe")
+        stamp = store.now()
+        params = "{}"
+        first = conn.execute(
+            f"INSERT INTO {jobs.TABLE} (kind, binary_id, status, params_json, created_at)"
+            " VALUES ('composition', ?, ?, ?, ?)",
+            (binary_id, jobs.STATUS_QUEUED, params, stamp),
+        ).lastrowid
+        second = conn.execute(
+            f"INSERT INTO {jobs.TABLE} (kind, binary_id, status, params_json, created_at)"
+            " VALUES ('composition', ?, ?, ?, ?)",
+            (binary_id, jobs.STATUS_QUEUED, params, stamp),
+        ).lastrowid
+        conn.commit()
+        jobs.ensure_schema(conn)
+        rows = conn.execute(
+            f"SELECT id, status FROM {jobs.TABLE} WHERE binary_id = ? ORDER BY id",
+            (binary_id,),
+        ).fetchall()
+        by_id = {int(row["id"]): str(row["status"]) for row in rows}
+        assert by_id[int(second or 0)] == jobs.STATUS_QUEUED
+        assert by_id[int(first or 0)] == jobs.STATUS_CANCELLED
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                f"INSERT INTO {jobs.TABLE} (kind, binary_id, status, params_json, created_at)"
+                " VALUES ('composition', ?, ?, ?, ?)",
+                (binary_id, jobs.STATUS_QUEUED, params, stamp),
+            )
+
 
 class TestRun:
     def test_running_a_job_records_its_result(
@@ -523,7 +557,16 @@ class TestMatchJob:
             confidence=1.0,
             settings={},
         )
-        jobs.submit(conn, kind="match", binary_id=binary_id, params={})
+        # A scope that admits no candidate still replaces prior rows with an
+        # empty listing (see matching.match_binary).  Without a rebrew listing
+        # the unscored path would leave the seed match in place, which is not
+        # what this revert check exercises.
+        jobs.submit(
+            conn,
+            kind="match",
+            binary_id=binary_id,
+            params={"binary_ids": [binary_id], "include_self": False},
+        )
 
         finished = jobs.run_pending(conn, limit=1)
         action = finished[0]["result"]["journal_action"]

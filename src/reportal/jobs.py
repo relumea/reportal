@@ -144,7 +144,12 @@ CREATE INDEX IF NOT EXISTS idx_jobs_binary ON {TABLE}(binary_id);
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the jobs table when the database predates it."""
+    """Create the jobs table when the database predates it.
+
+    Before the live-dedupe unique index applies, older duplicate live rows
+    (possible before the index existed) are collapsed so the index can be
+    created on an upgraded database.
+    """
     conn.executescript(_SCHEMA)
     columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({TABLE})")}
     if "submitted_by" not in columns:
@@ -153,6 +158,38 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN submitted_by_user_id INTEGER")
     if "request_id" not in columns:
         conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN request_id TEXT NOT NULL DEFAULT ''")
+    # Keep the newest live row per (binary, kind, params); cancel older
+    # siblings so the unique live index can apply on a database that predates it.
+    duplicates = conn.execute(
+        f"SELECT binary_id, kind, params_json, MAX(id) AS keep_id FROM {TABLE}"
+        f" WHERE status IN (?, ?) GROUP BY binary_id, kind, params_json"
+        " HAVING COUNT(*) > 1",
+        LIVE_STATUSES,
+    ).fetchall()
+    for row in duplicates:
+        conn.execute(
+            f"UPDATE {TABLE} SET status = ?, message = ?, finished_at = ?"
+            " WHERE binary_id IS ? AND kind = ? AND params_json = ?"
+            " AND status IN (?, ?) AND id != ?",
+            (
+                STATUS_CANCELLED,
+                "abandoned: superseded by a newer live submit",
+                store.now(),
+                row["binary_id"],
+                row["kind"],
+                row["params_json"],
+                *LIVE_STATUSES,
+                int(row["keep_id"]),
+            ),
+        )
+    # At most one live job per (binary, kind, params): a double-click or a
+    # transport retry must reuse the queued/running row rather than start a
+    # second worker.  Terminal rows keep every historical submit.
+    conn.execute(
+        f"CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_live_dedupe"
+        f" ON {TABLE}(binary_id, kind, params_json)"
+        f" WHERE status IN ('{STATUS_QUEUED}', '{STATUS_RUNNING}')"
+    )
     conn.commit()
 
 
@@ -1113,8 +1150,9 @@ def submit(
     """Queue one job and return it; the caller decides whether to run it.
 
     A second submit of the same kind, binary and params while a matching job is
-    queued or running returns that row instead of inserting another: metered kinds
-    (``ai-enrich``) and writers must not run twice for one double-click.
+    queued or running returns that row instead of inserting another: the unique
+    live-dedupe index is the lock, so metered kinds (``ai-enrich``) and writers
+    cannot run twice for one double-click or a racing POST.
     *submitted_by* names who queued it (and the stable id behind the name),
     so the worker thread that later runs it records the submitter's identity
     on the journal entries it writes.  The active HTTP ``request_id`` (when
@@ -1314,43 +1352,55 @@ def submit(
     # matches the queued row; without sort_keys, insertion order alone would
     # make every retry look new.
     params_json = json.dumps(resolved, sort_keys=True)
-    with conn:
-        conn.execute("BEGIN IMMEDIATE")
-        existing = conn.execute(
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                f"SELECT * FROM {TABLE} WHERE status IN (?, ?) AND kind = ? AND binary_id = ?"
+                " AND params_json = ? ORDER BY id LIMIT 1",
+                (*LIVE_STATUSES, kind, binary_id, params_json),
+            ).fetchone()
+            if existing is not None:
+                return _row(existing)
+            queued = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM {TABLE} WHERE status = ?", (STATUS_QUEUED,)
+                ).fetchone()[0]
+            )
+            if queued >= MAX_QUEUED_JOBS:
+                raise ValueError(f"the queue is full: {queued} jobs are waiting")
+            request_id = observability.current_request_id()
+            cur = conn.execute(
+                f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
+                " params_json, created_at, submitted_by, submitted_by_user_id, request_id)"
+                " VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?)",
+                (
+                    kind,
+                    binary_id,
+                    STATUS_QUEUED,
+                    "queued",
+                    params_json,
+                    store.now(),
+                    submitted_by,
+                    submitted_by_user_id,
+                    request_id,
+                ),
+            )
+            _prune(conn)
+        job = get_job(conn, int(cur.lastrowid or 0))
+        assert job is not None, "the row was just inserted"
+        return job
+    except sqlite3.IntegrityError:
+        # The unique live-dedupe index is the lock: a racing submit that passed
+        # the SELECT above loses the insert and reuses the winner's row.
+        raced = conn.execute(
             f"SELECT * FROM {TABLE} WHERE status IN (?, ?) AND kind = ? AND binary_id = ?"
             " AND params_json = ? ORDER BY id LIMIT 1",
             (*LIVE_STATUSES, kind, binary_id, params_json),
         ).fetchone()
-        if existing is not None:
-            return _row(existing)
-        queued = int(
-            conn.execute(
-                f"SELECT COUNT(*) FROM {TABLE} WHERE status = ?", (STATUS_QUEUED,)
-            ).fetchone()[0]
-        )
-        if queued >= MAX_QUEUED_JOBS:
-            raise ValueError(f"the queue is full: {queued} jobs are waiting")
-        request_id = observability.current_request_id()
-        cur = conn.execute(
-            f"INSERT INTO {TABLE} (kind, binary_id, status, progress, steps_total, message,"
-            " params_json, created_at, submitted_by, submitted_by_user_id, request_id)"
-            " VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?, ?, ?)",
-            (
-                kind,
-                binary_id,
-                STATUS_QUEUED,
-                "queued",
-                params_json,
-                store.now(),
-                submitted_by,
-                submitted_by_user_id,
-                request_id,
-            ),
-        )
-        _prune(conn)
-    job = get_job(conn, int(cur.lastrowid or 0))
-    assert job is not None, "the row was just inserted"
-    return job
+        if raced is not None:
+            return _row(raced)
+        raise
 
 
 def cancel(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
