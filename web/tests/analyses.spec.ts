@@ -18,6 +18,7 @@ test("the list filters to the seeded analysis and its log opens on demand", asyn
   await panel.getByLabel("Search", { exact: true }).fill("notepad.exe");
   await panel.getByRole("button", { name: "Search" }).click();
   await expect(page).toHaveURL(/search=notepad/);
+  await expect(panel.locator(".chip").filter({ hasText: /Search notepad/ })).toBeVisible();
   const rows = panel.locator("table.data-table tbody tr");
   await expect(rows).toHaveCount(1);
   await expect(rows.first().locator(".hash-identicon")).toHaveCount(1);

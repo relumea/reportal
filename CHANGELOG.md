@@ -56,6 +56,7 @@ view renders it from here.
 - Function list J/K focus draws the same left border as a checked row.
 - Function list referrer filter is a removable chip.
 - Analyses search waits `SEARCH_DEBOUNCE_MS` before the hash updates.
+- Analyses active filters are removable chips.
 - Search binary and collection hits show their stored `created_at`.
 - Function header signature hover shows return, parameters and convention.
   Named types in that hover link the type list.

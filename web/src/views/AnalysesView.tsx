@@ -55,6 +55,24 @@ import { AnalysisScans } from "../panels/ScansPanel";
 
 const ANALYSES_PATH = "/analyses";
 
+/** One removable chip naming an active list filter. */
+function FilterChip({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}): ReactNode {
+  return (
+    <span className="chip">
+      <span className="chip-label">{label}</span>
+      <button type="button" className="chip-clear" aria-label={`Clear ${label}`} onClick={onClear}>
+        x
+      </button>
+    </span>
+  );
+}
+
 /** The filter values one analyses hash carries; every one is optional. */
 interface AnalysisFilters {
   /** The status multi-select: any-of, repeated as the API takes it. */
@@ -628,6 +646,50 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
             </Button>
           ) : null}
         </Toolbar>
+        {filtered ? (
+          <div className="chips">
+            {filters.search ? (
+              <FilterChip
+                label={`Search ${filters.search}`}
+                onClear={() => {
+                  setDraft("");
+                  apply({ search: "" });
+                }}
+              />
+            ) : null}
+            {filters.workspace ? (
+              <FilterChip
+                label={`Workspace ${filters.workspace}`}
+                onClear={() => apply({ workspace: "" })}
+              />
+            ) : null}
+            {filters.status.map((value) => (
+              <FilterChip
+                key={value}
+                label={`Status ${value}`}
+                onClear={() => apply({ status: filters.status.filter((entry) => entry !== value) })}
+              />
+            ))}
+            {filters.platform ? (
+              <FilterChip
+                label={`Platform ${filters.platform}`}
+                onClear={() => apply({ platform: "" })}
+              />
+            ) : null}
+            {filters.arch ? (
+              <FilterChip label={`Arch ${filters.arch}`} onClear={() => apply({ arch: "" })} />
+            ) : null}
+            {filters.order ? (
+              <FilterChip
+                label={`Order ${
+                  ANALYSIS_ORDER_LABELS[filters.order as (typeof ANALYSIS_ORDERS)[number]] ??
+                  filters.order
+                }`}
+                onClear={() => apply({ order: "" })}
+              />
+            ) : null}
+          </div>
+        ) : null}
         <Muted>
           Reportal is a single-user loopback tool, so an analysis has no owner column. The{" "}
           <a href="#/journal">Journal</a> lists who did what, entry by entry.

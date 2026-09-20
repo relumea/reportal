@@ -88,8 +88,11 @@ locally registered malware families, ``family-add`` registers one from a
 reference binary, ``family-rm`` deletes one and ``detect`` matches a binary
 against them.
 Human output goes to stderr through Rich; ``--json`` payloads go to stdout so
-they can be piped.  The console does not auto-highlight: a config table name
-such as ``[knowledge]`` or an id in an error must stay copyable.
+they can be piped.  Commands whose product is a text body (``disasm``,
+``decompile``, ``yara``, ``snort``, ``stix``, ``sbom``, ``symbols-export``,
+``decompiler-script``) write that body to stdout in human mode too, with the
+header and notes on stderr.  The console does not auto-highlight: a config
+table name such as ``[knowledge]`` or an id in an error must stay copyable.
 """
 
 from __future__ import annotations
@@ -804,13 +807,16 @@ def sandbox_command(
     Off by default: the workspace opts in with REPORTAL_SANDBOX=enabled or
     `[sandbox] enabled = true`, a runner must be installed, and the run is
     capped, given no network and a read-only root.  `--report` prints the last
-    stored report and `--status` says whether a run is possible here.
+    stored report and `--status` says whether a run is possible here; the two
+    flags are mutually exclusive.
     """
     from reportal import sandbox
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if status and report:
+        _fail("--report and --status are mutually exclusive", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id) or 0
@@ -1347,12 +1353,18 @@ def organisation_add(
 @app.command("organisation-rm")
 def organisation_rm(
     organisation_id: int = typer.Argument(..., help="Organisation id"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Delete one organisation; its teams stay and stop being grouped."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    _require_confirmation(
+        f"Delete organisation {organisation_id}?",
+        yes=yes,
+        json_output=json_output,
+    )
     with contextlib.closing(store.connect(portal_db)) as conn:
         if auth.get_organisation(conn, organisation_id) is None:
             _fail(f"no organisation with id {organisation_id}", json_output)
@@ -6430,7 +6442,11 @@ def decompile(
     named: bool = typer.Option(False, "--named", help="Apply known symbol names"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Decompile one function through the rebrew engine and store the source."""
+    """Decompile one function through the rebrew engine and store the source.
+
+    Human mode writes the source to stdout so it pipes; the header and journal
+    line stay on stderr with the rest of the human chrome.
+    """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
@@ -6485,7 +6501,7 @@ def decompile(
     _print_journal_action(log, json_output)
     console.print(f"\n[bold cyan]function {function_id} @ 0x{va:x}[/bold cyan]")
     console.print(f"backend: {resolved}\n")
-    console.print(code, markup=False)
+    typer.echo(code)
 
 
 # ── AI artifacts ───────────────────────────────────────────────────
@@ -9122,7 +9138,8 @@ def disasm(
 
     The nasm listing is cached the way the route caches it (the hex view is not:
     it is a rendering of the same bytes), so a repeated read answers without the
-    engine.
+    engine.  Human mode writes the listing to stdout so it pipes; the header
+    line stays on stderr with the rest of the human chrome.
     """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
@@ -9169,7 +9186,7 @@ def disasm(
         typer.echo(json.dumps(payload))
         return
     console.print(f"[dim]{function['name']} @ {hex(va)} ({size} bytes, {fmt})[/dim]")
-    console.print(listing)
+    typer.echo(listing)
 
 
 @app.command()

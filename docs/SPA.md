@@ -1055,6 +1055,8 @@ rather than an empty page.
 
 The Analyses view (`views/AnalysesView.tsx`) carries the entry 10 filters: a
 chip per status (the set is any-of, the last one off means any status), a
+removable chip per active search, workspace, platform, architecture and
+order, a
 platform and an architecture select built from the values the payload reports
 the register actually holds, an Order select over `store.ANALYSIS_ORDERS`, a
 Show field for the page size (bounded by `store.MAX_ANALYSIS_LIMIT`, and left

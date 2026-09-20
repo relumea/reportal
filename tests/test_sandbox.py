@@ -538,6 +538,13 @@ class TestCli:
         assert human.exit_code == 0, human.output
         assert "from-cli" in human.output
 
+        both = runner.invoke(
+            cli.app,
+            ["sandbox", str(ids["binary"]), "--report", "--status", "--json"],
+        )
+        assert both.exit_code == 1
+        assert "mutually exclusive" in json.loads(both.stdout)["error"]
+
     def test_it_refuses_when_the_opt_in_is_missing(self, tmp_path: Path, monkeypatch: Any) -> None:
         ids = self._portal(tmp_path, monkeypatch)
         monkeypatch.delenv(sandbox.ENABLED_ENV, raising=False)

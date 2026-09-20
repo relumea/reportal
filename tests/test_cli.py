@@ -720,7 +720,9 @@ class TestDisasmCommand:
         result = runner.invoke(cli.app, ["disasm", str(function_id)])
 
         assert result.exit_code == 0, result.output
-        assert "func_1000:" in result.output
+        assert "func_1000:" in result.stdout
+        assert "func_1000:" not in result.stderr
+        assert "@ 0x1000" in result.stderr
 
     def test_hex_is_not_cached(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
@@ -1195,8 +1197,9 @@ class TestDecompile:
         function_id = self._seed(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["decompile", str(function_id)])
         assert result.exit_code == 0, result.output
-        assert "sub_1000" in result.output
-        assert "backend: kuna" in result.output
+        assert "return;" in result.stdout
+        assert "backend: kuna" in result.stderr
+        assert "backend: kuna" not in result.stdout
         assert fake_engine.calls == ["decompile"]
         with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
             stored = store.get_decompilation(conn, function_id)

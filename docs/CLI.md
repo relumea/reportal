@@ -43,7 +43,8 @@ reportal sandbox <binary-id> [--timeout N] [--memory-mb N] [--report|--status] [
                                            #   runner (off by default: the workspace opts in
                                            #   and a runner must be installed); --report
                                            #   prints the stored one, --status says whether
-                                           #   a run is possible here
+                                           #   a run is possible here; the two flags refuse
+                                           #   each other
 reportal firmware <binary-id> [--json]       # carve a stored firmware image: its embedded
                                            #   regions, their entropy and confidence;
                                            #   offline byte work, nothing executed
@@ -104,7 +105,8 @@ reportal enrich <binary-id> [--json]       # compute and store a rebrew fingerpr
 reportal fingerprint <binary-id> [--json]  # print the stored fingerprint, else compute
                                            #   one live without storing it
 reportal decompile <function-id> [--backend kuna] [--named] [--json]
-                                           # decompile through rebrew and store the source
+                                           # decompile through rebrew and store the source;
+                                           #   human mode writes the source to stdout
 reportal summary <function-id> [--json]    # summarize the stored decompilation with the
                                            #   configured LLM and store the result
 reportal comments --binary ID | --function ID [--json]
@@ -378,7 +380,8 @@ reportal imports <binary-id> [--json]      # list a binary's import table (libra
 reportal disasm <function-id> [--format nasm|hex] [--json]
                                            # print one function's disassembly through its
                                            #   binary's rebrew project context; the nasm
-                                           #   listing is cached the way the route caches it
+                                           #   listing is cached the way the route caches it;
+                                           #   human mode writes the listing to stdout
 reportal section-coverage <binary-id> [--json]
                                            # report per-section byte coverage over the stored
                                            #   function table and the stored pe-info sections;
@@ -718,8 +721,10 @@ reportal organisations [--json]            # the organisations and the teams eac
                                            #   holds; a grouping, not access
 reportal organisation-add NAME [--description TEXT] [--json]
                                            # create an organisation; journaled
-reportal organisation-rm <organisation-id> [--json]
-                                           # delete an organisation; its teams stay
+reportal organisation-rm <organisation-id> [--yes] [--json]
+                                           # delete an organisation; its teams stay;
+                                           #   asks for confirmation unless --yes is passed
+                                           #   (--json refuses without --yes so the pipe stays clean)
 reportal team-organisation <team-id> [<organisation-id>] [--json]
                                            # move a team into an organisation, or
                                            #   ungroup it by omitting the id

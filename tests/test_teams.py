@@ -1053,9 +1053,16 @@ class TestTeamStructureCli:
         assert ungrouped.exit_code == 0, ungrouped.output
         assert json.loads(ungrouped.output)["organisation_id"] is None
 
-        removed = runner.invoke(cli.app, ["organisation-rm", str(organisation_id), "--json"])
+        refused = runner.invoke(cli.app, ["organisation-rm", str(organisation_id), "--json"])
+        assert refused.exit_code == 1
+        assert "confirmation required" in refused.stdout
+        removed = runner.invoke(
+            cli.app, ["organisation-rm", str(organisation_id), "--yes", "--json"]
+        )
         assert removed.exit_code == 0, removed.output
-        missing = runner.invoke(cli.app, ["organisation-rm", str(organisation_id), "--json"])
+        missing = runner.invoke(
+            cli.app, ["organisation-rm", str(organisation_id), "--yes", "--json"]
+        )
         assert missing.exit_code == 1
 
     def test_the_organisation_commands_validate(
