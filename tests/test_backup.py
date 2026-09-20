@@ -555,6 +555,27 @@ class TestCli:
         assert fresh.exists()
         assert other.exists()
 
+    def test_prune_cutoff_follows_a_pinned_store_now(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        directory = tmp_path / "backups"
+        directory.mkdir()
+        stale = directory / "reportal-20200101T000000Z.tar.gz"
+        fresh = directory / "reportal-20200110T000000Z.tar.gz"
+        stale.write_bytes(b"stale")
+        fresh.write_bytes(b"fresh")
+        # Pin the process clock to 2020-01-20; keep_days=14 makes mtimes before
+        # 2020-01-06 the cutoff.  The stale file sits on Jan 1, the fresh one
+        # on Jan 10, so only the older archive is pruned.
+        monkeypatch.setattr(store, "now", lambda: "2020-01-20T00:00:00+00:00")
+        os.utime(stale, (1577836800.0, 1577836800.0))  # 2020-01-01
+        os.utime(fresh, (1578614400.0, 1578614400.0))  # 2020-01-10
+        result = backup.prune(directory=directory, keep_days=14, keep_min=0)
+        assert result["removed_count"] == 1
+        assert result["kept_count"] == 1
+        assert not stale.exists()
+        assert fresh.exists()
+
     def test_prune_keeps_the_newest_archive_when_all_are_stale(self, tmp_path: Path) -> None:
         directory = tmp_path / "backups"
         directory.mkdir()

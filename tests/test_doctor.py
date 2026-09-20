@@ -11,6 +11,7 @@ directives rather than about a machine's layout.
 from __future__ import annotations
 
 import json
+import os
 import socket
 import sqlite3
 import subprocess
@@ -485,6 +486,27 @@ class TestUnit:
         payload = doctor.report()
         row = _check(payload, "backup")
         assert row["status"] == "ok"
+        assert str(archive) in row["detail"]
+
+    def test_a_stale_archive_warn_follows_a_pinned_store_now(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
+    ) -> None:
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        _workspace(ws, monkeypatch)
+        store.init_db(ws / "reportal.db")
+        archive_dir = tmp_path / "reportal-backups"
+        archive_dir.mkdir()
+        result = backup.create(workspace=ws, output=archive_dir / "reportal-backup-old.tar.gz")
+        archive = Path(result["path"])
+        # Archive mtime is 2020-01-01; pin the process clock three days later so
+        # the age exceeds FRESH_SECONDS (48h) without waiting on wall time.
+        os.utime(archive, (1577836800.0, 1577836800.0))
+        monkeypatch.setattr(store, "now", lambda: "2020-01-04T00:00:00+00:00")
+        payload = doctor.report()
+        row = _check(payload, "backup")
+        assert row["status"] == "warn"
+        assert "stale" in row["detail"]
         assert str(archive) in row["detail"]
 
     def test_an_unreadable_archive_warns_without_failing(

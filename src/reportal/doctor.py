@@ -29,7 +29,6 @@ import os
 import socket
 import sqlite3
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -238,7 +237,9 @@ def _backup_check(root: Path | None) -> dict[str, str]:
             f"newest archive is unreadable: {newest} ({exc.detail})",
             BACKUP_HINT,
         )
-    age = max(0.0, time.time() - newest.stat().st_mtime)
+    # Through :func:`store.now` so a pinned process clock also pins freshness;
+    # a raw ``time.time`` would leave this check outside the shared clock.
+    age = max(0.0, store.as_utc(store.now()).timestamp() - newest.stat().st_mtime)
     detail = f"{newest} ({_format_age(age)} old)"
     if age > backup.FRESH_SECONDS:
         return _check(

@@ -38,7 +38,6 @@ import shutil
 import sqlite3
 import tarfile
 import tempfile
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -585,7 +584,10 @@ def prune(
                     ERROR_INVALID_ARCHIVE,
                     f"refusing to prune {target} inside the workspace",
                 )
-    cutoff = time.time() - timedelta(days=keep_days).total_seconds()
+    # Through :func:`store.now` so a test that pins the process clock also
+    # pins prune's retention cutoff; a raw ``time.time`` would leave age
+    # decisions outside the one clock writers share.
+    cutoff = store.as_utc(store.now()).timestamp() - timedelta(days=keep_days).total_seconds()
     archives = list_archives(target)
     protected = set(archives[-keep_min:]) if keep_min else set()
     removed: list[dict[str, Any]] = []
