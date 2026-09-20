@@ -707,6 +707,15 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
             f"unknown binary order: {order};"
             f" expected one of {', '.join(sorted(store.BINARY_ORDERS))}",
         )
+    limit = _arg_optional_int(arguments, "limit", store.MAX_BINARY_LIMIT)
+    if not 1 <= limit <= store.MAX_BINARY_LIMIT:
+        raise ToolError(
+            "invalid limit",
+            f"limit must be between 1 and {store.MAX_BINARY_LIMIT}",
+        )
+    offset = _arg_optional_int(arguments, "offset", 0)
+    if offset < 0:
+        raise ToolError("invalid offset", "offset must not be negative")
     with contextlib.closing(_open()) as conn:
         caller = _mcp_caller(conn)
         rows = store.list_binaries(
@@ -718,13 +727,31 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
             compiler=compiler or None,
             order=order,
             visible_to=caller,
+            limit=limit,
+            offset=offset,
         )
-        total = store.count_binaries(conn, visible_to=caller)
+        matched = store.count_binaries(
+            conn,
+            search=search or None,
+            tag=tag or None,
+            fmt=fmt or None,
+            language=language or None,
+            compiler=compiler or None,
+            visible_to=caller,
+        )
+        total = (
+            matched
+            if not any((search, tag, fmt, language, compiler))
+            else store.count_binaries(conn, visible_to=caller)
+        )
         facets = store.binary_filter_values(conn)
     return {
         "binaries": rows,
         "count": len(rows),
+        "matched": matched,
         "total": total,
+        "limit": limit,
+        "offset": offset,
         "search": search or None,
         "tag": tag or None,
         "format": fmt or None,
@@ -788,6 +815,15 @@ def _tool_list_functions(arguments: dict[str, Any]) -> dict[str, Any]:
     regex = _arg_optional_bool(arguments, "regex", False)
     name = _arg_optional_str(arguments, "name")
     va = _arg_optional_address(arguments, "va")
+    limit = _arg_optional_int(arguments, "limit", store.MAX_FUNCTION_LIMIT)
+    if not 1 <= limit <= store.MAX_FUNCTION_LIMIT:
+        raise ToolError(
+            "invalid limit",
+            f"limit must be between 1 and {store.MAX_FUNCTION_LIMIT}",
+        )
+    offset = _arg_optional_int(arguments, "offset", 0)
+    if offset < 0:
+        raise ToolError("invalid offset", "offset must not be negative")
     with contextlib.closing(_open()) as conn:
         if binary_id:
             _require_binary(conn, binary_id)
@@ -800,10 +836,27 @@ def _tool_list_functions(arguments: dict[str, Any]) -> dict[str, Any]:
                 regex=regex,
                 name=name or None,
                 va=va,
+                limit=limit,
+                offset=offset,
             )
         except store.SearchError as exc:
             raise ToolError(exc.code, exc.detail) from None
-    return {"functions": functions, "count": len(functions)}
+        matched = store.count_matching_functions(
+            conn,
+            binary_id=binary_id or None,
+            analysis_id=analysis_id or None,
+            strings=strings,
+            regex=regex,
+            name=name or None,
+            va=va,
+        )
+    return {
+        "functions": functions,
+        "count": len(functions),
+        "matched": matched,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 def _tool_get_function(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -6208,7 +6261,8 @@ def builtin_tools() -> tuple[Tool, ...]:
             "list_binaries",
             "List the registered binaries with their function and comment counts, optionally"
             " filtered by name, SHA-256 or notes, by tag, by stored format, recovered"
-            " language or recovered toolchain, and ordered.",
+            " language or recovered toolchain, and ordered.  Capped at the register page"
+            " size unless limit/offset name a different page.",
             _object(
                 {
                     "search": _str(
@@ -6223,6 +6277,11 @@ def builtin_tools() -> tuple[Tool, ...]:
                         "enum": sorted(store.BINARY_ORDERS),
                         "description": "id (default), newest, name, name-desc, size or size-desc.",
                     },
+                    "limit": _int(
+                        f"Page size, 1..{store.MAX_BINARY_LIMIT}"
+                        f" (default {store.MAX_BINARY_LIMIT})."
+                    ),
+                    "offset": _int("Rows to skip before the page (default 0)."),
                 }
             ),
             _READ,
@@ -6255,7 +6314,8 @@ def builtin_tools() -> tuple[Tool, ...]:
             "list_functions",
             "List function rows, optionally scoped to a binary or an analysis and filtered by"
             " name, address, or what their stored decompilation contains; several strings are"
-            " combined as any-of.",
+            " combined as any-of.  Capped at the function page size unless limit/offset name a"
+            " different page.",
             _object(
                 {
                     "binary_id": _int("Limit to one binary's functions."),
@@ -6267,6 +6327,11 @@ def builtin_tools() -> tuple[Tool, ...]:
                         _str("A literal, or a pattern with regex."),
                     ),
                     "regex": _bool("Treat every string as a regular expression."),
+                    "limit": _int(
+                        f"Page size, 1..{store.MAX_FUNCTION_LIMIT}"
+                        f" (default {store.MAX_FUNCTION_LIMIT})."
+                    ),
+                    "offset": _int("Rows to skip before the page (default 0)."),
                 }
             ),
             _READ,

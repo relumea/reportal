@@ -5384,6 +5384,21 @@ def find_data_type_by_name(
     return _data_type_row(row) if row else None
 
 
+def data_type_ids_by_name(conn: sqlite3.Connection, binary_id: int) -> dict[str, int]:
+    """Map each data-type name of *binary_id* to its id, in one round trip.
+
+    A symbol-file or bulk import that resolves many names used to query once
+    per name; this index keeps those paths from paying a lookup per type.
+    """
+    return {
+        str(row["name"]): int(row["id"])
+        for row in conn.execute(
+            "SELECT id, name FROM data_types WHERE binary_id = ?",
+            (binary_id,),
+        )
+    }
+
+
 def update_data_type(
     conn: sqlite3.Connection,
     data_type_id: int,

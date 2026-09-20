@@ -591,24 +591,20 @@ def classify(
     Results sort by ``evidence_count`` descending, then name.
     """
     results: list[dict[str, Any]] = []
+    import_names = [name for entry in imports if (name := _import_name(entry))]
+    string_texts = [text for entry in strings if (text := _string_text(entry))]
     for rule in CAPABILITIES:
         evidence: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
         matched_import = False
-        for entry in imports:
-            name = _import_name(entry)
-            if not name:
-                continue
+        for name in import_names:
             if any(_import_matches(pattern, name) for pattern in rule.imports):
                 matched_import = True
                 marker = ("import", name.casefold())
                 if marker not in seen:
                     seen.add(marker)
                     evidence.append({"kind": "import", "value": name})
-        for entry in strings:
-            text = _string_text(entry)
-            if not text:
-                continue
+        for text in string_texts:
             if any(pattern.search(text) for pattern in rule.strings):
                 marker = ("string", text)
                 if marker not in seen:

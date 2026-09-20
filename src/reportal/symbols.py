@@ -1168,25 +1168,26 @@ def _apply_types(
     types: Sequence[Mapping[str, Any]],
 ) -> int:
     """Create or update the aggregate types a symbol file declared."""
+    by_name = store.data_type_ids_by_name(conn, binary_id)
     written = 0
     for entry in types:
         name = str(entry.get("name") or "")
         if not name:
             continue
         members = [dict(member) for member in entry.get("members") or []]
-        existing = store.find_data_type_by_name(conn, binary_id, name)
-        if existing is not None:
+        existing_id = by_name.get(name)
+        if existing_id is not None:
             journal.journaled_rows(
                 conn,
                 log,
                 table="data_types",
                 where="id = ?",
-                params=(int(existing["id"]),),
+                params=(existing_id,),
                 description=f"replaced type {name}",
             )
             store.update_data_type(
                 conn,
-                int(existing["id"]),
+                existing_id,
                 members=[_with_offsets(member) for member in members],
                 size=int(entry.get("size") or 0),
                 source=data_types.SOURCE_SYMBOL,
@@ -1202,6 +1203,7 @@ def _apply_types(
             kind=str(entry.get("kind") or "struct"),
             source=data_types.SOURCE_SYMBOL,
         )
+        by_name[name] = data_type_id
         journal.journaled_create(
             log,
             table="data_types",

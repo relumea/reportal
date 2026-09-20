@@ -320,11 +320,10 @@ def classify_anti_analysis(
     ``count`` and ``by_confidence`` stay exact.
     """
     findings: dict[tuple[str, str], dict[str, Any]] = {}
+    import_names = [name for entry in imports if (name := capabilities._import_name(entry))]
+    string_texts = [text for entry in strings if (text := capabilities._string_text(entry))]
     for rule in ANTI_ANALYSIS_RULES:
-        for entry in imports:
-            name = capabilities._import_name(entry)
-            if not name:
-                continue
+        for name in import_names:
             if any(capabilities._import_matches(pattern, name) for pattern in rule.imports):
                 _add(
                     findings,
@@ -333,10 +332,7 @@ def classify_anti_analysis(
                     detail=rule.description,
                     confidence=CONFIDENCE_HIGH,
                 )
-        for entry in strings:
-            text = capabilities._string_text(entry)
-            if not text:
-                continue
+        for text in string_texts:
             if any(pattern.search(text) for pattern in rule.strings):
                 _add(
                     findings,

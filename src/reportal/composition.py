@@ -7,15 +7,13 @@ matched, and which tags those binaries carry.  :func:`compute_composition`
 answers them from the store alone.
 
 Every input is already stored: this binary's functions come from
-:func:`store.list_functions`, the match edges from
-:func:`matching.binary_match_rows` (which reads ``matches`` joined to the
-candidate functions), and the candidate's owning binary from
-:func:`store.get_function` plus :func:`store.get_binary`.  The scan never runs
-local function matching and never calls the engine, so a stored composition is
-a reading of the ``matches`` table the ``reportal match`` command produced, not
-a new computation.  A store with no match rows for the binary still succeeds:
-``refined`` is false, a note names the command that fills the table, and every
-function renders as ``No Match``.
+:func:`store.list_functions`, and the match edges from
+:func:`matching.binary_match_rows` (which already joins each candidate's
+owning binary).  The scan never runs local function matching and never calls
+the engine, so a stored composition is a reading of the ``matches`` table the
+``reportal match`` command produced, not a new computation.  A store with no
+match rows for the binary still succeeds: ``refined`` is false, a note names
+the command that fills the table, and every function renders as ``No Match``.
 
 A stored match whose candidate belongs to this same binary is not a
 composition: reportal's corpus includes a binary's own functions, so an exact
@@ -214,58 +212,35 @@ def quality_band(similarity: float | None) -> str:
     return BAND_WEAK_MATCH
 
 
-def _candidate_binary(
-    conn: sqlite3.Connection, candidate_function_id: int, cache: dict[int, dict[str, Any] | None]
-) -> dict[str, Any] | None:
-    """The binary owning a candidate function, cached by candidate function id."""
-    if candidate_function_id in cache:
-        return cache[candidate_function_id]
-    function = store.get_function(conn, candidate_function_id)
-    binary = store.get_binary(conn, int(function["binary_id"])) if function is not None else None
-    resolved = (
-        None
-        if binary is None
-        else {
-            "binary_id": int(binary["id"]),
-            "name": str(binary["name"]),
-            "sha256": binary.get("sha256"),
-        }
-    )
-    cache[candidate_function_id] = resolved
-    return resolved
-
-
 def _best_matches(
     conn: sqlite3.Connection, *, binary_id: int, scope: frozenset[int] = frozenset()
 ) -> tuple[dict[int, dict[str, Any]], int, bool]:
     """The best other-binary match of each function, plus self-match and edge counts.
 
     ``matching.binary_match_rows`` returns every stored edge of this binary's
-    functions, best similarity first, so the first non-self edge of a function
-    is its best match against another binary.  Returns ``(best, self_only,
+    functions, best similarity first, already carrying the candidate's owning
+    binary, so the first non-self edge of a function is its best match against
+    another binary without a per-edge lookup.  Returns ``(best, self_only,
     has_edges)``: the best match per function id, how many functions matched
     only within this binary, and whether the store holds any edge at all.
     """
-    cache: dict[int, dict[str, Any] | None] = {}
     best: dict[int, dict[str, Any]] = {}
     self_seen: set[int] = set()
     edges = matching.binary_match_rows(conn, binary_id)
     for edge in edges:
         source_id = int(edge["source_function_id"])
-        candidate = _candidate_binary(conn, int(edge["candidate_function_id"]), cache)
-        if candidate is None:
+        candidate_binary_id = int(edge["candidate_binary_id"])
+        if scope and candidate_binary_id not in scope:
             continue
-        if scope and int(candidate["binary_id"]) not in scope:
-            continue
-        if int(candidate["binary_id"]) == binary_id:
+        if candidate_binary_id == binary_id:
             self_seen.add(source_id)
             continue
         if source_id in best:
             continue
         best[source_id] = {
             "similarity": round(float(edge["similarity"]), METRIC_DECIMALS),
-            "binary_id": int(candidate["binary_id"]),
-            "binary_name": str(candidate["name"]),
+            "binary_id": candidate_binary_id,
+            "binary_name": str(edge["candidate_binary_name"]),
         }
     return best, len(self_seen - set(best)), bool(edges)
 

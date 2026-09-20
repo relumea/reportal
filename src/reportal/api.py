@@ -476,7 +476,17 @@ def list_binaries(request: Request) -> Response:
             compiler=compiler,
             visible_to=_caller(request),
         )
-        total = store.count_binaries(conn, visible_to=_caller(request))
+        # No content filter means the page's matched set is the caller's whole
+        # visible register, so the unfiltered total is the same number.
+        total = (
+            matched
+            if search is None
+            and tag is None
+            and fmt is None
+            and language is None
+            and compiler is None
+            else store.count_binaries(conn, visible_to=_caller(request))
+        )
         facets = store.binary_filter_values(conn)
     return json_response(
         {
@@ -970,19 +980,22 @@ def extract_binary(binary_id: int, body: dict[str, Any] = Depends(optional_json_
     return json_response(payload, status=201)
 
 
-def _function_capabilities(function: dict[str, Any]) -> frozenset[str]:
-    """Capability names a function's own name matches, through the rule table.
+def _function_has_capability(function: dict[str, Any], capability: str) -> bool:
+    """True when *function*'s name matches the one named capability rule.
 
     A function name is an import name when the row is an import stub (a THUNK
-    named after the API it forwards to), so the binary capability classifier
-    answers the same question for one name: it is run with an empty string
-    list, and only its import rules can match.
+    named after the API it forwards to), so only that rule's import patterns
+    are checked.  Walking every capability rule per row is wasted work on the
+    filtered function list.
     """
     name = str(function.get("name") or "")
     if not name:
-        return frozenset()
-    found = capabilities.classify([{"name": name}], [])
-    return frozenset(str(entry["name"]) for entry in found)
+        return False
+    for rule in capabilities.CAPABILITIES:
+        if rule.name != capability:
+            continue
+        return any(capabilities._import_matches(pattern, name) for pattern in rule.imports)
+    return False
 
 
 def _query_optional_address(request: Request, key: str) -> int | None:
@@ -1167,7 +1180,7 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
         label = composition.name_source_label
         functions = [row for row in functions if label(row) == name_source]
     if capability is not None:
-        functions = [row for row in functions if capability in _function_capabilities(row)]
+        functions = [row for row in functions if _function_has_capability(row, capability)]
     if post_filtered:
         matched = len(functions)
         if limit is not None or offset:
