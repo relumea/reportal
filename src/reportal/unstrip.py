@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from reportal import store
+from reportal import lineage, store
 from reportal.engines import RebrewEngine
 
 # Minimum engine confidence a proposal must reach when the caller names none.
@@ -32,9 +32,9 @@ DEFAULT_MIN_CONFIDENCE = 0.0
 # Placeholder names are handled separately.
 AUTO_NAME_SOURCES = frozenset({"rebrew", "unstrip"})
 
-# Name prefixes an importer or decompiler leaves on a function it could not
-# name; a function carrying one is unnamed even when a name_source was set.
-PLACEHOLDER_PREFIXES = ("sub_", "fcn_", "FUN_")
+# Shared with lineage / composition / decompiler scripts so a FUN_* or FUNC_*
+# name is unnamed everywhere, not only in the unstrip eligibility check.
+PLACEHOLDER_PREFIXES = lineage.PLACEHOLDER_PREFIXES
 
 # Actor and rename source an unstrip apply records in the function's history.
 # The value matches the stored scan kind so a proposal and the rename it caused

@@ -11,9 +11,9 @@ no network and no state directory.
 
 A script carries one rename per stored function whose name is a real
 identity, never a decompiler placeholder (``sub_*``, ``fcn_*``, ``FUN_*``,
-empty), because replaying a placeholder would overwrite the name the tool
-already shows.  The history an analyst can revert in reportal stays in
-reportal; the script is the outbound half only.  ``collect`` gathers the
+``FUNC_*``, empty), because replaying a placeholder would overwrite the name
+the tool already shows.  The history an analyst can revert in reportal stays
+in reportal; the script is the outbound half only.  ``collect`` gathers the
 rows, ``render`` writes one tool's text, and the API, CLI and MCP tool share
 both.
 """
@@ -23,7 +23,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any
 
-from reportal import store
+from reportal import lineage, store
 
 # Tools a script can be rendered for, in the order the CLI, API and SPA list
 # them.  The names are the tools' own spellings.
@@ -48,9 +48,9 @@ FILENAMES = {
     FORMAT_BINJA: "renames_binja.json",
 }
 
-# Name prefixes a decompiler leaves on a function it could not name.  A
-# function carrying one is unnamed even when a name_source was set.
-PLACEHOLDER_PREFIXES = ("sub_", "fcn_", "FUN_")
+# Shared with lineage / composition / unstrip so a placeholder is never
+# replayed into a decompiler as if it were a real rename.
+PLACEHOLDER_PREFIXES = lineage.PLACEHOLDER_PREFIXES
 
 
 class ScriptError(RuntimeError):

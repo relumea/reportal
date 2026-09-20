@@ -120,6 +120,13 @@ class TestNamePass:
         )
         assert _statuses(payload) == ["removed", "added"]
 
+    def test_fun_and_func_placeholders_do_not_pair_on_name(self) -> None:
+        for left, right in (("FUN_401000", "FUN_401000"), ("FUNC_1000", "FUNC_1000")):
+            payload = lineage.compare_functions(
+                [_fn(1, left, 0x1000, 48)], [_fn(2, right, 0x2000, 48)]
+            )
+            assert _statuses(payload) == ["removed", "added"], (left, right)
+
     def test_a_named_function_is_never_re_paired_structurally(self) -> None:
         payload = lineage.compare_functions(
             [_fn(1, "OldName", 0x1000, 48)],

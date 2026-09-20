@@ -600,13 +600,14 @@ class TestDiscard:
     ) -> None:
         function_id = _seed(tmp_path, monkeypatch)
         with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
-            for kind in (llm.AI_KIND_SUMMARY, llm.AI_KIND_COMMENTS, llm.AI_KIND_TYPES):
+            for kind in llm.DISCARDABLE_AI_KINDS:
                 store.set_ai_artifact(conn, function_id, kind, {"note": kind}, "stub")
 
         for path, kind in (
             ("summary", llm.AI_KIND_SUMMARY),
             ("ai-comments", llm.AI_KIND_COMMENTS),
             ("type-suggestions", llm.AI_KIND_TYPES),
+            ("renames", llm.AI_KIND_RENAMES),
         ):
             status, headers, body = wsgi_request("DELETE", f"/api/functions/{function_id}/{path}")
             assert status.startswith("200"), body
@@ -636,6 +637,27 @@ class TestDiscardSurfaces:
         assert payload["journal_action"]
         with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
             assert store.get_ai_artifact(conn, function_id, llm.AI_KIND_COMMENTS) is None
+
+    def test_the_cli_discards_rename_suggestions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+            store.set_ai_artifact(
+                conn, function_id, llm.AI_KIND_RENAMES, {"suggestions": []}, "stub"
+            )
+
+        result = runner.invoke(
+            cli.app,
+            ["ai-clear", str(function_id), "--kind", llm.AI_KIND_RENAMES, "--json"],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["kind"] == llm.AI_KIND_RENAMES
+        assert payload["discarded"] is True
+        with contextlib.closing(store.connect(Path(os.environ[DB_ENV]))) as conn:
+            assert store.get_ai_artifact(conn, function_id, llm.AI_KIND_RENAMES) is None
 
     def test_the_cli_refuses_an_unknown_kind(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

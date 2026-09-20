@@ -57,7 +57,7 @@ WORKER_LLM_GOAL = "llm_goal"
 
 # A function whose name is an address placeholder was never identified, so the
 # offline worker treats it as unmarked.  Everything else is "marked" work.
-_ADDRESS_NAME = re.compile(r"^(?:sub|func|fcn|loc|unk)_[0-9a-fA-F]+$")
+_ADDRESS_NAME = re.compile(r"^(?:sub|fun|func|fcn|loc|unk)_[0-9a-fA-F]+$", re.IGNORECASE)
 
 # Status the offline worker claims for a marked function.  It stands in for the
 # engine verification a real worker performs; the offline worker is dry-run

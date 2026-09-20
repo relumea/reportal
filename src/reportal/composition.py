@@ -40,7 +40,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from reportal import lineage, matching, renames, store, unstrip
+from reportal import flirt_sigs, lineage, matching, renames, store, unstrip
 
 # The five function-name-source labels the portal's breakdown carries, in the
 # order the panel renders them.  ``No Debug Info`` is defined by the name (empty
@@ -69,6 +69,7 @@ NAME_SOURCE_MAP: dict[str, str] = {
     "import": NAME_SOURCE_SYSTEM,
     "rebrew": NAME_SOURCE_SYSTEM,
     "symbol": NAME_SOURCE_SYSTEM,
+    flirt_sigs.PROPOSAL_SOURCE: NAME_SOURCE_SYSTEM,
     unstrip.UNSTRIP_SOURCE: NAME_SOURCE_AUTO_UNSTRIP,
     renames.RENAME_SOURCE: NAME_SOURCE_AI_AGENT,
 }
@@ -139,8 +140,11 @@ CATEGORY_TOP_BINARIES = 5
 
 # Stored ``name_source`` values that mean the name came from a symbol file or
 # the engine's own identification, which is what the hosted ``library`` category
-# reads: an import stub, a rebrew-supplied name or an ingested symbol.
-LIBRARY_NAME_SOURCES: frozenset[str] = frozenset({"import", "rebrew", "symbol"})
+# reads: an import stub, a rebrew-supplied name, an ingested symbol, or a FLIRT
+# apply.
+LIBRARY_NAME_SOURCES: frozenset[str] = frozenset(
+    {"import", "rebrew", "symbol", flirt_sigs.PROPOSAL_SOURCE}
+)
 
 # Function rows the payload returns.  A binary can hold tens of thousands of
 # functions; the summary counts stay exact and the note states the cap.

@@ -23,8 +23,10 @@ from typing import Any
 from reportal import llm, store
 
 # Stored artifact kinds: the suggestions the model produced and the journal a
-# successful apply writes so `revert_renames` can put the text back.
-RENAMES_KIND = "renames"
+# successful apply writes so `revert_renames` can put the text back.  The
+# suggestions kind is ``llm.AI_KIND_RENAMES`` so discard surfaces share one
+# closed set with the other flat AI artifacts without joining ``AI_RUNNERS``.
+RENAMES_KIND = llm.AI_KIND_RENAMES
 RENAMES_APPLIED_KIND = "renames-applied"
 
 # Actor and name_history source an apply records.  A function-kind suggestion

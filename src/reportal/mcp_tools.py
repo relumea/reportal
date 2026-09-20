@@ -3137,7 +3137,7 @@ def _tool_clear_ai_artifact(arguments: dict[str, Any]) -> dict[str, Any]:
     """Discard one stored AI artifact of a function; journaled, so a revert restores it."""
     function_id = _arg_int(arguments, "function_id")
     kind = _arg_optional_str(arguments, "kind", ai_decomp.KIND)
-    kinds = (ai_decomp.KIND, *llm.AI_KINDS)
+    kinds = (ai_decomp.KIND, *llm.DISCARDABLE_AI_KINDS)
     if kind not in kinds:
         raise ToolError("unknown artifact kind", f"artifact kind must be one of {', '.join(kinds)}")
     with contextlib.closing(_open()) as conn:
@@ -7741,15 +7741,15 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "clear_ai_artifact",
             "Discard one stored AI artifact of a function (the rewrite by default, else a"
-            " summary, its inline comments or its type suggestions). The artifact's rating,"
-            " overrides and line comments live inside it and come back with the revert."
-            " Destructive.",
+            " summary, its inline comments, its type suggestions or its rename suggestions)."
+            " The artifact's rating, overrides and line comments live inside it and come"
+            " back with the revert. Destructive.",
             _object(
                 {
                     "function_id": _int("Function id."),
                     "kind": {
                         "type": "string",
-                        "enum": [ai_decomp.KIND, *llm.AI_KINDS],
+                        "enum": [ai_decomp.KIND, *llm.DISCARDABLE_AI_KINDS],
                         "description": "Artifact to discard (default: the rewrite).",
                     },
                 },

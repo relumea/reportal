@@ -45,8 +45,8 @@ from typing import Any
 
 from reportal import comments, journal, llm, renames, store
 
-# Stored artifact kind.  It is deliberately not in `llm.AI_KINDS`: the four
-# kinds there are flat payloads served verbatim, and this one carries a token
+# Stored artifact kind.  It is deliberately not in ``llm.AI_KINDS`` (the three
+# flat runner payloads) or ``llm.AI_KIND_RENAMES``: this one carries a token
 # map, attributions, overrides, a rating and per-line comments.
 KIND = "ai-decompilation"
 

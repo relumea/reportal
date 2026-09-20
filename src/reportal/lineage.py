@@ -59,10 +59,14 @@ MAX_CANDIDATES = 20
 # of rows.
 MAX_ROWS = 500
 
-# Name prefixes rebrew gives a function it could not name.  A name matching one
-# of these (or an empty name) carries no identity, so it never pairs in the
-# name pass.
-PLACEHOLDER_PREFIXES = ("sub_", "fcn_", "FUNC_")
+# Name prefixes a decompiler or importer leaves on a function it could not
+# name.  Covers Ghidra (``FUN_``), Binary Ninja / some Hex-Rays dumps
+# (``FUNC_``), and rebrew's own ``sub_`` / ``fcn_``.  A name matching one of
+# these (or an empty name) carries no identity, so it never pairs in the name
+# pass.  Composition, unstrip and the decompiler script exporters share this
+# tuple so the same string cannot read as real in one surface and unnamed in
+# another.
+PLACEHOLDER_PREFIXES = ("sub_", "fcn_", "FUN_", "FUNC_")
 
 # Decimals `matched_percent` and `confidence` are rounded to.
 METRIC_DECIMALS = 1

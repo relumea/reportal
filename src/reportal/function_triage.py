@@ -80,10 +80,14 @@ MATCH_REFERENCE = 3
 METHOD_LLM = "llm"
 METHOD_HEURISTIC = "heuristic"
 
-# Prefixes that mark a compiler-generated or unnamed function.
+# Prefixes that mark a compiler-generated or unnamed function.  Matched
+# case-insensitively after lowercasing, so ``FUN_`` and ``FUNC_`` both land
+# here (``fun_`` / ``func_``); keep both spellings so IDA and Hex-Rays dumps
+# agree with lineage.PLACEHOLDER_PREFIXES.
 PLACEHOLDER_NAME_PREFIXES: tuple[str, ...] = (
     "sub_",
     "fcn_",
+    "fun_",
     "func_",
     "nullsub_",
     "loc_",

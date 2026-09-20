@@ -175,6 +175,7 @@ class TestScoreCandidates:
         assert function_triage.is_placeholder_name("") is True
         assert function_triage.is_placeholder_name("sub_1000") is True
         assert function_triage.is_placeholder_name("FUNC_4") is True
+        assert function_triage.is_placeholder_name("FUN_401000") is True
         assert function_triage.is_placeholder_name("deadbeef") is True
         assert function_triage.is_placeholder_name("FreePrintSetup") is False
 

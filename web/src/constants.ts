@@ -347,10 +347,11 @@ const NAME_SOURCE_MAP: Record<string, (typeof FUNCTION_NAME_SOURCES)[number]> = 
   import: "System",
   rebrew: "System",
   symbol: "System",
+  flirt: "System",
   unstrip: "Auto Unstrip",
   renames: "AI Agent",
 };
-const PLACEHOLDER_PREFIXES = ["sub_", "fcn_", "FUNC_"] as const;
+const PLACEHOLDER_PREFIXES = ["sub_", "fcn_", "FUN_", "FUNC_"] as const;
 
 /** Portal label for a stored function name and source. */
 export function nameSourceLabel(

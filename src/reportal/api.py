@@ -5420,9 +5420,19 @@ def get_function_renames(function_id: int) -> Response:
                 404, error="function not found", detail=f"no function with id {function_id}"
             )
         artifact = store.get_ai_artifact(conn, function_id, renames.RENAMES_KIND)
-    if artifact is None:
-        return _no_renames_artifact(function_id)
+        if artifact is None:
+            return _no_renames_artifact(function_id)
     return json_response({"function_id": function_id, "kind": renames.RENAMES_KIND, **artifact})
+
+
+@router.delete("/api/functions/{function_id}/renames")
+def discard_function_renames(function_id: int) -> bytes | Any:
+    """Discard the stored rename suggestions; journaled, so a revert restores them."""
+    return _clear_ai_artifact(
+        function_id,
+        renames.RENAMES_KIND,
+        missing=_no_renames_artifact(function_id),
+    )
 
 
 def _applied_entries(body: dict[str, Any]) -> list[dict[str, Any]] | None:

@@ -69,7 +69,7 @@ def _llm_status() -> dict[str, Any]:
     return {
         "configured": client.available(),
         "model": client.model,
-        "kinds": sorted(llm.AI_KINDS),
+        "kinds": sorted(llm.DISCARDABLE_AI_KINDS),
     }
 
 

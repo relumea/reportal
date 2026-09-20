@@ -109,12 +109,15 @@ class TestNameSources:
         rows = [
             ("imported_fn", "import", composition.NAME_SOURCE_SYSTEM),
             ("crt_fn", "rebrew", composition.NAME_SOURCE_SYSTEM),
+            ("flirt_fn", "flirt", composition.NAME_SOURCE_SYSTEM),
             ("unstripped_fn", "unstrip", composition.NAME_SOURCE_AUTO_UNSTRIP),
             ("renamed_fn", "renames", composition.NAME_SOURCE_AI_AGENT),
             ("ai_helper", "ai-inline", composition.NAME_SOURCE_AI_AGENT),
             ("hand_named_fn", "manual", composition.NAME_SOURCE_USER),
             ("mystery_fn", "mystery-source", composition.NAME_SOURCE_USER),
             ("sub_1000", "import", composition.NAME_SOURCE_NO_DEBUG_INFO),
+            ("FUN_401000", "rebrew", composition.NAME_SOURCE_NO_DEBUG_INFO),
+            ("FUNC_401000", "rebrew", composition.NAME_SOURCE_NO_DEBUG_INFO),
             ("", "", composition.NAME_SOURCE_NO_DEBUG_INFO),
         ]
         for index, (name, source, _label) in enumerate(rows):
@@ -122,17 +125,17 @@ class TestNameSources:
 
         payload = composition.compute_composition(conn, binary_id=target)
 
-        assert payload["total_functions"] == 9
+        assert payload["total_functions"] == 12
         assert [entry["label"] for entry in payload["name_sources"]] == list(
             composition.NAME_SOURCE_LABELS
         )
         buckets = _labelled(payload["name_sources"])
-        assert buckets[composition.NAME_SOURCE_SYSTEM]["count"] == 2
+        assert buckets[composition.NAME_SOURCE_SYSTEM]["count"] == 3
         assert buckets[composition.NAME_SOURCE_AUTO_UNSTRIP]["count"] == 1
         assert buckets[composition.NAME_SOURCE_AI_AGENT]["count"] == 2
         assert buckets[composition.NAME_SOURCE_USER]["count"] == 2
-        assert buckets[composition.NAME_SOURCE_NO_DEBUG_INFO]["count"] == 2
-        assert buckets[composition.NAME_SOURCE_SYSTEM]["percent"] == pytest.approx(22.2)
+        assert buckets[composition.NAME_SOURCE_NO_DEBUG_INFO]["count"] == 4
+        assert buckets[composition.NAME_SOURCE_SYSTEM]["percent"] == pytest.approx(25.0)
 
     def test_placeholder_name_is_no_debug_info_whatever_the_source(
         self, conn: sqlite3.Connection, tmp_path: Path
@@ -144,6 +147,18 @@ class TestNameSources:
         buckets = _labelled(payload["name_sources"])
         assert buckets[composition.NAME_SOURCE_NO_DEBUG_INFO]["count"] == 1
         assert buckets[composition.NAME_SOURCE_SYSTEM]["count"] == 0
+
+    def test_flirt_name_source_is_system_and_library(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
+        analysis_id = _analysis(conn, target)
+        _function(conn, analysis_id, va=0x1000, name="memcpy", name_source="flirt")
+        payload = composition.compute_composition(conn, binary_id=target)
+        buckets = _labelled(payload["name_sources"])
+        assert buckets[composition.NAME_SOURCE_SYSTEM]["count"] == 1
+        categories = {entry["category"]: entry for entry in payload["categories"]}
+        assert categories[composition.CATEGORY_LIBRARY]["count"] == 1
 
 
 class TestQualityBands:

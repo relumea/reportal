@@ -7123,7 +7123,10 @@ def ai_clear(
     kind: str = typer.Option(
         ai_decomp.KIND,
         "--kind",
-        help=f"Artifact to discard: {ai_decomp.KIND}, {', '.join(llm.AI_KINDS)}",
+        help=(
+            f"Artifact to discard: {ai_decomp.KIND}, "
+            f"{', '.join(llm.DISCARDABLE_AI_KINDS)}"
+        ),
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
@@ -7136,7 +7139,7 @@ def ai_clear(
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    kinds = (ai_decomp.KIND, *llm.AI_KINDS)
+    kinds = (ai_decomp.KIND, *llm.DISCARDABLE_AI_KINDS)
     if kind not in kinds:
         _fail(f"unknown artifact kind {kind!r}; expected one of {', '.join(kinds)}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:

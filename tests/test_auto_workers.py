@@ -123,7 +123,9 @@ class TestRegistry:
 
 
 class TestHelpers:
-    @pytest.mark.parametrize("name", ["sub_1000", "func_10008880", "loc_1a2b", "unk_10"])
+    @pytest.mark.parametrize(
+        "name", ["sub_1000", "func_10008880", "FUN_401000", "loc_1a2b", "unk_10"]
+    )
     def test_address_placeholders(self, name: str) -> None:
         assert auto_workers.is_address_placeholder(name)
 

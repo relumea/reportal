@@ -336,7 +336,10 @@ class TestPromptBuilders:
 
     def test_every_kind_has_a_runner_and_cli_command(self) -> None:
         assert set(llm.AI_RUNNERS) == set(llm.AI_KINDS)
-        assert set(llm.AI_CLI_COMMANDS) == set(llm.AI_KINDS)
+        assert set(llm.AI_KINDS) <= set(llm.AI_CLI_COMMANDS)
+        assert set(llm.AI_CLI_COMMANDS) == set(llm.DISCARDABLE_AI_KINDS)
+        assert llm.AI_KIND_RENAMES in llm.DISCARDABLE_AI_KINDS
+        assert llm.AI_KIND_RENAMES not in llm.AI_KINDS
 
 
 class TestConfidence:

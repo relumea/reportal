@@ -115,17 +115,24 @@ EMBEDDINGS_PATH = "embeddings"
 EMBEDDINGS_BATCH_SIZE = 32
 
 # Artifact kinds, one row per (function, kind) in `ai_artifacts`.  The kind is
-# also the CLI-independent name the API and SPA use.
+# also the CLI-independent name the API and SPA use.  ``AI_KINDS`` is exactly
+# the set with an ``AI_RUNNERS`` entry; identifier-rename suggestions
+# (``AI_KIND_RENAMES``) are stored the same way but run through
+# :mod:`reportal.renames`, so clear / discard / instance discovery include them
+# via ``DISCARDABLE_AI_KINDS`` without putting them in ``AI_RUNNERS``.
 AI_KIND_SUMMARY = "summary"
 AI_KIND_COMMENTS = "comments"
 AI_KIND_TYPES = "type-suggestions"
+AI_KIND_RENAMES = "renames"
 AI_KINDS: tuple[str, ...] = (AI_KIND_SUMMARY, AI_KIND_COMMENTS, AI_KIND_TYPES)
+DISCARDABLE_AI_KINDS: tuple[str, ...] = (*AI_KINDS, AI_KIND_RENAMES)
 
 # CLI command per kind, used in the hint a missing artifact answers with.
 AI_CLI_COMMANDS: dict[str, str] = {
     AI_KIND_SUMMARY: "summary",
     AI_KIND_COMMENTS: "comments",
     AI_KIND_TYPES: "suggest-types",
+    AI_KIND_RENAMES: "suggest-renames",
 }
 
 # Fixed detail every unconfigured AI surface reports.
