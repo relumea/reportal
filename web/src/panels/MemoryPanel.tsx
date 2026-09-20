@@ -143,6 +143,45 @@ function asciiCopy(bytes: number[]): string {
   return bytes.map(gutterOf).join("");
 }
 
+type CopyForm = "hex" | "c" | "ascii";
+
+/** One ASCII gutter character; click selects the same byte the hex column would. */
+function AsciiGutter({
+  start,
+  bytes,
+  selection,
+  onSelect,
+}: {
+  start: number;
+  bytes: number[];
+  selection: Selection | null;
+  onSelect: (address: number, extend: boolean, form: CopyForm) => void;
+}): ReactNode {
+  return (
+    <span className="memory-ascii">
+      {bytes.map((byte, offset) => {
+        const address = start + offset;
+        const selected =
+          selection !== null && address >= selection.start && address <= selection.end;
+        const classes = ["byte"];
+        if (byte === 0) classes.push("byte-zero");
+        if (selected) classes.push("byte-selected");
+        return (
+          <button
+            key={address}
+            type="button"
+            className={classes.join(" ")}
+            aria-label={`ascii ${hex(address)}`}
+            onClick={(event) => onSelect(address, event.shiftKey, "ascii")}
+          >
+            {gutterOf(byte)}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
 export function MemoryPanel({
   binaryId,
   focus,
@@ -366,6 +405,7 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
   const [gotoKind, setGotoKind] = useState<GotoKind>("va");
   const [anchor, setAnchor] = useState<number | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [copyForm, setCopyForm] = useState<CopyForm>("hex");
   const [copied, setCopied] = useState("");
 
   const page = entry?.state === "ready" ? entry.data : undefined;
@@ -386,10 +426,11 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
     load(() => loadPage(value, kind));
   };
 
-  const selectByte = (address: number, extend: boolean): void => {
+  const selectByte = (address: number, extend: boolean, form: CopyForm = "hex"): void => {
     const next = extendSelection(anchor, address, extend);
     setAnchor(next.anchor);
     setSelection(next.selection);
+    setCopyForm(form);
   };
 
   const selectedBytes = (): number[] => {
@@ -516,7 +557,7 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
                   setSelection(null);
                   setCopied("");
                 }}
-                onCopyHex={() => void copy("hex")}
+                onCopy={() => void copy(copyForm)}
               />
             </>
           )}
@@ -535,13 +576,13 @@ function PageRows({
   selection,
   onSelect,
   onClear,
-  onCopyHex,
+  onCopy,
 }: {
   page: MemoryPage;
   selection: Selection | null;
-  onSelect: (address: number, extend: boolean) => void;
+  onSelect: (address: number, extend: boolean, form?: CopyForm) => void;
   onClear: () => void;
-  onCopyHex: () => void;
+  onCopy: () => void;
 }): ReactNode {
   return (
     <div
@@ -559,7 +600,7 @@ function PageRows({
           selection !== null
         ) {
           event.preventDefault();
-          onCopyHex();
+          onCopy();
         }
       }}
     >
@@ -582,7 +623,7 @@ function PageRow({
 }: {
   row: MemoryPageRow;
   selection: Selection | null;
-  onSelect: (address: number, extend: boolean) => void;
+  onSelect: (address: number, extend: boolean, form?: CopyForm) => void;
 }): ReactNode {
   if (row.kind === "gap") {
     return (
@@ -614,14 +655,14 @@ function PageRow({
               type="button"
               className={classes.join(" ")}
               aria-label={`byte ${hex(address)}`}
-              onClick={(event) => onSelect(address, event.shiftKey)}
+              onClick={(event) => onSelect(address, event.shiftKey, "hex")}
             >
               {byte.toString(16).padStart(2, "0")}
             </button>
           );
         })}
       </span>
-      <span className="memory-ascii">{bytes.map(gutterOf).join("")}</span>
+      <AsciiGutter start={start} bytes={bytes} selection={selection} onSelect={onSelect} />
     </div>
   );
 }
@@ -701,6 +742,7 @@ function ContinuousMode({
   const [goto, setGoto] = useState(focus ?? "");
   const [anchor, setAnchor] = useState<number | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
+  const [copyForm, setCopyForm] = useState<CopyForm>("hex");
   const [copied, setCopied] = useState("");
   const container = useRef<HTMLDivElement | null>(null);
   const gotoRef = useRef<HTMLInputElement | null>(null);
@@ -857,10 +899,11 @@ function ContinuousMode({
     }
   };
 
-  const select = (address: number, extend: boolean): void => {
+  const select = (address: number, extend: boolean, form: CopyForm = "hex"): void => {
     const next = extendSelection(anchor, address, extend);
     setAnchor(next.anchor);
     setSelection(next.selection);
+    setCopyForm(form);
   };
 
   const selectedBytes = (): number[] => {
@@ -938,7 +981,7 @@ function ContinuousMode({
       selection !== null
     ) {
       event.preventDefault();
-      void copy("hex");
+      void copy(copyForm);
     }
   };
 
@@ -1082,7 +1125,7 @@ function ContinuousMode({
       <Muted>
         Press G to focus the address box, Tab to switch the offset and virtual columns, Enter
         to jump and clear, Esc to dismiss without jumping, Esc on the dump to
-        clear a selection, and Ctrl+C to copy the selection as hex. The
+        clear a selection, and Ctrl+C to copy hex or ASCII from the last column. The
         choice is remembered across sessions. Only the rows on screen are rendered and the bytes
         arrive {CONTINUOUS_WINDOW} at a time, so a large binary scrolls without loading whole.
       </Muted>
@@ -1134,7 +1177,7 @@ function DumpLine({
   top: number;
   sections: MemoryPageSection[];
   selection: Selection | null;
-  onSelect: (address: number, extend: boolean) => void;
+  onSelect: (address: number, extend: boolean, form?: CopyForm) => void;
 }): ReactNode {
   // The rows are named by their virtual address, which is what a decompiler or
   // a disassembly prints, and the second column is the file offset beside it,
@@ -1179,14 +1222,19 @@ function DumpLine({
               type="button"
               className={classes.join(" ")}
               aria-label={`byte ${hex(at)}`}
-              onClick={(event) => onSelect(at, event.shiftKey)}
+              onClick={(event) => onSelect(at, event.shiftKey, "hex")}
             >
               {byte.toString(16).padStart(2, "0")}
             </button>
           );
         })}
       </span>
-      <span className="memory-ascii">{values.map(gutterOf).join("")}</span>
+      <AsciiGutter
+        start={row.address}
+        bytes={values}
+        selection={selection}
+        onSelect={onSelect}
+      />
     </div>
   );
 }

@@ -70,6 +70,7 @@ view renders it from here.
 - Memory dump Esc clears the byte selection.
 - Memory paged dump copies a selection as ASCII.
 - Memory dump Ctrl+C copies the selection as hex.
+- Memory dump ASCII column selects as text; Ctrl+C follows that column.
 - Section file-offset cells open Memory at that offset.
 - Code listings (As C, prototypes, dumps) copy on click.
 - Clicking an Analyses row (not a control) opens that binary, or

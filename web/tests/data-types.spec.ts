@@ -29,7 +29,7 @@ test("the kind filter narrows the type list", async ({ page }) => {
   const typeLink = types.getByRole("link", { name: "NP_ENTRY" }).first();
   await expect(typeLink).toHaveAttribute("href", /search=NP_ENTRY/);
   await expect(types.getByText(/3 members · \d+ bytes/).first()).toBeVisible();
-  const entryCard = types.locator(".card").filter({ hasText: "NP_ENTRY" }).first();
+  const entryCard = types.locator(".card").filter({ hasText: /NP_ENTRY struct/ }).first();
   await entryCard.getByRole("button", { name: "References" }).click();
   await expect(entryCard.getByRole("heading", { name: "Referenced by" })).toBeVisible();
   await expect(

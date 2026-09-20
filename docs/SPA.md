@@ -845,8 +845,9 @@ and the bytes read 256 at a time as the viewport approaches a window.  A region
 no section backs is a stated `gap` row, the same one the paged mode renders, so
 the dump never shows invented zeros.  Zero bytes in the window dump and the
 paged dump are dimmed (`.byte-zero`).  A selected range copies as hex, a C
-array, or ASCII (printable, else a dot).  Ctrl+C on a dump copies the
-selection as hex.  The window dump names Offset and
+array, or ASCII (printable, else a dot).  Click the ASCII column to select
+as text; Ctrl+C copies hex or ASCII from the last column clicked.  The
+window dump names Offset and
 Virtual per row (a file read fills Offset; a VA read fills Virtual).
 Enter on the window address box reads the window; Esc clears it.
 The `Columns` control switches the virtual

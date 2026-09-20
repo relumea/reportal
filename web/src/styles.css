@@ -3185,6 +3185,11 @@ kbd.key {
 
 .memory-ascii {
   color: var(--text);
+  display: inline-flex;
+}
+
+.memory-ascii .byte {
+  padding: 0;
 }
 
 .memory-gap {

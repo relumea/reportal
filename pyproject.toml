@@ -35,8 +35,14 @@ dependencies = [
     # imported at all in a clean environment.
     "openai==2.54.0",
     "python-multipart==0.0.32",
+    # Imported directly by `flirt_sigs` (lazy); do not rely on the transitive
+    # pin through `rebrew`. Kept as a base dep so a wheel install without the
+    # sibling checkout still has the matcher when signatures are configured.
+    "python-flirt==0.10.0",
     "rebrew",
     "reportlab==5.0.1",
+    # Exact pin; see [tool.uv].override-dependencies for why this stays on
+    # 14.x while the sibling rebrew declares rich>=15.
     "rich==14.3.4",
     # Imported directly by `server`, `api`, and `ui`; do not rely on the
     # transitive pin through `fastapi`.
@@ -114,6 +120,12 @@ package = true
 # Floor matches CI setup-uv (`version: "0.8.22"` in .github/workflows/check.yml).
 # A bare pin is ==; use >= so newer local uv still syncs.
 required-version = ">=0.8.22"
+# rebrew declares rich>=15.0.0; the optional cognee extra pulls instructor,
+# which caps rich at <15. Override keeps the resolver on reportal's exact pin
+# so `uv lock` stays solvable until a cognee line accepts rich 15.
+override-dependencies = [
+    "rich==14.3.4",
+]
 
 [tool.uv.sources]
 # Sibling-checkout path deps, resolved relative to this pyproject.toml so the
@@ -202,15 +214,18 @@ disallow_any_generics = true
 # per-module relaxation and keeps the package at the graduated set.
 
 # Runtime-only dependencies published without a PEP 561 marker: the sibling
-# resembl checkout (the similarity extra), cognee's LLM exception module and
-# reportlab's canvas.  There are no stubs to check against, and their values are
-# used through the annotations this project already writes.
+# resembl checkout (the similarity extra), cognee's LLM exception module,
+# python-flirt's matcher, and reportlab's canvas.  There are no stubs to check
+# against, and their values are used through the annotations this project
+# already writes.
 [[tool.mypy.overrides]]
 module = [
     "resembl",
     "resembl.*",
     "cognee",
     "cognee.*",
+    "flirt",
+    "flirt.*",
     "reportlab",
     "reportlab.*",
 ]
