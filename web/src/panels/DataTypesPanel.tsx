@@ -1711,7 +1711,7 @@ function MemberRow({
             title={canInsert ? undefined : "Fill the add-member name and type first"}
             onClick={insertAfter}
           >
-            Insert after
+            Insert member after
           </Button>
           {hideLayout ? null : isGap ? (
             <Button size="sm" tone="ghost" pending={busy === "ungap"} onClick={fromGap}>

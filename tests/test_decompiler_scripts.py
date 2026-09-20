@@ -135,8 +135,9 @@ class TestApi:
         assert json_body(body, headers)["error"] == "invalid format"
 
     def test_export_404s_an_unknown_binary(self, conn: sqlite3.Connection) -> None:
-        status, _headers, _body = wsgi_request("GET", "/api/binaries/999/decompiler-script")
+        status, headers, body = wsgi_request("GET", "/api/binaries/999/decompiler-script")
         assert status == "404 Not Found"
+        assert json_body(body, headers)["error"] == "binary not found"
 
 
 class TestCli:
@@ -160,6 +161,7 @@ class TestCli:
         binary_id = _seed(conn, tmp_path)
         result = runner.invoke(cli.app, ["decompiler-script", str(binary_id), "--format", "nope"])
         assert result.exit_code != 0
+        assert "format must be one of" in result.output
 
     def test_command_writes_a_file(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         binary_id = _seed(conn, tmp_path)
@@ -184,11 +186,13 @@ class TestMcp:
 
     def test_tool_refuses_an_unknown_format(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
         binary_id = _seed(conn, tmp_path)
-        _payload, failed = mcp_server.call_tool(
+        payload, failed = mcp_server.call_tool(
             "export_decompiler_script", {"binary_id": binary_id, "format": "nope"}
         )
         assert failed
+        assert payload["error"] == "invalid format"
 
     def test_tool_404s_an_unknown_binary(self, conn: sqlite3.Connection) -> None:
-        _payload, failed = mcp_server.call_tool("export_decompiler_script", {"binary_id": 999})
+        payload, failed = mcp_server.call_tool("export_decompiler_script", {"binary_id": 999})
         assert failed
+        assert payload["error"] == "binary not found"

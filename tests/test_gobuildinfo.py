@@ -178,8 +178,9 @@ class TestRoutes:
         assert payload["error"] == "no-scan"
 
     def test_routes_of_an_unknown_binary_are_404(self, portal_db: Path) -> None:
-        status, _payload = _get("/api/binaries/4242/gobuildinfo")
+        status, payload = _get("/api/binaries/4242/gobuildinfo")
         assert status.startswith("404")
+        assert payload["error"] == "binary not found"
 
 
 class TestCli:

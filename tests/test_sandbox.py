@@ -158,11 +158,11 @@ class TestGuards:
             sandbox.unregister_runner("bwrap")
 
     def test_refresh_reads_the_entry_point_group(self) -> None:
-        from reportal import plugins
-
-        assert sandbox.refresh_runners() == [entry.name for entry in sandbox.registered_runners()]
-        assert "bwrap" in [entry.name for entry in sandbox.registered_runners()]
-        assert plugins is not None
+        names = sandbox.refresh_runners()
+        registered = [entry.name for entry in sandbox.registered_runners()]
+        assert names == registered
+        assert "bwrap" in registered
+        assert sandbox.RUNNER_ENTRY_POINT_GROUP == "reportal.sandbox_runners"
 
     def test_a_run_table_row_is_not_written_by_a_disabled_route(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

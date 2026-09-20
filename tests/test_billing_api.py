@@ -92,8 +92,9 @@ class TestBillingRoute:
         assert payload["billing"]["provider"] in {"disabled", "stripe", "manual"}
 
     def test_an_unknown_organisation_is_a_404(self, portal_db: Path) -> None:
-        status, _, _ = on_request("GET", "/api/organisations/424242/billing")
+        status, _, chunks = on_request("GET", "/api/organisations/424242/billing")
         assert status.startswith("404")
+        assert json_body(b"".join(chunks), {})["error"] == auth.ERROR_ORGANISATION_NOT_FOUND
 
 
 class TestPlanAssignment:
@@ -166,26 +167,30 @@ class TestCheckoutRoute:
     ) -> None:
         monkeypatch.setenv(billing.PROVIDER_ENV, billing.PROVIDER_DISABLED)
         organisation_id = _organisation(portal_db)
-        status, _, _ = on_request(
+        status, _, chunks = on_request(
             "POST",
             f"/api/organisations/{organisation_id}/billing/checkout",
             body=json.dumps({"plan_id": "analyst"}),
             headers={"Content-Type": "application/json"},
         )
         assert status.startswith("503")
+        assert json_body(b"".join(chunks), {})["error"] == "billing-error"
 
     def test_an_unknown_plan_is_a_400(
         self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(billing.PROVIDER_ENV, billing.PROVIDER_MANUAL)
         organisation_id = _organisation(portal_db)
-        status, _, _ = on_request(
+        status, _, chunks = on_request(
             "POST",
             f"/api/organisations/{organisation_id}/billing/checkout",
             body=json.dumps({"plan_id": "platinum"}),
             headers={"Content-Type": "application/json"},
         )
         assert status.startswith("400")
+        payload = json_body(b"".join(chunks), {})
+        assert payload["error"] == "billing-error"
+        assert "unknown plan" in payload["detail"]
 
     def test_a_manual_checkout_round_trips(
         self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
@@ -227,13 +232,16 @@ class TestWebhookRoute:
         self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv(billing.STRIPE_WEBHOOK_ENV, WEBHOOK_SECRET)
-        status, _, _ = on_request(
+        status, _, chunks = on_request(
             "POST",
             "/api/billing/webhook",
             body=json.dumps({"id": "evt_1", "type": "ping"}),
             headers={"Content-Type": "application/json"},
         )
         assert status.startswith("400")
+        payload = json_body(b"".join(chunks), {})
+        assert payload["error"] == "billing-error"
+        assert payload["detail"] == "invalid signature"
 
     def test_a_signed_webhook_applies_and_redelivery_is_a_duplicate(
         self, portal_db: Path, monkeypatch: pytest.MonkeyPatch

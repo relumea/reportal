@@ -536,7 +536,7 @@ export function FunctionsView({
           </Button>
           {filtered ? (
             <Button tone="ghost" onClick={clearFilters}>
-              Clear ({filterCount})
+              Clear all
             </Button>
           ) : null}
         </Toolbar>

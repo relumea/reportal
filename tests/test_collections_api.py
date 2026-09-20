@@ -92,9 +92,10 @@ class TestUpdate:
         assert payload["detail"] == "name, description or scope is required"
 
     def test_an_unknown_collection_is_404(self, conn: sqlite3.Connection) -> None:
-        status, _payload = _request("PATCH", "/api/collections/4242", {"name": "x"})
+        status, payload = _request("PATCH", "/api/collections/4242", {"name": "x"})
 
         assert status.startswith("404")
+        assert payload["error"] == "collection not found"
 
 
 class TestDelete:

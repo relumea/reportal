@@ -64,7 +64,7 @@ test("a member is inserted after another from the row action", async ({ page }) 
   await card.getByLabel("Add member", { exact: true }).fill("afterMagic");
   await card.getByLabel("Type", { exact: true }).fill("char");
   const row = memberRow(card, "magic");
-  await row.getByRole("button", { name: "Insert after", exact: true }).click();
+  await row.getByRole("button", { name: "Insert member after", exact: true }).click();
 
   await expect(card.getByText("char afterMagic;", { exact: false })).toBeVisible();
 });

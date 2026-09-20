@@ -100,7 +100,9 @@ view renders it from here.
 - Data type `typedef` hover reads Type alias.
 - Data type Sort and Direction keep both values when set together.
 - Data type Clear all filters leaves the search text.
+- Data type member rows insert with Insert member after.
 - Function list Ctrl/⌘-click opens the function in a new tab.
+- Function list Clear all resets the filters.
 - Binary register Ctrl/⌘-click opens the binary in a new tab.
 - Match / Diff Ctrl/⌘-click opens the candidate in a new tab.
 - Match / Diff toolbar reads `Found: N matches` for the loaded function.

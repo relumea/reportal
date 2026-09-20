@@ -44,12 +44,12 @@ test("a filter narrows the row set and states the counts", async ({ page }) => {
   await expect(page).toHaveURL(/match=unmatched/);
   // One of the six seeded functions is the source of a stored match.
   await expect(panel.getByText("5 of 6 functions")).toBeVisible();
-  await expect(panel.getByRole("button", { name: "Clear (1)", exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Clear all", exact: true })).toBeVisible();
   await expect(panel.getByLabel("Clear Match unmatched")).toBeVisible();
 
   await page.reload();
   await expect(panel.getByText("5 of 6 functions")).toBeVisible();
-  await panel.getByRole("button", { name: "Clear (1)", exact: true }).click();
+  await panel.getByRole("button", { name: "Clear all", exact: true }).click();
   await expect(panel.getByText("6 of 6 functions")).toBeVisible();
 });
 

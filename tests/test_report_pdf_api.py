@@ -66,8 +66,13 @@ class TestGeneratePdfRoute:
     ) -> None:
         _workspace(tmp_path, monkeypatch)
         binary_id, _ = _binary(conn)
-        status, _, _ = wsgi_request("POST", f"/api/binaries/{binary_id}/report/pdf")
+        status, headers, body = wsgi_request("POST", f"/api/binaries/{binary_id}/report/pdf")
         assert status.startswith("200")
+        payload = json_body(body, headers)
+        written = Path(payload["path"])
+        assert written.is_file()
+        assert payload["bytes"] == written.stat().st_size
+        assert written.read_bytes().startswith(b"%PDF-1.4")
 
     def test_post_renders_stored_scans(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

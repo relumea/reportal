@@ -738,7 +738,8 @@ namespace tree (`Search namespaces...`, Collapse) whose descendants grey
 out when a branch is ticked, empty namespace reads Binary, a
 References control whose Referenced-by names link the type list, a
 pointer/typedef/array target that walks each hop's kind and size, a
-function type's Returns row and parameter table, Clear all filters
+function type's Returns row and parameter table, Insert member after
+and Convert to gap on a member row, Clear all filters
 when a filter is on (it leaves the search text), and a
 page-at-a-time list with a Load more control; its six controls live in the
 route hash, so a filtered and ordered model is a link.  The order is the
@@ -782,7 +783,7 @@ the total (`Search N functions`) and which narrows as you type, one address
 name for), the name source,
 capability, match state, a size range and a string reference are sent to the
 server as query parameters (`GET /api/binaries/<id>/functions`), the table
-reports the filtered-of-total counts, Clear states how many filters are on,
+reports the filtered-of-total counts, Clear all resets them,
 and the empty state names the filter, and
 the sort headers toggle a column and its direction.  The filter and sort state
 lives in the route's hash query (`#/binaries/<id>/functions?sort=size&order=desc`),

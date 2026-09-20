@@ -555,8 +555,9 @@ class TestBinaries:
         assert [function["name"] for function in functions] == ["ChooseFontW"]
 
     def test_functions_unknown_binary_404(self, portal_db: Path) -> None:
-        status, _, _ = wsgi_request("GET", "/api/binaries/12/functions")
+        status, headers, body = wsgi_request("GET", "/api/binaries/12/functions")
         assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "binary not found"
 
 
 class TestEngineRoutes:
@@ -641,8 +642,9 @@ class TestEngineRoutes:
         assert json_body(body, headers)["error"] == "engine-unavailable"
 
     def test_strings_404_unknown_id(self, portal_db: Path, fake_engine: FakeEngine) -> None:
-        status, _, _ = wsgi_request("GET", "/api/binaries/999/strings")
+        status, headers, body = wsgi_request("GET", "/api/binaries/999/strings")
         assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "binary not found"
 
 
 class TestFunctions:
@@ -676,16 +678,18 @@ class TestFunctions:
 
     def test_rename_missing_name_400(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
-        status, _, _ = wsgi_request(
+        status, headers, body = wsgi_request(
             "POST", f"/api/functions/{ids['function']}/rename", body=json.dumps({"actor": "x"})
         )
         assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "name must be a non-empty string"
 
     def test_rename_unknown_404(self, portal_db: Path) -> None:
-        status, _, _ = wsgi_request(
+        status, headers, body = wsgi_request(
             "POST", "/api/functions/321/rename", body=json.dumps({"name": "x"})
         )
         assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "function not found"
 
     def test_matches(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
@@ -695,8 +699,9 @@ class TestFunctions:
         assert matches[0]["candidate_name"] == "sub_2000"
 
     def test_history_unknown_404(self, portal_db: Path) -> None:
-        status, _, _ = wsgi_request("GET", "/api/functions/321/history")
+        status, headers, body = wsgi_request("GET", "/api/functions/321/history")
         assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "function not found"
 
 
 class TestRevert:
@@ -1121,10 +1126,11 @@ class TestMatchRoute:
     ) -> None:
         monkeypatch.setattr(similarity, "available", lambda: True)
         ids = self._seed_with_context(conn)
-        status, _, _ = wsgi_request(
+        status, headers, body = wsgi_request(
             "POST", f"/api/binaries/{ids['binary']}/match", body=json.dumps({"top": 0})
         )
         assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "top must be positive"
 
     def test_match_503_without_engine(self, conn: sqlite3.Connection) -> None:
         ids = self._seed_with_context(conn)
@@ -1769,8 +1775,11 @@ class TestAnalyses:
         assert "integer" in json_body(body, headers)["error"]
 
     def test_create_unknown_binary_404(self, portal_db: Path) -> None:
-        status, _, _ = wsgi_request("POST", "/api/analyses", body=json.dumps({"binary_id": 42}))
+        status, headers, body = wsgi_request(
+            "POST", "/api/analyses", body=json.dumps({"binary_id": 42})
+        )
         assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "binary not found"
 
 
 class TestCollections:
@@ -1796,17 +1805,19 @@ class TestCollections:
 
     def test_duplicate_name_400(self, conn: sqlite3.Connection) -> None:
         wsgi_request("POST", "/api/collections", body=json.dumps({"name": "winsock"}))
-        status, _, _ = wsgi_request(
+        status, headers, body = wsgi_request(
             "POST", "/api/collections", body=json.dumps({"name": "winsock"})
         )
         assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid collection"
 
     def test_add_to_unknown_collection_404(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
-        status, _, _ = wsgi_request(
+        status, headers, body = wsgi_request(
             "POST", "/api/collections/99/binaries", body=json.dumps({"binary_id": ids["binary"]})
         )
         assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "collection not found"
 
 
 class TestTags:
@@ -4413,8 +4424,9 @@ class TestConversationsRoutes:
         assert status.startswith("200")
         assert json_body(body, headers)["deleted"] is True
         assert store.list_messages(conn, conversation_id) == []
-        status, _, _ = wsgi_request("GET", f"/api/conversations/{conversation_id}")
+        status, headers, body = wsgi_request("GET", f"/api/conversations/{conversation_id}")
         assert status.startswith("404")
+        assert json_body(body, headers)["error"] == "conversation not found"
 
     def test_delete_unknown_404(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("DELETE", "/api/conversations/999")
