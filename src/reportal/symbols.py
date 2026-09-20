@@ -182,17 +182,25 @@ class _Elf:
         if len(data) < 16:
             raise UnreadableSymbolError("the ELF is truncated")
         self.is64 = data[4] == 2
-        if data[5] != 1:
-            raise UnreadableSymbolError("only a little-endian ELF is read")
+        # EI_DATA: 1 little-endian, 2 big-endian.  Firmware and network
+        # targets ship both; the host's own endianness is irrelevant.
+        if data[5] == 1:
+            self.byteorder = "little"
+            self.endian = "<"
+        elif data[5] == 2:
+            self.byteorder = "big"
+            self.endian = ">"
+        else:
+            raise UnreadableSymbolError("the ELF endianness is unknown")
         if self.is64:
-            header = self._unpack("<HHIQQQIHHHHHH", 16, 48)
+            header = self._unpack(f"{self.endian}HHIQQQIHHHHHH", 16, 48)
             self.machine = int(header[1])
             self.shoff = int(header[5])
             self.shentsize = int(header[10])
             self.shnum = int(header[11])
             self.shstrndx = int(header[12])
         else:
-            header = self._unpack("<HHIIIIIHHHHHH", 16, 36)
+            header = self._unpack(f"{self.endian}HHIIIIIHHHHHH", 16, 36)
             self.machine = int(header[1])
             self.shoff = int(header[4])
             self.shentsize = int(header[9])
@@ -214,9 +222,9 @@ class _Elf:
         """One section header as a plain dict."""
         offset = self.shoff + index * self.shentsize
         if self.is64:
-            fields = self._unpack("<IIQQQQIIQQ", offset, 64)
+            fields = self._unpack(f"{self.endian}IIQQQQIIQQ", offset, 64)
         else:
-            fields = self._unpack("<IIIIIIIIII", offset, 40)
+            fields = self._unpack(f"{self.endian}IIIIIIIIII", offset, 40)
         return {
             "name_offset": int(fields[0]),
             "type": int(fields[1]),
@@ -282,11 +290,11 @@ class _Elf:
         for offset in range(0, len(blob) - entry_size + 1, entry_size):
             if self.is64:
                 name_at, info, _other, shndx, value, size = struct.unpack_from(
-                    "<IBBHQQ", blob, offset
+                    f"{self.endian}IBBHQQ", blob, offset
                 )
             else:
                 name_at, value, size, info, _other, shndx = struct.unpack_from(
-                    "<IIIBBH", blob, offset
+                    f"{self.endian}IIIBBH", blob, offset
                 )
             name = _string_at(strings, int(name_at))
             if not name:
@@ -379,6 +387,8 @@ class _Dwarf:
     """The sections one ELF's DWARF readers need, already bounds-checked."""
 
     def __init__(self, elf: _Elf) -> None:
+        # DWARF multi-byte fields follow the containing ELF's EI_DATA.
+        self.byteorder = elf.byteorder
         self.info = _section_bytes(elf, ".debug_info")
         self.abbrev = _section_bytes(elf, ".debug_abbrev")
         self.strings = _section_bytes(elf, ".debug_str")
@@ -405,8 +415,8 @@ def parse_dwarf(elf: _Elf) -> tuple[list[dict[str, Any]], list[dict[str, Any]], 
     symbols: list[dict[str, Any]] = []
     types: list[dict[str, Any]] = []
     notes: list[str] = []
-    for unit in _units(dwarf.info or b""):
-        unit = {**unit, "dwarf": dwarf}
+    for unit in _units(dwarf.info or b"", byteorder=dwarf.byteorder):
+        unit = {**unit, "dwarf": dwarf, "byteorder": dwarf.byteorder}
         try:
             bases = _unit_bases(unit)
             unit = {**unit, "bases": bases}
@@ -421,36 +431,36 @@ def parse_dwarf(elf: _Elf) -> tuple[list[dict[str, Any]], list[dict[str, Any]], 
     return symbols, types, notes
 
 
-def _units(data: bytes) -> list[dict[str, Any]]:
+def _units(data: bytes, *, byteorder: str = "little") -> list[dict[str, Any]]:
     """Every compilation unit header of a ``.debug_info`` section."""
     units: list[dict[str, Any]] = []
     offset = 0
     while offset + 11 <= len(data) and len(units) < 4096:
-        length = int.from_bytes(data[offset : offset + 4], "little")
+        length = int.from_bytes(data[offset : offset + 4], byteorder)
         if length == 0:
             break
         dwarf64 = length == 0xFFFFFFFF
         if dwarf64:
-            length = int.from_bytes(data[offset + 4 : offset + 12], "little")
+            length = int.from_bytes(data[offset + 4 : offset + 12], byteorder)
             header = offset + 12
         else:
             header = offset + 4
         end = header + length
         if length <= 0 or end > len(data):
             break
-        version = int.from_bytes(data[header : header + 2], "little")
+        version = int.from_bytes(data[header : header + 2], byteorder)
         cursor = header + 2
         if version >= 5:
             unit_type = data[cursor] if cursor < end else 0
             address_size = data[cursor + 1] if cursor + 1 < end else 8
             cursor += 2
             width = 8 if dwarf64 else 4
-            abbrev_offset = int.from_bytes(data[cursor : cursor + width], "little")
+            abbrev_offset = int.from_bytes(data[cursor : cursor + width], byteorder)
             cursor += width
         else:
             unit_type = 0
             width = 8 if dwarf64 else 4
-            abbrev_offset = int.from_bytes(data[cursor : cursor + width], "little")
+            abbrev_offset = int.from_bytes(data[cursor : cursor + width], byteorder)
             address_size = data[cursor + width] if cursor + width < end else 8
             cursor += width + 1
         units.append(
@@ -462,6 +472,7 @@ def _units(data: bytes) -> list[dict[str, Any]]:
                 "offset_size": 8 if dwarf64 else 4,
                 "abbrev_offset": abbrev_offset,
                 "address_size": address_size or 8,
+                "byteorder": byteorder,
                 "bases": {_DW_AT_STR_OFFSETS_BASE: 0, _DW_AT_ADDR_BASE: 0},
             }
         )
@@ -540,22 +551,23 @@ def _form_value(
     """
     size = int(unit["address_size"])
     offset_size = int(unit["offset_size"])
+    byteorder = str(unit.get("byteorder") or "little")
     if form in _FIXED_FORMS and offset + _fixed_width(form, size, offset_size) > len(data):
         raise UnreadableSymbolError("an attribute ran past the section")
     if form == 0x01:  # addr
-        return int.from_bytes(data[offset : offset + size], "little"), offset + size
+        return int.from_bytes(data[offset : offset + size], byteorder), offset + size
     if form == 0x03:  # block2
-        length = int.from_bytes(data[offset : offset + 2], "little")
+        length = int.from_bytes(data[offset : offset + 2], byteorder)
         return data[offset + 2 : offset + 2 + length], offset + 2 + length
     if form == 0x04:  # block4
-        length = int.from_bytes(data[offset : offset + 4], "little")
+        length = int.from_bytes(data[offset : offset + 4], byteorder)
         return data[offset + 4 : offset + 4 + length], offset + 4 + length
     if form == 0x05:  # data2
-        return int.from_bytes(data[offset : offset + 2], "little"), offset + 2
+        return int.from_bytes(data[offset : offset + 2], byteorder), offset + 2
     if form == 0x06:  # data4
-        return int.from_bytes(data[offset : offset + 4], "little"), offset + 4
+        return int.from_bytes(data[offset : offset + 4], byteorder), offset + 4
     if form == 0x07:  # data8
-        return int.from_bytes(data[offset : offset + 8], "little"), offset + 8
+        return int.from_bytes(data[offset : offset + 8], byteorder), offset + 8
     if form == 0x08:  # string: the bytes follow inline
         text, cursor = _inline_string(data, offset)
         return text, cursor
@@ -577,46 +589,46 @@ def _form_value(
     if form == 0x0F:  # udata
         return _uleb(data, offset)
     if form == 0x10:  # ref_addr
-        return int.from_bytes(data[offset : offset + size], "little"), offset + size
+        return int.from_bytes(data[offset : offset + size], byteorder), offset + size
     if form == 0x11:  # ref1
         return data[offset], offset + 1
     if form == 0x12:  # ref2
-        return int.from_bytes(data[offset : offset + 2], "little"), offset + 2
+        return int.from_bytes(data[offset : offset + 2], byteorder), offset + 2
     if form == 0x13:  # ref4
-        return int.from_bytes(data[offset : offset + 4], "little"), offset + 4
+        return int.from_bytes(data[offset : offset + 4], byteorder), offset + 4
     if form == 0x14:  # ref8
-        return int.from_bytes(data[offset : offset + 8], "little"), offset + 8
+        return int.from_bytes(data[offset : offset + 8], byteorder), offset + 8
     if form == 0x15:  # ref_udata
         return _uleb(data, offset)
     if form == 0x17:  # sec_offset
-        return int.from_bytes(data[offset : offset + offset_size], "little"), offset + offset_size
+        return int.from_bytes(data[offset : offset + offset_size], byteorder), offset + offset_size
     if form == 0x18:  # exprloc
         length, cursor = _uleb(data, offset)
         return data[cursor : cursor + length], cursor + length
     if form == 0x19:  # flag_present: no bytes at all
         return True, offset
     if form in _STRX_WIDTHS:  # strx, strx1..strx4
-        index, cursor = _indexed(data, offset, form, _STRX_WIDTHS)
+        index, cursor = _indexed(data, offset, form, _STRX_WIDTHS, byteorder)
         return _strx_string(unit, index), cursor
     if form in _ADDRX_WIDTHS:  # addrx, addrx1..addrx4
-        index, cursor = _indexed(data, offset, form, _ADDRX_WIDTHS)
+        index, cursor = _indexed(data, offset, form, _ADDRX_WIDTHS, byteorder)
         return _addr_value(unit, index), cursor
     if form == 0x1C:  # ref_sup4
-        return int.from_bytes(data[offset : offset + 4], "little"), offset + 4
+        return int.from_bytes(data[offset : offset + 4], byteorder), offset + 4
     if form == 0x1D:  # strp_sup
-        return int.from_bytes(data[offset : offset + offset_size], "little"), offset + offset_size
+        return int.from_bytes(data[offset : offset + offset_size], byteorder), offset + offset_size
     if form == 0x1E:  # data16
-        return int.from_bytes(data[offset : offset + 16], "little"), offset + 16
+        return int.from_bytes(data[offset : offset + 16], byteorder), offset + 16
     if form == 0x1F:  # line_strp
-        return int.from_bytes(data[offset : offset + offset_size], "little"), offset + offset_size
+        return int.from_bytes(data[offset : offset + offset_size], byteorder), offset + offset_size
     if form == 0x20:  # ref_sig8
-        return int.from_bytes(data[offset : offset + 8], "little"), offset + 8
+        return int.from_bytes(data[offset : offset + 8], byteorder), offset + 8
     if form == 0x21:  # implicit_const: its value lives in the abbreviation
         return _sleb(data, offset)
     if form in (0x22, 0x23):  # loclistx, rnglistx
         return _uleb(data, offset)
     if form == 0x24:  # ref_sup8
-        return int.from_bytes(data[offset : offset + 8], "little"), offset + 8
+        return int.from_bytes(data[offset : offset + 8], byteorder), offset + 8
     return None
 
 
@@ -661,12 +673,14 @@ _STRX_WIDTHS = {0x1A: 0, 0x25: 1, 0x26: 2, 0x27: 3, 0x28: 4}
 _ADDRX_WIDTHS = {0x1B: 0, 0x29: 1, 0x2A: 2, 0x2B: 3, 0x2C: 4}
 
 
-def _indexed(data: bytes, offset: int, form: int, widths: Mapping[int, int]) -> tuple[int, int]:
+def _indexed(
+    data: bytes, offset: int, form: int, widths: Mapping[int, int], byteorder: str = "little"
+) -> tuple[int, int]:
     """The index of a strx/addrx form, with its width taken from the form code."""
     width = widths.get(form, 0)
     if width == 0:
         return _uleb(data, offset)
-    return int.from_bytes(data[offset : offset + width], "little"), offset + width
+    return int.from_bytes(data[offset : offset + width], byteorder), offset + width
 
 
 def _strx_string(unit: Mapping[str, Any], index: int) -> str:
@@ -683,7 +697,8 @@ def _strx_string(unit: Mapping[str, Any], index: int) -> str:
     start = base + index * width
     if start < 0 or start + width > len(table):
         return ""
-    value = int.from_bytes(table[start : start + width], "little")
+    byteorder = str(unit.get("byteorder") or "little")
+    value = int.from_bytes(table[start : start + width], byteorder)
     return _string_at(unit["dwarf"].strings or b"", value)
 
 
@@ -697,7 +712,8 @@ def _addr_value(unit: Mapping[str, Any], index: int) -> int | None:
     start = base + index * size
     if start < 0 or start + size > len(table):
         return None
-    return int.from_bytes(table[start : start + size], "little")
+    byteorder = str(unit.get("byteorder") or "little")
+    return int.from_bytes(table[start : start + size], byteorder)
 
 
 def _unit_bases(unit: Mapping[str, Any]) -> dict[int, int]:

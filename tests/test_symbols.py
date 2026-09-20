@@ -43,13 +43,18 @@ def _strtab(*names: str) -> tuple[bytes, dict[str, int]]:
     return blob, offsets
 
 
-def _symtab(names: dict[str, int], entries: list[tuple[str, int, str, int, int]]) -> bytes:
+def _symtab(
+    names: dict[str, int],
+    entries: list[tuple[str, int, str, int, int]],
+    *,
+    endian: str = "<",
+) -> bytes:
     """A 64-bit symbol table: (name, value, kind, size, shndx) per entry."""
     blob = b""
     for name, value, kind, size, shndx in entries:
         symbol_type = STT_FUNC if kind == "function" else STT_OBJECT
         info = (1 << 4) | symbol_type
-        blob += struct.pack("<IBBHQQ", names[name], info, 0, shndx, value, size)
+        blob += struct.pack(f"{endian}IBBHQQ", names[name], info, 0, shndx, value, size)
     return blob
 
 
@@ -57,8 +62,14 @@ def build_elf(
     sections: list[tuple[str, bytes, int, int]],
     *,
     machine: int = 62,
+    big_endian: bool = False,
 ) -> bytes:
-    """One 64-bit little-endian ELF: (name, data, type, link) per section."""
+    """One 64-bit ELF: (name, data, type, link) per section.
+
+    *big_endian* builds an EI_DATA=2 container so the reader is exercised on
+    both byte orders a firmware image can carry.
+    """
+    endian = ">" if big_endian else "<"
     names = ["", *[name for name, _data, _type, _link in sections], ".shstrtab"]
     shstrtab, name_offsets = _strtab(*names[1:])
     count = len(sections) + 2  # the null section, the sections, the shstrtab
@@ -73,9 +84,9 @@ def build_elf(
         cursor += len(data)
     shstrtab_offset = (cursor + 7) // 8 * 8
 
-    ident = b"\x7fELF" + bytes([2, 1, 1]) + b"\x00" * 9
+    ident = b"\x7fELF" + bytes([2, 2 if big_endian else 1, 1]) + b"\x00" * 9
     header = ident + struct.pack(
-        "<HHIQQQIHHHHHH",
+        f"{endian}HHIQQQIHHHHHH",
         2,
         machine,
         1,
@@ -93,10 +104,10 @@ def build_elf(
     out = bytearray(header)
     out.extend(b"\x00" * (shoff - len(out)))
     headers = bytearray()
-    headers += struct.pack("<IIQQQQIIQQ", 0, 0, 0, 0, 0, 0, 0, 0, 1, 0)
+    headers += struct.pack(f"{endian}IIQQQQIIQQ", 0, 0, 0, 0, 0, 0, 0, 0, 1, 0)
     for name_offset, section_type, offset, link, data in placed:
         headers += struct.pack(
-            "<IIQQQQIIQQ",
+            f"{endian}IIQQQQIIQQ",
             name_offset,
             section_type,
             0,
@@ -109,7 +120,7 @@ def build_elf(
             24 if section_type == SHT_SYMTAB else 0,
         )
     headers += struct.pack(
-        "<IIQQQQIIQQ",
+        f"{endian}IIQQQQIIQQ",
         name_offsets[".shstrtab"],
         SHT_STRTAB,
         0,
@@ -291,6 +302,42 @@ class TestElfSymbols:
             "source": symbols.SOURCE_ELF,
         }
         assert by_name["counter"]["kind"] == symbols.KIND_OBJECT
+
+    def test_a_big_endian_elf_is_read(self) -> None:
+        text, names = _strtab("entry")
+        elf = build_elf(
+            [
+                (
+                    ".symtab",
+                    _symtab(
+                        names,
+                        [("entry", 0x1000, "function", 16, 1)],
+                        endian=">",
+                    ),
+                    SHT_SYMTAB,
+                    2,
+                ),
+                (".strtab", text, SHT_STRTAB, 0),
+            ],
+            machine=8,  # MIPS
+            big_endian=True,
+        )
+        parsed = symbols.parse(elf)
+        assert parsed["counts"]["symbols"] == 1
+        assert parsed["symbols"][0] == {
+            "name": "entry",
+            "va": 0x1000,
+            "size": 16,
+            "kind": symbols.KIND_FUNCTION,
+            "source": symbols.SOURCE_ELF,
+        }
+
+    def test_an_unknown_elf_endianness_is_refused(self) -> None:
+        # EI_DATA=0 is neither little nor big.
+        data = bytearray(b"\x7fELF" + bytes([2, 0, 1]) + b"\x00" * 9 + b"\x00" * 48)
+        with pytest.raises(symbols.UnreadableSymbolError) as caught:
+            symbols.parse(bytes(data))
+        assert "endianness" in caught.value.detail
 
     def test_an_unrelated_format_is_refused(self) -> None:
         with pytest.raises(symbols.UnreadableSymbolError) as caught:

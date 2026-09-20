@@ -31,8 +31,10 @@ SYNC_EXTRAS ?= --extra dev
 COVERAGE_MIN ?= 92
 # pytest's tmp_path follows TMPDIR.  /tmp is tmpfs here and fills during the
 # suite; a path inside this repo is found by workspace-root walks, so the
-# gate keeps temps on disk outside the tree.
-PYTEST_TMP ?= $(HOME)/.cache/reportal-pytest
+# gate keeps temps on disk outside the tree.  Prefer XDG_CACHE_HOME, then
+# $HOME/.cache, then /tmp so a headless or HOME-less Linux shell still works.
+CACHE_HOME ?= $(or $(XDG_CACHE_HOME),$(if $(HOME),$(HOME)/.cache,/tmp))
+PYTEST_TMP ?= $(CACHE_HOME)/reportal-pytest
 # Reproducible SPA/wheel timestamps: honour an explicit SOURCE_DATE_EPOCH,
 # else the tree's HEAD commit time, else a fixed zero (gzip/zip mtimes).
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || printf '0')
@@ -60,11 +62,14 @@ uv-check:
 	  exit 1; \
 	}
 	@got=$$($(UV) --version 2>/dev/null | awk '{print $$2}'); \
-	lowest=$$(printf '%s\n%s\n' "$(UV_VERSION)" "$$got" | sort -V | head -n1); \
-	if [ -z "$$got" ] || [ "$$lowest" != "$(UV_VERSION)" ]; then \
+	if [ -z "$$got" ]; then \
+	  echo "$(UV) version could not be read; need >=$(UV_VERSION) ([tool.uv] required-version)" >&2; \
+	  exit 1; \
+	fi; \
+	python3 -c 'import sys; g=tuple(int(p) for p in sys.argv[1].split(".")[:3]); n=tuple(int(p) for p in sys.argv[2].split(".")[:3]); raise SystemExit(0 if g>=n else 1)' "$$got" "$(UV_VERSION)" || { \
 	  echo "$(UV) $$got does not meet required >=$(UV_VERSION) ([tool.uv] required-version)" >&2; \
 	  exit 1; \
-	fi
+	}
 
 # rebrew is a path source on the sibling checkout (`[tool.uv.sources]`).
 rebrew-check:
@@ -113,7 +118,7 @@ doctor: venv-check ## Preflight readiness (workspace, engine, SPA, port)
 gate-deps: ## Name missing lint/gate system tools (shellcheck, Java 17+, vnu)
 	@missing=0; \
 	if ! command -v shellcheck >/dev/null 2>&1; then \
-	  echo "shellcheck is required; install with: apt-get install shellcheck (Debian) or brew install shellcheck (macOS)" >&2; \
+	  echo "shellcheck is required; install with: apt-get install shellcheck" >&2; \
 	  missing=1; \
 	fi; \
 	if ! command -v java >/dev/null 2>&1; then \
