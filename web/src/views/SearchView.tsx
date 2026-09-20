@@ -174,6 +174,7 @@ export function SearchView({
                     render: (row) => <Link to={collectionHref(row.id)}>{row.name}</Link>,
                   },
                   { label: "Description", key: "description" },
+                  { label: "Scope", key: "visibility", mono: true },
                   { label: "Binaries", key: "binary_count", numeric: true },
                   { label: "Created", key: "created_at", mono: true },
                 ]}

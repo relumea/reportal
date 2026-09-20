@@ -690,6 +690,27 @@ def _find_organisation(conn: sqlite3.Connection, event: BillingEvent) -> int | N
     return None
 
 
+def _event_audit_payload(event: BillingEvent, organisation_id: int | None) -> dict[str, Any]:
+    """Operational snapshot for the event ledger; never Stripe customer PII.
+
+    The raw provider event can carry ``customer_details.email``, a billing
+    address and similar fields.  Entitlement already extracted the ids and
+    status it needs, so the ledger only keeps those.
+    """
+    return {
+        "event_id": event.event_id,
+        "kind": event.kind,
+        "organisation_id": organisation_id,
+        "customer_id": event.customer_id,
+        "subscription_id": event.subscription_id,
+        "status": event.status,
+        "plan_id": event.plan_id,
+        "payment_status": event.payment_status,
+        "cancel_at_period_end": event.cancel_at_period_end,
+        "current_period_end": event.current_period_end,
+    }
+
+
 def _claim_event(
     conn: sqlite3.Connection, event: BillingEvent, organisation_id: int | None
 ) -> bool:
@@ -708,7 +729,7 @@ def _claim_event(
                 event.provider,
                 event.kind,
                 organisation_id,
-                json.dumps(event.payload)[:20000],
+                json.dumps(_event_audit_payload(event, organisation_id))[:20000],
                 auth.now(),
             ),
         )
@@ -951,7 +972,12 @@ def reconcile_account(conn: sqlite3.Connection, organisation_id: int) -> Reconci
 
 
 def subscription_of(conn: sqlite3.Connection, organisation_id: int) -> dict[str, Any] | None:
-    """The mirrored subscription row for an organisation, or None."""
+    """The mirrored subscription row for an organisation, or None.
+
+    Internal callers (portal, reconcile) need ``customer_id`` and
+    ``subscription_id``.  Tenant-facing responses use
+    :func:`public_subscription` so those provider ids stay off the wire.
+    """
     row = conn.execute(
         f"SELECT * FROM {metering.SUBSCRIPTION_TABLE} WHERE organisation_id = ?",
         (organisation_id,),
@@ -961,3 +987,22 @@ def subscription_of(conn: sqlite3.Connection, organisation_id: int) -> dict[str,
     record = dict(row)
     record["cancel_at_period_end"] = bool(record.get("cancel_at_period_end"))
     return record
+
+
+def public_subscription(conn: sqlite3.Connection, organisation_id: int) -> dict[str, Any] | None:
+    """Subscription state safe for any organisation member: no provider ids.
+
+    Stripe ``customer_id`` / ``subscription_id`` identify the payer; they stay
+    server-side for portal and reconcile.  Members see status and period only.
+    """
+    record = subscription_of(conn, organisation_id)
+    if record is None:
+        return None
+    return {
+        "organisation_id": record["organisation_id"],
+        "provider": record["provider"],
+        "status": record["status"],
+        "current_period_end": record["current_period_end"],
+        "cancel_at_period_end": record["cancel_at_period_end"],
+        "updated_at": record["updated_at"],
+    }

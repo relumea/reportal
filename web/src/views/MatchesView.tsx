@@ -1021,7 +1021,8 @@ export function MatchesView({
                 }}
                 empty={
                   <EmptyState>
-                    No matches recorded for this binary. Use Run match after setting a scope.
+                    No matches recorded yet. Your binary's functions are already
+                    listed below; press Run match to score candidates.
                   </EmptyState>
                 }
               />

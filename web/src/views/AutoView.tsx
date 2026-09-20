@@ -326,7 +326,7 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
 
   let body: ReactNode;
   if (!data && error && isApiErrorCode(error, AUTO_NO_RUN)) {
-    body = <EmptyState>No auto run for this binary yet. Start one from the form above.</EmptyState>;
+    body = <EmptyState>Your first auto run is one step away. Set the worker below and press Start run.</EmptyState>;
   } else if (error) {
     body = <ErrorNote error={error} onRetry={reload} />;
   } else if (!data) {
@@ -356,7 +356,7 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
           {data ? (
             <ConfirmButton
               label="Revert run"
-              message="Revert this run?"
+              message="Revert this run and restore the statuses it replaced?"
               pending={busy === "revert"}
               onConfirm={() => void revert(data.run_id)}
             />
@@ -364,7 +364,7 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
           {data?.status === "running" ? (
             <ConfirmButton
               label="Recover run"
-              message="Close this run as stale?"
+              message="Close this run as stale and keep its revertible writes?"
               pending={busy === "recover"}
               onConfirm={() => void recover(data.run_id)}
             />

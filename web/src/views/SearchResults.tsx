@@ -90,6 +90,7 @@ function hitMeta(hit: SearchHit): ReactNode {
       <>
         <span className="search-row-kind">{hitKindLabel(hit)}</span>
         <span>{hit.row.binary_count} binaries</span>
+        <span className="muted">{hit.row.visibility || "public"}</span>
         {_tags([hit.row.description].filter(Boolean))}
         <span className="muted">{hit.row.created_at}</span>
         <span className="muted">matched {hit.row.match}</span>

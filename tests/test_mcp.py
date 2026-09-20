@@ -1275,6 +1275,26 @@ class TestDestructiveTools:
         assert is_error is True
         assert missing["error"] == auth.ERROR_API_KEY_NOT_FOUND
 
+    def test_an_analyst_cannot_list_users(self, conn: Any) -> None:
+        from reportal import journal
+
+        analyst, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        with journal.acting_as("ana", user_id=int(analyst["id"])):
+            payload, is_error = _call("list_users", {})
+        assert is_error is True
+        assert payload["error"] == auth.ERROR_FORBIDDEN
+
+    def test_an_analyst_cannot_list_another_users_api_keys(self, conn: Any) -> None:
+        from reportal import journal
+
+        owner, _ = auth.add_user(conn, name="owner")
+        analyst, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        auth.create_api_key(conn, int(owner["id"]), "secret")
+        with journal.acting_as("ana", user_id=int(analyst["id"])):
+            payload, is_error = _call("list_api_keys", {"user_id": int(owner["id"])})
+        assert is_error is True
+        assert payload["error"] == auth.ERROR_FORBIDDEN
+
     def test_team_invite_mints_lists_and_joins(self, conn: Any) -> None:
         team_id = int(auth.create_team(conn, name="Invited")["id"])
         user, _ = auth.add_user(conn, name="ana")

@@ -11344,7 +11344,7 @@ def get_organisation_billing(organisation_id: int, request: Request) -> Response
         if refused is not None:
             return refused
         summary = metering.usage_summary(conn, organisation_id)
-        subscription = billing.subscription_of(conn, organisation_id)
+        subscription = billing.public_subscription(conn, organisation_id)
     return json_response(
         {
             **summary,
@@ -11559,10 +11559,14 @@ def set_active_team(request: Request, body: dict[str, Any] = Depends(json_body))
 
 
 @router.get("/api/teams")
-def list_teams() -> Response:
-    """Every team with its member count; readable by any authenticated caller."""
+def list_teams(request: Request) -> Response:
+    """The caller's teams with member counts.
+
+    Personal profile (or admin): every team. SaaS non-admin: only the teams
+    the caller belongs to, so one tenant never enumerates another's names.
+    """
     with contextlib.closing(_open()) as conn:
-        teams = auth.list_teams(conn)
+        teams = auth.list_teams(conn, visible_to=_caller(request))
     return json_response({"teams": teams, "count": len(teams)})
 
 
@@ -11649,12 +11653,28 @@ def set_team_member_role(
 
 
 @router.get("/api/teams/{team_id}")
-def get_team(team_id: int) -> Response:
-    """One team with its members."""
+def get_team(team_id: int, request: Request) -> Response:
+    """One team with its members.
+
+    SaaS non-admin callers must belong to the team; otherwise a guessed id
+    would expose every member's name.
+    """
     with contextlib.closing(_open()) as conn:
         team = auth.get_team(conn, team_id)
-    if team is None:
-        return json_error(404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}")
+        if team is None:
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
+        caller = _caller(request)
+        if (
+            caller is not None
+            and str(caller.get("role")) != auth.ROLE_ADMIN
+            and not auth.may_access_team(conn, caller, team_id)
+            and profiles.is_saas()
+        ):
+            return json_error(
+                404, error=auth.ERROR_TEAM_NOT_FOUND, detail=f"no team with id {team_id}"
+            )
     return json_response(team)
 
 

@@ -896,14 +896,36 @@ def find_team(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
     return _team_row(row) if row else None
 
 
-def list_teams(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Every team, oldest first, each with its member count and organisation."""
-    rows = conn.execute(
-        f"SELECT t.*, o.name AS organisation_name,"
-        f" (SELECT COUNT(*) FROM {MEMBER_TABLE} m WHERE m.team_id = t.id)"
-        f" AS member_count FROM {TEAM_TABLE} t"
-        f" LEFT JOIN {ORG_TABLE} o ON o.id = t.organisation_id ORDER BY t.id"
-    ).fetchall()
+def list_teams(
+    conn: sqlite3.Connection, *, visible_to: Mapping[str, Any] | None = None
+) -> list[dict[str, Any]]:
+    """Teams oldest first, each with its member count and organisation.
+
+    Personal profile (or admin, or auth off): every team. SaaS non-admin: only
+    the teams the caller belongs to, so one tenant never enumerates another's
+    team names.
+    """
+    if (
+        visible_to is not None
+        and profiles.is_saas()
+        and str(visible_to.get("role") or "") != ROLE_ADMIN
+    ):
+        rows = conn.execute(
+            f"SELECT t.*, o.name AS organisation_name,"
+            f" (SELECT COUNT(*) FROM {MEMBER_TABLE} m2 WHERE m2.team_id = t.id)"
+            f" AS member_count FROM {TEAM_TABLE} t"
+            f" JOIN {MEMBER_TABLE} m ON m.team_id = t.id"
+            f" LEFT JOIN {ORG_TABLE} o ON o.id = t.organisation_id"
+            " WHERE m.user_id = ? ORDER BY t.id",
+            (int(visible_to["id"]),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"SELECT t.*, o.name AS organisation_name,"
+            f" (SELECT COUNT(*) FROM {MEMBER_TABLE} m WHERE m.team_id = t.id)"
+            f" AS member_count FROM {TEAM_TABLE} t"
+            f" LEFT JOIN {ORG_TABLE} o ON o.id = t.organisation_id ORDER BY t.id"
+        ).fetchall()
     teams: list[dict[str, Any]] = []
     for row in rows:
         team = _team_row(row)
@@ -1164,6 +1186,18 @@ def may_manage_team(conn: sqlite3.Connection, user: Mapping[str, Any] | None, te
     if str(user.get("role") or "") == ROLE_ADMIN:
         return True
     return member_role(conn, team_id, int(user["id"])) == TEAM_ROLE_OWNER
+
+
+def may_access_team(conn: sqlite3.Connection, user: Mapping[str, Any] | None, team_id: int) -> bool:
+    """Whether *user* may read this team's roster.
+
+    Auth off is the local operator. An admin may reach any team. Otherwise the
+    caller must be a member, so one tenant cannot enumerate another's names by
+    guessing a team id.
+    """
+    if user is None or str(user.get("role") or "") == ROLE_ADMIN:
+        return True
+    return member_role(conn, team_id, int(user["id"])) is not None
 
 
 def may_access_organisation(

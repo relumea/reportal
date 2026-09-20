@@ -182,14 +182,14 @@ export function JournalView({
                 <div className="actions-cell">
                   <ConfirmButton
                     label="Revert entry"
-                    message="Revert?"
+                    message="Revert this entry and restore the row it changed?"
                     disabled={row.status !== "active"}
                     pending={busy === `entry-${row.id}`}
                     onConfirm={() => void revertEntry(row)}
                   />
                   <ConfirmButton
                     label="Revert action"
-                    message="Revert all?"
+                    message="Revert every entry this action made?"
                     disabled={row.status !== "active"}
                     pending={busy === `action-${row.id}`}
                     onConfirm={() => void revertAction(row)}

@@ -4767,7 +4767,7 @@ def _search_collections(
     """Collections whose name carries the needle, or whose description does too."""
     name_sql, name_param = match.clause("c.name")
     columns = (
-        "SELECT c.id, c.name, c.description, c.created_at, ("
+        "SELECT c.id, c.name, c.description, c.created_at, c.visibility, ("
         " SELECT COUNT(*) FROM collection_binaries cb WHERE cb.collection_id = c.id"
         " ) AS binary_count FROM collections c WHERE " + name_sql
     )

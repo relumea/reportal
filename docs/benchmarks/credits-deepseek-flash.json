@@ -3,7 +3,7 @@
   "model": "deepseek-flash",
   "endpoint": "https://api.deepseek.com",
   "sample": 8,
-  "corpus": "/home/maci/Desktop/Projects/relumea/rebrew-projects/notepad-rebrew/src",
+  "corpus": "../rebrew-projects/notepad-rebrew/src",
   "credit_cogs_usd": 0.001826,
   "tasks": [
     {

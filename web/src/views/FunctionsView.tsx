@@ -467,7 +467,7 @@ export function FunctionsView({
           <Field label="Name" hint="a substring; Enter applies">
             <input
               type="search"
-              placeholder={total ? `Search ${total} functions` : "sub_1000"}
+              placeholder={total ? `Search ${total} functions...` : "sub_1000"}
               value={drafts.name}
               onChange={(event) => setDrafts({ ...drafts, name: event.target.value })}
               onKeyDown={(event) => {

@@ -27,7 +27,7 @@ test("a filter narrows the row set and states the counts", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}/functions`);
   const panel = panelByTitle(page, "Functions");
   await expect(panel.getByText("6 of 6 functions")).toBeVisible();
-  await expect(panel.getByPlaceholder("Search 6 functions")).toBeVisible();
+  await expect(panel.getByPlaceholder("Search 6 functions...")).toBeVisible();
   await expect(panel.locator(".name-source-dot").first()).toBeVisible();
   await panel.locator("table.data-table input[type='checkbox']").first().check();
   await expect(panel.locator("tr.row-selected")).toHaveCount(1);

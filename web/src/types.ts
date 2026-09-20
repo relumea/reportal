@@ -1390,6 +1390,8 @@ export interface SearchCollectionRow {
   name: string;
   description: string;
   created_at: string;
+  /** `public` or `team`, matching the collections listing. */
+  visibility: string;
   binary_count: number;
   /** The field the query matched: name or description. */
   match: string;
@@ -1978,6 +1980,8 @@ export interface Comment {
   scope_kind: string;
   scope_id: number;
   author: string;
+  /** Stable user id when token auth attributed the comment; null while auth is off. */
+  author_user_id?: number | null;
   body: string;
   created_at: string;
   updated_at: string;
@@ -3551,12 +3555,11 @@ export interface UsagePayload {
   usage: Record<string, QuotaState>;
 }
 
-/** The mirrored provider subscription, or null when there is none. */
+/** The mirrored provider subscription, or null when there is none.
+ *  Provider customer/subscription ids stay server-side; members see status only. */
 export interface Subscription {
   organisation_id: number;
   provider: string;
-  customer_id: string;
-  subscription_id: string;
   status: string;
   current_period_end: string;
   cancel_at_period_end: boolean;

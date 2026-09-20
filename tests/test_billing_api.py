@@ -91,6 +91,43 @@ class TestBillingRoute:
         assert payload["subscription"] is None
         assert payload["billing"]["provider"] in {"disabled", "stripe", "manual"}
 
+    def test_a_subscription_response_omits_provider_ids(
+        self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(billing.PROVIDER_ENV, billing.PROVIDER_STRIPE)
+        monkeypatch.setenv(billing.STRIPE_SECRET_ENV, "sk_test_123")
+        monkeypatch.setenv(billing.STRIPE_WEBHOOK_ENV, WEBHOOK_SECRET)
+        monkeypatch.setenv("REPORTAL_STRIPE_PRICE_ANALYST", "price_analyst")
+        organisation_id = _organisation(portal_db)
+        with contextlib.closing(store.connect(portal_db)) as conn:
+            billing.apply_event(
+                conn,
+                billing.normalize_stripe_event(
+                    {
+                        "id": "evt_api_1",
+                        "type": "customer.subscription.updated",
+                        "data": {
+                            "object": {
+                                "id": "sub_api",
+                                "status": "active",
+                                "customer": "cus_secret",
+                                "cancel_at_period_end": False,
+                                "current_period_end": int(billing._wall_time()) + 86400,
+                                "metadata": {"organisation_id": str(organisation_id)},
+                                "items": {"data": [{"price": {"id": "price_analyst"}}]},
+                            }
+                        },
+                    }
+                ),
+            )
+        status, _, chunks = on_request("GET", f"/api/organisations/{organisation_id}/billing")
+        assert status.startswith("200")
+        subscription = json_body(b"".join(chunks), {})["subscription"]
+        assert subscription is not None
+        assert "customer_id" not in subscription
+        assert "subscription_id" not in subscription
+        assert subscription["status"] == "active"
+
     def test_an_unknown_organisation_is_a_404(self, portal_db: Path) -> None:
         status, _, chunks = on_request("GET", "/api/organisations/424242/billing")
         assert status.startswith("404")

@@ -543,7 +543,7 @@ export function DataTypesPanel({
             type="search"
             placeholder={
               entry?.state === "ready"
-                ? `Search ${entry.data.total} types or namespaces`
+                ? `Search ${entry.data.total} types or namespaces...`
                 : "name, member or enum value"
             }
             value={draftSearch}

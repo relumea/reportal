@@ -243,7 +243,7 @@ export function PipelinePanel({
           {entry?.state === "ready" ? (
             <ConfirmButton
               label="Revert run"
-              message="Revert this run?"
+              message="Revert this run and restore what it wrote?"
               pending={busy === "revert"}
               onConfirm={() => void revertRun(entry.data.id)}
             />

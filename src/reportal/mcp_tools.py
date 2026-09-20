@@ -337,6 +337,41 @@ def _ensure_entry_points() -> None:
 _open = db
 
 
+def _mcp_caller(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The authenticated MCP caller, or None while auth is off (local operator)."""
+    user_id = journal.current_actor_user_id()
+    if user_id is None:
+        return None
+    return auth.get_user(conn, user_id)
+
+
+def _require_tenant_admin(conn: sqlite3.Connection) -> None:
+    """Refuse when the MCP caller may not administer users (HTTP /api/users gate)."""
+    if auth.may_administer_tenants(_mcp_caller(conn)):
+        return
+    raise ToolError(auth.ERROR_FORBIDDEN, auth.FORBIDDEN_DETAIL)
+
+
+def _require_self_or_admin(conn: sqlite3.Connection, user_id: int) -> None:
+    """Refuse when a non-admin MCP caller targets another user's credentials."""
+    caller = _mcp_caller(conn)
+    if caller is None or str(caller.get("role") or "") == auth.ROLE_ADMIN:
+        return
+    if int(caller["id"]) == user_id:
+        return
+    raise ToolError(auth.ERROR_FORBIDDEN, auth.FORBIDDEN_DETAIL)
+
+
+def _require_team_manager(conn: sqlite3.Connection, team_id: int) -> None:
+    """Refuse when the MCP caller may not manage *team_id* (HTTP invite gate)."""
+    if auth.may_manage_team(conn, _mcp_caller(conn), team_id):
+        return
+    raise ToolError(
+        auth.ERROR_NOT_A_TEAM_OWNER,
+        f"the caller does not own team {team_id}",
+    )
+
+
 def _require_function(conn: sqlite3.Connection, function_id: int) -> dict[str, Any]:
     function = store.get_function(conn, function_id)
     if function is None:
@@ -4555,6 +4590,7 @@ def _tool_bulk_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_list_users(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
+        _require_tenant_admin(conn)
         users = auth.list_users(conn)
     return {"users": users, "count": len(users), "auth_required": auth.required()}
 
@@ -4577,6 +4613,7 @@ def _tool_add_user(arguments: dict[str, Any]) -> dict[str, Any]:
         contextlib.closing(_open()) as conn,
         journal.journaled(conn, journal.new_action()) as log,
     ):
+        _require_tenant_admin(conn)
         try:
             user, token = auth.add_user(conn, name=name, role=role)
         except auth.AuthError as exc:
@@ -4595,6 +4632,7 @@ def _tool_list_api_keys(arguments: dict[str, Any]) -> dict[str, Any]:
 
     user_id = _arg_int(arguments, "user_id")
     with contextlib.closing(_open()) as conn:
+        _require_self_or_admin(conn, user_id)
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
         keys = auth.list_api_keys(conn, user_id)
@@ -4613,6 +4651,7 @@ def _tool_create_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
     name = _arg_str(arguments, "name")
     read_only = _arg_optional_bool(arguments, "read_only", False)
     with contextlib.closing(_open()) as conn:
+        _require_self_or_admin(conn, user_id)
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
         with journal.journaled(conn, journal.new_action()) as log:
@@ -4633,8 +4672,10 @@ def _tool_rename_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
     key_id = _arg_int(arguments, "key_id")
     name = _arg_str(arguments, "name")
     with contextlib.closing(_open()) as conn:
-        if auth.get_api_key(conn, key_id) is None:
+        key = auth.get_api_key(conn, key_id)
+        if key is None:
             raise ToolError(auth.ERROR_API_KEY_NOT_FOUND, f"no API key with id {key_id}")
+        _require_self_or_admin(conn, int(key["user_id"]))
         with journal.journaled(conn, journal.new_action()) as log:
             journal.journaled_rows(
                 conn,
@@ -4653,8 +4694,10 @@ def _tool_rename_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_revoke_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
     key_id = _arg_int(arguments, "key_id")
     with contextlib.closing(_open()) as conn:
-        if auth.get_api_key(conn, key_id) is None:
+        key = auth.get_api_key(conn, key_id)
+        if key is None:
             raise ToolError(auth.ERROR_API_KEY_NOT_FOUND, f"no API key with id {key_id}")
+        _require_self_or_admin(conn, int(key["user_id"]))
         with journal.journaled(conn, journal.new_action()) as log:
             journal.journaled_rows(
                 conn,
@@ -4670,6 +4713,7 @@ def _tool_revoke_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_rotate_user_token(arguments: dict[str, Any]) -> dict[str, Any]:
     user_id = _arg_int(arguments, "user_id")
     with contextlib.closing(_open()) as conn:
+        _require_tenant_admin(conn)
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
         with journal.journaled(conn, journal.new_action()) as log:
@@ -4701,6 +4745,7 @@ def _tool_update_user(arguments: dict[str, Any]) -> dict[str, Any]:
     if role is None and disabled is None and active_team is None and not clear_active_team:
         raise ToolError(auth.ERROR_INVALID_USER, "provide role, disabled or an active team")
     with contextlib.closing(_open()) as conn:
+        _require_tenant_admin(conn)
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
         with journal.journaled(conn, journal.new_action()) as log:
@@ -4726,6 +4771,7 @@ def _tool_update_user(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_delete_user(arguments: dict[str, Any]) -> dict[str, Any]:
     user_id = _arg_int(arguments, "user_id")
     with contextlib.closing(_open()) as conn:
+        _require_tenant_admin(conn)
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
         with journal.journaled(conn, journal.new_action()) as log:
@@ -4743,7 +4789,7 @@ def _tool_delete_user(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def _tool_list_teams(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
-        teams = auth.list_teams(conn)
+        teams = auth.list_teams(conn, visible_to=_mcp_caller(conn))
     return {"teams": teams, "count": len(teams)}
 
 
@@ -4752,6 +4798,7 @@ def _tool_list_team_invites(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         if auth.get_team(conn, team_id) is None:
             raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        _require_team_manager(conn, team_id)
         invites = auth.list_invites(conn, team_id)
     return {"invites": invites, "count": len(invites)}
 
@@ -4847,6 +4894,7 @@ def _tool_create_team_invite(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         if auth.get_team(conn, team_id) is None:
             raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        _require_team_manager(conn, team_id)
         with journal.journaled(conn, journal.new_action()) as log:
             invite_id, code = auth.create_invite(conn, team_id, None)
             journal.journaled_create(
@@ -4866,6 +4914,7 @@ def _tool_revoke_team_invite(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError(auth.ERROR_INVITE_NOT_FOUND, f"no invite with id {invite_id}")
         if invite["used_by"] is not None:
             raise ToolError(auth.ERROR_INVITE_USED, "that invite was already used")
+        _require_team_manager(conn, int(invite["team_id"]))
         with journal.journaled(conn, journal.new_action()) as log:
             journal.journaled_rows(
                 conn,
@@ -8045,7 +8094,7 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "list_users",
             "The local users with their roles and state, never their token digests; says whether"
-            " token auth is required on this install.",
+            " token auth is required on this install. Admin (or auth-off local operator) only.",
             _object({}),
             _READ,
             _tool_list_users,
@@ -8054,7 +8103,7 @@ def builtin_tools() -> tuple[Tool, ...]:
             "list_api_keys",
             "Named extra keys a user minted, without digests. The login token counts"
             " toward the plan cap and is not listed. last_used_at is empty until the"
-            " key authenticates.",
+            " key authenticates. Callers may only list their own keys unless admin.",
             _object({"user_id": _int("User id.")}, ("user_id",)),
             _READ,
             _tool_list_api_keys,

@@ -2255,7 +2255,7 @@ function StringsBody({ data, binaryId }: { data: StringTable; binaryId: number }
         <Field label="Filter">
           <input
             type="search"
-            placeholder={`Search ${total} strings`}
+            placeholder={`Search ${total} strings...`}
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
           />

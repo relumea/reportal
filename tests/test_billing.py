@@ -388,6 +388,49 @@ class TestSubscriptionLifecycle:
     def test_no_subscription_reads_as_none(self, conn: sqlite3.Connection) -> None:
         assert billing.subscription_of(conn, _organisation(conn)) is None
 
+    def test_public_subscription_omits_provider_ids(
+        self, conn: sqlite3.Connection, stripe_env: None
+    ) -> None:
+        organisation_id = _organisation(conn)
+        billing.apply_event(
+            conn, billing.normalize_stripe_event(_subscription_event(organisation_id))
+        )
+        public = billing.public_subscription(conn, organisation_id)
+        assert public is not None
+        assert "customer_id" not in public
+        assert "subscription_id" not in public
+        assert public["status"] == "active"
+        assert public["provider"] == billing.PROVIDER_STRIPE
+
+
+class TestEventLedgerPrivacy:
+    """The billing_events row must not keep Stripe customer PII."""
+
+    def test_the_ledger_drops_customer_details(
+        self, conn: sqlite3.Connection, stripe_env: None
+    ) -> None:
+        organisation_id = _organisation(conn)
+        raw = _subscription_event(organisation_id, event_id="evt_pii")
+        raw["data"]["object"]["customer_details"] = {
+            "email": "payer@example.com",
+            "name": "Payer Name",
+            "address": {"line1": "1 Main St", "city": "Town"},
+        }
+        billing.apply_event(conn, billing.normalize_stripe_event(raw))
+        row = conn.execute(
+            f"SELECT payload FROM {metering.EVENT_TABLE} WHERE event_id = ?",
+            ("evt_pii",),
+        ).fetchone()
+        assert row is not None
+        stored = json.loads(str(row["payload"]))
+        dumped = json.dumps(stored)
+        assert "payer@example.com" not in dumped
+        assert "Payer Name" not in dumped
+        assert "1 Main St" not in dumped
+        assert stored["event_id"] == "evt_pii"
+        assert stored["customer_id"] == "cus_123"
+        assert stored["subscription_id"] == "sub_123"
+
 
 class TestCheckoutGuards:
     """What a checkout refuses before it ever calls the provider."""

@@ -28,7 +28,7 @@ test("a UI write appears in the journal and its revert restores the state", asyn
     .first();
   await expect(entry).toBeVisible();
   await entry.getByRole("button", { name: "Revert action" }).click();
-  await expect(page.getByText("Revert all?")).toBeVisible();
+  await expect(page.getByText("Revert every entry this action made?")).toBeVisible();
   await entry.getByRole("button", { name: "Revert action" }).click();
   await expect(page.getByText(/reverted \d+/)).toBeVisible();
 

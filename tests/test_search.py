@@ -172,6 +172,7 @@ class TestSearchMetadata:
         row = store.search(conn, "alpha", kind=store.SEARCH_KIND_COLLECTION)["collections"][0]
         assert row["binary_count"] == 1
         assert row["created_at"]
+        assert row["visibility"] == "public"
 
     def test_counts_are_exact_under_a_limit(self, conn: sqlite3.Connection) -> None:
         for index in range(3):

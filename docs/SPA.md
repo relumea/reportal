@@ -167,7 +167,8 @@ pulls focus back), moves a roving highlight with the arrow keys, opens the
 highlighted hit with Enter or a click and returns focus to where it was on
 Escape; a 64-character hex query selects the SHA-256 type.  A binary hit
 shows a 12-character SHA-256 with a copy control and the stored
-`created_at`.  A collection hit shows its member count and `created_at`.
+`created_at`.  A collection hit shows its member count, `visibility`
+(`public` or `team`) and `created_at`.
 The Search view
 keeps its three-group tables, which is why the two surfaces share the hit
 model and helpers rather than a single component.
@@ -730,7 +731,7 @@ typedef), a coloured source
 dot on each type
 card (the kind badge is the C tag, hover the full name), a Source filter
 beside the search filters (the search
-placeholder states `Search N types or namespaces`, the needle matches
+placeholder states `Search N types or namespaces...`, the needle matches
 the name, the namespace or `namespace::name`, and typing waits
 `SEARCH_DEBOUNCE_MS` before the hash updates),
 a Sort select (name or size) with an asc/desc Direction select, a
@@ -778,7 +779,7 @@ actions, a left border on the focused or checked row, Ctrl/⌘-click opening
 the function in a new tab, and carries a
 filter panel plus sortable headers: a coloured
 name-source dot beside each name, a name search whose placeholder states
-the total (`Search N functions`) and which narrows as you type, one address
+the total (`Search N functions...`) and which narrows as you type, one address
 (decimal or `0x` hex, which is how an analyst has a function they have no
 name for), the name source,
 capability, match state, a size range and a string reference are sent to the

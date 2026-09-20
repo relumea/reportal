@@ -58,7 +58,7 @@ test("the kind filter narrows the type list", async ({ page }) => {
 test("a function type shows its return and parameters", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
   const types = panelTypes(page);
-  await types.getByPlaceholder(/Search \d+ types or namespaces/).fill(FUNCTION_TYPE);
+  await types.getByPlaceholder(/Search \d+ types or namespaces\.\.\./).fill(FUNCTION_TYPE);
   const card = types.locator(".card").filter({ hasText: FUNCTION_TYPE }).first();
   await expect(card.getByText("Returns")).toBeVisible();
   await expect(card.getByRole("link", { name: NAMESPACED_TYPEDEF }).first()).toBeVisible();
@@ -72,7 +72,7 @@ test("a function type shows its return and parameters", async ({ page }) => {
 test("the search matches a namespace", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
   const types = panelTypes(page);
-  await types.getByPlaceholder(/Search \d+ types or namespaces/).fill("winnt");
+  await types.getByPlaceholder(/Search \d+ types or namespaces\.\.\./).fill("winnt");
   await expect(types.getByText(NAMESPACED_TYPEDEF, { exact: false }).first()).toBeVisible();
   await expect(types.getByText("Aliases").first()).toBeVisible();
   const handleCard = types.locator(".card").filter({ hasText: NAMESPACED_POINTER }).first();

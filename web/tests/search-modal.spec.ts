@@ -136,6 +136,7 @@ test("the collection and function query types narrow the results", async ({ page
   await page.keyboard.type(collection);
   await expect(hit(page, "collection").first()).toBeVisible();
   await expect(hit(page, "collection").first()).toHaveAttribute("aria-selected", "true");
+  await expect(hit(page, "collection").first().getByText("public")).toBeVisible();
 
   await page.keyboard.press("Control+a");
   await page.keyboard.press("Backspace");

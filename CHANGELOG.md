@@ -96,12 +96,15 @@ view renders it from here.
 - Memory dump splits each 16-byte row into two groups of eight.
 - Data type cards use the same C kind tags as the kind strip.
 - Data type namespace tree placeholder reads `Search namespaces...`.
+- Data type search placeholder reads `Search N types or namespaces...`.
 - Data type empty namespace reads `Binary`.
 - Data type `typedef` hover reads Type alias.
 - Data type Sort and Direction keep both values when set together.
 - Data type Clear all filters leaves the search text.
 - Data type member rows insert with Insert member after.
 - Function list Ctrl/⌘-click opens the function in a new tab.
+- Function list search placeholder reads `Search N functions...`.
+- Strings search placeholder reads `Search N strings...`.
 - Function list Clear all resets the filters.
 - Binary register Ctrl/⌘-click opens the binary in a new tab.
 - Match / Diff Ctrl/⌘-click opens the candidate in a new tab.
@@ -109,6 +112,7 @@ view renders it from here.
 - Match / Diff metric toggle reads Show Similarity, Show Confidence,
   Show Difference.
 - Search binary and collection hits show their stored `created_at`.
+- Search collection hits show `visibility` (`public` or `team`).
 - Function header signature hover shows return, parameters and convention.
   Named types in that hover link the type list.
 - Diff copies each side's name and transfers the candidate's name,

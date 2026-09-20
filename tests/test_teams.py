@@ -1348,3 +1348,44 @@ class TestOrganisationAccessGate:
         )
         assert usage[0].startswith("403")
         assert usage[1]["error"] == auth.ERROR_SCOPE_FORBIDDEN
+
+
+class TestTeamRosterPrivacy:
+    """SaaS tenants must not enumerate another team's member names."""
+
+    def test_list_teams_scopes_to_membership_on_saas(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import profiles
+
+        monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        mine = auth.create_team(conn, name="Mine")
+        theirs = auth.create_team(conn, name="Theirs")
+        user, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        auth.add_member(conn, int(mine["id"]), int(user["id"]))
+        conn.commit()
+
+        status, payload = _send("GET", "/api/teams", token=token)
+        assert status.startswith("200")
+        names = {row["name"] for row in payload["teams"]}
+        assert names == {"Mine"}
+        assert int(theirs["id"]) not in {int(row["id"]) for row in payload["teams"]}
+
+    def test_get_team_hides_a_foreign_roster_on_saas(
+        self, portal_db: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import profiles
+
+        monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        foreign = auth.create_team(conn, name="Foreign")
+        outsider, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        insider, _ = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        auth.add_member(conn, int(foreign["id"]), int(insider["id"]))
+        conn.commit()
+
+        status, payload = _send("GET", f"/api/teams/{foreign['id']}", token=token)
+        assert status.startswith("404")
+        assert payload["error"] == auth.ERROR_TEAM_NOT_FOUND
+        assert outsider["name"] not in json.dumps(payload)

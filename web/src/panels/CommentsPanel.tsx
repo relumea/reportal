@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
@@ -20,7 +20,8 @@ import {
 } from "../constants";
 import type { CommentScopeKind } from "../constants";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
-import type { Comment, CommentList } from "../types";
+import type { Comment, CommentList, Me } from "../types";
+import { useAsync } from "../useAsync";
 
 function scopePath(scopeKind: CommentScopeKind, scopeId: number): string {
   return scopeKind === "binary" ? `/binaries/${scopeId}/comments` : `/functions/${scopeId}/comments`;
@@ -44,6 +45,14 @@ function storeAuthor(author: string): void {
   }
 }
 
+function clearStoredAuthor(): void {
+  try {
+    window.localStorage.removeItem(COMMENT_AUTHOR_STORAGE_KEY);
+  } catch {
+    // Private mode: nothing to clear.
+  }
+}
+
 function isEdited(comment: Comment): boolean {
   return comment.updated_at !== comment.created_at;
 }
@@ -60,12 +69,22 @@ export function CommentsPanel({
   const key = panelKey(scopeKind, scopeId, "comments");
   const load = (): Promise<CommentList> => api<CommentList>(path);
   const entry = usePanel<CommentList>(key, load);
+  const me = useAsync(() => api<Me>("/iam/me"), []);
+  const authRequired = me.data?.auth === "required";
+  const callerName = me.data?.user?.name ?? "";
+  const callerId = me.data?.user?.id ?? null;
   const [author, setAuthor] = useState(loadAuthor);
   const [text, setText] = useState("");
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
+
+  useEffect(() => {
+    if (!authRequired || !callerName) return;
+    setAuthor(callerName);
+    clearStoredAuthor();
+  }, [authRequired, callerName]);
 
   const refresh = (): void => refreshPanel(key, load);
 
@@ -74,13 +93,23 @@ export function CommentsPanel({
     storeAuthor(value);
   };
 
+  const ownsComment = (comment: Comment): boolean => {
+    if (authRequired && callerId != null && comment.author_user_id != null) {
+      return comment.author_user_id === callerId;
+    }
+    return comment.author === author;
+  };
+
   const add = async (): Promise<void> => {
     setActionError(null);
     const body = text.trim();
     if (!body) return;
     setBusy("add");
     try {
-      await api(path, { method: "POST", json: { body, author } });
+      // With token auth the server attributes the comment to the caller; the
+      // freeform author field is only for the auth-off local operator.
+      const json = authRequired ? { body } : { body, author };
+      await api(path, { method: "POST", json });
       setText("");
       refresh();
     } catch (failure) {
@@ -133,13 +162,15 @@ export function CommentsPanel({
         }}
       >
         <Toolbar>
-          <Field label="Author">
-            <input
-              value={author}
-              onChange={(event) => rememberAuthor(event.target.value)}
-              placeholder={DEFAULT_COMMENT_AUTHOR}
-            />
-          </Field>
+          {authRequired ? null : (
+            <Field label="Author">
+              <input
+                value={author}
+                onChange={(event) => rememberAuthor(event.target.value)}
+                placeholder={DEFAULT_COMMENT_AUTHOR}
+              />
+            </Field>
+          )}
           <Button tone="primary" type="submit" pending={busy === "add"}>
             Add comment
           </Button>
@@ -170,7 +201,7 @@ export function CommentsPanel({
                   {comment.created_at}
                   {isEdited(comment) ? ` (edited ${comment.updated_at})` : ""}
                 </span>
-                {comment.author === author ? (
+                {ownsComment(comment) ? (
                   <span className="message-actions">
                     {editing === comment.id ? (
                       <>
