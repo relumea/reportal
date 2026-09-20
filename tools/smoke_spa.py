@@ -1657,6 +1657,31 @@ def check_code_split() -> bool:
             f"(budget {ENTRY_JS_MAX_BYTES}); defer more of the shell"
         )
         return False
+    gz_sibling = Path(f"{entry_path}.gz")
+    if not gz_sibling.is_file() or gz_sibling.stat().st_size == 0:
+        emit(
+            f"[FAIL] entry chunk {entry_path.name} has no .gz sibling; "
+            "run `bun run build` (or `make spa`) so ui.py can serve precompressed bytes"
+        )
+        return False
+    css = sorted(assets.glob("index-*.css"))
+    if css:
+        css_gz = Path(f"{css[0]}.gz")
+        if not css_gz.is_file() or css_gz.stat().st_size == 0:
+            emit(
+                f"[FAIL] stylesheet {css[0].name} has no .gz sibling; "
+                "precompress must run after vite build"
+            )
+            return False
+    index_html = (repo_root() / DIST_INDEX_RELATIVE).read_text(encoding="utf-8")
+    css_pos = index_html.find('rel="stylesheet"')
+    module_pos = index_html.find('type="module"')
+    if css_pos < 0 or module_pos < 0 or css_pos > module_pos:
+        emit(
+            "[FAIL] built index.html lists the stylesheet after the entry module; "
+            "CSS must start before JS so first paint is not gated on the vendor chunk"
+        )
+        return False
     carried = [marker for marker in VIEW_MARKERS if marker in entry_text]
     if carried:
         emit(f"[FAIL] the initial bundle carries {carried[0]!r}, a view it should load on demand")

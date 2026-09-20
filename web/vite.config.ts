@@ -1,18 +1,72 @@
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 
 // The Vite root is web/ (this config's directory). The build output lands
 // beside the Python package so ui.py serves it from one directory; Vite would
 // keep the previous contents of an out-of-root outDir, so emptyOutDir is set
 // explicitly.
 const rootDir = fileURLToPath(new URL(".", import.meta.url));
+const distDir = fileURLToPath(new URL("../src/reportal/assets/dist", import.meta.url));
+const precompressScript = fileURLToPath(
+  new URL("../scripts/precompress_spa.py", import.meta.url),
+);
+
+/** Move stylesheets ahead of module scripts so CSS fetch and first paint do not
+ * wait behind the entry/vendor module tags Vite injects first by default. */
+function cssBeforeModules(): Plugin {
+  return {
+    name: "reportal-css-before-modules",
+    transformIndexHtml: {
+      order: "post",
+      handler(html) {
+        const styles: string[] = [];
+        const withoutStyles = html.replace(
+          /\s*<link[^>]*\brel=["']stylesheet["'][^>]*>/gi,
+          (tag) => {
+            const withPriority = /\bfetchpriority=/.test(tag)
+              ? tag.trim()
+              : tag.trim().replace(/\/?>$/, ' fetchpriority="high">');
+            styles.push(withPriority);
+            return "";
+          },
+        );
+        if (styles.length === 0) {
+          return html;
+        }
+        const block = `\n    ${styles.join("\n    ")}`;
+        if (/<script\b[^>]*\btype=["']module["']/.test(withoutStyles)) {
+          return withoutStyles.replace(
+            /<script\b[^>]*\btype=["']module["'][^>]*>/,
+            (script) => `${block}\n    ${script}`,
+          );
+        }
+        return withoutStyles.replace(/<\/head>/i, `${block}\n  </head>`);
+      },
+    },
+  };
+}
+
+/** Write ``.gz`` / ``.br`` siblings after the bundle lands, so a plain
+ * ``bun run build`` (not only ``make spa``) ships precompressed assets. */
+function precompressDist(): Plugin {
+  return {
+    name: "reportal-precompress-spa",
+    apply: "build",
+    closeBundle() {
+      execFileSync(process.env.REPORTAL_PYTHON ?? "python3", [precompressScript, distDir], {
+        stdio: "inherit",
+      });
+    },
+  };
+}
 
 export default defineConfig({
   root: rootDir,
   base: "/static/",
-  plugins: [react()],
+  plugins: [react(), cssBeforeModules(), precompressDist()],
   build: {
     outDir: "../src/reportal/assets/dist",
     emptyOutDir: true,

@@ -45,17 +45,24 @@ wheel cannot ship a stale sibling) is preferred, then a sibling `.gz` (zlib
 level 9, header mtime from `SOURCE_DATE_EPOCH` or `0`), otherwise
 `ui.py` gzip-compresses at the request-time level and caches the result in
 process.  Responses carry `Vary: Accept-Encoding` so a cache never serves a
-compressed body to a client that cannot decode it.
+compressed body to a client that cannot decode it.  The Vite build itself runs
+that precompress step (`web/vite.config.ts`), so `bun run build` and `make spa`
+both leave `.gz`/`.br` siblings next to the hashed bundles.
+
+The entry HTML lists the stylesheet before the module scripts (and marks it
+`fetchpriority="high"`), so CSS fetch and first paint are not gated on the
+entry or vendor chunk tags Vite would otherwise inject first.  `tools/smoke_spa.py`
+fails when that order regresses or when the entry JS/CSS lack a `.gz` sibling.
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-about 45 kB (under a 64 kB smoke budget) and the vendor chunk about 289 kB
+about 51 kB (under a 64 kB smoke budget) and the vendor chunk about 289 kB
 (91 kB gzip, ~78 kB brotli), with the view and shell-dialog chunks behind them.
 On the wire that is what `ui.py` actually sends when compression is accepted;
 without it the browser downloads the raw sizes.  `make run`, `make ui` and
-`make package-check` run the precompress step after `vite build` (CI runs the
-same step before the wheel check).  `tools/smoke_spa.py` asserts the split
-rather than trusting it: the entry chunk must not carry a marker only the
+`make package-check` run the same build path (CI runs it before the wheel
+check).  `tools/smoke_spa.py` asserts the split rather than trusting it: the
+entry chunk must not carry a marker only the
 binary detail view or a deferred shell dialog renders, must stay under the
 entry size budget, and some other chunk must carry the detail markers, so a
 view import that goes back to being static fails the gate.

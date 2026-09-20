@@ -112,7 +112,21 @@ class TestRoute:
         assert status.startswith("200")
         assert headers.get("Content-Encoding") == "gzip"
         assert headers.get("Vary") == "Accept-Encoding"
+        assert headers.get("ETag")
         assert b"reportal" in gzip.decompress(body)
+
+    def test_it_revalidates_with_etag(self, portal_db: Path) -> None:
+        _, headers, _ = on_request("GET", "/pricing", headers={"Accept-Encoding": "gzip"})
+        etag = headers["ETag"]
+        status, revalidated, chunks = on_request(
+            "GET",
+            "/pricing",
+            headers={"Accept-Encoding": "gzip", "If-None-Match": etag},
+        )
+        assert status.startswith("304")
+        assert revalidated.get("ETag") == etag
+        assert revalidated.get("Cache-Control") == landing.CACHE_CONTROL
+        assert b"".join(chunks) == b""
 
     def test_it_shows_the_prices(self, portal_db: Path) -> None:
         _, _, chunks = on_request("GET", "/pricing")

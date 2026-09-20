@@ -20,6 +20,8 @@ from __future__ import annotations
 import gzip
 import hashlib
 import mimetypes
+import shutil
+import subprocess
 from email.utils import formatdate, parsedate
 from functools import lru_cache
 from pathlib import Path
@@ -248,23 +250,65 @@ def index(request: Request) -> Response:
     return _file_under(root, APP_INDEX, request, cache_control=SHELL_CACHE_CONTROL)
 
 
+@lru_cache(maxsize=8)
+def _pricing_encodings(raw: bytes) -> tuple[bytes, bytes | None]:
+    """Gzip (and brotli when the CLI is present) for a pricing body, once per body.
+
+    The page is derived from code and only changes on deploy, so maximum gzip
+    effort is paid once per distinct markup rather than on every request.
+    """
+    gz = gzip.compress(raw, compresslevel=9)
+    br: bytes | None = None
+    binary = shutil.which("brotli")
+    if binary is not None:
+        try:
+            completed = subprocess.run(
+                [binary, "-q", "11", "-c"],
+                input=raw,
+                capture_output=True,
+                check=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            completed = None
+        if completed is not None and completed.stdout and len(completed.stdout) < len(raw):
+            br = completed.stdout
+    return gz, br
+
+
 @router.get("/pricing")
-def pricing() -> Response:
+def pricing(request: Request) -> Response:
     """The public marketing and pricing page, rendered from the plan catalog.
 
     Served whether or not the SPA has been built: it is the page a visitor who
     has never signed in reads, so it must not depend on a frontend build step.
+    Bodies are content-addressed (``ETag``) so a repeat load after ``max-age``
+    can be answered ``304`` instead of re-sending the markup.
     """
-    body = landing.render().encode("utf-8")
-    headers = {"Cache-Control": landing.CACHE_CONTROL, "Vary": "Accept-Encoding"}
-    if len(body) >= MIN_COMPRESS_BYTES and _accepts_gzip(_ACCEPT_ENCODING.get()):
-        body = gzip.compress(body, GZIP_LEVEL)
-        headers["Content-Encoding"] = "gzip"
-    return Response(
+    raw = landing.render().encode("utf-8")
+    accept = _ACCEPT_ENCODING.get()
+    etag_plain = hashlib.sha256(raw).hexdigest()
+    body = raw
+    encoding: str | None = None
+    if len(raw) >= MIN_COMPRESS_BYTES:
+        gz, br = _pricing_encodings(raw)
+        if br is not None and _accepts_br(accept):
+            body, encoding = br, "br"
+        elif _accepts_gzip(accept):
+            body, encoding = gz, "gzip"
+    etag = f'"{etag_plain}-{encoding or "identity"}"'
+    headers = {
+        "Cache-Control": landing.CACHE_CONTROL,
+        "Vary": "Accept-Encoding",
+        "ETag": etag,
+    }
+    if encoding is not None:
+        headers["Content-Encoding"] = encoding
+    response = Response(
         content=body,
         media_type="text/html; charset=utf-8",
         headers=headers,
     )
+    return _revalidate(response, request)
 
 
 @router.get("/static/{path:path}")
