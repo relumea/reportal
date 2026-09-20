@@ -3722,13 +3722,17 @@ def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
         target = Path(path).expanduser()
         target.parent.mkdir(parents=True, exist_ok=True)
         handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
+        # fdopen takes ownership only on success; close the raw fd only when it never did.
+        owned = True
         try:
             with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                owned = False
                 stream.write(text)
             os.replace(temp_name, target)
         except BaseException:
-            with contextlib.suppress(OSError):
-                os.close(handle)
+            if owned:
+                with contextlib.suppress(OSError):
+                    os.close(handle)
             raise
         finally:
             with contextlib.suppress(FileNotFoundError):

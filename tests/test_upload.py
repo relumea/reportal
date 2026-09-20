@@ -227,6 +227,24 @@ class TestUploadErrors:
         assert list((workspace / "binaries").iterdir()) == []
         assert store.list_binaries(conn) == []
 
+    def test_registration_error_removes_upload_temp(
+        self,
+        portal_db: Path,
+        workspace: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failure after the part is streamed must not leave `.upload-*` behind."""
+
+        def boom(*_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("forced registration failure")
+
+        monkeypatch.setattr(store, "find_binary_by_sha256", boom)
+        status, _headers, _raw = _upload(b"streamed then rejected", filename="demo.exe")
+        assert status.startswith("500")
+        binaries = workspace / "binaries"
+        leftovers = list(binaries.glob(".upload-*")) if binaries.is_dir() else []
+        assert leftovers == []
+
     def test_malformed_multipart_body_400(self, portal_db: Path, workspace: Path) -> None:
         headers = {"Content-Type": f"multipart/form-data; boundary={BOUNDARY}"}
         status, response_headers, raw = wsgi_request(

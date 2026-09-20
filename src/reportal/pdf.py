@@ -905,13 +905,17 @@ def write_report(
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
     try:
         with os.fdopen(handle, "wb") as stream:
+            owned = False
             stream.write(report.data)
         os.replace(temp_name, target)
     except BaseException:
-        with contextlib.suppress(OSError):
-            os.close(handle)
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
         raise
     finally:
         with contextlib.suppress(FileNotFoundError):

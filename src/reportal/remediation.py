@@ -633,8 +633,11 @@ def validate_rule(rule: str) -> dict[str, Any]:
         }
     directory = _scratch_dir()
     handle, temp_name = tempfile.mkstemp(dir=directory, prefix="rule-", suffix=".yar")
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            owned = False
             stream.write(rule)
         try:
             proc = subprocess.run(
@@ -649,8 +652,9 @@ def validate_rule(rule: str) -> dict[str, Any]:
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"validated": False, "validator": YARAC_BIN, "error": str(exc)}
     except BaseException:
-        with contextlib.suppress(OSError):
-            os.close(handle)
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
         raise
     finally:
         with contextlib.suppress(FileNotFoundError):

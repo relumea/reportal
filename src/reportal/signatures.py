@@ -1090,14 +1090,17 @@ def export_prototypes(
         raise ExportExistsError(f"refusing to overwrite {target} without force")
 
     handle, temp_name = tempfile.mkstemp(dir=parent, prefix=".signatures-")
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
     try:
         with os.fdopen(handle, "wb") as stream:
+            owned = False
             stream.write(header)
         os.replace(temp_name, target)
     except BaseException:
-        # fdopen takes ownership only on success; a failed open leaves the fd.
-        with contextlib.suppress(OSError):
-            os.close(handle)
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
         raise
     finally:
         with contextlib.suppress(FileNotFoundError):

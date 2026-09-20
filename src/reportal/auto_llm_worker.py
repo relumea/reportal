@@ -333,13 +333,17 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            owned = False
             stream.write(source)
         os.replace(temp_name, path)
     except BaseException:
-        with contextlib.suppress(OSError):
-            os.close(handle)
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
         raise
     finally:
         with contextlib.suppress(FileNotFoundError):

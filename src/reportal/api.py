@@ -515,8 +515,11 @@ def _stream_upload(upload: Any, directory: Path) -> tuple[Path, str, int]:
     temp = Path(temp_name)
     digest = hashlib.sha256()
     size = 0
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
     try:
         with os.fdopen(fd, "wb") as handle:
+            owned = False
             while True:
                 chunk = upload.file.read(_UPLOAD_CHUNK_BYTES)
                 if not chunk:
@@ -531,9 +534,9 @@ def _stream_upload(upload: Any, directory: Path) -> tuple[Path, str, int]:
                 digest.update(chunk)
                 handle.write(chunk)
     except BaseException:
-        # fdopen takes ownership only on success; a failed open leaves the fd.
-        with contextlib.suppress(OSError):
-            os.close(fd)
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(fd)
         temp.unlink(missing_ok=True)
         raise
     return temp, digest.hexdigest(), size
@@ -720,75 +723,77 @@ def _upload_entry(
         temp, sha256, size = _stream_upload(upload, directory)
     except _PartError as exc:
         return _upload_error_entry(display, exc.error, exc.detail, exc.status)
-    if size == 0:
-        temp.unlink(missing_ok=True)
-        return _upload_error_entry(display, "empty-file", "uploaded file is empty")
-    tags = _file_option_str_list(entry, "tags")
-    collection_ids = _file_option_int_list(entry, "collection_ids")
-    existing = store.find_binary_by_sha256(conn, sha256)
-    if existing is not None:
-        temp.unlink(missing_ok=True)
-        binary_id = int(existing["id"])
-        duplicate = True
-        if scope is not None:
-            if not auth.may_write(
-                _caller(request), existing, team_ids=_caller_team_ids(conn, request)
-            ):
-                return _upload_error_entry(
-                    display,
-                    auth.ERROR_SCOPE_FORBIDDEN,
-                    f"binary {binary_id} belongs to a team you are not a member of",
-                    403,
+    try:
+        if size == 0:
+            return _upload_error_entry(display, "empty-file", "uploaded file is empty")
+        tags = _file_option_str_list(entry, "tags")
+        collection_ids = _file_option_int_list(entry, "collection_ids")
+        existing = store.find_binary_by_sha256(conn, sha256)
+        if existing is not None:
+            binary_id = int(existing["id"])
+            duplicate = True
+            if scope is not None:
+                if not auth.may_write(
+                    _caller(request), existing, team_ids=_caller_team_ids(conn, request)
+                ):
+                    return _upload_error_entry(
+                        display,
+                        auth.ERROR_SCOPE_FORBIDDEN,
+                        f"binary {binary_id} belongs to a team you are not a member of",
+                        403,
+                    )
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table="binaries",
+                    where="id = ?",
+                    params=(binary_id,),
+                    description=f"scoped binary {binary_id} to {scope[1]}",
                 )
-            journal.journaled_rows(
+                store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
+        else:
+            suffix = upload_suffix(raw_name)
+            target = directory / f"{sha256}{suffix}"
+            os.replace(temp, target)
+            binary_id = store.add_binary(
                 conn,
-                log,
-                table="binaries",
-                where="id = ?",
-                params=(binary_id,),
-                description=f"scoped binary {binary_id} to {scope[1]}",
+                sha256=sha256,
+                name=display or sha256,
+                path=str(target),
+                size=size,
+                fmt=_file_option_str(entry, "format") or suffix.lstrip(".").upper(),
+                arch=_file_option_str(entry, "arch"),
             )
-            store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
-    else:
-        suffix = upload_suffix(raw_name)
-        target = directory / f"{sha256}{suffix}"
-        os.replace(temp, target)
-        binary_id = store.add_binary(
-            conn,
-            sha256=sha256,
-            name=display or sha256,
-            path=str(target),
-            size=size,
-            fmt=_file_option_str(entry, "format") or suffix.lstrip(".").upper(),
-            arch=_file_option_str(entry, "arch"),
-        )
-        store.set_binary_compiler(conn, binary_id, _file_option_str(entry, "compiler"))
-        duplicate = False
-        if scope is not None:
-            store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
-        log.record(
-            effects.EFFECT_FILE_DELETE,
-            f"stored uploaded file {target}",
-            journal.file_delete_descriptor(str(target)),
-        )
-        log.record(
-            effects.EFFECT_ROW_DELETE,
-            f"registered binary {binary_id}",
-            journal.row_delete_descriptor("binaries", binary_id),
-        )
-    applied_tags = _apply_upload_tags(conn, log, binary_id, tags)
-    applied_collections = _apply_upload_collections(conn, log, binary_id, collection_ids)
-    row = store.get_binary(conn, binary_id) or {}
-    return {
-        "file": display or sha256,
-        "binary_id": binary_id,
-        "duplicate": duplicate,
-        "tags": applied_tags,
-        "collections": applied_collections,
-        "visibility": str(row.get("visibility") or auth.VISIBILITY_PUBLIC),
-        "owner_team_id": row.get("owner_team_id"),
-        "error": None,
-    }
+            store.set_binary_compiler(conn, binary_id, _file_option_str(entry, "compiler"))
+            duplicate = False
+            if scope is not None:
+                store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
+            log.record(
+                effects.EFFECT_FILE_DELETE,
+                f"stored uploaded file {target}",
+                journal.file_delete_descriptor(str(target)),
+            )
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                f"registered binary {binary_id}",
+                journal.row_delete_descriptor("binaries", binary_id),
+            )
+        applied_tags = _apply_upload_tags(conn, log, binary_id, tags)
+        applied_collections = _apply_upload_collections(conn, log, binary_id, collection_ids)
+        row = store.get_binary(conn, binary_id) or {}
+        return {
+            "file": display or sha256,
+            "binary_id": binary_id,
+            "duplicate": duplicate,
+            "tags": applied_tags,
+            "collections": applied_collections,
+            "visibility": str(row.get("visibility") or auth.VISIBILITY_PUBLIC),
+            "owner_team_id": row.get("owner_team_id"),
+            "error": None,
+        }
+    finally:
+        # Still present on empty/duplicate/error; gone after a successful replace.
+        temp.unlink(missing_ok=True)
 
 
 def _upload_error_entry(name: str, error: str, detail: str, status: int = 400) -> dict[str, Any]:
@@ -8595,40 +8600,42 @@ def _register_uploads(
         temp, sha256, size = _stream_upload(upload, directory)
     except _PartError as exc:
         return json_error(exc.status, error=exc.error, detail=exc.detail)
-    if size == 0:
+    try:
+        if size == 0:
+            return json_error(400, error="empty-file", detail="uploaded file is empty")
+        with contextlib.closing(_open()) as conn:
+            existing = store.find_binary_by_sha256(conn, sha256)
+            if existing is not None:
+                return json_response({**existing, "duplicate": True})
+            suffix = upload_suffix(raw_name)
+            target = directory / f"{sha256}{suffix}"
+            os.replace(temp, target)
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                binary_id = store.add_binary(
+                    conn,
+                    sha256=sha256,
+                    name=display or sha256,
+                    path=str(target),
+                    size=size,
+                    fmt=suffix.lstrip(".").upper(),
+                )
+                log.record(
+                    effects.EFFECT_FILE_DELETE,
+                    f"stored uploaded file {target}",
+                    journal.file_delete_descriptor(str(target)),
+                )
+                log.record(
+                    effects.EFFECT_ROW_DELETE,
+                    f"registered binary {binary_id}",
+                    journal.row_delete_descriptor("binaries", binary_id),
+                )
+            row = store.get_binary(conn, binary_id)
+            payload = log.attach({**(row or {}), "duplicate": False})
+        return json_response(payload)
+    finally:
+        # Still present on empty/duplicate/error; gone after a successful replace.
         temp.unlink(missing_ok=True)
-        return json_error(400, error="empty-file", detail="uploaded file is empty")
-    with contextlib.closing(_open()) as conn:
-        existing = store.find_binary_by_sha256(conn, sha256)
-        if existing is not None:
-            temp.unlink(missing_ok=True)
-            return json_response({**existing, "duplicate": True})
-        suffix = upload_suffix(raw_name)
-        target = directory / f"{sha256}{suffix}"
-        os.replace(temp, target)
-        action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            binary_id = store.add_binary(
-                conn,
-                sha256=sha256,
-                name=display or sha256,
-                path=str(target),
-                size=size,
-                fmt=suffix.lstrip(".").upper(),
-            )
-            log.record(
-                effects.EFFECT_FILE_DELETE,
-                f"stored uploaded file {target}",
-                journal.file_delete_descriptor(str(target)),
-            )
-            log.record(
-                effects.EFFECT_ROW_DELETE,
-                f"registered binary {binary_id}",
-                journal.row_delete_descriptor("binaries", binary_id),
-            )
-        row = store.get_binary(conn, binary_id)
-        payload = log.attach({**(row or {}), "duplicate": False})
-    return json_response(payload)
 
 
 @router.post("/api/binaries/{binary_id}/documents")

@@ -487,6 +487,7 @@ def fetch_virustotal(
     """
     url = f"{VIRUSTOTAL_URL_PREFIX}{sha256}"
     client, owned = _open_client(timeout)
+    response: httpx.Response | None = None
     try:
         response = client.get(
             url,
@@ -514,6 +515,10 @@ def fetch_virustotal(
     except (httpx.HTTPError, ValueError) as exc:
         raise ExternalFetchError(f"the VirusTotal request failed: {exc}") from exc
     finally:
+        # An injected process-wide client keeps its pool; unread/unclosed bodies
+        # pin connections there on every 404/redirect/error path.
+        if response is not None:
+            response.close()
         if owned:
             client.close()
     payload["sha256"] = payload.get("sha256") or sha256

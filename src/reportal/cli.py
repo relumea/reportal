@@ -472,13 +472,17 @@ def _write_text_atomic(path: Path, text: str) -> Path:
     """Write *text* to *path* through a same-directory temp file and rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
     handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            owned = False
             stream.write(text)
         os.replace(temp_name, path)
     except BaseException:
-        with contextlib.suppress(OSError):
-            os.close(handle)
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
         raise
     finally:
         with contextlib.suppress(FileNotFoundError):
@@ -5888,8 +5892,11 @@ def _copy_stream(source: Path, target: Path) -> int:
 
     handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".download-")
     written = 0
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
     try:
         with source.open("rb") as src, os.fdopen(handle, "wb") as dst:
+            owned = False
             while True:
                 chunk = src.read(api.BINARY_DOWNLOAD_CHUNK_BYTES)
                 if not chunk:
@@ -5898,9 +5905,9 @@ def _copy_stream(source: Path, target: Path) -> int:
                 written += len(chunk)
         os.replace(temp_name, target)
     except BaseException:
-        # fdopen takes ownership only on success; a failed open leaves the fd.
-        with contextlib.suppress(OSError):
-            os.close(handle)
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
         raise
     finally:
         with contextlib.suppress(FileNotFoundError):
