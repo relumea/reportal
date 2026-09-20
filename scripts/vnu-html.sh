@@ -18,6 +18,13 @@ if ! command -v java >/dev/null 2>&1; then
   echo "VNU: Java 17+ is required (vnu.jar runs on the JVM; apt: openjdk-17-jre-headless)" >&2
   exit 1
 fi
+# Match CI's openjdk-17 floor.  Parse the first version token from
+# `java -version` (stderr); refuse anything below 17 before vnu.jar runs.
+java_ver="$(java -version 2>&1 | head -n1 | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p')"
+if [ -z "${java_ver}" ] || [ "${java_ver}" -lt 17 ]; then
+  echo "VNU: Java 17+ is required (found ${java_ver:-unknown}); apt: openjdk-17-jre-headless" >&2
+  exit 1
+fi
 
 vnu --format text "$HTML"
 vnu --css --format text "$CSS"

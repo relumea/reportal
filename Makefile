@@ -6,14 +6,16 @@
 # Every target uses the project venv's python (`PY`, default .venv/bin/python).
 # A missing tool fails loud with its install hint; nothing is silently skipped.
 
-.PHONY: help setup run serve spa check check-ci check-fast lint typecheck test test-fast test-one ui package-check package-wheel clean doctor venv-check bun-check uv-check rebrew-check
+.PHONY: help setup run serve spa check check-ci check-fast lint typecheck test test-fast test-one ui package-check package-wheel clean doctor venv-check bun-check uv-check rebrew-check resembl-check
 
 .DEFAULT_GOAL := help
 
 UV   ?= uv
 PY   ?= .venv/bin/python
 BUN  ?= bun
-# Keep in sync with web/package.json `packageManager` and CI setup-bun.
+# Major.minor pin; keep in sync with web/package.json `packageManager` and CI
+# setup-bun.  Patch floats so a local `bun upgrade` within 1.4.x still passes;
+# CI keeps the exact packageManager version.
 BUN_VERSION ?= 1.4.0
 # Floor matches CI setup-uv and `[tool.uv] required-version` in pyproject.toml.
 UV_VERSION ?= 0.8.22
@@ -45,8 +47,10 @@ venv-check:
 bun-check:
 	@command -v "$(BUN)" >/dev/null 2>&1 || { echo "$(BUN) is required; install with: curl -fsSL https://bun.sh/install | bash" >&2; exit 1; }
 	@got=$$($(BUN) --version 2>/dev/null | tr -d '\r'); \
-	if [ "$$got" != "$(BUN_VERSION)" ]; then \
-	  echo "$(BUN) $$got does not match required $(BUN_VERSION) (web/package.json packageManager)" >&2; \
+	want_mm=$$(printf '%s' "$(BUN_VERSION)" | cut -d. -f1,2); \
+	got_mm=$$(printf '%s' "$$got" | cut -d. -f1,2); \
+	if [ -z "$$got" ] || [ "$$got_mm" != "$$want_mm" ]; then \
+	  echo "$(BUN) $$got is not in the required $$want_mm.x line (web/package.json packageManager bun@$(BUN_VERSION); CI pins $(BUN_VERSION))" >&2; \
 	  exit 1; \
 	fi
 
@@ -71,8 +75,21 @@ rebrew-check:
 	  exit 1; \
 	}
 
+# resembl backs the optional similarity extra; only required when that extra is
+# requested via SYNC_EXTRAS (CI always syncs it).
+resembl-check:
+	@test -f ../resembl/pyproject.toml || { \
+	  echo "../resembl is required for the similarity extra; clone it beside this repo:" >&2; \
+	  echo "  git clone https://github.com/maci0/resembl ../resembl" >&2; \
+	  echo "CI pins a commit in .github/workflows/check.yml (Check out the sibling engines)." >&2; \
+	  exit 1; \
+	}
+
 # ── bootstrap ────────────────────────────────────────────────────────
 setup: uv-check bun-check rebrew-check ## Create .venv (uv sync --frozen) and install web packages
+	@if printf '%s' "$(SYNC_EXTRAS)" | grep -Eq '(^|[[:space:]])(--extra[=[:space:]])?similarity($$|[[:space:]])'; then \
+	  $(MAKE) --no-print-directory resembl-check; \
+	fi
 	$(UV) sync --frozen $(SYNC_EXTRAS)
 	cd web && $(BUN) install --frozen-lockfile
 	@echo "setup ok. CLI: .venv/bin/reportal  |  make doctor  |  make run  |  make check-fast  |  make check-ci" >&2
