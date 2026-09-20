@@ -30,6 +30,7 @@ import {
   Toolbar,
 } from "../components";
 import { ROLES } from "../constants";
+import { resetSessionCache } from "../panelCache";
 import type {
   ActivityItem,
   ActivityPayload,
@@ -999,12 +1000,15 @@ export function UsersView(): ReactNode {
   const rows = users.data?.users ?? [];
 
   const setActiveTeam = (value: string): void => {
-    act("active-team", () =>
-      api("/iam/active-team", {
+    act("active-team", async () => {
+      await api("/iam/active-team", {
         method: "PUT",
         json: { team_id: value === "" ? null : Number(value) },
-      }),
-    );
+      });
+      // Visibility is team-scoped; cached panels and lists from the previous
+      // active team must not outlive the switch.
+      resetSessionCache();
+    });
   };
 
   return (

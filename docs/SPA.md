@@ -116,8 +116,12 @@ works from the browser without a cookie or a session.
 `src/useAsync.ts` is a view's query over react-query (a per-instance key plus
 the caller's dependencies) and `src/panelCache.ts` is the panels' shared one,
 keyed by request identity, so a panel loaded once is reused when a view unmounts
-and mounts again; a successful journal revert drops every panel through
-`clearPanels`, since its undo plan can touch any scoped row.  `PanelBody` renders a skeleton
+and mounts again within `PANEL_GC_MS`; unmounted entries are dropped past that
+window so a long session cannot pin every panel ever opened.  A successful
+journal revert drops every panel through `clearPanels`, since its undo plan can
+touch any scoped row; `storeToken` and an active-team switch call
+`resetSessionCache` so a different bearer or team never keeps serving the
+previous caller's cached rows.  `PanelBody` renders a skeleton
 while a panel is loading, the empty state
 for a stored-only GET that answered `no-scan`, or the error name and detail
 with a retry.  Heavy engine work never runs on render: stored scans load

@@ -3,6 +3,9 @@
 // reused when the view unmounts and mounts again.  The store is react-query's
 // cache: a panel is one query under `PANEL_KEY`, its value the panel entry the
 // panels render, and a refresh is a fetch that notifies every mounted panel.
+// Unmounted entries expire after `PANEL_GC_MS`; identity changes call
+// `resetSessionCache` so a different bearer or active team cannot keep serving
+// the previous caller's rows.
 
 import { useQuery } from "@tanstack/react-query";
 import { useRef } from "react";
@@ -16,6 +19,11 @@ export type PanelEntry<T> =
 
 /** Every panel query shares this key prefix, so clearing them is one call. */
 const PANEL_KEY = "panel";
+
+// How long an unmounted panel stays in react-query's cache.  Remounts within
+// this window reuse the entry without refetching (`staleTime: Infinity`); past
+// it the entry is dropped so a long session cannot pin every panel ever opened.
+export const PANEL_GC_MS = 5 * 60 * 1000;
 
 function panelQueryKey(key: string): [string, string] {
   return [PANEL_KEY, key];
@@ -46,6 +54,11 @@ export function clearPanels(): void {
   queryClient.removeQueries({ queryKey: [PANEL_KEY] });
 }
 
+/** Drop every react-query entry after the browser's identity or active team changes. */
+export function resetSessionCache(): void {
+  queryClient.clear();
+}
+
 /** Re-run a load that previously failed or needs refreshing. */
 export function refreshPanel<T>(key: string, load: () => Promise<T>): void {
   void store(key, load);
@@ -58,10 +71,10 @@ export function usePanel<T>(key: string, load: () => Promise<T>): PanelEntry<T> 
   const query = useQuery<PanelEntry<T>>({
     queryKey: panelQueryKey(key),
     queryFn: () => loadEntry(() => loadRef.current()),
-    // A panel loaded once stays cached; a remount reuses it and a mutation
-    // calls `refreshPanel`.
+    // A panel loaded once stays cached while mounted; a remount within
+    // PANEL_GC_MS reuses it, and a mutation calls `refreshPanel`.
     staleTime: Infinity,
-    gcTime: Infinity,
+    gcTime: PANEL_GC_MS,
     refetchOnMount: false,
   });
   return query.data;
@@ -77,7 +90,7 @@ export function useLazyPanel<T>(
     queryFn: () => Promise.resolve<PanelEntry<T>>({ state: "loading" }),
     enabled: false,
     staleTime: Infinity,
-    gcTime: Infinity,
+    gcTime: PANEL_GC_MS,
   });
   return [query.data, (load) => void store(key, load)];
 }

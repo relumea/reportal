@@ -46,6 +46,8 @@ const API_PREFIX = "/api";
  */
 export const BINARY_OPTIONS_PATH = "/binaries?summary=true";
 
+import { resetSessionCache } from "./panelCache";
+
 /** Where the browser keeps the bearer token an authenticated install needs. */
 const TOKEN_STORAGE_KEY = "reportal.token";
 
@@ -62,11 +64,17 @@ export function storedToken(): string {
 
 /** Remember (or forget, with an empty value) the token the browser sends. */
 export function storeToken(token: string): void {
+  const previous = storedToken();
   try {
     if (token) window.localStorage.setItem(TOKEN_STORAGE_KEY, token);
     else window.localStorage.removeItem(TOKEN_STORAGE_KEY);
   } catch {
     // Nothing to do: the header still comes from storedToken() this session.
+  }
+  // Panels and view queries are keyed by entity id alone; a different bearer
+  // must not keep serving the previous caller's cached rows.
+  if (token !== previous) {
+    resetSessionCache();
   }
 }
 

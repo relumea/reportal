@@ -1982,10 +1982,12 @@ Vite + React + TypeScript in `web/`, built with bun into
   upload, `ApiError` carrying `error`/`detail`.
 - `src/panelCache.ts`: panel results in react-query's cache, keyed by request
   identity, so a panel survives a view unmount and a write refreshes it in
-  place (`refreshPanel`); a successful journal revert clears every panel
-  (`clearPanels`), since its undo plan can touch any scoped row; `PanelBody`
-  renders skeleton rows, the empty state for a `no-scan`, or the error name and
-  detail with a retry.
+  place (`refreshPanel`); unmounted entries expire after `PANEL_GC_MS`; a
+  successful journal revert clears every panel (`clearPanels`), since its undo
+  plan can touch any scoped row; `storeToken` and an active-team switch clear
+  the whole react-query cache (`resetSessionCache`) so identity changes cannot
+  keep serving the previous caller's rows; `PanelBody` renders skeleton rows,
+  the empty state for a `no-scan`, or the error name and detail with a retry.
 - `src/views/`: the dashboard cockpit (system-state readouts and the aggregate
   coverage meter, one row per binary with a segmented match meter and its status
   breakdown, the live auto-run card with a progress meter and the current task,
