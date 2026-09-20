@@ -30,6 +30,7 @@ from __future__ import annotations
 import os
 import struct
 import tempfile
+import unicodedata
 import zlib
 from collections.abc import Iterator
 from io import BytesIO
@@ -56,13 +57,17 @@ PASSWORD_CONTROL_DETAIL = "password must not contain control characters"
 def validate_password(password: str) -> str:
     """Return *password* when it is safe to put in a zip and a response header.
 
-    Empty or overlong values, and any ASCII control character (including CR,
-    LF and NUL), are refused.  Callers map the :class:`ValueError` message onto
-    their own error vocabulary.
+    Empty or overlong values, ASCII C0 controls and DEL (including CR, LF and
+    NUL), and Unicode format or separator characters that would split or
+    corrupt ``X-Reportal-Zip-Password``, are refused.  Callers map the
+    :class:`ValueError` message onto their own error vocabulary.
     """
     if not password or len(password) > MAX_PASSWORD_CHARS:
         raise ValueError(PASSWORD_LENGTH_DETAIL)
-    if any(ord(ch) < 32 for ch in password):
+    if any(
+        ord(ch) < 32 or ord(ch) == 127 or unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
+        for ch in password
+    ):
         raise ValueError(PASSWORD_CONTROL_DETAIL)
     return password
 

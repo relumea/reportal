@@ -24,6 +24,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import unicodedata
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import partial
@@ -506,8 +507,10 @@ def _client_name(raw_filename: str) -> str:
 
     Only the basename is kept, and a name that survives as a path component
     (``.`` or ``..``) is dropped so the caller falls back to the content hash.
+    The basename is NFC-normalized so a macOS NFD upload name matches an NFC
+    rename of the same spelling.
     """
-    candidate = Path(raw_filename).name
+    candidate = unicodedata.normalize("NFC", Path(raw_filename).name)
     return "" if candidate in {"", ".", ".."} else candidate
 
 
@@ -7280,8 +7283,11 @@ def create_tag(body: dict[str, Any] = Depends(json_body)) -> Response:
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
-            created = store.find_tag(conn, name) is None
-            tag_id = store.create_tag(conn, name)
+            try:
+                created = store.find_tag(conn, name) is None
+                tag_id = store.create_tag(conn, name)
+            except ValueError as exc:
+                return json_error(400, error="invalid tag", detail=str(exc))
             if created:
                 journal.journaled_create(
                     log, table="tags", key=tag_id, description=f"created tag {tag_id}"
@@ -7390,8 +7396,11 @@ def add_binary_tag(
             created_tag = False
         else:
             name = _require_str(body, "name")
-            created_tag = store.find_tag(conn, name) is None
-            tag_id = store.create_tag(conn, name)
+            try:
+                created_tag = store.find_tag(conn, name) is None
+                tag_id = store.create_tag(conn, name)
+            except ValueError as exc:
+                return json_error(400, error="invalid tag", detail=str(exc))
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             if created_tag:
@@ -10552,8 +10561,11 @@ def set_analysis_tags(analysis_id: int, body: dict[str, Any] = Depends(json_body
                 str(tag["name"]): int(tag["id"]) for tag in store.get_binary_tags(conn, binary_id)
             }
             for name in sorted(set(wanted) - set(current)):
-                created_tag = store.find_tag(conn, name) is None
-                tag_id = store.create_tag(conn, name)
+                try:
+                    created_tag = store.find_tag(conn, name) is None
+                    tag_id = store.create_tag(conn, name)
+                except ValueError as exc:
+                    return json_error(400, error="invalid tag", detail=str(exc))
                 if created_tag:
                     log.record(
                         effects.EFFECT_ROW_DELETE,

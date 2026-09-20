@@ -14,6 +14,7 @@ import re
 import shutil
 import sqlite3
 import tempfile
+import unicodedata
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -41,8 +42,10 @@ def _client_name(raw_filename: str) -> str:
 
     Only the basename is kept, and a name that survives as a path component
     (``.`` or ``..``) is dropped so the caller falls back to the content hash.
+    The basename is NFC-normalized so a macOS NFD member name matches an NFC
+    rename of the same spelling.
     """
-    candidate = Path(raw_filename).name
+    candidate = unicodedata.normalize("NFC", Path(raw_filename).name)
     return "" if candidate in {"", ".", ".."} else candidate
 
 

@@ -818,8 +818,11 @@ def add_binary(
     not available, so two unknown binaries never collide on an empty string.
     The insert is atomic: two concurrent uploads of the same bytes race on
     the UNIQUE index and the loser reads back the winner's row instead of
-    raising ``IntegrityError``.
+    raising ``IntegrityError``.  The display name is NFC-normalized so an NFD
+    upload name (typical of macOS) matches a later NFC rename of the same
+    spelling when sha256 is absent and dedupe falls back to ``(name, path)``.
     """
+    name = unicodedata.normalize("NFC", name)
     if sha256:
         conn.execute(
             "INSERT OR IGNORE INTO binaries (sha256, name, path, size, format, arch, created_at)"
@@ -1124,10 +1127,11 @@ def set_binary_compiler(
 def rename_binary(conn: sqlite3.Connection, binary_id: int, name: str) -> dict[str, Any] | None:
     """Set the display name of *binary_id*; None when the id is unknown.
 
-    The name is stripped.  An empty value raises ``ValueError``.  Dedupe
-    stays on sha256, so two binaries may share a display name.
+    The name is stripped and NFC-normalized.  An empty value raises
+    ``ValueError``.  Dedupe stays on sha256, so two binaries may share a
+    display name.
     """
-    cleaned = name.strip()
+    cleaned = unicodedata.normalize("NFC", name.strip())
     if not cleaned:
         raise ValueError("binary name must not be empty")
     if get_binary(conn, binary_id) is None:
@@ -3377,6 +3381,20 @@ def revert_name(
 # ── Collections ────────────────────────────────────────────────────
 
 
+def _has_label_controls(cleaned: str) -> bool:
+    """True when *cleaned* carries a control, format, or separator character.
+
+    ASCII C0 controls and DEL are refused, and so are Unicode format characters
+    (zero-width spaces, bidi controls) and line/paragraph separators that would
+    otherwise look blank in a name while still distinguishing two identities.
+    Matches the policy :mod:`reportal.auth` applies to user and team names.
+    """
+    return any(
+        ord(ch) < 32 or ord(ch) == 127 or unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"}
+        for ch in cleaned
+    )
+
+
 def _canonical_label(name: str) -> str:
     """Strip padding and NFC-normalize a tag or collection name.
 
@@ -3387,6 +3405,16 @@ def _canonical_label(name: str) -> str:
     return unicodedata.normalize("NFC", name.strip())
 
 
+def _validated_label(name: str, *, kind: str) -> str:
+    """Canonical form of *name*, or raise ``ValueError`` when blank or hostile."""
+    cleaned = _canonical_label(name)
+    if not cleaned:
+        raise ValueError(f"{kind} name must not be empty")
+    if _has_label_controls(cleaned):
+        raise ValueError(f"{kind} name must not contain control characters")
+    return cleaned
+
+
 def create_collection(
     conn: sqlite3.Connection, *, name: str, description: str = "", scope: str = ""
 ) -> int:
@@ -3394,11 +3422,10 @@ def create_collection(
 
     The stored name is stripped and NFC-normalized so a padded or NFD create
     cannot collide with a later rename that canonicalizes the same way, and so
-    uniqueness matches what callers see.
+    uniqueness matches what callers see.  Control and format characters are
+    refused the same way auth refuses them on identity names.
     """
-    cleaned = _canonical_label(name)
-    if not cleaned:
-        raise ValueError("collection name must not be empty")
+    cleaned = _validated_label(name, kind="collection")
     try:
         cur = conn.execute(
             "INSERT INTO collections (name, description, scope, created_at, updated_at)"
@@ -3735,9 +3762,7 @@ def update_collection(
     updates: list[str] = []
     params: list[Any] = []
     if name is not None:
-        cleaned = _canonical_label(name)
-        if not cleaned:
-            raise ValueError("collection name must not be empty")
+        cleaned = _validated_label(name, kind="collection")
         clash = conn.execute(
             "SELECT 1 FROM collections WHERE name = ? AND id != ?", (cleaned, collection_id)
         ).fetchone()
@@ -3822,8 +3847,14 @@ def set_collection_tags(
     """
     if get_collection(conn, collection_id) is None:
         raise KeyError(f"no collection with id {collection_id}")
-    wanted = {_canonical_label(name) for name in names}
-    wanted.discard("")
+    wanted: set[str] = set()
+    for name in names:
+        cleaned = _canonical_label(name)
+        if not cleaned:
+            continue
+        if _has_label_controls(cleaned):
+            raise ValueError("tag name must not contain control characters")
+        wanted.add(cleaned)
     current = {str(tag["name"]) for tag in collection_tags(conn, collection_id)}
     added = sorted(wanted - current)
     removed = sorted(current - wanted)
@@ -3854,11 +3885,10 @@ def create_tag(conn: sqlite3.Connection, name: str) -> int:
     Leading and trailing whitespace are stripped and the name is NFC-normalized
     so a padded or NFD create matches :func:`rename_tag` and :func:`find_tag`,
     and cannot mint a second tag that only differs by surrounding spaces or
-    combining-mark spelling.
+    combining-mark spelling.  Control and format characters are refused the
+    same way auth refuses them on identity names.
     """
-    cleaned = _canonical_label(name)
-    if not cleaned:
-        raise ValueError("tag name must not be empty")
+    cleaned = _validated_label(name, kind="tag")
     conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (cleaned,))
     conn.commit()
     row = conn.execute("SELECT id FROM tags WHERE name = ?", (cleaned,)).fetchone()
@@ -3890,9 +3920,7 @@ def rename_tag(conn: sqlite3.Connection, tag_id: int, name: str) -> dict[str, An
     """
     if get_tag(conn, tag_id) is None:
         return None
-    cleaned = _canonical_label(name)
-    if not cleaned:
-        raise ValueError("tag name must not be empty")
+    cleaned = _validated_label(name, kind="tag")
     existing = find_tag(conn, cleaned)
     if existing is not None and int(existing["id"]) != tag_id:
         raise ValueError(f"a tag named {cleaned!r} already exists")
@@ -4658,7 +4686,7 @@ class _Match:
             return False
         if self.regex:
             return bool(compile_regex(self.query).search(text))
-        return self.query.lower() in text.lower()
+        return self.query.casefold() in text.casefold()
 
 
 def compile_regex(pattern: str) -> re.Pattern[str]:

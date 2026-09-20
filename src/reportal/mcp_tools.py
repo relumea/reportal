@@ -4101,8 +4101,11 @@ def _tool_tag_binary(arguments: dict[str, Any]) -> dict[str, Any]:
                 name = str(tag["name"])
             else:
                 name = _arg_str(arguments, "name")
-                created = store.find_tag(conn, name) is None
-                tag_id = store.create_tag(conn, name)
+                try:
+                    created = store.find_tag(conn, name) is None
+                    tag_id = store.create_tag(conn, name)
+                except ValueError as exc:
+                    raise ToolError("invalid tag", str(exc)) from exc
                 if created:
                     journal.journaled_create(
                         log, table="tags", key=tag_id, description=f"created tag {tag_id}"
@@ -5715,8 +5718,11 @@ def _tool_set_analysis_tags(arguments: dict[str, Any]) -> dict[str, Any]:
                 str(tag["name"]): int(tag["id"]) for tag in store.get_binary_tags(conn, binary_id)
             }
             for name in sorted(set(names) - set(current)):
-                created = store.find_tag(conn, name) is None
-                tag_id = store.create_tag(conn, name)
+                try:
+                    created = store.find_tag(conn, name) is None
+                    tag_id = store.create_tag(conn, name)
+                except ValueError as exc:
+                    raise ToolError("invalid tag", str(exc)) from exc
                 if created:
                     log.record(
                         effects.EFFECT_ROW_DELETE,

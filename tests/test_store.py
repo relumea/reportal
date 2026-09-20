@@ -98,6 +98,18 @@ class TestBinaries:
     def test_rename_missing_returns_none(self, conn: sqlite3.Connection) -> None:
         assert store.rename_binary(conn, 999, "gone.exe") is None
 
+    def test_binary_names_collapse_nfd_to_nfc(self, conn: sqlite3.Connection) -> None:
+        nfc = "caf\u00e9.exe"
+        nfd = "cafe\u0301.exe"
+        assert nfc != nfd
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name=nfd)
+        row = store.get_binary(conn, binary_id)
+        assert row is not None
+        assert row["name"] == nfc
+        renamed = store.rename_binary(conn, binary_id, nfd)
+        assert renamed is not None
+        assert renamed["name"] == nfc
+
     def test_notes_set_clear_and_bound(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="old.exe")
         noted = store.set_binary_notes(conn, binary_id, "  sample from vendor  ")
@@ -861,6 +873,19 @@ class TestCollectionsAndTags:
         assert store.get_tag(conn, tag_id) == {"id": tag_id, "name": nfc}
         assert store.create_tag(conn, nfc) == tag_id
         assert store.find_tag(conn, nfd) == {"id": tag_id, "name": nfc}
+
+    def test_tag_and_collection_names_refuse_control_characters(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="control characters"):
+            store.create_tag(conn, "mal\u200bware")
+        with pytest.raises(ValueError, match="control characters"):
+            store.create_collection(conn, name="win\nsock")
+        with pytest.raises(ValueError, match="control characters"):
+            store.create_tag(conn, "packed\x7f")
+        tag_id = store.create_tag(conn, "packed")
+        with pytest.raises(ValueError, match="control characters"):
+            store.rename_tag(conn, tag_id, "pack\u200bed")
 
     def test_find_collection_by_name_strips_padding(self, conn: sqlite3.Connection) -> None:
         collection_id = store.create_collection(conn, name="archive extraction")

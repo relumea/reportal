@@ -262,6 +262,14 @@ class TestSearchRoute:
         assert [row["name"] for row in payload["functions"]] == ["parse_alpha"]
 
 
+class TestSearchNeedle:
+    def test_literal_match_uses_casefold(self) -> None:
+        needle = store._Match("straße")
+        assert needle.test("STRASSE") is True
+        assert needle.test("Strasse") is True
+        assert store._Match("STRASSE").test("straße") is True
+
+
 # ── The regular-expression search and the any-of string filter ─────
 
 

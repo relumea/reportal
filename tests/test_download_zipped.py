@@ -210,6 +210,10 @@ class TestRoute:
         assert json_body(body, headers)["detail"] == zipcrypto.PASSWORD_CONTROL_DETAIL
         assert "x-evil" not in {key.lower() for key in headers}
 
+        status, headers, body = self._zip(ids["binary"], password="secret\u200b")
+        assert status.startswith("400")
+        assert json_body(body, headers)["detail"] == zipcrypto.PASSWORD_CONTROL_DETAIL
+
     def test_an_unknown_binary_is_404(self, tmp_path: Path, monkeypatch: Any) -> None:
         _seed(tmp_path, monkeypatch)
 
