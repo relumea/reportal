@@ -1295,6 +1295,57 @@ class TestDestructiveTools:
         assert is_error is True
         assert payload["error"] == auth.ERROR_FORBIDDEN
 
+    def test_an_outsider_cannot_read_a_team_scoped_binary(self, conn: Any) -> None:
+        from reportal import journal
+
+        owner, _ = auth.add_user(conn, name="owner", role=auth.ROLE_ANALYST)
+        outsider, _ = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        team = auth.create_team(conn, name="red")
+        auth.add_member(conn, int(team["id"]), int(owner["id"]))
+        binary_id = store.add_binary(conn, sha256="b" * 64, name="secret.exe")
+        store.set_binary_scope(
+            conn, binary_id, owner_team_id=int(team["id"]), visibility=auth.VISIBILITY_TEAM
+        )
+        public_id = store.add_binary(conn, sha256="c" * 64, name="public.exe")
+        conn.commit()
+
+        with journal.acting_as("bob", user_id=int(outsider["id"])):
+            missing, is_error = _call("get_binary", {"binary_id": binary_id})
+            listed, list_error = _call("list_binaries")
+            renamed, rename_error = _call(
+                "rename_binary", {"binary_id": binary_id, "name": "stolen.exe"}
+            )
+
+        assert is_error is True
+        assert missing["error"] == "binary not found"
+        assert list_error is False
+        listed_ids = {int(row["id"]) for row in listed["binaries"]}
+        assert binary_id not in listed_ids
+        assert public_id in listed_ids
+        assert rename_error is True
+        assert renamed["error"] == "binary not found"
+        restored = store.get_binary(conn, binary_id)
+        assert restored is not None and restored["name"] == "secret.exe"
+
+    def test_an_analyst_cannot_join_another_user_to_a_team(self, conn: Any) -> None:
+        from reportal import journal
+
+        owner, _ = auth.add_user(conn, name="owner", role=auth.ROLE_ANALYST)
+        target, _ = auth.add_user(conn, name="target", role=auth.ROLE_ANALYST)
+        outsider, _ = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        team_id = int(auth.create_team(conn, name="red")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        auth.set_member_role(conn, team_id, int(owner["id"]), auth.TEAM_ROLE_OWNER)
+        invite_id, code = auth.create_invite(conn, team_id, None)
+        conn.commit()
+
+        with journal.acting_as("bob", user_id=int(outsider["id"])):
+            payload, is_error = _call("join_team", {"code": code, "user_id": int(target["id"])})
+        assert is_error is True
+        assert payload["error"] == auth.ERROR_FORBIDDEN
+        assert auth.member_role(conn, team_id, int(target["id"])) is None
+        assert auth.get_invite(conn, invite_id) is not None
+
     def test_team_invite_mints_lists_and_joins(self, conn: Any) -> None:
         team_id = int(auth.create_team(conn, name="Invited")["id"])
         user, _ = auth.add_user(conn, name="ana")

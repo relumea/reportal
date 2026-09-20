@@ -674,6 +674,54 @@ class TestMcp:
         assert not failed
         assert listed["secrets"][0]["team_id"] == int(team["id"])
 
+    def test_an_outsider_cannot_read_or_write_another_teams_secret(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import journal
+
+        db = tmp_path / "portal.db"
+        monkeypatch.setenv(DB_ENV, str(db))
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            team = auth.create_team(conn, name="blue")
+            owner, _ = auth.add_user(conn, name="owner", role=auth.ROLE_ANALYST)
+            outsider, _ = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+            auth.add_member(conn, int(team["id"]), int(owner["id"]))
+            secret_store.set_secret(
+                conn,
+                name="virustotal.api_key",
+                value=API_KEY,
+                scope=secret_store.SCOPE_TEAM,
+                team_id=int(team["id"]),
+            )
+            team_id = int(team["id"])
+            outsider_id = int(outsider["id"])
+
+        with journal.acting_as("bob", user_id=outsider_id):
+            listed, failed = mcp_server.call_tool("list_secrets", {"team_id": team_id})
+            assert not failed
+            assert listed["count"] == 0
+            written, write_failed = mcp_server.call_tool(
+                "set_secret",
+                {
+                    "name": "virustotal.api_key",
+                    "value": "sk-stolen-key-xx",
+                    "scope": "team",
+                    "team_id": team_id,
+                },
+            )
+            assert write_failed
+            assert written["error"] == secret_store.ERROR_FORBIDDEN
+            removed, delete_failed = mcp_server.call_tool(
+                "delete_secret",
+                {"name": "virustotal.api_key", "scope": "team", "team_id": team_id},
+            )
+            assert delete_failed
+            assert removed["error"] == secret_store.ERROR_FORBIDDEN
+
+        with contextlib.closing(store.connect(db)) as conn:
+            assert secret_store.value_of(conn, "virustotal.api_key", team_id=team_id) == API_KEY
+
 
 def test_the_environment_override_points_at_the_seeded_database(
     conn: sqlite3.Connection,

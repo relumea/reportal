@@ -21,7 +21,7 @@ import contextlib
 import os
 import sqlite3
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -129,7 +129,6 @@ def _family_error(exc: families.FamilyError) -> ToolError:
 _binary_file = partial(surface.binary_file, fail=_fail)
 _engine = partial(surface.engine, fail=_fail)
 _project_context = partial(surface.project_context, fail=_fail)
-_require_binary = partial(surface.require_binary, fail=_fail)
 
 # Entry-point group third-party tools register in.
 TOOL_ENTRY_POINT_GROUP = "reportal.mcp_tools"
@@ -345,6 +344,56 @@ def _mcp_caller(conn: sqlite3.Connection) -> dict[str, Any] | None:
     return auth.get_user(conn, user_id)
 
 
+def _mcp_team_ids(conn: sqlite3.Connection) -> list[int]:
+    """Team ids the MCP caller belongs to; empty while auth is off."""
+    caller = _mcp_caller(conn)
+    if caller is None:
+        return []
+    return [int(team["id"]) for team in auth.teams_of_user(conn, int(caller["id"]))]
+
+
+def _refuse_unless_object_visible(
+    conn: sqlite3.Connection, row: Mapping[str, Any], *, kind: str
+) -> None:
+    """404 when *row* is team-scoped outside the caller's membership.
+
+    Mirrors ``server._enforce_scope`` for reads: the path-based HTTP gate never
+    sees MCP tool arguments, so every object-id tool must apply the same rule.
+    Auth off (local operator) and admins keep full reach.
+    """
+    if auth.may_write(_mcp_caller(conn), row, team_ids=_mcp_team_ids(conn)):
+        return
+    raise ToolError(f"{kind} not found", f"no {kind} with id {row.get('id')}")
+
+
+def _refuse_unless_may_write_object(
+    conn: sqlite3.Connection, row: Mapping[str, Any], *, kind: str
+) -> None:
+    """403 when the caller may not change a team-scoped *row* (HTTP write gate)."""
+    if auth.may_write(_mcp_caller(conn), row, team_ids=_mcp_team_ids(conn)):
+        return
+    raise ToolError(
+        auth.ERROR_SCOPE_FORBIDDEN,
+        f"this {kind} belongs to a team you are not a member of",
+    )
+
+
+def _require_binary(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
+    """Return the binary row, or refuse when it is out of the caller's scope."""
+    binary = surface.require_binary(conn, binary_id, fail=_fail)
+    _refuse_unless_object_visible(conn, binary, kind="binary")
+    return binary
+
+
+def _require_collection(conn: sqlite3.Connection, collection_id: int) -> dict[str, Any]:
+    """Return the collection row, or refuse when it is out of the caller's scope."""
+    collection = store.get_collection(conn, collection_id)
+    if collection is None:
+        raise ToolError("collection not found", f"no collection with id {collection_id}")
+    _refuse_unless_object_visible(conn, collection, kind="collection")
+    return collection
+
+
 def _require_tenant_admin(conn: sqlite3.Connection) -> None:
     """Refuse when the MCP caller may not administer users (HTTP /api/users gate)."""
     if auth.may_administer_tenants(_mcp_caller(conn)):
@@ -376,6 +425,7 @@ def _require_function(conn: sqlite3.Connection, function_id: int) -> dict[str, A
     function = store.get_function(conn, function_id)
     if function is None:
         raise ToolError("function not found", f"no function with id {function_id}")
+    _require_binary(conn, int(function["binary_id"]))
     return function
 
 
@@ -630,6 +680,7 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
             f" expected one of {', '.join(sorted(store.BINARY_ORDERS))}",
         )
     with contextlib.closing(_open()) as conn:
+        caller = _mcp_caller(conn)
         rows = store.list_binaries(
             conn,
             search=search or None,
@@ -638,8 +689,9 @@ def _tool_list_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
             language=language or None,
             compiler=compiler or None,
             order=order,
+            visible_to=caller,
         )
-        total = store.count_binaries(conn)
+        total = store.count_binaries(conn, visible_to=caller)
         facets = store.binary_filter_values(conn)
     return {
         "binaries": rows,
@@ -3595,11 +3647,8 @@ def _tool_canonicalize_function_names(arguments: dict[str, Any]) -> dict[str, An
 
 
 def _binary_or_error(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
-    """The binary row, or a tool error naming the id."""
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise ToolError("binary not found", f"no binary with id {binary_id}")
-    return binary
+    """The binary row, or a tool error naming the id (scoped like HTTP)."""
+    return _require_binary(conn, binary_id)
 
 
 def _tool_get_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -3751,15 +3800,18 @@ def _tool_get_external_status(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_list_secrets(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Every stored secret, redacted: the value is never in a tool payload."""
+    """Every secret the caller may see, redacted: the value is never in a tool payload."""
     scope = _arg_optional_str(arguments, "scope") or None
     team_id = _arg_optional_int(arguments, "team_id", 0) or None
     try:
         with contextlib.closing(_open()) as conn:
             rows = secret_store.list_secrets(conn, scope=scope, team_id=team_id)
+            caller = _mcp_caller(conn)
+            team_ids = _mcp_team_ids(conn)
     except secret_store.SecretError as exc:
         raise ToolError(exc.code, exc.detail) from exc
-    return {"secrets": rows, "count": len(rows)}
+    visible = [row for row in rows if secret_store.may_read(caller, row, team_ids=team_ids)]
+    return {"secrets": visible, "count": len(visible)}
 
 
 def _secret_scope(arguments: dict[str, Any]) -> tuple[str, int | None]:
@@ -3780,6 +3832,14 @@ def _tool_set_secret(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         if team_id is not None and auth.get_team(conn, team_id) is None:
             raise ToolError(auth.ERROR_TEAM_NOT_FOUND, f"no team with id {team_id}")
+        caller = _mcp_caller(conn)
+        if not secret_store.may_write(
+            caller, team_ids=_mcp_team_ids(conn), scope=scope, team_id=team_id
+        ):
+            raise ToolError(
+                secret_store.ERROR_FORBIDDEN,
+                "a workspace secret needs an admin, a team secret its members",
+            )
         with journal.journaled(conn, journal.new_action()) as log:
             try:
                 row = secret_store.journaled_set(
@@ -3799,22 +3859,28 @@ def _tool_set_secret(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_delete_secret(arguments: dict[str, Any]) -> dict[str, Any]:
     name = _arg_str(arguments, "name")
     scope, team_id = _secret_scope(arguments)
-    with (
-        contextlib.closing(_open()) as conn,
-        journal.journaled(conn, journal.new_action()) as log,
-    ):
-        try:
-            row = secret_store.journaled_delete(
-                conn,
-                log,
-                name=name,
-                scope=scope,
-                team_id=team_id,
-                description=f"deleted the secret {name}",
+    with contextlib.closing(_open()) as conn:
+        caller = _mcp_caller(conn)
+        if not secret_store.may_write(
+            caller, team_ids=_mcp_team_ids(conn), scope=scope, team_id=team_id
+        ):
+            raise ToolError(
+                secret_store.ERROR_FORBIDDEN,
+                "a workspace secret needs an admin, a team secret its members",
             )
-        except secret_store.SecretError as exc:
-            raise ToolError(exc.code, exc.detail) from exc
-        return log.attach(row)
+        with journal.journaled(conn, journal.new_action()) as log:
+            try:
+                row = secret_store.journaled_delete(
+                    conn,
+                    log,
+                    name=name,
+                    scope=scope,
+                    team_id=team_id,
+                    description=f"deleted the secret {name}",
+                )
+            except secret_store.SecretError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
+            return log.attach(row)
 
 
 def _tool_create_conversation(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4298,15 +4364,20 @@ def _tool_list_collections(arguments: dict[str, Any]) -> dict[str, Any]:
         # One binary's memberships: the reverse read the collection listing
         # cannot answer, and the ordering is the store's own by name.
         with contextlib.closing(_open()) as conn:
-            _binary_or_error(conn, binary)
-            rows = store.collections_of_binary(conn, binary)
+            _require_binary(conn, binary)
+            rows = store.collections_of_binary(conn, binary, visible_to=_mcp_caller(conn))
             tag_names = store.collection_tag_names(conn, [int(row["id"]) for row in rows])
             for row in rows:
                 row["tags"] = tag_names.get(int(row["id"]), [])
             return {"binary_id": binary, "collections": rows, "count": len(rows)}
     with contextlib.closing(_open()) as conn:
         try:
-            rows = store.list_collections(conn, order=order, workspace=workspace or None)
+            rows = store.list_collections(
+                conn,
+                order=order,
+                workspace=workspace or None,
+                visible_to=_mcp_caller(conn),
+            )
         except ValueError as exc:
             # The store names the argument it refused; the tool answers the same
             # code the route would.
@@ -4326,10 +4397,7 @@ def _tool_list_collections(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_get_collection(arguments: dict[str, Any]) -> dict[str, Any]:
     collection_id = _arg_int(arguments, "collection_id")
     with contextlib.closing(_open()) as conn:
-        collection = store.get_collection(conn, collection_id)
-        if collection is None:
-            raise ToolError("collection not found", f"no collection with id {collection_id}")
-        return collection
+        return _require_collection(conn, collection_id)
 
 
 def _tool_create_collection(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4365,8 +4433,10 @@ def _tool_update_collection(arguments: dict[str, Any]) -> dict[str, Any]:
     if not fields:
         raise ToolError("invalid params", "provide name, description or scope")
     with contextlib.closing(_open()) as conn:
-        if store.get_collection(conn, collection_id) is None:
+        current = store.get_collection(conn, collection_id)
+        if current is None:
             raise ToolError("collection not found", f"no collection with id {collection_id}")
+        _refuse_unless_may_write_object(conn, current, kind="collection")
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             journal.journaled_rows(
@@ -4387,8 +4457,10 @@ def _tool_update_collection(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_delete_collection(arguments: dict[str, Any]) -> dict[str, Any]:
     collection_id = _arg_int(arguments, "collection_id")
     with contextlib.closing(_open()) as conn:
-        if store.get_collection(conn, collection_id) is None:
+        current = store.get_collection(conn, collection_id)
+        if current is None:
             raise ToolError("collection not found", f"no collection with id {collection_id}")
+        _refuse_unless_may_write_object(conn, current, kind="collection")
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             # Links first: a revert replays newest-first and a link restored
@@ -4421,8 +4493,10 @@ def _tool_set_collection_members(arguments: dict[str, Any]) -> dict[str, Any]:
     if binary_ids is None:
         raise ToolError("invalid params", "binary_ids is required")
     with contextlib.closing(_open()) as conn:
-        if store.get_collection(conn, collection_id) is None:
+        current = store.get_collection(conn, collection_id)
+        if current is None:
             raise ToolError("collection not found", f"no collection with id {collection_id}")
+        _refuse_unless_may_write_object(conn, current, kind="collection")
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -4449,8 +4523,10 @@ def _tool_set_collection_tags(arguments: dict[str, Any]) -> dict[str, Any]:
         raise ToolError("invalid params", "tags is required")
     names = _arg_str_list(arguments, "tags")
     with contextlib.closing(_open()) as conn:
-        if store.get_collection(conn, collection_id) is None:
+        current = store.get_collection(conn, collection_id)
+        if current is None:
             raise ToolError("collection not found", f"no collection with id {collection_id}")
+        _refuse_unless_may_write_object(conn, current, kind="collection")
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -4938,6 +5014,7 @@ def _tool_join_team(arguments: dict[str, Any]) -> dict[str, Any]:
         contextlib.closing(_open()) as conn,
         journal.journaled(conn, journal.new_action()) as log,
     ):
+        _require_self_or_admin(conn, user_id)
         try:
             team = _journal_invite_join(conn, log, code, user_id)
         except auth.UnknownTeamError:
@@ -4962,10 +5039,22 @@ def _set_object_scope(arguments: dict[str, Any], *, kind: str) -> dict[str, Any]
         )
         if current is None:
             raise ToolError(f"{kind} not found", f"no {kind} with id {row_id}")
+        _refuse_unless_may_write_object(conn, current, kind=kind)
         try:
             owner, resolved = auth.scope_of(conn, team_id=team_id, visibility=visibility)
         except auth.AuthError as exc:
             raise ToolError(exc.code, exc.detail) from exc
+        caller = _mcp_caller(conn)
+        if (
+            owner is not None
+            and caller is not None
+            and str(caller.get("role")) != auth.ROLE_ADMIN
+            and owner not in set(_mcp_team_ids(conn))
+        ):
+            raise ToolError(
+                auth.ERROR_NOT_A_MEMBER,
+                f"you are not a member of team {owner}",
+            )
         with journal.journaled(conn, journal.new_action()) as log:
             journal.journaled_rows(
                 conn,
@@ -5433,6 +5522,17 @@ def _tool_register_binary(arguments: dict[str, Any]) -> dict[str, Any]:
                 owner, resolved = auth.scope_of(conn, team_id=team, visibility=auth.VISIBILITY_TEAM)
             except auth.AuthError as exc:
                 raise ToolError(exc.code, exc.detail) from exc
+            caller = _mcp_caller(conn)
+            if (
+                owner is not None
+                and caller is not None
+                and str(caller.get("role")) != auth.ROLE_ADMIN
+                and owner not in set(_mcp_team_ids(conn))
+            ):
+                raise ToolError(
+                    auth.ERROR_NOT_A_MEMBER,
+                    f"you are not a member of team {owner}",
+                )
         with journal.journaled(conn, journal.new_action()) as log:
             known = store.find_binary_by_sha256(conn, digest) is not None
             binary_id = store.add_binary(
@@ -5453,6 +5553,9 @@ def _tool_register_binary(arguments: dict[str, Any]) -> dict[str, Any]:
                 )
             if team is not None:
                 if known:
+                    current = store.get_binary(conn, binary_id)
+                    if current is not None:
+                        _refuse_unless_may_write_object(conn, current, kind="binary")
                     journal.journaled_rows(
                         conn,
                         log,
@@ -5505,10 +5608,11 @@ def _ai_client_or_error() -> llm.LlmClient:
 
 
 def _analysis_or_error(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any]:
-    """The analysis row, or a tool error naming the id."""
+    """The analysis row, or a tool error naming the id (scoped via its binary)."""
     analysis = store.get_analysis(conn, analysis_id)
     if analysis is None:
         raise ToolError("analysis not found", f"no analysis with id {analysis_id}")
+    _require_binary(conn, int(analysis["binary_id"]))
     return analysis
 
 
@@ -5528,6 +5632,7 @@ def _tool_list_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_optional_int(arguments, "binary_id", 0)
     limit = _arg_optional_int(arguments, "limit", store.DEFAULT_ANALYSIS_LIMIT)
     with contextlib.closing(_open()) as conn:
+        caller = _mcp_caller(conn)
         rows = store.list_analyses(
             conn,
             binary_id=binary_id or None,
@@ -5535,8 +5640,9 @@ def _tool_list_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
             search=search or None,
             workspace=workspace or None,
             limit=limit,
+            visible_to=caller,
         )
-        total = store.count_analyses(conn, binary_id=binary_id or None)
+        total = store.count_analyses(conn, binary_id=binary_id or None, visible_to=caller)
     return {"analyses": rows, "count": len(rows), "total": total}
 
 
