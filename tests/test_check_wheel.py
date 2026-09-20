@@ -155,13 +155,16 @@ def test_missing_requires_dist_flags_absent_runtime_deps() -> None:
         "Requires-Dist: rebrew\n"
         'Requires-Dist: pytest==9.1.1; extra == "dev"\n'
     )
-    assert mod.missing_requires_dist(metadata) == ["python-flirt"]  # type: ignore[attr-defined]
-    assert (
-        mod.missing_requires_dist(  # type: ignore[attr-defined]
-            metadata + "Requires-Dist: python-flirt==0.10.0\n"
-        )
-        == []
+    gaps = mod.missing_requires_dist(metadata)  # type: ignore[attr-defined]
+    assert "python-flirt" in gaps
+    assert "httpx2" in gaps
+    assert "fastapi" not in gaps
+    assert "rebrew" not in gaps
+    complete = metadata + "\n".join(
+        f"Requires-Dist: {name}"
+        for name in mod.REQUIRED_DIST_NAMES  # type: ignore[attr-defined]
     )
+    assert mod.missing_requires_dist(complete) == []  # type: ignore[attr-defined]
 
 
 def test_expected_gzip_mtime_honours_source_date_epoch(

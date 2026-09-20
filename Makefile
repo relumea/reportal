@@ -201,14 +201,16 @@ ui: spa ## Build the SPA, then run the headless-Chrome smoke and audit
 # cannot ship a stale `assets/dist/` from a previous checkout.
 package-check: spa package-wheel ## Build SPA, wheel, and assert packaged assets
 
-package-wheel: venv-check uv-check ## Wheel + checks; assumes a current SPA dist
-	rm -rf dist build
+package-wheel: venv-check uv-check ## Wheel + sdist + checks; assumes a current SPA dist
+	rm -rf dist build src/reportal.egg-info
 	# REPORTAL_BROTLI=0: drop host-dependent .br so the wheel matches CI.
 	$(REPRO_ENV) REPORTAL_BROTLI=0 $(PY) scripts/precompress_spa.py
 	$(PY) scripts/sync_packaged_docs.py
 	$(PY) scripts/sync_packaged_deploy.py
 	$(REPRO_ENV) $(UV) build --wheel
 	$(REPRO_ENV) $(PY) scripts/check_wheel.py
+	$(REPRO_ENV) $(UV) build --sdist
+	$(REPRO_ENV) $(PY) scripts/check_sdist.py
 
 # ── housekeeping ─────────────────────────────────────────────────────
 clean: ## Remove build artifacts and caches

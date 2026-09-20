@@ -24,8 +24,9 @@ from the source would otherwise keep being packaged from the stale copy.
 Gzip siblings must carry a reproducible header mtime (``SOURCE_DATE_EPOCH`` when
 set, else ``0``), every zip member's DOS ``date_time`` must match that epoch,
 and the wheel must not ship ``*.map`` source maps or host-dependent ``*.br``
-siblings.  METADATA must declare ``python-flirt`` so a clean install still has
-the FLIRT matcher.
+siblings.  METADATA must declare every base runtime dependency named in
+``REQUIRED_DIST_NAMES`` so a clean install still has the FLIRT matcher and the
+HTTP/API stack the portal imports at module scope.
 """
 
 from __future__ import annotations
@@ -54,7 +55,23 @@ DOCS_DIR = Path("docs")
 LICENSE_SUFFIX = ".dist-info/licenses/LICENSE"
 PACKAGE_PREFIX = "reportal/"
 SOURCE_DIR = Path("src/reportal")
-REQUIRED_DIST_NAMES = ("python-flirt",)
+# Base ``[project] dependencies`` that must appear as Requires-Dist.  Optional
+# extras are gated separately; path-sourced siblings (``rebrew``) stay unpinned.
+REQUIRED_DIST_NAMES = (
+    "anyio",
+    "fastapi",
+    "httpx2",
+    "mcp",
+    "openai",
+    "python-multipart",
+    "python-flirt",
+    "rebrew",
+    "reportlab",
+    "rich",
+    "starlette",
+    "typer",
+    "uvicorn",
+)
 
 
 def expected_gzip_mtime() -> int:
