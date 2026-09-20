@@ -9,6 +9,7 @@ what a human recorded.
 from __future__ import annotations
 
 import contextlib
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,26 @@ class TestStore:
         assert first["id"] == again["id"] == same["id"]
         assert again["note"] == "later"
         assert same["note"] == "later"
+
+    def test_duplicate_scope_value_kind_is_rejected_by_the_schema(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            user_strings.ensure_schema(conn)
+            user_strings.add_string(
+                conn,
+                scope_kind=user_strings.SCOPE_FUNCTION,
+                scope_id=ids["function"],
+                value="hello",
+            )
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO user_strings"
+                    " (scope_kind, scope_id, value, kind, note, actor, created_at)"
+                    " VALUES (?, ?, 'hello', 'string', '', '', ?)",
+                    (user_strings.SCOPE_FUNCTION, ids["function"], store.now()),
+                )
 
     def test_a_journaled_re_add_snapshots_and_reverts(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

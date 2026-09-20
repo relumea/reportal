@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +151,21 @@ class TestEdges:
             )
         assert first["id"] == second["id"]
         assert second["note"] == "why"
+
+    def test_duplicate_edge_tuple_is_rejected_by_the_schema(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            function_extras.ensure_schema(conn)
+            function_extras.add_edge(conn, function_id=ids["functions"][0], callee="f")
+            with pytest.raises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO function_edges"
+                    " (function_id, callee_name, kind, note, source, created_at)"
+                    " VALUES (?, 'f', 'call', '', 'analyst', ?)",
+                    (ids["functions"][0], store.now()),
+                )
 
     def test_a_blank_callee_and_a_bad_kind_are_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

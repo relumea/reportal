@@ -62,7 +62,13 @@ CREATE TABLE IF NOT EXISTS {_TABLE} (
     actor           TEXT NOT NULL DEFAULT '',
     actor_user_id   INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_journal_entries_action ON {_TABLE}(action);
+-- ``(action, status)`` covers active-row revert lookups and the plain action
+-- existence check (leftmost prefix); the older single-column index is dropped
+-- so an upgrade does not keep both.
+DROP INDEX IF EXISTS idx_journal_entries_action;
+CREATE INDEX IF NOT EXISTS idx_journal_entries_action_status
+    ON {_TABLE}(action, status);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_created ON {_TABLE}(created_at);
 """
 
 # The actor index is created after the column migration below, because an index

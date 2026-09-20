@@ -488,7 +488,11 @@ CREATE TABLE IF NOT EXISTS signature_history (
 DROP INDEX IF EXISTS idx_functions_analysis;
 CREATE INDEX IF NOT EXISTS idx_functions_analysis_name_source
     ON functions(analysis_id, name_source);
-CREATE INDEX IF NOT EXISTS idx_analyses_binary ON analyses(binary_id);
+-- ``(binary_id, engine)`` covers find-by-engine and the plain binary listing
+-- (leftmost prefix); the older single-column index is dropped so an upgrade
+-- does not keep both.
+DROP INDEX IF EXISTS idx_analyses_binary;
+CREATE INDEX IF NOT EXISTS idx_analyses_binary_engine ON analyses(binary_id, engine);
 CREATE INDEX IF NOT EXISTS idx_matches_function ON matches(function_id);
 CREATE INDEX IF NOT EXISTS idx_matches_candidate ON matches(candidate_function_id);
 CREATE INDEX IF NOT EXISTS idx_name_history_function ON name_history(function_id);
@@ -1376,21 +1380,25 @@ def create_analysis(
     if status not in ANALYSIS_STATUSES:
         raise ValueError(f"unknown analysis status: {status}")
     finished_at = now() if status in TERMINAL_STATUSES else None
+    # Ensure the log table exists before the INSERT: ``executescript`` commits,
+    # and must not cut the analysis row off from the creation log entries.
+    analysis_log.ensure_schema(conn)
     cur = conn.execute(
         "INSERT INTO analyses (binary_id, status, engine, created_at, finished_at, log)"
         " VALUES (?, ?, ?, ?, ?, ?)",
         (binary_id, status, engine, now(), finished_at, log),
     )
-    conn.commit()
     analysis_id = int(cur.lastrowid or 0)
     analysis_log.append_entry(
         conn,
         analysis_id,
         message=f"analysis created for binary {binary_id} (engine {engine or 'manual'},"
         f" status {status})",
+        commit=False,
     )
     if log:
-        analysis_log.append_entry(conn, analysis_id, message=log)
+        analysis_log.append_entry(conn, analysis_id, message=log, commit=False)
+    conn.commit()
     return analysis_id
 
 

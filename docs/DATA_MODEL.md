@@ -548,17 +548,17 @@ rows of their own, each owned by its module (`function_extras.py`,
 `sandbox_runs` uses.  A `function_edges` row is one analyst-declared callee edge:
 the `function_id` that claims it, the `callee_name`, the `kind` (`call` or
 `indirect`), a bounded `note`, `source` (`analyst`, so a reader can tell a claim
-from a scan) and the time.  A row for the same `(function, callee, kind)` is
-updated in place, so re-declaring an edge is not a duplicate, and both writes are
-journaled.  A `user_strings` row is one analyst string at a scope: `scope_kind`
-(`function` or `analysis`), `scope_id`, the `value`, a `kind` (`string`,
-`import` or `export`), a bounded `note`, the `actor` and the time.  A value
-already stored at its scope keeps its row and updates its note rather than
-appending a duplicate, one scope holds at most
-`user_strings.MAX_STRINGS_PER_SCOPE` values, and the whole-list replace is one
-journaled action.  Neither table has a derived half: the literals and callees a
-read reports beside these rows are text scans of the stored decompilation and are
-never written down.
+from a scan) and the time.  A unique index on `(function_id, callee_name, kind)`
+makes a concurrent re-declare unrepresentable; the writer updates the existing
+row in place, and both writes are journaled.  A `user_strings` row is one
+analyst string at a scope: `scope_kind` (`function` or `analysis`), `scope_id`,
+the `value`, a `kind` (`string`, `import` or `export`), a bounded `note`, the
+`actor` and the time.  A unique index on `(scope_kind, scope_id, value, kind)`
+keeps a value already stored at its scope as one row (its note may move), one
+scope holds at most `user_strings.MAX_STRINGS_PER_SCOPE` values, and the
+whole-list replace is one journaled action.  Neither table has a derived half:
+the literals and callees a read reports beside these rows are text scans of the
+stored decompilation and are never written down.
 
 `sandbox_runs` is the detonation ledger, owned by `sandbox.py` and created
 lazily by its own `ensure_schema` (the same pattern `journal.py` uses, which

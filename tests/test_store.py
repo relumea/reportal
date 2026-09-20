@@ -1209,7 +1209,7 @@ class TestScans:
                     "SELECT name FROM sqlite_master WHERE type = 'index'"
                 ).fetchall()
             }
-        assert "idx_analyses_binary" in names
+        assert "idx_analyses_binary_engine" in names
         assert "idx_matches_candidate" in names
         assert "idx_collection_binaries_binary" in names
         assert "idx_binaries_owner_team" in names
@@ -1224,6 +1224,7 @@ class TestScans:
         assert "idx_binaries_name_path_null_sha" in names
         assert "idx_team_members_user" in names
         assert "idx_jobs_binary" in names
+        assert "idx_analyses_binary" not in names
         assert "idx_functions_analysis" not in names
         assert "idx_binary_tags_binary" not in names
         assert "idx_chunks_document" not in names

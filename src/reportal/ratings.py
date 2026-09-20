@@ -61,7 +61,9 @@ CREATE TABLE IF NOT EXISTS artifact_ratings (
     updated_at TEXT NOT NULL,
     UNIQUE (binary_id, kind)
 );
-CREATE INDEX IF NOT EXISTS idx_artifact_ratings_binary ON artifact_ratings(binary_id);
+-- The UNIQUE ``(binary_id, kind)`` already covers per-binary listings
+-- (leftmost prefix); drop the redundant single-column index on upgrade.
+DROP INDEX IF EXISTS idx_artifact_ratings_binary;
 """
 
 

@@ -160,6 +160,42 @@ class TestAnalysisLifecycle:
         with pytest.raises(ValueError):
             store.create_analysis(conn, binary_id=_binary(conn), engine="manual", status="queued")
 
+    def test_create_analysis_shares_one_commit_with_its_log(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = _binary(conn)
+        before_analyses = int(conn.execute("SELECT COUNT(*) FROM analyses").fetchone()[0])
+        before_log = int(conn.execute("SELECT COUNT(*) FROM analysis_log_entries").fetchone()[0])
+        calls = {"n": 0}
+        real = analysis_log.append_entry
+
+        def boom(
+            connection: sqlite3.Connection,
+            analysis_id: int,
+            *,
+            message: str,
+            severity: str = analysis_log.SEVERITY_INFO,
+            commit: bool = True,
+        ) -> int:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("log write failed")
+            return real(
+                connection, analysis_id, message=message, severity=severity, commit=commit
+            )
+
+        monkeypatch.setattr(analysis_log, "append_entry", boom)
+        with pytest.raises(RuntimeError, match="log write failed"):
+            store.create_analysis(
+                conn, binary_id=binary_id, engine="rebrew-import", log="imported"
+            )
+        conn.rollback()
+        assert int(conn.execute("SELECT COUNT(*) FROM analyses").fetchone()[0]) == before_analyses
+        assert (
+            int(conn.execute("SELECT COUNT(*) FROM analysis_log_entries").fetchone()[0])
+            == before_log
+        )
+
     def test_set_scan_records_the_finish_and_completes(self, conn: sqlite3.Connection) -> None:
         analysis_id = _analysis(conn, _binary(conn))
         store.set_scan(conn, analysis_id, store.SCAN_KIND_TRIAGE, {"toolchain": {}})

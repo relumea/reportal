@@ -169,7 +169,12 @@ CREATE TABLE IF NOT EXISTS function_edges (
     source      TEXT NOT NULL DEFAULT 'analyst',
     created_at  TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_function_edges_function ON function_edges(function_id);
+-- Unique ``(function_id, callee_name, kind)`` replaces the plain function index
+-- and stops a concurrent re-declare from inserting a duplicate edge.  The
+-- leftmost prefix still covers per-function listings.
+DROP INDEX IF EXISTS idx_function_edges_function;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_function_edges_function_callee_kind
+    ON function_edges(function_id, callee_name, kind);
 """
 
 

@@ -107,7 +107,12 @@ CREATE TABLE IF NOT EXISTS user_strings (
     actor_user_id INTEGER,
     created_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_user_strings_scope ON user_strings(scope_kind, scope_id);
+-- Unique ``(scope_kind, scope_id, value, kind)`` replaces the plain scope index
+-- and stops a concurrent re-add from inserting a duplicate literal.  The
+-- leftmost ``(scope_kind, scope_id)`` prefix still covers scope listings.
+DROP INDEX IF EXISTS idx_user_strings_scope;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_user_strings_scope_value_kind
+    ON user_strings(scope_kind, scope_id, value, kind);
 """
 
 
