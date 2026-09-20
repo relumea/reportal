@@ -16,6 +16,8 @@ export default defineConfig({
   build: {
     outDir: "../src/reportal/assets/dist",
     emptyOutDir: true,
+    // Release assets must not embed sources or absolute build paths.
+    sourcemap: false,
     rollupOptions: {
       output: {
         // React and the router change when the SPA's dependencies change, and

@@ -15,10 +15,15 @@ checkout.
 It also checks that every packaged module exists in ``src/reportal``: setuptools
 reuses an existing ``build/lib`` tree without pruning it, so a module deleted
 from the source would otherwise keep being packaged from the stale copy.
+
+Gzip siblings must carry a reproducible header mtime (``SOURCE_DATE_EPOCH`` when
+set, else ``0``), and the wheel must not ship ``*.map`` source maps.
 """
 
 from __future__ import annotations
 
+import os
+import struct
 import sys
 import zipfile
 from pathlib import Path
@@ -37,6 +42,25 @@ DOCS_DIR = Path("docs")
 LICENSE_SUFFIX = ".dist-info/licenses/LICENSE"
 PACKAGE_PREFIX = "reportal/"
 SOURCE_DIR = Path("src/reportal")
+
+
+def expected_gzip_mtime() -> int:
+    """Gzip header mtime the build must embed: ``SOURCE_DATE_EPOCH`` or ``0``."""
+    raw = os.environ.get("SOURCE_DATE_EPOCH", "").strip()
+    if not raw:
+        return 0
+    try:
+        value = int(raw)
+    except ValueError:
+        return 0
+    return max(value, 0)
+
+
+def gzip_member_mtime(payload: bytes) -> int | None:
+    """Little-endian mtime from a gzip member header, or None when not gzip."""
+    if len(payload) < 8 or payload[:2] != b"\x1f\x8b":
+        return None
+    return int(struct.unpack_from("<I", payload, 4)[0])
 
 
 def packaged_pages(docs_dir: Path = DOCS_DIR) -> tuple[str, ...]:
@@ -79,6 +103,27 @@ def missing_manual(names: set[str], required: tuple[str, ...] = MANUAL_REQUIRED)
     return [path for path in required if path not in names]
 
 
+def source_maps(names: set[str]) -> list[str]:
+    """Packaged ``*.map`` paths under the SPA dist (release contamination)."""
+    return sorted(
+        name for name in names if name.startswith(ASSETS_PREFIX) and name.endswith(".map")
+    )
+
+
+def nondeterministic_gzip(
+    archive: zipfile.ZipFile, names: set[str], *, expected_mtime: int
+) -> list[str]:
+    """Gzip asset paths whose header mtime is not the reproducible epoch."""
+    bad: list[str] = []
+    for name in sorted(names):
+        if not (name.startswith(ASSETS_PREFIX) and name.endswith(".gz")):
+            continue
+        mtime = gzip_member_mtime(archive.read(name))
+        if mtime is None or mtime != expected_mtime:
+            bad.append(name)
+    return bad
+
+
 def newest_wheel(dist_dir: Path = DIST_DIR) -> Path | None:
     """The most recently modified ``reportal-*.whl`` under *dist_dir*, if any."""
     wheels = list(dist_dir.glob(WHEEL_GLOB))
@@ -95,11 +140,25 @@ def main() -> int:
         return 1
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
+        gzip_bad = nondeterministic_gzip(archive, names, expected_mtime=expected_gzip_mtime())
     stale = stale_modules(names)
     if stale:
         sys.stderr.write(
             f"{wheel.name} packages modules missing from {SOURCE_DIR}/: {', '.join(stale)}\n"
             "a stale build/lib tree is being reused; remove it with `make clean`\n"
+        )
+        return 1
+    maps = source_maps(names)
+    if maps:
+        sys.stderr.write(
+            f"{wheel.name} packages source maps (release contamination): {', '.join(maps)}\n"
+        )
+        return 1
+    if gzip_bad:
+        sys.stderr.write(
+            f"{wheel.name} has gzip siblings with non-reproducible mtime: "
+            f"{', '.join(gzip_bad)}\n"
+            "rebuild with SOURCE_DATE_EPOCH set (make package-check)\n"
         )
         return 1
     bundles = [name for name in names if name.startswith(f"{ASSETS_PREFIX}assets/")]

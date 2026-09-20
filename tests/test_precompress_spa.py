@@ -117,3 +117,20 @@ def test_gzip_mtime_rejects_invalid_source_date_epoch(
     assert precompress_mod.gzip_mtime() == 0  # type: ignore[attr-defined]
     monkeypatch.setenv("SOURCE_DATE_EPOCH", "-1")
     assert precompress_mod.gzip_mtime() == 0  # type: ignore[attr-defined]
+
+
+def test_precompress_removes_stale_brotli_when_unavailable(
+    tmp_path: Path, precompress_mod: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A leftover ``.br`` from a host that had brotli must not survive without it."""
+    monkeypatch.setattr(precompress_mod, "brotli_bin", lambda: None)
+    min_bytes = int(precompress_mod.MIN_BYTES)  # type: ignore[attr-defined]
+    root = tmp_path / "dist"
+    root.mkdir()
+    path = root / "app.js"
+    path.write_text("x" * (min_bytes + 10), encoding="utf-8")
+    stale = root / "app.js.br"
+    stale.write_bytes(b"stale-brotli")
+    assert precompress_mod.precompress(root) >= 1  # type: ignore[attr-defined]
+    assert (root / "app.js.gz").is_file()
+    assert not stale.exists()

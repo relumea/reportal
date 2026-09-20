@@ -16,6 +16,10 @@ test("the full-file view pages and copies a selected range as hex", async ({ pag
   await panel.getByLabel("Mode").selectOption("file");
   await panel.getByRole("button", { name: "Load page" }).click();
   await expect(panel.locator(".memory-row").first()).toBeVisible();
+  const rowBytes = panel.locator(".memory-row").first().locator(".memory-bytes > .byte");
+  await expect(rowBytes).toHaveCount(16);
+  await expect(rowBytes.nth(7)).toHaveCSS("margin-right", "12px");
+  await expect(rowBytes.nth(6)).toHaveCSS("margin-right", "0px");
 
   const firstRow = async (): Promise<string> => panel.locator(".memory-row").first().innerText();
   const before = await firstRow();

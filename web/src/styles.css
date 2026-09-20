@@ -3207,6 +3207,10 @@ kbd.key {
   gap: 4px;
 }
 
+.memory-bytes > :nth-child(8) {
+  margin-right: 12px;
+}
+
 .byte {
   padding: 0 2px;
   border: 0;

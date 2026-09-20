@@ -55,6 +55,12 @@ uv-check:
 	  echo "$(UV) >=$(UV_VERSION) is required; install with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; \
 	  exit 1; \
 	}
+	@got=$$($(UV) --version 2>/dev/null | awk '{print $$2}'); \
+	lowest=$$(printf '%s\n%s\n' "$(UV_VERSION)" "$$got" | sort -V | head -n1); \
+	if [ -z "$$got" ] || [ "$$lowest" != "$(UV_VERSION)" ]; then \
+	  echo "$(UV) $$got does not meet required >=$(UV_VERSION) ([tool.uv] required-version)" >&2; \
+	  exit 1; \
+	fi
 
 # rebrew is a path source on the sibling checkout (`[tool.uv.sources]`).
 rebrew-check:

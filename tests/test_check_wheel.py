@@ -77,3 +77,49 @@ def test_newest_wheel_prefers_mtime(tmp_path: Path) -> None:
     time.sleep(0.02)
     newer.write_bytes(b"new")
     assert mod.newest_wheel(tmp_path) == newer  # type: ignore[attr-defined]
+
+
+def test_source_maps_lists_dist_maps_only() -> None:
+    mod = _load()
+    names = {
+        "reportal/assets/dist/assets/app.js.map",
+        "reportal/assets/dist/index.html",
+        "other/place.js.map",
+    }
+    assert mod.source_maps(names) == [  # type: ignore[attr-defined]
+        "reportal/assets/dist/assets/app.js.map"
+    ]
+
+
+def test_expected_gzip_mtime_honours_source_date_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load()
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1700000000")
+    assert mod.expected_gzip_mtime() == 1700000000  # type: ignore[attr-defined]
+    monkeypatch.delenv("SOURCE_DATE_EPOCH")
+    assert mod.expected_gzip_mtime() == 0  # type: ignore[attr-defined]
+
+
+def test_nondeterministic_gzip_flags_wall_clock_mtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import gzip
+    import zipfile
+
+    mod = _load()
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    body = b"x" * 300
+    good = gzip.compress(body, compresslevel=9, mtime=0)
+    bad = gzip.compress(body, compresslevel=9, mtime=1_700_000_000)
+    wheel = tmp_path / "sample.zip"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("reportal/assets/dist/assets/app.js.gz", good)
+        archive.writestr("reportal/assets/dist/assets/other.js.gz", bad)
+        archive.writestr("reportal/cli.py", b"")
+    with zipfile.ZipFile(wheel) as archive:
+        names = set(archive.namelist())
+        flagged = mod.nondeterministic_gzip(  # type: ignore[attr-defined]
+            archive, names, expected_mtime=0
+        )
+    assert flagged == ["reportal/assets/dist/assets/other.js.gz"]

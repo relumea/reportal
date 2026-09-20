@@ -101,12 +101,18 @@ def precompress(root: Path) -> int:
         if _write_if_changed(gz_path, gz_payload):
             written += 1
             sys.stdout.write(f"{relative}: {len(body)} -> {len(gz_payload)} bytes (gzip)\n")
+        br_path = Path(f"{path}.br")
         br_payload = brotli_compress(body)
         if br_payload is not None and len(br_payload) < len(body):
-            br_path = Path(f"{path}.br")
             if _write_if_changed(br_path, br_payload):
                 written += 1
                 sys.stdout.write(f"{relative}: {len(body)} -> {len(br_payload)} bytes (br)\n")
+        elif br_path.is_file():
+            # Drop a sibling left by an earlier host that had brotli, or one that
+            # no longer matches this body: otherwise the wheel ships stale .br.
+            br_path.unlink()
+            written += 1
+            sys.stdout.write(f"{relative}: removed stale brotli sibling\n")
     return written
 
 

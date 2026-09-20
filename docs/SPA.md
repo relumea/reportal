@@ -40,7 +40,9 @@ no request for them at all.  A file without a hash (the favicon) is answered
 `no-cache` like the shell.  Compressible assets (JS, CSS, HTML, SVG, …) are
 compressed when the client sends `Accept-Encoding`: a sibling `.br` written by
 `scripts/precompress_spa.py` at build time (brotli quality 11, when the `brotli`
-CLI is on PATH) is preferred, then a sibling `.gz` (zlib level 9), otherwise
+CLI is on PATH; a leftover `.br` is removed when brotli is unavailable so the
+wheel cannot ship a stale sibling) is preferred, then a sibling `.gz` (zlib
+level 9, header mtime from `SOURCE_DATE_EPOCH` or `0`), otherwise
 `ui.py` gzip-compresses at the request-time level and caches the result in
 process.  Responses carry `Vary: Accept-Encoding` so a cache never serves a
 compressed body to a client that cannot decode it.
@@ -847,7 +849,8 @@ comes from the engine's own section map, with only the rows on screen rendered
 and the bytes read 256 at a time as the viewport approaches a window.  A region
 no section backs is a stated `gap` row, the same one the paged mode renders, so
 the dump never shows invented zeros.  Zero bytes in the window dump and the
-paged dump are dimmed (`.byte-zero`).  A selected range copies as hex, a C
+paged dump are dimmed (`.byte-zero`).  Each 16-byte row splits Bytes into
+two groups of eight.  A selected range copies as hex, a C
 array, or ASCII (printable, else a dot).  Click the ASCII column to select
 as text; Ctrl+C copies hex or ASCII from the last column clicked.  The
 window dump names Offset and
