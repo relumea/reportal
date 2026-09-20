@@ -19,6 +19,7 @@ from typing import Any
 
 from reportal import (
     __version__,
+    ai_decomp,
     analysis_log,
     archive,
     auth,
@@ -69,7 +70,7 @@ def _llm_status() -> dict[str, Any]:
     return {
         "configured": client.available(),
         "model": client.model,
-        "kinds": sorted(llm.DISCARDABLE_AI_KINDS),
+        "kinds": sorted((ai_decomp.KIND, *llm.DISCARDABLE_AI_KINDS)),
     }
 
 

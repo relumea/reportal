@@ -30,19 +30,16 @@ is kept content-addressed under the workspace's ``symbols/`` directory.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-import os
 import sqlite3
 import struct
-import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
 from reportal import data_types, journal, pdb, store
-from reportal._paths import SYMBOLS_DIR
+from reportal._paths import SYMBOLS_DIR, write_bytes_atomic
 
 ByteOrder = Literal["little", "big"]
 
@@ -986,23 +983,7 @@ def persist_bytes(data: bytes) -> Path:
     temp file and ``os.replace`` means a crash mid-write never leaves a
     half-written blob under the digest name.
     """
-    target = stored_path(digest(data))
-    target.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
-    owned = True
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            owned = False
-            stream.write(data)
-        os.replace(temp_name, target)
-    except BaseException:
-        if owned:
-            with contextlib.suppress(OSError):
-                os.close(handle)
-        with contextlib.suppress(OSError):
-            os.unlink(temp_name)
-        raise
-    return target
+    return write_bytes_atomic(stored_path(digest(data)), data)
 
 
 # ── The read ───────────────────────────────────────────────────────

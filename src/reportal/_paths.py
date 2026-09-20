@@ -17,7 +17,9 @@ than failing every command (``reportal config`` reports that).
 
 from __future__ import annotations
 
+import contextlib
 import os
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -46,6 +48,56 @@ SYMBOLS_DIR = "symbols"
 # ``docs/`` is deliberately absent: an empty one would shadow the shipped manual
 # (``docs.documents_dir``).
 WORKSPACE_DIRS = (BINARIES_DIR, REPORTS_DIR, SYMBOLS_DIR)
+
+# Temp-file prefix shared by atomic writers that do not need a named kind.
+_ATOMIC_PREFIX = ".reportal-"
+
+
+def write_bytes_atomic(path: Path, data: bytes, *, prefix: str = _ATOMIC_PREFIX) -> Path:
+    """Write *data* to *path* through a same-directory temp file and rename.
+
+    Creates the parent directory.  A crash mid-write never leaves a half-written
+    *path*; the temp file is removed on failure.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=prefix, suffix=".tmp")
+    # fdopen takes ownership only on success; close the raw fd only when it never did.
+    owned = True
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            owned = False
+            stream.write(data)
+        os.replace(temp_name, path)
+    except BaseException:
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
+        raise
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_name)
+    return path
+
+
+def write_text_atomic(path: Path, text: str, *, prefix: str = _ATOMIC_PREFIX) -> Path:
+    """Write UTF-8 *text* to *path* through a same-directory temp file and rename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=prefix, suffix=".tmp")
+    owned = True
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            owned = False
+            stream.write(text)
+        os.replace(temp_name, path)
+    except BaseException:
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
+        raise
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temp_name)
+    return path
 
 
 def ensure_workspace_dirs(root: Path) -> list[str]:

@@ -5260,7 +5260,7 @@ def _clear_ai_artifact(function_id: int, kind: str, *, missing: Response) -> Res
             )
             if not before:
                 return missing
-            store.clear_ai_artifact(conn, function_id, kind)
+            store.clear_ai_artifact(conn, function_id, kind, commit=False)
             log.record(
                 effects.EFFECT_ROW_RESTORE,
                 f"discarded the {kind} artifact of function {function_id}",
@@ -7156,6 +7156,42 @@ def delete_collection(collection_id: int) -> Response:
     return json_response(log.attach({"collection_id": collection_id, "deleted": True}))
 
 
+def _prepare_collection_binary_write(
+    request: Request,
+    conn: sqlite3.Connection,
+    collection_id: int,
+    binary_ids: Sequence[int],
+) -> Response | None:
+    """Refuse a collection membership change the caller may not make.
+
+    Checks the collection exists and is writable, then every named binary.
+    Returns the error response to send, or None when the change may proceed.
+    """
+    collection = store.get_collection(conn, collection_id)
+    if collection is None:
+        return _no_collection(collection_id)
+    team_ids = _caller_team_ids(conn, request)
+    if not auth.may_write(_caller(request), collection, team_ids=team_ids):
+        return json_error(
+            403,
+            error=auth.ERROR_SCOPE_FORBIDDEN,
+            detail=f"collection {collection_id} belongs to a team you are not a member of",
+        )
+    for binary_id in binary_ids:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        if not auth.may_write(_caller(request), binary, team_ids=team_ids):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"binary {binary_id} belongs to a team you are not a member of",
+            )
+    return None
+
+
 @router.patch("/api/collections/{collection_id}/binaries")
 def replace_collection_binaries(
     request: Request, collection_id: int, body: dict[str, Any] = Depends(json_body)
@@ -7165,28 +7201,9 @@ def replace_collection_binaries(
     if binary_ids is None:
         return json_error(400, error="invalid collection", detail="binary_ids is required")
     with contextlib.closing(_open()) as conn:
-        collection = store.get_collection(conn, collection_id)
-        if collection is None:
-            return _no_collection(collection_id)
-        team_ids = _caller_team_ids(conn, request)
-        if not auth.may_write(_caller(request), collection, team_ids=team_ids):
-            return json_error(
-                403,
-                error=auth.ERROR_SCOPE_FORBIDDEN,
-                detail=f"collection {collection_id} belongs to a team you are not a member of",
-            )
-        for binary_id in binary_ids:
-            binary = store.get_binary(conn, binary_id)
-            if binary is None:
-                return json_error(
-                    404, error="binary not found", detail=f"no binary with id {binary_id}"
-                )
-            if not auth.may_write(_caller(request), binary, team_ids=team_ids):
-                return json_error(
-                    403,
-                    error=auth.ERROR_SCOPE_FORBIDDEN,
-                    detail=f"binary {binary_id} belongs to a team you are not a member of",
-                )
+        refused = _prepare_collection_binary_write(request, conn, collection_id, binary_ids)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -7211,29 +7228,11 @@ def remove_collection_binaries(
     binary_ids = _optional_int_list(body, "binary_ids")
     if binary_ids is None:
         return json_error(400, error="invalid collection", detail="binary_ids is required")
+    drop = set(binary_ids)
     with contextlib.closing(_open()) as conn:
-        collection = store.get_collection(conn, collection_id)
-        if collection is None:
-            return _no_collection(collection_id)
-        team_ids = _caller_team_ids(conn, request)
-        if not auth.may_write(_caller(request), collection, team_ids=team_ids):
-            return json_error(
-                403,
-                error=auth.ERROR_SCOPE_FORBIDDEN,
-                detail=f"collection {collection_id} belongs to a team you are not a member of",
-            )
-        for binary_id in binary_ids:
-            binary = store.get_binary(conn, binary_id)
-            if binary is None:
-                return json_error(
-                    404, error="binary not found", detail=f"no binary with id {binary_id}"
-                )
-            if not auth.may_write(_caller(request), binary, team_ids=team_ids):
-                return json_error(
-                    403,
-                    error=auth.ERROR_SCOPE_FORBIDDEN,
-                    detail=f"binary {binary_id} belongs to a team you are not a member of",
-                )
+        refused = _prepare_collection_binary_write(request, conn, collection_id, binary_ids)
+        if refused is not None:
+            return refused
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -7244,8 +7243,8 @@ def remove_collection_binaries(
             )
             kept = [
                 int(row["id"])
-                for row in collection["binaries"]
-                if int(row["id"]) not in set(binary_ids)
+                for row in store.collection_binaries(conn, collection_id)
+                if int(row["id"]) not in drop
             ]
             change = store.replace_collection_binaries(conn, collection_id, kept)
             _record_link_change(conn, log, "collection_binaries", before, collection_id)

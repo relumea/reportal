@@ -20,12 +20,9 @@ will draw them.
 
 from __future__ import annotations
 
-import contextlib
 import io
-import os
 import re
 import sqlite3
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -44,7 +41,7 @@ from reportal import (
     lineage,
     store,
 )
-from reportal._paths import reports_dir
+from reportal._paths import reports_dir, write_bytes_atomic
 
 # File name a generated PDF takes inside a binary's workspace report directory.
 REPORT_PDF_NAME = "report.pdf"
@@ -903,23 +900,7 @@ def write_report(
     """
     report = _render(conn, binary_id=binary_id, engine=engine, generated=generated)
     target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
-    # fdopen takes ownership only on success; close the raw fd only when it never did.
-    owned = True
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            owned = False
-            stream.write(report.data)
-        os.replace(temp_name, target)
-    except BaseException:
-        if owned:
-            with contextlib.suppress(OSError):
-                os.close(handle)
-        raise
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp_name)
+    write_bytes_atomic(target, report.data)
     return {
         "path": str(target),
         "bytes": len(report.data),

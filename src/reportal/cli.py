@@ -202,6 +202,7 @@ from reportal._paths import (
     ensure_workspace_dirs,
     project_root,
     reports_dir,
+    write_text_atomic,
 )
 from reportal.surface import bulk_data_type_definitions as _bulk_data_types
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
@@ -471,24 +472,7 @@ def _run_scan_command(
 
 def _write_text_atomic(path: Path, text: str) -> Path:
     """Write *text* to *path* through a same-directory temp file and rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
-    # fdopen takes ownership only on success; close the raw fd only when it never did.
-    owned = True
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            owned = False
-            stream.write(text)
-        os.replace(temp_name, path)
-    except BaseException:
-        if owned:
-            with contextlib.suppress(OSError):
-                os.close(handle)
-        raise
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp_name)
-    return path
+    return write_text_atomic(path, text)
 
 
 # ── init ───────────────────────────────────────────────────────────
@@ -4562,8 +4546,7 @@ def collection_add(
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        collection = _require_collection(conn, collection_id, json_output)
-        current = [int(row["id"]) for row in collection["binaries"]]
+        _require_collection(conn, collection_id, json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -4572,6 +4555,7 @@ def collection_add(
                 where="collection_id = ?",
                 params=(collection_id,),
             )
+            current = [int(row["id"]) for row in store.collection_binaries(conn, collection_id)]
             try:
                 change = store.replace_collection_binaries(
                     conn, collection_id, [*current, *binary_id]
@@ -4604,8 +4588,7 @@ def collection_remove(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     drop = set(binary_id)
     with contextlib.closing(store.connect(portal_db)) as conn:
-        collection = _require_collection(conn, collection_id, json_output)
-        kept = [int(row["id"]) for row in collection["binaries"] if int(row["id"]) not in drop]
+        _require_collection(conn, collection_id, json_output)
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             before = journal.snapshot_rows(
@@ -4614,6 +4597,11 @@ def collection_remove(
                 where="collection_id = ?",
                 params=(collection_id,),
             )
+            kept = [
+                int(row["id"])
+                for row in store.collection_binaries(conn, collection_id)
+                if int(row["id"]) not in drop
+            ]
             change = store.replace_collection_binaries(conn, collection_id, kept)
             log.record(
                 effects.EFFECT_ROW_RESTORE,
@@ -7123,10 +7111,7 @@ def ai_clear(
     kind: str = typer.Option(
         ai_decomp.KIND,
         "--kind",
-        help=(
-            f"Artifact to discard: {ai_decomp.KIND}, "
-            f"{', '.join(llm.DISCARDABLE_AI_KINDS)}"
-        ),
+        help=(f"Artifact to discard: {ai_decomp.KIND}, {', '.join(llm.DISCARDABLE_AI_KINDS)}"),
     ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
@@ -7155,7 +7140,7 @@ def ai_clear(
             )
             if not before:
                 _fail(f"no {kind} artifact for function {function_id}", json_output)
-            store.clear_ai_artifact(conn, function_id, kind)
+            store.clear_ai_artifact(conn, function_id, kind, commit=False)
             log.record(
                 effects.EFFECT_ROW_RESTORE,
                 f"discarded the {kind} artifact of function {function_id}",

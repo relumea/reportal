@@ -20,13 +20,10 @@ both in-process bindings and persisted writes.
 from __future__ import annotations
 
 import base64
-import contextlib
 import hashlib
 import logging
-import os
 import re
 import sqlite3
-import tempfile
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from functools import partial
@@ -34,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from reportal import auto_store, plugins, store
+from reportal._paths import write_bytes_atomic
 from reportal.components import EFFECT_FAILED, EFFECT_REVERTED, Context
 from reportal.plugins import RegistryError as RegistryError
 
@@ -309,21 +307,7 @@ def _undo_file_restore(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> 
         return {"path": raw, "status": EFFECT_PARTIAL, "detail": "content not journaled"}
     data = base64.b64decode(encoded)
     path = Path(raw)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
-    owned = True
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            owned = False
-            stream.write(data)
-        os.replace(temp_name, path)
-    except BaseException:
-        if owned:
-            with contextlib.suppress(OSError):
-                os.close(handle)
-        with contextlib.suppress(OSError):
-            os.unlink(temp_name)
-        raise
+    write_bytes_atomic(path, data)
     return {"path": raw, "bytes": len(data), "status": EFFECT_RESTORED}
 
 

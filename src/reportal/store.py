@@ -3074,12 +3074,19 @@ def list_ai_artifacts(conn: sqlite3.Connection, function_id: int) -> list[dict[s
     return [row for row in (_artifact_row(entry) for entry in cur.fetchall()) if row is not None]
 
 
-def clear_ai_artifact(conn: sqlite3.Connection, function_id: int, kind: str) -> bool:
-    """Drop one stored AI artifact; False when the function had none of *kind*."""
+def clear_ai_artifact(
+    conn: sqlite3.Connection, function_id: int, kind: str, *, commit: bool = True
+) -> bool:
+    """Drop one stored AI artifact; False when the function had none of *kind*.
+
+    Pass ``commit=False`` when the caller journals the clear and will commit
+    the delete with the journal entry in one transaction.
+    """
     cur = conn.execute(
         "DELETE FROM ai_artifacts WHERE function_id = ? AND kind = ?", (function_id, kind)
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.rowcount > 0
 
 

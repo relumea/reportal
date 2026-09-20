@@ -19,9 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import math
-import os
 import sqlite3
-import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -101,7 +99,7 @@ from reportal import (
     user_strings,
     zipcrypto,
 )
-from reportal._paths import WorkspaceNotFound, reports_dir, under_workspace
+from reportal._paths import WorkspaceNotFound, reports_dir, under_workspace, write_text_atomic
 from reportal.plugins import RegistryError as RegistryError
 from reportal.surface import classified as _classified
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
@@ -3151,7 +3149,7 @@ def _tool_clear_ai_artifact(arguments: dict[str, Any]) -> dict[str, Any]:
             )
             if not before:
                 raise ToolError("no-artifact", f"no {kind} artifact for function {function_id}")
-            store.clear_ai_artifact(conn, function_id, kind)
+            store.clear_ai_artifact(conn, function_id, kind, commit=False)
             log.record(
                 effects.EFFECT_ROW_RESTORE,
                 f"discarded the {kind} artifact of function {function_id}",
@@ -3740,23 +3738,7 @@ def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
     text = symbols.render_symbols(row["parsed"], kind=kind)
     try:
         target = Path(path).expanduser()
-        target.parent.mkdir(parents=True, exist_ok=True)
-        handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
-        # fdopen takes ownership only on success; close the raw fd only when it never did.
-        owned = True
-        try:
-            with os.fdopen(handle, "w", encoding="utf-8") as stream:
-                owned = False
-                stream.write(text)
-            os.replace(temp_name, target)
-        except BaseException:
-            if owned:
-                with contextlib.suppress(OSError):
-                    os.close(handle)
-            raise
-        finally:
-            with contextlib.suppress(FileNotFoundError):
-                os.unlink(temp_name)
+        write_text_atomic(target, text)
     except OSError as exc:
         raise ToolError("write-failed", f"cannot write {path}: {exc}") from exc
     return {"path": path, "format": kind, "bytes": len(text)}

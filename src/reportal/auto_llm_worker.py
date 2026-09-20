@@ -23,10 +23,7 @@ metadata-owned, so the generated file carries only the marker.
 
 from __future__ import annotations
 
-import contextlib
-import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +36,7 @@ from rebrew.workspace import (
 )
 
 from reportal import engines, llm, store
+from reportal._paths import write_text_atomic
 from reportal.auto_workers import (
     REASON_ENGINE_UNAVAILABLE,
     REASON_LLM_UNAVAILABLE,
@@ -331,23 +329,7 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
     if engine is None or not engine.available():
         return _skip(ctx, REASON_ENGINE_UNAVAILABLE)
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
-    # fdopen takes ownership only on success; close the raw fd only when it never did.
-    owned = True
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            owned = False
-            stream.write(source)
-        os.replace(temp_name, path)
-    except BaseException:
-        if owned:
-            with contextlib.suppress(OSError):
-                os.close(handle)
-        raise
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp_name)
+    write_text_atomic(path, source)
     try:
         result = engine.test_source(ctx.project_dir, str(path))
     except engines.EngineError as exc:

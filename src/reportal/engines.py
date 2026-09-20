@@ -24,13 +24,11 @@ live; reportal never parses a PE.
 
 from __future__ import annotations
 
-import contextlib
 import functools
 import importlib
 import importlib.machinery
 import importlib.util
 import os
-import tempfile
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -970,25 +968,11 @@ class RebrewEngine:
         from rebrew.lzexe import unpack_lzexe
 
         def rebuild() -> dict[str, Any]:
+            from reportal._paths import write_bytes_atomic
+
             result = unpack_lzexe(path)
             data = result.to_bytes()
-            target.parent.mkdir(parents=True, exist_ok=True)
-            handle, temp_name = tempfile.mkstemp(
-                dir=target.parent, prefix=".reportal-", suffix=".tmp"
-            )
-            owned = True
-            try:
-                with os.fdopen(handle, "wb") as stream:
-                    owned = False
-                    stream.write(data)
-                os.replace(temp_name, target)
-            except BaseException:
-                if owned:
-                    with contextlib.suppress(OSError):
-                        os.close(handle)
-                with contextlib.suppress(OSError):
-                    os.unlink(temp_name)
-                raise
+            write_bytes_atomic(target, data)
             return {
                 "version": result.version,
                 "image_size": len(result.image),
