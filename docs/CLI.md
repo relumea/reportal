@@ -89,6 +89,10 @@ reportal restore ARCHIVE [--overwrite] [--yes] [--json]
                                            #   (same as other deletes)
 reportal backup-info ARCHIVE [--json]      # one archive's manifest, without
                                            #   restoring it
+reportal backup-prune [--dir PATH] [--keep-days N] [--dry-run] [--json]
+                                           # delete reportal archives older than
+                                           #   N days (default 14); only filenames
+                                           #   that look like reportal archives
 reportal symbols <binary-id> <path> [--no-apply] [--json]
                                            # ingest a PDB or ELF/DWARF symbol file:
                                            #   parse it, rename the functions whose

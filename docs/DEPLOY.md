@@ -143,12 +143,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now reportal-backup.timer
 ```
 
-The oneshot writes `/srv/backups/reportal-$(date -u +%F).tar.gz` (UTC calendar
-day, matching the timer's `OnCalendar=... UTC`) and fails if that file is
-missing or empty (`systemctl --failed` / `journalctl -u
-reportal-backup.service`).  Keep that directory on another volume when the disk
-is the failure you care about.  The archive carries every secret the workspace
-database holds and is not encrypted (`docs/THREAT_MODEL.md`).
+The oneshot writes `/srv/backups/reportal-$(date -u +%Y%m%dT%H%M%SZ).tar.gz`
+(UTC instant, so a same-day re-run keeps the earlier archive) and fails if that
+file is missing, empty, or refused by `reportal backup-info` (`systemctl
+--failed` / `journalctl -u reportal-backup.service`).  After a good write it
+runs `reportal backup-prune --dir /srv/backups --keep-days 14` so retention for
+logical corruption stays bounded.  Keep that directory on another volume when
+the disk is the failure you care about.  The archive carries every secret the
+workspace database holds and is not encrypted (`docs/THREAT_MODEL.md`).
 `docs/DR_RUNBOOK.md` states RPO/RTO, the state inventory, and the restore drill.
 
 ## Upgrading

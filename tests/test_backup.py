@@ -14,6 +14,7 @@ import json
 import os
 import sqlite3
 import tarfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -534,3 +535,47 @@ class TestCli:
         result = runner.invoke(cli.app, ["backup-info", str(broken), "--json"])
         assert result.exit_code == 1
         assert backup.ERROR_INVALID_ARCHIVE in result.output
+
+    def test_prune_removes_only_stale_reportal_archives(self, tmp_path: Path) -> None:
+        directory = tmp_path / "backups"
+        directory.mkdir()
+        stale = directory / "reportal-20200101T000000Z.tar.gz"
+        fresh = directory / "reportal-backup-fresh.tar.gz"
+        other = directory / "other-app.tar.gz"
+        stale.write_bytes(b"stale")
+        fresh.write_bytes(b"fresh")
+        other.write_bytes(b"leave me")
+        old = time.time() - (backup.DEFAULT_KEEP_DAYS + 2) * 86400
+        os.utime(stale, (old, old))
+        result = backup.prune(directory=directory, keep_days=backup.DEFAULT_KEEP_DAYS)
+        assert result["removed_count"] == 1
+        assert result["kept_count"] == 1
+        assert not stale.exists()
+        assert fresh.exists()
+        assert other.exists()
+
+    def test_prune_refuses_the_workspace_directory(self, tmp_path: Path) -> None:
+        root = _workspace(tmp_path / "one")
+        inside = root / "binaries"
+        with pytest.raises(backup.BackupError) as failure:
+            backup.prune(directory=inside, workspace=root)
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
+    def test_backup_prune_cli_dry_run(self, tmp_path: Path, monkeypatch: Any) -> None:
+        source = _workspace(tmp_path / "one")
+        monkeypatch.chdir(source)
+        directory = tmp_path / "reportal-backups"
+        directory.mkdir()
+        stale = directory / "reportal-old.tar.gz"
+        stale.write_bytes(b"stale")
+        old = time.time() - (backup.DEFAULT_KEEP_DAYS + 2) * 86400
+        os.utime(stale, (old, old))
+        result = runner.invoke(
+            cli.app,
+            ["backup-prune", "--dir", str(directory), "--dry-run", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["dry_run"] is True
+        assert payload["removed_count"] == 1
+        assert stale.exists()

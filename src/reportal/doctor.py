@@ -29,12 +29,14 @@ import os
 import socket
 import sqlite3
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
 from reportal import (
     __version__,
     auth,
+    backup,
     billing,
     engines,
     external,
@@ -69,6 +71,9 @@ SCHEMA_HINT = "the database exists but carries no schema; run 'reportal init'"
 PORT_HINT = "stop the process holding the port, or serve on another one (--port)"
 ENGINE_HINT = engines.ENGINE_UNAVAILABLE_HINT
 SPA_HINT = ui.UI_NOT_BUILT_DETAIL
+BACKUP_HINT = (
+    "enable reportal-backup.timer or run 'reportal backup'; see docs/DR_RUNBOOK.md"
+)
 
 # The tables a usable schema needs before any read.  The journal's table is
 # created on first use, so it is deliberately not required: a fresh workspace
@@ -179,6 +184,53 @@ def _port_check(port: int) -> dict[str, str]:
     finally:
         probe.close()
     return _check("port", STATUS_OK, f"{HOST}:{port} is free")
+
+
+def _backup_check(root: Path | None) -> dict[str, str]:
+    """Whether a recent workspace archive exists beside this install.
+
+    A warn never blocks serve: backups are an operator schedule, not a start
+    gate.  Silence means the newest archive under the sibling
+    ``reportal-backups/`` or ``/srv/backups`` is younger than
+    :data:`backup.FRESH_SECONDS` (two daily intervals).
+    """
+    if root is None:
+        return _check("backup", STATUS_WARN, "no workspace to locate archives beside", BACKUP_HINT)
+    directories = backup.archive_dirs(root)
+    if not directories:
+        return _check(
+            "backup",
+            STATUS_WARN,
+            "no archive directory beside the workspace or at /srv/backups",
+            BACKUP_HINT,
+        )
+    newest = backup.newest_archive(root)
+    if newest is None:
+        listed = ", ".join(str(path) for path in directories)
+        return _check(
+            "backup",
+            STATUS_WARN,
+            f"no reportal archives under {listed}",
+            BACKUP_HINT,
+        )
+    age = max(0.0, time.time() - newest.stat().st_mtime)
+    detail = f"{newest} ({_format_age(age)} old)"
+    if age > backup.FRESH_SECONDS:
+        return _check(
+            "backup",
+            STATUS_WARN,
+            f"newest archive is stale: {detail}",
+            BACKUP_HINT,
+        )
+    return _check("backup", STATUS_OK, detail)
+
+
+def _format_age(seconds: float) -> str:
+    """A short age string for the backup check detail."""
+    hours = int(seconds // 3600)
+    if hours < 48:
+        return f"{hours}h"
+    return f"{hours // 24}d"
 
 
 def _optional_check() -> dict[str, str]:
@@ -362,6 +414,7 @@ def report(*, port: int = DEFAULT_PORT) -> dict[str, Any]:
         )
     )
     checks.append(_optional_check())
+    checks.append(_backup_check(root))
     checks.append(_port_check(port))
 
     failures = [check["name"] for check in checks if check["status"] == STATUS_FAIL]

@@ -644,6 +644,55 @@ def backup_info_command(
     )
 
 
+@app.command("backup-prune")
+def backup_prune_command(
+    directory: Path | None = typer.Option(
+        None,
+        "--dir",
+        "-d",
+        help="Directory of archives to prune; ../reportal-backups beside the workspace by default",
+    ),
+    keep_days: int = typer.Option(
+        backup.DEFAULT_KEEP_DAYS,
+        "--keep-days",
+        min=0,
+        help="Delete archives older than this many days",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="List what would be removed without deleting"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Delete dated workspace archives older than the retention window.
+
+    Only filenames that look like reportal archives are touched.  The scheduled
+    backup unit runs this after a successful write so logical-corruption
+    recovery keeps a bounded window of dated snapshots without filling the disk.
+    """
+    target = directory
+    if target is None:
+        try:
+            root = project_root()
+        except WorkspaceNotFound as exc:
+            _fail(f"no-workspace: {exc}", json_output)
+        target = root.parent / backup.DEFAULT_BACKUP_DIRNAME
+    try:
+        result = backup.prune(directory=target, keep_days=keep_days, dry_run=dry_run)
+    except backup.BackupError as exc:
+        _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    action = "Would remove" if dry_run else "Removed"
+    console.print(
+        f"[green]{action}[/green] {result['removed_count']} archive(s),"
+        f" kept {result['kept_count']} under {result['directory']}"
+        f" (keep-days={result['keep_days']})"
+    )
+    for entry in result["removed"]:
+        console.print(f"  - {entry['path']}")
+
+
 # ── doctor and serve ───────────────────────────────────────────────
 
 

@@ -31,13 +31,15 @@ keeps a crafted archive from writing anywhere the workspace does not expect.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import shutil
 import sqlite3
 import tarfile
 import tempfile
-from datetime import UTC, datetime
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +66,21 @@ FORMAT_VERSION = 1
 STAGING_PREFIX = ".restore-"
 
 ARCHIVE_SUFFIXES = (".tar.gz", ".tgz")
+
+# How long dated archives are kept by the scheduled prune.  Fourteen days covers
+# logical corruption that sits unnoticed past a few daily cycles; shorter than
+# that and a bad write that lasted a week has no older snapshot to land on.
+DEFAULT_KEEP_DAYS = 14
+
+# How old the newest archive may be before ``reportal doctor`` warns.  Twice the
+# daily timer interval, so one missed night is a warning and a healthy schedule
+# stays quiet.
+FRESH_SECONDS = 48 * 60 * 60
+
+# Sibling directory the default ``reportal backup`` writes into, and the timer's
+# packaged destination.  Doctor and prune look here when they exist.
+DEFAULT_BACKUP_DIRNAME = "reportal-backups"
+TIMER_BACKUP_DIR = Path("/srv/backups")
 
 # Error codes the CLI and the surfaces report.
 ERROR_INVALID_ARCHIVE = "invalid-backup"
@@ -113,7 +130,7 @@ def _default_output(root: Path) -> Path:
     delete on the same host; operators who need a separate disk still pass
     ``--output``.
     """
-    return root.parent / "reportal-backups" / suggest_name()
+    return root.parent / DEFAULT_BACKUP_DIRNAME / suggest_name()
 
 
 def _sidecar_paths(db: Path) -> list[Path]:
@@ -457,3 +474,116 @@ def suggest_name() -> str:
     """
     stamp = datetime.fromisoformat(store.now()).astimezone(UTC).strftime("%Y%m%dT%H%M%S")
     return f"reportal-backup-{stamp}.tar.gz"
+
+
+def is_archive_name(name: str) -> bool:
+    """True when *name* looks like a reportal workspace archive filename.
+
+    Matches both the CLI default (``reportal-backup-…``) and the timer's
+    ``reportal-…`` prefix so prune and doctor share one recognition rule.
+    """
+    lower = name.lower()
+    if not lower.startswith("reportal"):
+        return False
+    return any(lower.endswith(suffix) for suffix in ARCHIVE_SUFFIXES)
+
+
+def list_archives(directory: Path) -> list[Path]:
+    """Every reportal archive file directly under *directory*, oldest first."""
+    root = Path(directory)
+    if not root.is_dir():
+        return []
+    found = [path for path in root.iterdir() if path.is_file() and is_archive_name(path.name)]
+    return sorted(found, key=lambda path: path.stat().st_mtime)
+
+
+def archive_dirs(workspace: Path | None = None) -> list[Path]:
+    """Directories that may hold archives for *workspace*, when they exist.
+
+    Looks at the sibling ``reportal-backups/`` next to the workspace and at the
+    packaged timer destination ``/srv/backups``.  Missing directories are omitted
+    rather than created: doctor and prune never invent a backup location.
+    """
+    found: list[Path] = []
+    if workspace is not None:
+        sibling = Path(workspace).resolve().parent / DEFAULT_BACKUP_DIRNAME
+        if sibling.is_dir():
+            found.append(sibling)
+    if TIMER_BACKUP_DIR.is_dir() and TIMER_BACKUP_DIR not in found:
+        found.append(TIMER_BACKUP_DIR)
+    return found
+
+
+def newest_archive(workspace: Path | None = None) -> Path | None:
+    """The most recently modified archive beside *workspace*, or None."""
+    archives: list[Path] = []
+    for directory in archive_dirs(workspace):
+        archives.extend(list_archives(directory))
+    if not archives:
+        return None
+    return max(archives, key=lambda path: path.stat().st_mtime)
+
+
+def prune(
+    *,
+    directory: Path,
+    keep_days: int = DEFAULT_KEEP_DAYS,
+    dry_run: bool = False,
+    workspace: Path | None = None,
+) -> dict[str, Any]:
+    """Delete reportal archives in *directory* older than *keep_days*.
+
+    Only files whose names match :func:`is_archive_name` are touched, so a
+    shared backup volume's other tenants are left alone.  Refuses a directory
+    inside the workspace for the same wipe-domain reason as :func:`create`.
+    A *keep_days* of zero keeps nothing older than this instant (everything
+    already written is eligible); negative values are refused.
+    """
+    if keep_days < 0:
+        raise BackupError(ERROR_INVALID_ARCHIVE, f"keep_days must be >= 0, got {keep_days}")
+    target = Path(directory).expanduser()
+    if not target.is_dir():
+        raise BackupError(ERROR_INVALID_ARCHIVE, f"no backup directory at {target}")
+    root: Path | None
+    if workspace is not None:
+        root = Path(workspace).resolve()
+    else:
+        try:
+            root = _workspace().resolve()
+        except BackupError as exc:
+            if exc.code != ERROR_NOT_A_WORKSPACE:
+                raise
+            root = None
+    if root is not None:
+        with contextlib.suppress(OSError):
+            resolved = target.resolve()
+            if resolved == root or resolved.is_relative_to(root):
+                raise BackupError(
+                    ERROR_INVALID_ARCHIVE,
+                    f"refusing to prune {target} inside the workspace",
+                )
+    cutoff = time.time() - timedelta(days=keep_days).total_seconds()
+    removed: list[dict[str, Any]] = []
+    kept: list[dict[str, Any]] = []
+    for path in list_archives(target):
+        age = path.stat()
+        entry = {
+            "path": str(path),
+            "bytes": age.st_size,
+            "mtime": datetime.fromtimestamp(age.st_mtime, tz=UTC).isoformat(),
+        }
+        if age.st_mtime >= cutoff:
+            kept.append(entry)
+            continue
+        if not dry_run:
+            path.unlink()
+        removed.append(entry)
+    return {
+        "directory": str(target),
+        "keep_days": keep_days,
+        "dry_run": dry_run,
+        "kept": kept,
+        "removed": removed,
+        "kept_count": len(kept),
+        "removed_count": len(removed),
+    }

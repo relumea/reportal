@@ -21,7 +21,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, doctor, graph_backends, sandbox
+from reportal import auth, backup, cli, doctor, graph_backends, sandbox
 
 runner = CliRunner()
 
@@ -34,6 +34,9 @@ def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Make *tmp_path* a workspace, so the checks run from inside one."""
     (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
+    # Keep the packaged timer destination from leaking host archives into the
+    # doctor backup check during tests.
+    monkeypatch.setattr(backup, "TIMER_BACKUP_DIR", tmp_path / "absent-srv-backups")
 
 
 def _check(payload: dict[str, Any], name: str) -> dict[str, Any]:
@@ -269,6 +272,7 @@ class TestCli:
             "engine",
             "spa",
             "optional",
+            "backup",
             "port",
         }
 
@@ -455,13 +459,45 @@ class TestUnit:
         text = BACKUP_UNIT.read_text(encoding="utf-8")
         assert "/srv/backups/reportal-" in text
         assert "test -s" in text
+        assert "backup-info" in text
+        assert "backup-prune" in text
+        assert "--keep-days 14" in text
         assert "ReadWritePaths=/srv/reportal /srv/backups" in text
         assert "Environment=PYTHONUNBUFFERED=1" in text
         assert "LimitCORE=0" in text
         assert BACKUP_TIMER.is_file()
         timer_text = BACKUP_TIMER.read_text(encoding="utf-8")
         assert "OnCalendar=*-*-* 00:00:00 UTC" in timer_text
-        assert "date -u +%%F" in BACKUP_UNIT.read_text(encoding="utf-8")
+        assert "date -u +%%Y%%m%%dT%%H%%M%%SZ" in text
+
+    def test_a_fresh_archive_makes_the_backup_check_ok(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
+    ) -> None:
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        _workspace(ws, monkeypatch)
+        archive_dir = tmp_path / "reportal-backups"
+        archive_dir.mkdir()
+        archive = archive_dir / "reportal-backup-fresh.tar.gz"
+        archive.write_bytes(b"not a real archive; age is what matters")
+        payload = doctor.report()
+        row = _check(payload, "backup")
+        assert row["status"] == "ok"
+        assert str(archive) in row["detail"]
+
+    def test_a_missing_archive_warns_without_failing(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
+    ) -> None:
+        ws = tmp_path / "workspace"
+        ws.mkdir()
+        _workspace(ws, monkeypatch)
+        assert not (tmp_path / "reportal-backups").exists()
+        payload = doctor.report()
+        assert payload["status"] == "ok"
+        assert payload["failures"] == []
+        row = _check(payload, "backup")
+        assert row["status"] == "warn"
+        assert "DR_RUNBOOK" in row["hint"]
 
     def test_deploy_units_dir_resolves_the_repository_templates(self) -> None:
         directory = doctor.deploy_units_dir()

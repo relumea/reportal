@@ -2710,7 +2710,9 @@ restored marker (or `REPORTAL_DB`) names.
 The default output path is a dated file under a sibling `reportal-backups/`
 directory; an `--output` inside the workspace is refused so the archive does not
 share the workspace wipe domain.  `deploy/reportal-backup.timer` is the
-scheduled form that writes under `/srv/backups/` and fails on a zero-byte file.
+scheduled form that writes under `/srv/backups/` with a UTC instant filename,
+fails on a zero-byte or manifest-invalid file, and prunes archives older than
+14 days.  `reportal backup-prune` is the same retention for a hand-run schedule.
 
 The manifest records the format and version, the reportal version, the time, the
 absolute workspace root, the live database path and every member name.
@@ -2788,10 +2790,13 @@ gates its own start on it.
 Every check is a read: the workspace walk-up, the database file and its write
 permission, the schema (the four tables the reads need, then `store.counts`), the
 auth posture and the enabled users a non-loopback bind needs, the engine's
-availability and origin, the SPA build, every optional path as one row, and a
-port probe that binds loopback with `SO_REUSEADDR` and closes again (uvicorn
-binds that way, so a socket in `TIME_WAIT` is not reported as a conflict).  A
-missing workspace is a reported failure, never a directory reportal creates.
+availability and origin, the SPA build, every optional path as one row, whether
+a workspace archive under `../reportal-backups/` or `/srv/backups` is younger
+than two daily intervals, and a port probe that binds loopback with
+`SO_REUSEADDR` and closes again (uvicorn binds that way, so a socket in
+`TIME_WAIT` is not reported as a conflict).  A missing workspace is a reported
+failure, never a directory reportal creates.  A missing or stale archive is a
+warning only: backups are an operator schedule, not a start gate.
 
 A check is `ok` (the path works), `warn` (it works, with a caveat) or `fail`
 (the portal cannot serve correctly).  A warning never changes the exit code, a

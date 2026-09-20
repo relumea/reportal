@@ -54,8 +54,9 @@ the live files still must include those sidecars or stop the server first.
   the workspace, never inside it.  Writing inside the workspace is refused so
   an instance wipe of the workspace directory cannot take the only copy.
 - `deploy/reportal-backup.service` plus `deploy/reportal-backup.timer` are the
-  scheduled form: daily into `/srv/backups/`, failing the unit when the archive
-  is missing or zero bytes.
+  scheduled form: daily into `/srv/backups/` with a UTC instant filename, failing
+  the unit when the archive is missing, empty, or refused by
+  `reportal backup-info`, then pruning archives older than 14 days.
 
 ## Failure domains (accepted unless the operator moves the archive)
 
@@ -65,7 +66,7 @@ the live files still must include those sidecars or stop the server first.
 | Host disk / same-volume loss | Not covered by the default sibling `reportal-backups/` path; keep `/srv/backups` (or equivalent) on another volume or host |
 | Zone / region loss | Out of scope in-tree; copy archives off-box |
 | Malicious or fat-finger delete of data and backups | One account that can write both can delete both; use a separate backup principal, append-only storage, or offline copies |
-| Logical corruption for longer than retention | Keep multiple dated archives; there is no PITR inside one file |
+| Logical corruption for longer than retention | Keep multiple dated archives (timer prunes past 14 days); there is no PITR inside one file |
 | Bad deploy / schema upgrade | Additive upgrades via `store._upgrade_schema`; roll back by restoring a pre-upgrade archive after stopping the service |
 
 ## What the code already guarantees (row-level undo)
@@ -230,9 +231,12 @@ systemctl --failed
 journalctl -u reportal-backup.service -n 50
 ```
 
-A successful run leaves a non-empty `/srv/backups/reportal-YYYY-MM-DD.tar.gz`
-named for the UTC calendar day.  The oneshot runs `test -s` on that path so a
-zero-byte write fails the unit.
+A successful run leaves a non-empty
+`/srv/backups/reportal-YYYYMMDDTHHMMSSZ.tar.gz` named for the UTC instant.  The
+oneshot runs `test -s` and `reportal backup-info` on that path so a zero-byte or
+corrupt write fails the unit, then `reportal backup-prune --keep-days 14`.
+`reportal doctor` warns when no archive under `../reportal-backups/` or
+`/srv/backups` is younger than 48 hours.
 
 ## Known gaps
 

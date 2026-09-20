@@ -8,8 +8,11 @@
 #
 # The archive must leave the workspace directory: a backup written under
 # /srv/reportal is lost with the same instance wipe that takes the live data.
-# The unit fails loud on a zero-byte archive so a silent credential or disk
-# failure shows up in `systemctl --failed` and the journal.
+# The unit fails loud on a zero-byte archive or a file whose manifest
+# `reportal backup-info` refuses, so a silent credential, disk, or truncate
+# failure shows up in `systemctl --failed` and the journal.  After a good
+# write it prunes archives older than 14 days so logical-corruption recovery
+# keeps a bounded window without filling the volume.
 
 [Unit]
 Description=reportal workspace backup
@@ -24,10 +27,11 @@ WorkingDirectory=/srv/reportal
 UMask=0077
 Environment=PYTHONUNBUFFERED=1
 LimitCORE=0
-# %%F is systemd's escape for date(1) %F (YYYY-MM-DD).  -u pins the name to the
-# UTC calendar day so a host TZ cannot rename or overwrite across a local-midnight
-# boundary (matches OnCalendar=... UTC on the timer).
-ExecStart=/bin/sh -c 'out=/srv/backups/reportal-$(date -u +%%F).tar.gz; /srv/reportal/.venv/bin/reportal backup --output "$out" && test -s "$out"'
+# %%Y%%m%%dT%%H%%M%%SZ is systemd's escape for date(1) UTC stamps.  A full
+# instant (not just the calendar day) keeps a same-day re-run from overwriting
+# the earlier archive that logical-corruption recovery may still need.
+# OnCalendar=... UTC on the timer matches the -u clock.
+ExecStart=/bin/sh -c 'out=/srv/backups/reportal-$(date -u +%%Y%%m%%dT%%H%%M%%SZ).tar.gz; bin=/srv/reportal/.venv/bin/reportal; "$bin" backup --output "$out" && test -s "$out" && "$bin" backup-info "$out" >/dev/null && "$bin" backup-prune --dir /srv/backups --keep-days 14'
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
