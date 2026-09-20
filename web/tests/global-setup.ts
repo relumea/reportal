@@ -25,7 +25,9 @@ import {
 export default async function globalSetup(): Promise<void> {
   const rebrew = rebrewPath();
   if (!existsSync(rebrew)) {
-    throw new Error(`missing the sibling rebrew CLI at ${rebrew}; install ../rebrew first`);
+    throw new Error(
+      `missing rebrew CLI at ${rebrew}; run make setup (installs .venv/bin/rebrew) or cd ../rebrew && make setup`,
+    );
   }
   const seed = seedWorkspace();
   const url = baseUrl();

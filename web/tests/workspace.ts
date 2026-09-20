@@ -26,7 +26,8 @@ export function port(): number {
 const REPO_MARKER = "pyproject.toml";
 const WORKSPACE_RELATIVE = join(".scratch", "e2e-web");
 const PYTHON_RELATIVE = join(".venv", "bin", "python");
-const REBREW_RELATIVE = join("rebrew", ".venv", "bin", "rebrew");
+const REBREW_LOCAL_RELATIVE = join(".venv", "bin", "rebrew");
+const REBREW_SIBLING_RELATIVE = join("rebrew", ".venv", "bin", "rebrew");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -51,9 +52,11 @@ export function pythonPath(): string {
   return join(repoRoot(), PYTHON_RELATIVE);
 }
 
-/** Sibling rebrew CLI the disassembly and decompilation routes call. */
+/** rebrew CLI for REPORTAL_REBREW: this checkout's venv after make setup, else sibling. */
 export function rebrewPath(): string {
-  return join(dirname(repoRoot()), REBREW_RELATIVE);
+  const local = join(repoRoot(), REBREW_LOCAL_RELATIVE);
+  if (existsSync(local)) return local;
+  return join(dirname(repoRoot()), REBREW_SIBLING_RELATIVE);
 }
 
 export function databasePath(): string {

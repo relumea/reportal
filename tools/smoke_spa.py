@@ -20,9 +20,10 @@ real deterministic `rebrew security-scan` over the project's reversed sources
 (the engine adapter, no sample and no network call), so the binary-detail
 route's severity badges render from a real payload rather than a hand-written
 one.  Then it starts
-``reportal serve`` on a free port with ``REPORTAL_REBREW`` pointed at the
-sibling rebrew checkout and renders the dashboard landing route plus each hash
-route, asserting the dumped DOM carries that view's markers.
+``reportal serve`` on a free port with ``REPORTAL_REBREW`` pointed at
+``.venv/bin/rebrew`` (or a sibling rebrew venv) and renders the dashboard
+landing route plus each hash route, asserting the dumped DOM carries that
+view's markers.
 
 The SPA is the Vite build under ``web/``; when ``assets/dist/index.html`` is
 missing this first runs ``bun install`` (unless ``web/node_modules`` exists)
@@ -102,10 +103,12 @@ from reportal import (  # noqa: E402
 )
 from tools import cdp  # noqa: E402
 
-# Sibling checkouts the smoke drives: the rebrew engine and the notepad rebrew
-# project it imported.  Both are resolved from this script's repo root so no
-# machine-specific path is baked in.
-REBREW_RELATIVE = Path("rebrew") / ".venv" / "bin" / "rebrew"
+# rebrew CLI for REPORTAL_REBREW: prefer this checkout's venv (make setup
+# installs it via the path dependency), fall back to a sibling rebrew venv.
+# The notepad rebrew project is a separate local fixture for browser gates.
+REBREW_LOCAL_RELATIVE = Path(".venv") / "bin" / "rebrew"
+REBREW_SIBLING_RELATIVE = Path("rebrew") / ".venv" / "bin" / "rebrew"
+REBREW_RELATIVE = REBREW_SIBLING_RELATIVE
 NOTEPAD_PROJECT_RELATIVE = Path("rebrew-projects") / "notepad-rebrew"
 
 # Frontend source and the Vite entry page it builds; the smoke builds when the
@@ -1048,9 +1051,41 @@ def repo_root() -> Path:
     raise SystemExit("no pyproject.toml found above tools/smoke_spa.py")
 
 
-def sibling(name: str) -> Path:
+def sibling(name: str | Path) -> Path:
     """Return *name* beside the repo root."""
     return repo_root().parent / name
+
+
+def resolve_rebrew_bin() -> Path:
+    """Return a rebrew CLI path: this checkout's ``.venv`` first, else sibling.
+
+    ``make setup`` installs ``.venv/bin/rebrew`` through the path dependency, so
+    browser gates do not need a second ``make setup`` inside ``../rebrew``.
+    """
+    local = repo_root() / REBREW_LOCAL_RELATIVE
+    if local.is_file():
+        return local
+    return sibling(REBREW_SIBLING_RELATIVE)
+
+
+def missing_prerequisite_message(path: Path) -> str:
+    """One-line failure naming *path* plus the contributor fix."""
+    notepad_root = sibling(NOTEPAD_PROJECT_RELATIVE)
+    if path == resolve_rebrew_bin() or path.name == "rebrew":
+        return (
+            f"missing prerequisite: {path} "
+            "(run: make setup — installs .venv/bin/rebrew; "
+            "or: cd ../rebrew && make setup)"
+        )
+    try:
+        path.resolve().relative_to(notepad_root.resolve())
+    except ValueError:
+        return f"missing prerequisite: {path}"
+    return (
+        f"missing prerequisite: {path} "
+        f"(place the notepad-rebrew fixture at {notepad_root}; "
+        "needed for make ui / make check, not for make check-ci)"
+    )
 
 
 def free_port() -> int:
@@ -1238,12 +1273,12 @@ def _seed_security_scan(
     hand-writing one.  The SPA renders one severity badge per finding, which is
     what the binary-detail route markers assert and the UI audit measures.
     """
-    rebrew_bin = sibling(REBREW_RELATIVE)
-    if not rebrew_bin.is_file():
-        raise SystemExit(f"missing prerequisite: {rebrew_bin}")
     engine = engines.RebrewEngine()
     if not engine.available():
-        raise SystemExit(f"missing prerequisite: {rebrew_bin}")
+        raise SystemExit(
+            "missing prerequisite: rebrew package "
+            "(run: make setup — rebrew is a path dependency on ../rebrew)"
+        )
     result = engine.security_scan(project_dir)
     store.set_scan(
         conn,
@@ -2040,13 +2075,13 @@ def run_smoke(workspace: Path, env: dict[str, str], browser: str, ids: dict[str,
 
 def main() -> int:
     """Run the smoke; 0 on success or a clean skip, 1 otherwise."""
-    rebrew_bin = sibling(REBREW_RELATIVE)
+    rebrew_bin = resolve_rebrew_bin()
     project_dir = sibling(NOTEPAD_PROJECT_RELATIVE)
     binary_path = project_dir / "original" / "notepad.exe"
     functions_file = function_seed_file(project_dir)
     for required in (rebrew_bin, binary_path, functions_file):
         if not required.is_file():
-            emit(f"missing prerequisite: {required}")
+            emit(missing_prerequisite_message(required))
             return 1
 
     browser = find_browser()

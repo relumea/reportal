@@ -79,11 +79,12 @@ make setup
 
 make spa                     # Vite build + .gz siblings into assets/dist
 (cd web && bun run dev)      # Vite HMR; not a make target
-(cd web && bun run test:ui)  # Playwright; not in make check / check-ci
+make test-ui                 # Playwright (same as: cd web && bun run test:ui)
 
 make run                     # build SPA, serve (PORT=8002)
 make serve                   # serve current build
 make doctor                  # preflight; exits 1 on failure; docs/DEPLOY.md
+make gate-deps               # shellcheck / Java 17+ / vnu before first check-ci
 .venv/bin/reportal config
 .venv/bin/reportal doctor
 

@@ -491,17 +491,21 @@ target. `make check` is the whole gate: ruff and ruff format, oxlint,
 shellcheck, W3C VNU over the HTML and CSS, mypy (the flag set in
 `pyproject.toml`), `tsc --noEmit`, pytest under the coverage floor, the built
 SPA smoke and audit in headless Chrome, and the wheel packaging check.
-`make check-ci` is what GitHub Actions runs (same as `make check` without
-`ui`, which needs a local rebrew project fixture). `make check-fast` drops the
-slow parts (coverage, browsers, wheel) for iteration.
+`make check-ci` is what GitHub Actions runs (`lint` + `typecheck` + `test` +
+`package-check`); it skips the headless smoke/audit (`make ui`), which need a
+local `../rebrew-projects/notepad-rebrew` fixture. `make check-fast` drops the
+slow parts (coverage, browsers, wheel) for iteration. `make gate-deps` checks
+shellcheck, Java 17+, and `vnu` alone.
 
 ```bash
 make setup          # once: uv sync --extra dev + web packages
+make gate-deps      # shellcheck / Java / vnu (before first check-ci)
 make run            # build the SPA and serve the portal (PORT=8002)
 make check-fast     # no coverage, no browsers, no wheel
 make check-ci       # what CI runs on every PR
 make check          # the whole gate (includes headless Chrome)
 make test-one ARGS='tests/test_disclosure.py'   # one file or node
+make test-ui        # Playwright SPA suite (not in check-ci)
 ```
 
 Individual targets: `make run` (build the SPA, then serve) and `make serve`

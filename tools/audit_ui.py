@@ -483,7 +483,7 @@ def main(argv: list[str] | None = None) -> int:
         if base_url is None:
             missing = _missing_prerequisites()
             if missing is not None:
-                emit(f"missing prerequisite: {missing}")
+                emit(smoke_spa.missing_prerequisite_message(missing))
                 return EXIT_FAIL
             if smoke_spa.ensure_frontend_built():
                 return EXIT_FAIL
@@ -497,7 +497,7 @@ def main(argv: list[str] | None = None) -> int:
             env = {
                 **os.environ,
                 "REPORTAL_DB": str(workspace / "reportal.db"),
-                "REPORTAL_REBREW": str(smoke_spa.sibling(smoke_spa.REBREW_RELATIVE)),
+                "REPORTAL_REBREW": str(smoke_spa.resolve_rebrew_bin()),
             }
             server, base_url = start_server(workspace, env)
 
@@ -537,7 +537,7 @@ def _missing_prerequisites() -> Path | None:
     """Return the first missing sibling path the seeded audit needs."""
     project_dir = smoke_spa.sibling(smoke_spa.NOTEPAD_PROJECT_RELATIVE)
     for required in (
-        smoke_spa.sibling(smoke_spa.REBREW_RELATIVE),
+        smoke_spa.resolve_rebrew_bin(),
         project_dir / "original" / "notepad.exe",
         smoke_spa.function_seed_file(project_dir),
     ):

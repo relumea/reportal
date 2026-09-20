@@ -20,7 +20,10 @@ make setup
 ```
 
 After setup the CLI is `.venv/bin/reportal` (not on `PATH` until you activate
-`.venv`). Quick readiness check: `make doctor`.
+`.venv`), and the path dependency also installs `.venv/bin/rebrew` for the
+browser gates. Quick readiness check: `make doctor`. Before the first
+`make check-ci`, run `make gate-deps` so missing `shellcheck`, Java 17+, or
+`vnu` fail with an install hint instead of halfway through lint.
 
 Optional similarity scoring also needs `../resembl`, then:
 
@@ -41,14 +44,16 @@ export PATH="$HOME/.local/bin:$PATH"
 ```bash
 make test-one ARGS='tests/test_foo.py'          # one file or node
 make check-fast                                 # lint + types + pytest, no cov
+make gate-deps                                  # shellcheck / Java / vnu only
 make check-ci                                   # what GitHub Actions runs
 make check                                      # full gate, including browsers
+make test-ui                                    # Playwright (web/); not in CI
 ```
 
 `make check-ci` matches the workflow step `make lint typecheck test
 package-check` under the same `SOURCE_DATE_EPOCH` / `LC_ALL=C` / `TZ=UTC` /
-`PYTHONHASHSEED=0` exports. The headless `ui` target needs a local
-`../rebrew-projects/notepad-rebrew` fixture and is not run in CI.
+`PYTHONHASHSEED=0` exports. The headless `ui` / `test-ui` targets need a local
+`../rebrew-projects/notepad-rebrew` fixture and are not run in CI.
 
 New tests live under `tests/` (no `tests/__init__.py`); use `tmp_path` and
 mirror a nearby file that covers the same surface. New Python modules go under

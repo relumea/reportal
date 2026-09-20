@@ -24,8 +24,20 @@ def _prerequisites() -> tuple[Path, Path, Path, Path]:
         project_dir,
         project_dir / "original" / "notepad.exe",
         smoke_spa.function_seed_file(project_dir),
-        smoke_spa.sibling(str(smoke_spa.REBREW_RELATIVE)),
+        smoke_spa.resolve_rebrew_bin(),
     )
+
+
+def test_resolve_rebrew_bin_prefers_this_checkout_venv() -> None:
+    resolved = smoke_spa.resolve_rebrew_bin()
+    local = smoke_spa.repo_root() / smoke_spa.REBREW_LOCAL_RELATIVE
+    sibling = smoke_spa.sibling(smoke_spa.REBREW_SIBLING_RELATIVE)
+    if local.is_file():
+        assert resolved == local
+    elif sibling.is_file():
+        assert resolved == sibling
+    else:
+        pytest.skip("no rebrew CLI in .venv or ../rebrew/.venv")
 
 
 def test_seeded_workspace_holds_a_security_scan_with_severities(tmp_path: Path) -> None:

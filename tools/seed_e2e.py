@@ -140,10 +140,10 @@ def seed(workspace: Path) -> dict[str, object]:
     project_dir = smoke_spa.sibling(smoke_spa.NOTEPAD_PROJECT_RELATIVE)
     binary_path = project_dir / "original" / "notepad.exe"
     functions_file = smoke_spa.function_seed_file(project_dir)
-    rebrew_bin = smoke_spa.sibling(smoke_spa.REBREW_RELATIVE)
+    rebrew_bin = smoke_spa.resolve_rebrew_bin()
     for required in (binary_path, functions_file, rebrew_bin):
         if not required.is_file():
-            raise SystemExit(f"missing prerequisite: {required}")
+            raise SystemExit(smoke_spa.missing_prerequisite_message(required))
 
     ids = smoke_spa.build_workspace(workspace, project_dir, binary_path, functions_file)
     function_name = smoke_spa.read_functions(functions_file, 1)[0][1]
