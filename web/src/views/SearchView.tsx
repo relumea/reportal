@@ -13,6 +13,7 @@ import {
   Panel,
   StatusCell,
   Toolbar,
+  CopyValue,
   hex,
 } from "../components";
 import { SEARCH_KIND_LABELS, SEARCH_KINDS } from "../constants";
@@ -59,7 +60,11 @@ export function SearchView({
               type="search"
               placeholder="name, hash, path"
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) => {
+                const next = event.target.value;
+                setDraft(next);
+                if (/^[0-9a-fA-F]{64}$/.test(next.trim())) setKind("sha256");
+              }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") onQuery(draft);
               }}
@@ -120,9 +125,14 @@ export function SearchView({
                   { label: "Arch", key: "arch", mono: true },
                   { label: "Size", numeric: true, render: (row) => row.size.toLocaleString() },
                   {
+                    label: "SHA-256",
+                    render: (row) => <CopyValue value={row.sha256} compact />,
+                  },
+                  {
                     label: "Tags",
                     render: (row) => (row.tags.length ? row.tags.join(", ") : "n/a"),
                   },
+                  { label: "Created", key: "created_at", mono: true },
                   { label: "Match", key: "match", mono: true },
                 ]}
                 rows={results.binaries}
@@ -165,6 +175,7 @@ export function SearchView({
                   },
                   { label: "Description", key: "description" },
                   { label: "Binaries", key: "binary_count", numeric: true },
+                  { label: "Created", key: "created_at", mono: true },
                 ]}
                 rows={results.collections}
                 rowKey={(row) => row.id}

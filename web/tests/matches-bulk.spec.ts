@@ -25,7 +25,7 @@ async function pickChangingRow(dialog: Locator): Promise<{ row: Locator; candida
 
 test("a bulk name transfer previews without writing and then renames", async ({ page }) => {
   await page.goto("/#/matches");
-  await page.getByLabel("Function", { exact: true }).fill(String(state.ids.function_id));
+  await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
   await page.getByRole("button", { name: "Load", exact: true }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
 

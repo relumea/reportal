@@ -781,9 +781,9 @@ def binary_match_rows(conn: sqlite3.Connection, binary_id: int) -> list[dict[str
     """All recorded matches whose source is a function of *binary_id*.
 
     Each row pairs the source function with its candidate and carries the
-    stored similarity and confidence, the ISA pair of the two binaries, and
-    the run settings the edge was recorded under.  Rows are ordered best
-    similarity first.
+    stored similarity and confidence, the ISA pair of the two binaries, the
+    source function's name source, the candidate's owning binary, and the run
+    settings the edge was recorded under.  Rows are ordered best similarity first.
     """
     rows: list[dict[str, Any]] = []
     for match in store.list_matches_for_binary(conn, binary_id):
@@ -794,9 +794,12 @@ def binary_match_rows(conn: sqlite3.Connection, binary_id: int) -> list[dict[str
                 "source_function_id": int(match["source_function_id"]),
                 "source_name": str(match["source_name"]),
                 "source_va": int(match["source_va"]),
+                "source_name_source": str(match.get("source_name_source") or ""),
                 "candidate_function_id": int(match["candidate_function_id"]),
                 "candidate_name": str(match["candidate_name"]),
                 "candidate_va": int(match["candidate_va"]),
+                "candidate_binary_id": int(match["candidate_binary_id"]),
+                "candidate_binary_name": str(match["candidate_binary_name"]),
                 "similarity": float(match["similarity"]),
                 "confidence": float(match["confidence"]),
                 "source_arch": source_arch,

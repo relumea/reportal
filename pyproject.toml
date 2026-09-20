@@ -99,12 +99,14 @@ where = ["src"]
 # The built SPA (Vite output into `assets/dist/`) ships in the wheel: the
 # package serves `index.html` and its `assets/*.js` and `assets/*.css` from
 # there.  Recursive `**` (setuptools 69+) covers nested hashed chunks if the
-# Vite layout grows past `dist/assets/`.  `manual/*.md` is the in-app docs
+# Vite layout grows past `dist/assets/`.  `manual/**.md` is the in-app docs
 # browser payload (`scripts/sync_packaged_docs.py` mirrors `docs/` +
-# `CHANGELOG.md` into it before `uv build`).
+# `CHANGELOG.md` into it before `uv build`, keeping the `subsystems/` and
+# `cookbook/` subdirectories the reader serves).
 reportal = [
     "assets/dist/**",
     "manual/*.md",
+    "manual/**/*.md",
 ]
 
 [tool.uv]

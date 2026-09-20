@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { api } from "../api";
+import { BINARY_OPTIONS_PATH, api } from "../api";
 import {
   Button,
   ConfirmButton,
@@ -16,7 +16,7 @@ import {
 } from "../components";
 import { DEFAULT_KNOWLEDGE_LIMIT, REMOTE_INGEST_DISABLED_DETAIL } from "../constants";
 import { KnowledgeResults } from "../panels/KnowledgePanel";
-import type { Binary, Document, KnowledgeConfig, KnowledgeSearch } from "../types";
+import type { BinaryOption, Document, KnowledgeConfig, KnowledgeSearch } from "../types";
 import { useAsync } from "../useAsync";
 
 /** A document as the ingest routes answer with, including the dedupe flag. */
@@ -24,7 +24,7 @@ type IngestedDocument = Document & { duplicate: boolean };
 
 /** Knowledge documents of one binary: ingest a file or a note, list, search. */
 export function KnowledgeView(): ReactNode {
-  const binariesResult = useAsync(() => api<{ binaries: Binary[] }>("/binaries"), []);
+  const binariesResult = useAsync(() => api<{ binaries: BinaryOption[] }>(BINARY_OPTIONS_PATH), []);
   const binaries = binariesResult.data?.binaries ?? [];
   const [selectedId, setSelectedId] = useState("");
   const activeId = selectedId || (binaries[0] ? String(binaries[0].id) : "");
@@ -263,7 +263,7 @@ export function KnowledgeView(): ReactNode {
         ) : (
           <Muted>URL ingestion is disabled: {REMOTE_INGEST_DISABLED_DETAIL}.</Muted>
         )}
-        {message ? <Muted>{message}</Muted> : null}
+        <Muted live>{message}</Muted>
         {actionError ? <ErrorNote error={actionError} /> : null}
       </Panel>
       <Panel title="Documents" subtitle="Documents stored in this scope, newest first.">

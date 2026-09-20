@@ -103,7 +103,7 @@ export function ComponentsView(): ReactNode {
       }
     >
       {failure ? <ErrorNote error={failure} /> : null}
-      {message ? <Muted>{message}</Muted> : null}
+      <Muted live>{message}</Muted>
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}
       {rows === null ? (
         <Loading label="Loading components" />

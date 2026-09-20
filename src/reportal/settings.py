@@ -34,6 +34,7 @@ from reportal import (
     auth,
     billing,
     external,
+    flirt_sigs,
     graph_backends,
     jobs,
     llm,
@@ -218,6 +219,14 @@ SETTINGS: tuple[Setting, ...] = (
         table="llm",
         key="model",
         default=llm.DEFAULT_MODEL,
+    ),
+    Setting(
+        name="flirt.sigs_dir",
+        describe="the FLIRT signature checkout the catalog indexes, and the only path it reads",
+        kind=KIND_PATH,
+        read=flirt_sigs.sigs_dir_text,
+        env=flirt_sigs.SIGS_DIR_ENV,
+        default="unset, so the FLIRT routes report an empty catalog",
     ),
     Setting(
         name="external.allow_remote",

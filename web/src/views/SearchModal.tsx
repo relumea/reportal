@@ -163,7 +163,11 @@ export function SearchModal({
             placeholder="Search binaries, collections, tags and functions"
             aria-label="Search query"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              const next = event.target.value;
+              setQuery(next);
+              if (/^[0-9a-fA-F]{64}$/.test(next.trim())) setKind("sha256");
+            }}
           />
           <div className="search-kinds" role="tablist" aria-label="Query type">
             {SEARCH_KINDS.map((option) => (

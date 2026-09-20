@@ -15,11 +15,17 @@ import {
   Note,
   Panel,
   Toolbar,
+  TypeNameLink,
 } from "../components";
 import { CALLING_CONVENTIONS, PARAMETER_KINDS, SIGNATURE_NOT_FOUND } from "../constants";
 import type { ParameterKind } from "../constants";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
-import type { FunctionSignatureDetail, SignatureHistory, SignatureParameter } from "../types";
+import type {
+  DataTypeList,
+  FunctionSignatureDetail,
+  SignatureHistory,
+  SignatureParameter,
+} from "../types";
 
 const NO_SIGNATURE_HINT =
   "No signature stored for this function. Import signatures from the binary detail view.";
@@ -28,9 +34,11 @@ const NO_SIGNATURE_HINT =
 export function SignaturePanel({
   functionId,
   analysisId,
+  binaryId,
 }: {
   functionId: number;
   analysisId: number;
+  binaryId: number;
 }): ReactNode {
   const key = panelKey("fn", functionId, "signature");
   const loader = (): Promise<FunctionSignatureDetail> =>
@@ -50,6 +58,7 @@ export function SignaturePanel({
     body = (
       <SignatureEditor
         functionId={functionId}
+        binaryId={binaryId}
         signature={entry.data}
         onChange={() => refreshPanel(key, loader)}
       />
@@ -219,13 +228,22 @@ function SignatureCopy({
 
 function SignatureEditor({
   functionId,
+  binaryId,
   signature,
   onChange,
 }: {
   functionId: number;
+  binaryId: number;
   signature: FunctionSignatureDetail;
   onChange: () => void;
 }): ReactNode {
+  const typesKey = panelKey("binary", binaryId, "data-types", "");
+  const types = usePanel(typesKey, () =>
+    api<DataTypeList>(`/binaries/${binaryId}/data-types`),
+  );
+  const knownTypes = new Set(
+    types?.state === "ready" ? types.data.types.map((entry) => entry.name) : [],
+  );
   const [returnType, setReturnType] = useState(signature.return_type);
   const [convention, setConvention] = useState(signature.calling_convention);
   const [parameterType, setParameterType] = useState("");
@@ -277,6 +295,12 @@ function SignatureEditor({
             value={returnType}
             onChange={(event) => setReturnType(event.target.value)}
           />
+          <TypeNameLink
+            binaryId={binaryId}
+            name={signature.return_type}
+            knownTypes={knownTypes}
+            fallback={false}
+          />
         </Field>
         <Field label="Convention">
           <select value={convention} onChange={(event) => setConvention(event.target.value)}>
@@ -296,7 +320,7 @@ function SignatureEditor({
         <EmptyState>No parameters yet. Add one from the fields below.</EmptyState>
       ) : (
         <div className="table-scroll">
-          <table className="data-table">
+          <table className="data-table" aria-label="Signature parameters">
             <thead>
               <tr>
                 <th className="num">Index</th>
@@ -313,7 +337,9 @@ function SignatureEditor({
                 <ParameterRow
                   key={`${parameter.index}-${parameter.name}`}
                   functionId={functionId}
+                  binaryId={binaryId}
                   parameter={parameter}
+                  knownTypes={knownTypes}
                   count={signature.parameters.length}
                   onChange={onChange}
                 />
@@ -363,12 +389,16 @@ function SignatureEditor({
 
 function ParameterRow({
   functionId,
+  binaryId,
   parameter,
+  knownTypes,
   count,
   onChange,
 }: {
   functionId: number;
+  binaryId: number;
   parameter: SignatureParameter;
+  knownTypes: Set<string>;
   count: number;
   onChange: () => void;
 }): ReactNode {
@@ -431,6 +461,12 @@ function ParameterRow({
           aria-label={`Type of parameter ${parameter.index}`}
           value={typeText}
           onChange={(event) => setTypeText(event.target.value)}
+        />
+        <TypeNameLink
+          binaryId={binaryId}
+          name={parameter.type}
+          knownTypes={knownTypes}
+          fallback={false}
         />
       </td>
       <td>

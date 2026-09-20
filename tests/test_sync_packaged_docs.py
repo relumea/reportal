@@ -63,3 +63,22 @@ def test_sync_refuses_incomplete_page_order(tmp_path: Path) -> None:
     dest = tmp_path / "manual"
     assert mod.sync(dest=dest, docs_src=docs_src, changelog=changelog) == -1  # type: ignore[attr-defined]
     assert not dest.exists()
+
+
+def test_sync_mirrors_subdirectories_and_prunes_them(tmp_path: Path) -> None:
+    mod = _load()
+    docs_src = tmp_path / "docs"
+    changelog = tmp_path / "CHANGELOG.md"
+    _populate_required(docs_src, changelog)
+    (docs_src / "subsystems").mkdir()
+    (docs_src / "subsystems" / "store.md").write_text("# Store\n", encoding="utf-8")
+    (docs_src / "subsystems" / "README.md").write_text("# Subsystems\n", encoding="utf-8")
+    dest = tmp_path / "manual"
+    written = mod.sync(dest=dest, docs_src=docs_src, changelog=changelog)  # type: ignore[attr-defined]
+    assert written == len(PAGE_ORDER) + 3
+    assert (dest / "subsystems" / "store.md").read_text(encoding="utf-8") == "# Store\n"
+    assert mod.sync(dest=dest, docs_src=docs_src, changelog=changelog) == 0  # type: ignore[attr-defined]
+    (docs_src / "subsystems" / "store.md").unlink()
+    (docs_src / "subsystems" / "README.md").unlink()
+    mod.sync(dest=dest, docs_src=docs_src, changelog=changelog)  # type: ignore[attr-defined]
+    assert not (dest / "subsystems").exists()

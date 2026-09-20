@@ -252,7 +252,7 @@ export function PipelinePanel({
       }
     >
       {actionError ? <ErrorNote error={actionError} /> : null}
-      {notice ? <Muted>{notice}</Muted> : null}
+      <Muted live>{notice}</Muted>
       {body}
     </Panel>
   );

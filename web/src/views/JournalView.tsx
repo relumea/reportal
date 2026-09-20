@@ -158,7 +158,7 @@ export function JournalView({
         </p>
       ) : null}
       {failure ? <ErrorNote error={failure} /> : null}
-      {message ? <Muted>{message}</Muted> : null}
+      <Muted live>{message}</Muted>
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}
       {entries === null ? (
         <Loading label="Loading journal entries" />

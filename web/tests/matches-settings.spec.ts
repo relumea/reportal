@@ -11,10 +11,29 @@ const state = e2eState();
 
 test("a platform scope narrows the recorded match rows to none", async ({ page }) => {
   await page.goto("/#/matches");
-  await page.getByLabel("Function", { exact: true }).fill(String(state.ids.function_id));
+  await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
   await page.getByRole("button", { name: "Load", exact: true }).click();
 
   // The seeded workspace recorded both edges of the pair.
+  await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
+  await expect(page.getByText("Matched: 1 / 6 (17%)")).toBeVisible();
+  await page.getByRole("button", { name: /System/ }).click();
+  await expect(page.getByRole("button", { name: /System/ })).toHaveAttribute(
+    "data-selected",
+    "true",
+  );
+  await page.getByRole("button", { name: /System/ }).click();
+  await expect(
+    page.locator("table.data-table a[href^='#/binaries/']").first(),
+  ).toBeVisible();
+  await page.locator("table.data-table tbody tr").first().locator("td").nth(3).click();
+  await expect(page).toHaveURL(/#\/diff\/\d+\/\d+/);
+  await page.goBack();
+  await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: /No Match/ }).click();
+  await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
+  await expect(page.getByText("No match").first()).toBeVisible();
+  await page.getByRole("button", { name: /No Match/ }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
 
   await page.getByRole("button", { name: "Match settings" }).click();
@@ -33,7 +52,7 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
 
   await expect(page.getByText("Match run recorded:", { exact: false })).toBeVisible();
   await expect(page.getByText("0 candidates recorded", { exact: false })).toBeVisible();
-  await expect(page.getByText("No matches recorded for this binary.", { exact: false })).toBeVisible();
+  await expect(page.getByText("No match").first()).toBeVisible();
 
   // The active scope shows as a chip the reader can clear.
   await expect(page.locator(".chip").getByText("Android", { exact: true })).toBeVisible();
@@ -54,7 +73,7 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
 
 test("the top setting reaches the run and is recorded with it", async ({ page }) => {
   await page.goto("/#/matches");
-  await page.getByLabel("Function", { exact: true }).fill(String(state.ids.function_id));
+  await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
   await page.getByRole("button", { name: "Load", exact: true }).click();
   await expect(page.getByText(/candidates? recorded/)).toBeVisible();
 

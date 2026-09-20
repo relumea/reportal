@@ -13,6 +13,7 @@ import {
   registerShortcut,
   resolveShortcut,
 } from "../src/keys";
+import { e2eState } from "./e2e-state";
 import { expect, test } from "./fixtures";
 
 const CHEATSHEET = "Keyboard shortcuts";
@@ -23,12 +24,14 @@ function dialog(page: import("@playwright/test").Page) {
 
 /** The bindings the shell registers outside the `g` prefix jumps. */
 // Shell bindings outside the per-view `g` jumps: search, the cheatsheet, the
-// two table row moves, the filter focus, the two section steps, the code-view
-// switch, the sidebar collapse and the two history steps.
-const SHELL_BINDINGS = 11;
+// two table row moves, the first/last row jumps, the focused-row rename, the
+// filter focus, the filters row, the type save, the type discard, the two
+// section steps, the seven analysis-section jumps, the memory go-to, the
+// code-view switch, the sidebar collapse and the four history steps.
+const SHELL_BINDINGS = 27;
 
 // One `g` jump per sidebar view plus the shell bindings above.
-const DECLARED_SHORTCUTS = 20 + SHELL_BINDINGS;
+const DECLARED_SHORTCUTS = 21 + SHELL_BINDINGS;
 
 test("a conflicting binding is refused at registration", () => {
   const probe = (): void => {};
@@ -61,6 +64,7 @@ test("a combo has one canonical spelling", () => {
   expect(normalizeCombo("Ctrl+K")).toBe("mod+k");
   expect(normalizeCombo("Cmd+K")).toBe("mod+k");
   expect(normalizeCombo("g  d")).toBe("g d");
+  expect(normalizeCombo("Space")).toBe("space");
   expect(isPrefix("zz9")).toBe(false);
 });
 
@@ -69,6 +73,7 @@ test("a combo renders for the platform it runs on", () => {
   expect(displayCombo("mod+k", true)).toBe("⌘K");
   expect(displayCombo("g d", false)).toBe("G then D");
   expect(displayCombo("?", false)).toBe("?");
+  expect(displayCombo("space", false)).toBe("Space");
 });
 
 test("? opens the cheatsheet, Escape closes it and returns the focus", async ({ page }) => {
@@ -105,7 +110,7 @@ test("the cheatsheet lists the registered set", async ({ page }) => {
 
   const declared = Number(await sheet.getAttribute("data-shortcut-count"));
   expect(declared).toBe(descriptions.length);
-  expect(views).toHaveLength(20);
+  expect(views).toHaveLength(21);
   expect(declared).toBe(DECLARED_SHORTCUTS);
 
   // The visible keys are the combos, not the registry's spelling of them.
@@ -135,6 +140,13 @@ test("/ focuses the view's filter box", async ({ page }) => {
   await expect(field).toBeFocused();
 });
 
+test("p focuses the view's first filter control", async ({ page }) => {
+  await page.goto("/#/functions");
+  await expect(page.locator("table.data-table tbody tr").first()).toBeVisible();
+  await page.keyboard.press("p");
+  await expect(page.getByLabel("Name source")).toBeFocused();
+});
+
 test("j and k move through the rows of the view's table", async ({ page }) => {
   await page.goto("/#/functions");
   await expect(page.locator("table.data-table tbody tr").first()).toBeVisible();
@@ -153,9 +165,98 @@ test("j and k move through the rows of the view's table", async ({ page }) => {
   );
 });
 
+test("Shift+J and Shift+K jump to the last and first rows", async ({ page }) => {
+  await page.goto("/#/functions");
+  await expect(page.locator("table.data-table tbody tr").first()).toBeVisible();
+  await page.keyboard.press("Shift+J");
+  expect(
+    await page.evaluate<boolean>(
+      `document.activeElement === Array.from(document.querySelectorAll("table.data-table tbody tr[tabindex='0']")).at(-1)`,
+    ),
+  ).toBe(true);
+  await page.keyboard.press("Shift+K");
+  expect(
+    await page.evaluate<boolean>(
+      `document.activeElement === document.querySelector("table.data-table tbody tr[tabindex='0']")`,
+    ),
+  ).toBe(true);
+});
+
+test("r clicks Rename on the focused function row", async ({ page }) => {
+  await page.goto("/#/functions");
+  await expect(page.locator("table.data-table tbody tr").first()).toBeVisible();
+  await page.keyboard.press("j");
+  const prompted = new Promise<string>((resolve) => {
+    page.once("dialog", (dialog) => {
+      const message = dialog.message();
+      void dialog.dismiss();
+      resolve(message);
+    });
+  });
+  await page.keyboard.press("r");
+  expect(await prompted).toMatch(/name/i);
+});
+
 test("the g prefix jumps to a view", async ({ page }) => {
   await page.goto("/#/binaries");
   await page.keyboard.press("g");
   await page.keyboard.press("j");
   await expect(page).toHaveURL(/#\/journal$/);
+});
+
+test("{ and } step this tab's view history", async ({ page }) => {
+  await page.goto("/#/binaries");
+  await page.goto("/#/functions");
+  await expect(page).toHaveURL(/#\/functions/);
+  await page.keyboard.press("{");
+  await expect(page).toHaveURL(/#\/binaries/);
+  await page.keyboard.press("}");
+  await expect(page).toHaveURL(/#\/functions/);
+});
+
+test("o and m jump to Binary details and Memory on a binary page", async ({ page }) => {
+  const binaryId = e2eState().ids.binary_id;
+  await page.goto(`/#/binaries/${binaryId}`);
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeVisible();
+  await expect(page.locator(".detail-head .hash-identicon")).toHaveCount(1);
+  await expect(page.locator(".detail-head .copy-row .mono")).toHaveText(/…$/);
+  await page.keyboard.press("m");
+  await expect(page.getByRole("heading", { name: "Memory", exact: true })).toBeInViewport();
+  await page.keyboard.press("o");
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeInViewport();
+});
+
+test("Shift+G focuses the memory address box", async ({ page }) => {
+  const binaryId = e2eState().ids.binary_id;
+  await page.goto(`/#/binaries/${binaryId}`);
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeVisible();
+  await page.keyboard.press("Shift+G");
+  await expect(page.getByPlaceholder("0x401000")).toBeFocused();
+});
+
+test("f jumps from a binary page to its functions", async ({ page }) => {
+  const binaryId = e2eState().ids.binary_id;
+  await page.goto(`/#/binaries/${binaryId}`);
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeVisible();
+  await page.keyboard.press("f");
+  await expect(page).toHaveURL(new RegExp(`#/binaries/${binaryId}/functions`));
+});
+
+test("Space on a diff toggles Disassembly and AI decompilation", async ({ page }) => {
+  const { function_id, candidate_function_id } = e2eState().ids;
+  await page.goto(`/#/diff/${function_id}/${candidate_function_id}`);
+  await expect(page.getByRole("button", { name: "Transfer symbol" })).toBeVisible();
+  await expect(page.locator(".diff-table thead .copy-row").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /binary #/ }).first()).toHaveAttribute(
+    "href",
+    /#\/binaries\/\d+/,
+  );
+  await expect(page.getByRole("heading", { name: "Suggested names" })).toBeVisible();
+  const kind = page.getByLabel("Kind");
+  await expect(kind).toHaveValue("decomp");
+  await page.locator("#content").click();
+  await page.keyboard.press("Space");
+  await expect(kind).toHaveValue("disasm");
+  await page.keyboard.press("Space");
+  await expect(kind).toHaveValue("decomp");
 });

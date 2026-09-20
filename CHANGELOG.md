@@ -7,6 +7,178 @@ view renders it from here.
 
 ## Unreleased
 
+### Added
+
+- MCP `logging/setLevel` sets the reportal stderr logger. Protocol JSON stays
+  on stdout; `notifications/message` is not pushed.
+- Filetype table names MEW, Upack, kkrunchy, ASProtect, ConfuserEx,
+  .NET Reactor, SmartAssembly, ILProtector, PyInstaller, Nuitka,
+  cx_Freeze, AutoIt, Electron, Nim, Zig, WiX and 7-Zip SFX from
+  section prefixes and string markers. The full DIE database stays
+  out.
+- Secrets scan names Anthropic, Discord, Telegram, npm, GitLab,
+  Hugging Face, SendGrid and Twilio tokens. GitHub tokens include
+  fine-grained `github_pat_` as well as `ghp_` classic.
+- Firmware carve names LZ4, zstd, cpio newc and flattened device-tree
+  magics. A squashfs or UBI inode reader stays out.
+- Global search selects the SHA-256 query type when the query is a
+  64-character hex string.
+- Search binary hits show a 12-character SHA-256 with a copy control.
+- Functions and Data types search placeholders state the total count.
+  Analyses carries an Upload File action that opens the binaries panel.
+- Binary header, Analyses rows and Binaries rows show a hash identicon
+  and a 12-character SHA-256 with a copy control that still writes the
+  full digest. A team-scoped row carries a lock badge beside the name.
+- Function rows and the function header show a coloured name-source
+  dot (System, Auto Unstrip, AI Agent, User, No Debug Info). The
+  function name copies from the header. The header also copies the
+  stored signature prototype, or reads Unknown signature. Data type
+  cards carry the same source-dot for System, User, Auto Unstrip and
+  AI.
+- Match / Diff shows `Matched: N / M (P%)` from unique source functions
+  over the binary total.
+- Binary details entry point links to the function at that VA, or the
+  function list filtered to it.
+- Binary header and register show the stored `created_at`.
+- Composition analysis carries Open matching view, which opens Match /
+  Diff for the first composition function (`#/matches?function=`).
+- Packer detection shows a per-section entropy strip; hover a cell for
+  that section's bits/byte.
+- Function Matches shows each candidate's stored prototype.
+- Function Matches carries View function matching, which opens Match /
+  Diff for that function (`#/matches?function=`).
+- Function header name is click-to-rename (Enter saves, Escape discards).
+- Search binary and collection hits show their stored `created_at`.
+- Function header signature hover shows return, parameters and convention.
+  Named types in that hover link the type list.
+- Diff copies each side's name and transfers the candidate's name,
+  signature, or both onto the source function.
+- Diff headers link each side's owning binary.
+- Diff Suggested names applies a recorded candidate name.
+- Clicking a Strings row opens the functions that reference it.
+- Strings search placeholder states the total count.
+- Function Globals addresses open Memory, and Filter functions.
+- Function Globals addresses copy the VA.
+- Function Callers and Callees names link that function.
+- Import names and export addresses open the function at that name or VA.
+- Memory go-to placeholders use the PE entry point when one is stored.
+- Memory window dump dims zero bytes, matching the paged dump.
+- Memory window dump names Offset and Virtual per row.
+- Memory window address box reads on Enter; Esc clears it.
+- Memory dump Enter jumps and clears; Esc dismisses without jumping.
+- Memory dump Esc clears the byte selection.
+- Section file-offset cells open Memory at that offset.
+- Code listings (As C, prototypes, dumps) copy on click.
+- Clicking an Analyses row (not a control) opens that binary, or
+  the log when the row failed. Each row downloads the stored binary.
+- Data type member and target names that exist in the model link to
+  that type.
+- Data type Referenced-by names link the type list.
+- Data type pointer, typedef and array targets name that type's kind
+  and size, and walk each hop.
+- Data type function kinds show Returns and a parameter table.
+- Data type member tables foot member count, size and padding.
+- Matches quality legend filters the table to that band.
+- Matches name-source legend filters the table.
+- Clicking a Matches row (not a control) opens the diff.
+- Matches lists unmatched functions as No match.
+- Matches rows link the candidate's owning binary.
+- Data types Clear drops every list filter and states the count,
+  and leaves the search text.
+- Data types kind strip filters the list, with counts over the whole model.
+- Data types namespace descendants grey out when a branch is ticked.
+- Data types search matches the namespace and `namespace::name`.
+- Functions Clear states how many filters are on.
+- Functions filters draw a removable chip per active control.
+- Functions checked rows keep a left border.
+- Functions name search narrows the list as you type.
+- Composition name-source meters filter the function list.
+- Composition quality meters filter the function rows.
+- Composition rows Scope matching to that binary.
+- Composition tags come from the matched binaries.
+- Upload rows carry a Debug symbols file input.
+- Upload rows show size and SHA-256 once the browser hashes the file.
+- Upload rows named as an archive carry Extract, which stores then unpacks.
+- Composition category top binaries link to that binary.
+- Composition category top binaries Scope matching to that binary.
+- Binary header name is click-to-rename (Enter saves, Escape discards).
+- Binary header Download serves the stored bytes.
+- Binary header PDF and Symbols export the stored report and ingest.
+- Binary header Scope writes public or team visibility.
+- Binary header Logs and Tags jump to those panels.
+- Binary Details panels badge Hashes, Security, Sections, Imports,
+  Exports and Code signature with their counts.
+- Binary Details Relocations badges the stored relocation count.
+- Binary Details Hashes, Security, Sections, Imports, Exports,
+  Code signature, Relocations and Debug symbols start folded.
+- Signature return and parameter types that exist in the model link
+  to that type.
+- SPA `R` clicks Rename on the focused function-table row. `P` focuses the
+  first toolbar filter. `Cmd/Ctrl+Enter` saves the focused type. `Shift+J`
+  and `Shift+K` jump to the last and first table rows. `{` and `}` alias
+  `Alt+Left`/`Alt+Right` in the tab history. `O`/`F`/`D`/`T`/`S`/`A`/`M`
+  jump the analysis sections. Escape discards a focused type edit. `/`
+  already focuses the filter box. `Space` on a diff toggles Disassembly and
+  AI decompilation. `Shift+G` focuses the Memory address box. Bare `g`
+  stays the nav prefix.
+- Analysis requeue queues a job for each stored scan that has a job kind
+  (`POST /api/analyses/<id>/requeue`, `reportal analysis-requeue`, MCP
+  `requeue_analysis`). `pe-info`, `triage`, `crypto`, `library`, `firmware`,
+  `security`, `threat`, `structs`, `detect`, `gobuildinfo`, `remediation`,
+  `function-triage`, `related`, `lineage` and `benchmark` are queued kinds,
+  so those stored scans re-run. `unpack` is a queued kind that creates a
+  new binary, so a stored unpack scan still stays a per-scan POST.
+- Named extra API keys rename in place (`PATCH /api/iam/keys/<id>`,
+  `reportal api-key-rename`, MCP `rename_api_key`). The token is unchanged; a
+  taken name is 400 `invalid-api-key`.
+- FLIRT signature catalog and match cache (`flirt_sigs.py`): one row per
+  compiled `.sig` file with its content hash, one digest over the enabled blobs
+  of an architecture as the library's identity, and the matches of a binary
+  cached under `(binary_sha256, sigset_key, arch)`, so a binary already matched
+  is served from the cache instead of re-matched. The catalog is global — a
+  signature set is a fact about a toolchain, not a tenant's object. `GET
+  /api/flirt/sigsets`, `POST /api/flirt/sigsets/refresh` (indexes the checkout
+  named by `REPORTAL_FLIRT_SIGS_DIR`, and only that path) and the
+  `POST`/`GET /api/binaries/{id}/flirt` pair expose it.
+
+### Performance
+
+- `GET /api/binaries?summary=true` projects each row down to its `id` and
+  `name`, and every SPA binary picker reads it instead of the whole register: a
+  twenty-thousand sample register answers 0.84 MB instead of 8.28 MB for the
+  picker on the Binaries, Functions, Graph, Knowledge and Matches views and the
+  benchmark and lineage panels.
+- `GET /api/binaries` takes `?limit=`/`?offset=` and reports `matched`, and the
+  Binaries register reads one page and appends the rest with Load more: the
+  first page answers 0.08 MB in 5.8 ms instead of 8.28 MB in 81 ms on that
+  register, and a page counts its own rows rather than grouping the whole
+  functions and comments tables.
+
+### Accessibility
+
+- A clickable table row is a row again: it stays focusable and Enter-activated,
+  but no longer carries `role="link"`, so its cells and the links inside it keep
+  their own semantics for a screen reader.
+- Sortable tables state their order: the sorted `th` carries `aria-sort`, the
+  sort control names its direction, and the arrow is hidden from the accessible
+  name. A windowed table carries `aria-rowcount` and each row `aria-rowindex`,
+  so a reader learns how long the list is and where a row sits.
+- Action results (`Muted live`, the bulk and extract lines) announce themselves
+  in a status region mounted before its text exists, so the message is heard
+  when it arrives; `prefers-reduced-motion` also stops the skeleton shimmer and
+  slows the button spinner without losing either state; at phone width buttons,
+  the sidebar control, nav links, checkboxes and bare action links all reach a
+  target a thumb can hit.
+- A table's actions cell no longer shrinks its links below their content (the
+  register's "Zipped" measured 18x56 at phone width, one glyph per line); the
+  cell keeps its intrinsic width and the table's own scroller carries the
+  overflow. The type scale is expressed in `rem`, so a raised default font size
+  scales the whole shell instead of leaving the copy at its pixel size.
+- Every data table carries an accessible name: `DataTable` takes it from the
+  heading of the enclosing `Panel` or `Card`, and the hand-written tables name
+  themselves. The type panel's paste, import and signature results also sit in
+  one status region, so the last outcome badges that were silent now announce.
+
 ## 2.1.0
 
 Tenant onboarding, restored packaging, and the hardening that landed after

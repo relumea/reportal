@@ -8,11 +8,14 @@ import { expect, test } from "./fixtures";
 const MAX_TAB_STEPS = 150;
 
 const ROW_ACTION_FOCUSED = `document.activeElement instanceof HTMLButtonElement && document.activeElement.closest("table.data-table tbody tr") !== null`;
-const ROW_FOCUSED = `document.activeElement === document.querySelector("table.data-table tbody tr[role='link']")`;
+// A clickable row stays focusable and Enter-activated, but it stays a row: the
+// cells and any link inside it keep their own semantics.
+const ROW_FOCUSED = `document.activeElement === document.querySelector("table.data-table tbody tr[tabindex='0']")`;
 
 test("tab reaches the primary nav and the first table's row actions", async ({ page }) => {
   await page.goto("/#/functions");
   await expect(page.locator("table.data-table tbody tr").first()).toBeVisible();
+  expect(await page.locator("table.data-table tbody tr[role='link']").count()).toBe(0);
 
   // Skip link first, then the sidebar collapse control, then the nav links.
   await page.keyboard.press("Tab");

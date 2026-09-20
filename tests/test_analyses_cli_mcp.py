@@ -154,6 +154,7 @@ class TestCli:
         assert result.exit_code == 0
         payload = json.loads(result.stdout)
         assert payload["status"] == "pending"
+        assert payload["jobs"] == []
         with contextlib.closing(store.connect(ids["db"])) as conn:
             journal.revert_action(conn, payload["journal_action"])
             restored = store.get_analysis(conn, ids["analysis"])
@@ -328,7 +329,9 @@ class TestMcp:
         )
         assert logged["severity"] == "warn"
         assert logged["journal_action"]
-        assert requeue.handler({"analysis_id": analysis_id})["status"] == "pending"
+        queued = requeue.handler({"analysis_id": analysis_id})
+        assert queued["status"] == "pending"
+        assert queued["jobs"] == []
 
     def test_get_imported_functions(self, portal_db: Path, conn: sqlite3.Connection) -> None:
         analysis_id = self._seed(conn)

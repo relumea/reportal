@@ -44,14 +44,20 @@ def seed_rows(
     *,
     rows: Sequence[tuple[int, str, int, str]] = DEFAULT_ROWS,
     project_dir: str | None = None,
+    binary_path: str | None = None,
 ) -> dict[str, Any]:
     """Add a binary, an analysis and the given functions to an existing connection.
 
     The path matches the ``portal_db`` fixture's database, so a test that takes
     the ``conn`` fixture can seed through this helper and read the rows back.
+    *binary_path* points the binary row at a real file, which a worker that
+    reads the binary (``llm_goal``) needs.
     """
     binary_id = store.add_binary(
-        conn, sha256="cd" * 32, name="demo.exe", path=str(Path("/nonexistent/demo.exe"))
+        conn,
+        sha256="cd" * 32,
+        name="demo.exe",
+        path=str(binary_path or Path("/nonexistent/demo.exe")),
     )
     analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
     function_ids = [
@@ -75,6 +81,7 @@ def seed_auto_portal(
     *,
     rows: Sequence[tuple[int, str, int, str]] = DEFAULT_ROWS,
     project: bool = True,
+    binary_path: str | None = None,
 ) -> dict[str, Any]:
     """Create a portal DB with a binary, an analysis and the given functions."""
     db = tmp_path / "reportal.db"
@@ -85,7 +92,7 @@ def seed_auto_portal(
         if project:
             write_rebrew_project(tmp_path)
             project_dir = str(tmp_path)
-        ids = seed_rows(conn, rows=rows, project_dir=project_dir)
+        ids = seed_rows(conn, rows=rows, project_dir=project_dir, binary_path=binary_path)
     return {"db": str(db), **ids}
 
 
@@ -123,6 +130,7 @@ def make_context(
     execute: bool = False,
     keep_failures: bool = False,
     previous: dict[str, Any] | None = None,
+    goal: str = "",
 ) -> WorkerContext:
     """A worker context for one function, with everything else defaulted."""
     return WorkerContext(
@@ -134,6 +142,7 @@ def make_context(
         execute=execute,
         keep_failures=keep_failures,
         previous=previous,
+        goal=goal,
     )
 
 

@@ -76,8 +76,13 @@ BOX_TOLERANCE_PX = 1
 VIEWPORTS: tuple[tuple[int, int], ...] = ((1600, 1000), (480, 900))
 
 # Colour schemes every route is audited in.  Headless Chrome defaults to light,
-# so the dark palette is emulated, never assumed.
-THEMES: tuple[str, ...] = ("dark", "light")
+# so the dark palette is emulated, never assumed.  Any name past these two is a
+# palette of the app's own (`zine`), pinned with `?theme=` and rendered under
+# the light scheme.
+THEMES: tuple[str, ...] = ("dark", "light", "zine")
+
+# The themes that are `prefers-color-scheme` values rather than named palettes.
+COLOUR_SCHEMES: frozenset[str] = frozenset({"dark", "light"})
 
 WORKSPACE_RELATIVE = Path(".scratch") / "audit-ui"
 EXIT_OK = 0
@@ -341,21 +346,29 @@ def emit(message: str) -> None:
     sys.stdout.flush()
 
 
-def route_url(base_url: str, route: str, render_index: int) -> str:
+def route_url(base_url: str, route: str, render_index: int, theme: str) -> str:
     """Absolute URL for a hash route, reloaded fresh on every render.
 
     A query string that changes per render forces a full navigation; an
     unchanged one would make Chrome treat a different hash as a fragment jump
-    and skip the load event the settle waits on.
+    and skip the load event the settle waits on.  A named theme is pinned with
+    ``?theme=``, which is the resolution `theme.ts` reads first, so a palette
+    that is not a colour scheme is audited as itself.
     """
-    return f"{base_url}/?audit={render_index}{route}"
+    pinned = "" if theme in COLOUR_SCHEMES else f"&theme={theme}"
+    return f"{base_url}/?audit={render_index}{pinned}{route}"
 
 
 def set_theme(cdp: CdpPipe, session_id: str, theme: str) -> None:
-    """Emulate *theme* as the page's ``prefers-color-scheme``."""
+    """Emulate *theme* as the page's ``prefers-color-scheme``.
+
+    Only the two colour schemes are media values; a named theme renders under
+    the light scheme and is pinned through the URL instead.
+    """
+    scheme = theme if theme in COLOUR_SCHEMES else "light"
     cdp.send(
         "Emulation.setEmulatedMedia",
-        {"features": [{"name": "prefers-color-scheme", "value": theme}]},
+        {"features": [{"name": "prefers-color-scheme", "value": scheme}]},
         session_id=session_id,
     )
 
@@ -372,7 +385,7 @@ def audit_route(
 ) -> list[dict[str, str]]:
     """Render one route in one theme and return its page-level violations."""
     set_theme(cdp, session_id, theme)
-    render(cdp, session_id, route_url(base_url, route, index), width, height)
+    render(cdp, session_id, route_url(base_url, route, index, theme), width, height)
     script = AUDIT_SCRIPT.replace("__LIMITS__", json.dumps(PAGE_LIMITS))
     violations = evaluate(cdp, session_id, script)
     if not isinstance(violations, list):

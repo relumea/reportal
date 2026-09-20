@@ -32,19 +32,28 @@ test("the full-file view pages and copies a selected range as hex", async ({ pag
   await expect(copied).toBeVisible();
   // Four bytes selected, so the hex readout is four space-separated pairs.
   await expect(copied).toHaveText(/Copied: [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2}/);
+  await panel.locator(".memory-grid").press("Escape");
+  await expect(panel.getByText(/Selected /)).toHaveCount(0);
 });
 
 test("the continuous view scrolls the whole binary and links from a section", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
   const panel = panelByTitle(page, "Memory");
-  const sections = panelByTitle(page, "Sections");
+  const sections = page
+    .locator(".panel")
+    .filter({ has: page.getByRole("heading", { name: /^Sections / }) });
+  await sections.locator("button.panel-fold").click();
 
   // The section table's virtual-address column is the link into the dump.
   const link = sections.locator("a.address-link").first();
   await expect(link).toBeVisible();
   const href = await link.getAttribute("href");
-  const target = (href ?? "").split("memory=")[1];
+  const target = (href ?? "").split("memory=")[1]?.split("&")[0];
   expect(target).toMatch(/^0x[0-9a-f]+$/);
+  const fileLink = sections.getByRole("columnheader", { name: "File offset" });
+  await expect(fileLink).toBeVisible();
+  const offsetHref = await sections.locator("a.address-link").nth(1).getAttribute("href");
+  expect(offsetHref).toMatch(/memory=0x[0-9a-f]+&memoryKind=file/);
   await link.click();
 
   // The dump opens in the continuous mode, on the linked address, and reads
@@ -72,4 +81,8 @@ test("the continuous view scrolls the whole binary and links from a section", as
   // The keyboard layer: `G` focuses the address box and Tab switches columns.
   await panel.locator(".memory-scroll").press("g");
   await expect(panel.getByLabel("Go to address")).toBeFocused();
+  await panel.getByLabel("Go to address").fill("0xdead");
+  await panel.getByLabel("Go to address").press("Escape");
+  await expect(panel.getByLabel("Go to address")).toHaveValue("");
+  await expect(panel.locator(".memory-scroll")).toBeFocused();
 });

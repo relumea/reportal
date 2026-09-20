@@ -59,6 +59,7 @@ from reportal import (
     families,
     filetypes,
     firmware,
+    flirt_sigs,
     function_extras,
     function_triage,
     gobuildinfo,
@@ -838,6 +839,7 @@ def _tool_list_data_types(arguments: dict[str, Any]) -> dict[str, Any]:
         "count": len(selected),
         "total": len(all_types),
         "sources": data_types.source_totals(all_types),
+        "kinds": data_types.kind_totals(all_types),
         "sort": sort,
         "direction": direction,
         "types": [data_types.encode_type(row) for row in selected],
@@ -2729,6 +2731,79 @@ def _tool_apply_unstrip(arguments: dict[str, Any]) -> dict[str, Any]:
             return log.attach(change)
 
 
+def _tool_get_flirt_sigsets(arguments: dict[str, Any]) -> dict[str, Any]:
+    arch = _arg_optional_str(arguments, "arch").strip()
+    root = flirt_sigs.sigs_dir()
+    with contextlib.closing(_open()) as conn:
+        rows = flirt_sigs.list_sigsets(conn, arch=arch or None)
+    return {
+        "sigsets": rows,
+        "sigs_dir": "" if root is None else str(root),
+        "env": flirt_sigs.SIGS_DIR_ENV,
+    }
+
+
+def _tool_refresh_flirt_sigsets(_arguments: dict[str, Any]) -> dict[str, Any]:
+    root = flirt_sigs.sigs_dir()
+    if root is None or not root.is_dir():
+        raise ToolError(
+            "no-signature-dir", f"set {flirt_sigs.SIGS_DIR_ENV} to a signature checkout"
+        )
+    with contextlib.closing(_open()) as conn:
+        result = flirt_sigs.refresh(conn, root)
+        if result["added"] or result["updated"] or result["pruned"]:
+            flirt_sigs.forget_matchers()
+    return {"sigs_dir": str(root), **result}
+
+
+def _tool_get_flirt(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        payload = flirt_sigs.stored_reading(conn, binary_id)
+    if payload is None:
+        raise ToolError("no-flirt-scan", f"binary {binary_id} has no stored signature reading")
+    return payload
+
+
+def _tool_run_flirt(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    arch = _arg_optional_str(arguments, "arch").strip()
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        try:
+            return _journaled_scan_run(
+                conn,
+                binary_id,
+                store.SCAN_KIND_FLIRT,
+                lambda: flirt_sigs.run_flirt(conn, binary_id=binary_id, arch=arch),
+            )
+        except flirt_sigs.FlirtError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
+def _tool_apply_flirt(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    name = _arg_str(arguments, "name")
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                change = journal.journaled_name_change(
+                    conn,
+                    log,
+                    function_id,
+                    lambda: flirt_sigs.apply_proposal(conn, function_id=function_id, new_name=name),
+                )
+            except KeyError as exc:
+                raise ToolError("function not found", f"no function with id {function_id}") from exc
+            except flirt_sigs.ManualNameError as exc:
+                raise ToolError("manual-name", str(exc)) from exc
+            except ValueError as exc:
+                raise ToolError("invalid name", str(exc)) from exc
+            return log.attach(change)
+
+
 def _tool_run_summary(arguments: dict[str, Any]) -> dict[str, Any]:
     return _store_ai_artifact(_arg_int(arguments, "function_id"), llm.AI_KIND_SUMMARY)
 
@@ -3930,6 +4005,7 @@ def _tool_run_auto(arguments: dict[str, Any]) -> dict[str, Any]:
                 ),
                 max_tasks=_arg_optional_int(arguments, "max_tasks", auto_mode.DEFAULT_MAX_TASKS),
                 disabled=disabled,
+                goal=_arg_optional_str(arguments, "goal", ""),
             )
         except ValueError as exc:
             raise ToolError("invalid params", str(exc)) from exc
@@ -4533,12 +4609,13 @@ def _tool_list_api_keys(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_create_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
     user_id = _arg_int(arguments, "user_id")
     name = _arg_str(arguments, "name")
+    read_only = _arg_optional_bool(arguments, "read_only", False)
     with contextlib.closing(_open()) as conn:
         if auth.get_user(conn, user_id) is None:
             raise ToolError(auth.ERROR_USER_NOT_FOUND, f"no user with id {user_id}")
         with journal.journaled(conn, journal.new_action()) as log:
             try:
-                key, token = auth.create_api_key(conn, user_id, name)
+                key, token = auth.create_api_key(conn, user_id, name, read_only=read_only)
             except auth.AuthError as exc:
                 raise ToolError(exc.code, exc.detail) from exc
             journal.journaled_create(
@@ -4548,6 +4625,27 @@ def _tool_create_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
                 description=f"minted API key {key['name']} for user {user_id}",
             )
             return log.attach({**key, "token": token})
+
+
+def _tool_rename_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
+    key_id = _arg_int(arguments, "key_id")
+    name = _arg_str(arguments, "name")
+    with contextlib.closing(_open()) as conn:
+        if auth.get_api_key(conn, key_id) is None:
+            raise ToolError(auth.ERROR_API_KEY_NOT_FOUND, f"no API key with id {key_id}")
+        with journal.journaled(conn, journal.new_action()) as log:
+            journal.journaled_rows(
+                conn,
+                log,
+                table=auth.KEY_TABLE,
+                where="id = ?",
+                params=(key_id,),
+                description=f"renamed API key {key_id}",
+            )
+            try:
+                return log.attach(auth.rename_api_key(conn, key_id, name))
+            except auth.AuthError as exc:
+                raise ToolError(exc.code, exc.detail) from exc
 
 
 def _tool_revoke_api_key(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5512,8 +5610,9 @@ def _tool_requeue_analysis(arguments: dict[str, Any]) -> dict[str, Any]:
                 key=["id"],
                 description=f"logged the requeue of analysis {analysis_id}",
             )
+            queued = jobs.queue_stored_scans(conn, log, analysis_id)
     assert updated is not None, "the row was just read"
-    return log.attach(updated)
+    return log.attach({**updated, "jobs": queued})
 
 
 def _tool_list_models(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -7555,7 +7654,7 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "run_auto",
-            "Decompose a binary's unmatched functions into batches, work them with a worker"
+            "Decompose a binary's functions into batches, work them with a worker"
             " and return the run with its coverage delta. A dry run unless execute is true.",
             _object(
                 {
@@ -7567,6 +7666,10 @@ def builtin_tools() -> tuple[Tool, ...]:
                     "max_attempts": _int("Attempts per function."),
                     "max_tasks": _int("Maximum task rows the run creates."),
                     "disabled": _array("Worker names to refuse.", _str("A worker name.")),
+                    "goal": _str(
+                        "Free-form objective a goal-directed worker works toward; plans every"
+                        " function of the binary, not only the unmatched ones."
+                    ),
                 },
                 ("binary_id",),
             ),
@@ -7930,13 +8033,33 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "create_api_key",
             "Mint one named extra key for a user; the token is returned once and"
-            " counts toward the organisation plan's max_api_keys. Journaled.",
+            " counts toward the organisation plan's max_api_keys. Journaled."
+            " A read_only key refuses HTTP writes and /mcp.",
             _object(
-                {"user_id": _int("User id."), "name": _str("Label for this key.")},
+                {
+                    "user_id": _int("User id."),
+                    "name": _str("Label for this key."),
+                    "read_only": _bool(
+                        "When true, HTTP writes and /mcp answer 403. Default false."
+                    ),
+                },
                 ("user_id", "name"),
             ),
             _WRITE,
             _tool_create_api_key,
+        ),
+        Tool(
+            "rename_api_key",
+            "Rename one named extra key; the token is unchanged. Journaled and revertible.",
+            _object(
+                {
+                    "key_id": _int("Named key id."),
+                    "name": _str("New label for this key."),
+                },
+                ("key_id", "name"),
+            ),
+            _WRITE,
+            _tool_rename_api_key,
         ),
         Tool(
             "revoke_api_key",
@@ -8873,7 +8996,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "requeue_analysis",
-            "Put an analysis back to pending and clear its finish time; journaled and revertible.",
+            "Put an analysis back to pending and queue a job for each stored scan"
+            " that has a job kind; journaled and revertible.",
             _object({"analysis_id": _int("Analysis id.")}, ("analysis_id",)),
             _WRITE,
             _tool_requeue_analysis,

@@ -116,10 +116,11 @@ automatically and the run controls POST explicitly.
 
 The shell's own bindings (`src/App.tsx`) are the sidebar collapse
 (`Cmd/Ctrl+B`, a 64px rail whose preference is `SIDEBAR_STORAGE_KEY`), the
-per-tab view history on `Alt+Left`/`Alt+Right` (`HISTORY_STORAGE_KEY` in
-`sessionStorage`, fifty entries), `[`/`]` section cycling
+per-tab view history on `Alt+Left`/`Alt+Right` and `{`/`}` (`HISTORY_STORAGE_KEY`
+in `sessionStorage`, fifty entries), `[`/`]` section cycling
 (`keys.cycleViewSection`) and `Space` flipping a function's Disassembly and
-Control flow view (`toggleFunctionCodeView`, which the mounted `CodeSection`
+Control flow, or a diff's Disassembly and AI decompilation
+(`toggleFunctionCodeView`, which the mounted `CodeSection` or `DiffView`
 publishes).  The router's own back and forward keep working beside the in-app
 history, and `stepHistory` marks its navigation so recording does not push the
 entry the reader just left.
@@ -128,23 +129,31 @@ entry the reader just left.
 (`combo`, `scope`, `description`, `handler`): `registerShortcut` refuses a combo
 twice in one scope, a `view`-scoped binding outranks a `global` one, `mod` is
 Command on a Mac and Control elsewhere, and a sequence combo (`g d`) keeps its
-prefix armed for `PREFIX_TIMEOUT_MS`.  Two rules are unconditional: a binding
-never fires while the focus owns text (`isTypingTarget` in
-`src/keys.ts`) and none fires while a modal dialog owns the
-keyboard.  `focusViewFilter` focuses the view's filter box (the first
-`input[type="search"]` in the content area) and `moveTableRow` walks the
-tabbable rows of the view's first data table; `displayCombo` spells a combo for
-the platform.
+prefix armed for `PREFIX_TIMEOUT_MS`.  A binding never fires while the focus
+owns text (`isTypingTarget` in `src/keys.ts`) unless it sets `whenTyping`
+(`mod+enter` and Escape on a type field), and none fires while a modal dialog
+owns the keyboard.  `focusViewFilter` focuses the view's filter box (the first
+`input[type="search"]` in the content area), `focusViewFilters` focuses the
+first toolbar control (`P`), `moveTableRow` walks the tabbable rows of the
+view's first data table, `jumpTableRow` jumps to the last or first of those
+rows (`Shift+J` / `Shift+K`), `focusPanel` jumps to a named panel (`O`/`T`/
+`S`/`A`/`M`), `focusMemoryGoto` focuses the Memory address box (`Shift+G`;
+bare `g` stays the nav prefix), `clickFocusedRowAction` clicks a named button
+on that row (`R` is Rename), `clickFocusedSave` clicks Save on the focused
+type, and `discardFocusedTypeEdit` restores the field (`Escape`);
+`displayCombo` spells a combo for the platform.
 
 `src/App.tsx` registers the shell's bindings and installs the layer once:
 `mod+k` (the global search modal), `?` (the cheatsheet), one `g <key>` jump per
-sidebar view, and the `view`-scoped `j`, `k` and `/`.
+sidebar view, `{`/`}` as history aliases of `Alt+Left`/`Alt+Right`, and the
+`view`-scoped `o`/`f`/`d`/`t`/`s`/`a`/`m` analysis jumps, `shift+g` memory
+go-to, `j`, `k`, `shift+j`, `shift+k`, `r`, `/`, `p`, `mod+enter` and
+`escape`.
 `src/views/CheatsheetDialog.tsx` renders the live registry grouped by scope, so
 the documented set cannot drift from the registered one; it takes the focus on
-open, traps Tab, closes on Escape and returns the focus it took.  No binding
-exists for a control that does not: the shell has no sidebar collapse, no
-history control and no focused-row model beyond a table's tabbable rows, so
-those keys are not registered at all.
+open, traps Tab, closes on Escape and returns the focus it took.  `R` clicks
+Rename on the focused table row; a view without that button leaves the key
+inert.  `G` lives on the memory dump's address box, not the shell.
 
 `src/views/SearchModal.tsx` is the global search modal the `⌘K` binding opens,
 and `src/views/SearchResults.tsx` is the shared hit model both the modal and the
@@ -154,8 +163,12 @@ renders one keyboard-navigable row.  The modal traps focus while open (Tab
 cycles the query type rather than leaving the dialog, and a `focusin` listener
 pulls focus back), moves a roving highlight with the arrow keys, opens the
 highlighted hit with Enter or a click and returns focus to where it was on
-Escape; the Search view keeps its three-group tables, which is why the two
-surfaces share the hit model and helpers rather than a single component.
+Escape; a 64-character hex query selects the SHA-256 type.  A binary hit
+shows a 12-character SHA-256 with a copy control and the stored
+`created_at`.  A collection hit shows its member count and `created_at`.
+The Search view
+keeps its three-group tables, which is why the two surfaces share the hit
+model and helpers rather than a single component.
 
 Below 900px the shell is one column: the sidebar becomes a sticky top bar and
 its nav keeps every group label and divider in a single horizontally scrollable
@@ -216,9 +229,13 @@ metric or the dashboard follows these names:
   unlit remainder visible, fixed-position readout, a faint reference grid,
   `value={null}` renders the explicit missing state, an optional `band`
   fraction range marked along the track bottom), `Readout` (a headline
-  number with its label and unit), and `NA` / `UNAVAILABLE` for the missing
-  states.  `Panel`/`Card` take `hue` and `className`; `DataTable` takes
-  `rowClassName`.
+  number with its label and unit), `CopyValue` (optional `compact` shortens
+  a long hash; the copy control still writes the full value), `HashIdenticon`
+  (a 5x5 symmetric digest face), `NameSourceDot` (a coloured name-source
+  mark), `TypeNameLink` (a named type that exists in the model, linking to
+  `?search=`), `CodeBlock` (click the listing to copy), and `NA` / `UNAVAILABLE`
+  for the missing states.  `Panel`/`Card` take `hue` and `className`;
+  `DataTable` takes `rowClassName`.
 - **Live edge** (`src/useAsync.ts`, `src/live.ts`): a poll is the query's own
   interval, so its rate lives beside the signal it follows (`useAsync`'s fourth
   argument, a number or a function of the data that stops when the run settles),
@@ -270,9 +287,13 @@ readout flashes and fades.
 
 The Binaries view carries the batch upload control: a multiple file input, a
 collection picker and a selected-files table with one row per file (name,
-a chip tag control, a Format, ISA and Compiler select, Remove), posting `FormData`
+size and SHA-256 once the browser hashes it,
+a chip tag control, a Format, ISA and Compiler select, a Debug symbols
+file input, Extract on an archive name, Remove), posting `FormData`
 with the repeated `file` parts and the `files` JSON options to
-`POST /api/binaries`.  The response renders one line per file, a duplicate as
+`POST /api/binaries`.  A Debug symbols file on a row posts
+`POST /api/binaries/<id>/symbols` after that binary registers.  The response
+renders one line per file, a duplicate as
 `Already stored <file> as binary #N.` rather than as a failure, and the whole
 batch's journal action as a link; the list refetches and a failure renders in
 place with the error name and detail.
@@ -297,21 +318,34 @@ none); analyses (the binary's own runs from
 `GET /api/analyses?binary_id=`, newest first: each row's id, engine, created and
 finished times, status badge and the importer's log line, the scoped
 `count of total` line, an `All analyses` link to the workspace-wide view and a
-nothing-stored state for a binary no analysis exists for); binary details (auto-loads the
+nothing-stored state for a binary no analysis exists for); binary header name
+is click-to-rename (Enter saves, Escape discards) and the header shows
+the stored `created_at`, Download serves
+`GET /api/binaries/<id>/download`, PDF serves
+`GET /api/binaries/<id>/report/pdf`, Symbols serves
+`GET /api/binaries/<id>/symbols/export`, Logs and Tags jump to those panels,
+and Scope writes `PATCH /api/binaries/<id>/scope`; binary details (auto-loads the
 stored PE metadata and, for the build-identity rows, the fingerprint bundle; a
 `no-scan` response shows the nothing-stored message with a Run PE details
 control that posts and stores it; the identity table carries the PE type, base
-address and image base, entry point, checksum, resource count, import hash and
+address and image base, a clickable entry point (the function at that VA, or
+the function list filtered to it), checksum, resource count, import hash and
 export hash, and the debug-directory and Rich-header summary is kept beside it);
-hashes (auto-loads the fingerprint `GET`, with a Compute/Recompute control, and
+hashes (a collapsible heading badges how many digests are stored, auto-loads the
+fingerprint `GET`, with a Compute/Recompute control, and
 renders md5, sha1, sha256, sha512, the four SHA-3 digests, crc32 and the
-Rich-header hash as copyable mono rows); security mitigations (the `N/11`
+Rich-header hash as copyable mono rows); security mitigations (the heading
+badges `N/M`, the `N/11`
 `security_score` readout plus the 11-item checklist in portal order, each item's
 state and its raw flag name and value from the stored scan, an item with no
-source value rendering `n/a`); imports (loaded on demand, a client-side filter
-over library and function with the filtered-of-total count); exports (the stored
+source value rendering `n/a`); imports (the heading badges the stored count,
+loaded on demand, a client-side filter
+over library and function with the filtered-of-total count, each name linking
+the function list filtered to that import); exports (the heading
+badges the stored count; the stored
 export table with a filter over name, ordinal and forwarder, showing each
-export's name, absolute address, ordinal and forwarder target); sections (the
+export's name, a clickable address, ordinal and forwarder target); sections (the
+heading badges the stored count; the
 stored section table with a filter and columns for name, virtual address, file
 offset, virtual size, raw size, an entropy meter, the R/W/X protection letters
 and the full `IMAGE_SCN_*` name list); coverage map (the defrag view of the same
@@ -322,10 +356,13 @@ function, or the memory dump at that address when no function covers it; a
 section past 512 cells widens them rather than drawing more, and a binary with
 no stored functions says so instead of reading as uniformly empty); code
 signature (Authenticode state,
-signature count and signers); packer detection (auto-loads the stored file-type
+signature count and signers); relocations (the heading badges the stored
+count, plus directory presence from the pe-info scan); packer detection
+(auto-loads the stored file-type
 detection and never runs the engine on render; a `no-scan` response shows the
 nothing-stored message with a Run detector control, which posts and renders the
-packer verdict, a peak-section-entropy meter with the packed range marked, the
+packer verdict, a peak-section-entropy meter with the packed range marked, a
+per-section entropy strip (hover a cell for that section's bits/byte), the
 section count, the toolchain compiler string and the match table with each
 match's category, name, confidence and signal list); detail coverage (three
 stored-only reads: the source list from
@@ -342,10 +379,12 @@ the count: one row per scan naming its kind, its status, the inputs it ran with
 result itself left to the panel that shows that scan, through the table
 `panels/ScansPanel.tsx` shares with the analyses log drawer); unpacked files (the unpack panel, see
 below); strings (loaded on demand,
-a client-side filter with the filtered-of-total count, capped at
+a client-side filter whose placeholder states `Search N strings` with
+the filtered-of-total count, capped at
 `MAX_STRINGS_SHOWN` with the true total stated, server-side `sort`/`order`
 controls over `value` or `length`, and each row's VA and text linking to the
-Functions view filtered to the functions that reference that address); tags (a
+Functions view filtered to the functions that reference that address (clicking
+the row does the same)); tags (a
 table of tags with an add control and a per-row Remove behind an inline
 confirm); collections (the reverse read `GET /api/binaries/<id>/collections`:
 the collections holding this binary, each row naming it, its member count and
@@ -365,10 +404,12 @@ linked to that binary's detail, similarity and signal list); composition
 (auto-loads the stored analysis and never runs matching or the engine on
 render; a `no-scan` response shows the nothing-stored message with a Run
 analysis control, which posts and renders the `Matched: N / M (P%)` meter, the
-name-source and match-quality meters, the per-binary rollup (name linked to
+name-source and match-quality meters, the tags from the matched binaries,
+the per-binary rollup (name linked to
 that binary's detail, sha256, count and percent) and the per-function rows
 (name linked to its function detail, VA, size, band badge, similarity and the
-matched binary, or an explicit `No match` badge), capped at
+matched binary, or an explicit `No match` badge), an Open matching view
+link to `#/matches?function=<id>` for the first composition row, capped at
 `MAX_COMPOSITION_ROWS_SHOWN` with the true total stated); triage and report
 (View loads the stored result, surfacing `no-scan` as a muted nothing-stored
 message, while Run posts to the engine; rendering the same software-type badge
@@ -412,7 +453,9 @@ seeds the model from the stored scan, an Export path input whose Export header
 control renders the model to that path and offers a Force overwrite
 confirmation when the API answers 409 `export-exists`, and one block per type
 with its name, size and source, a member table (offset, size, member name and
-the declared type), inline rename/retype/save/remove controls per member, an
+the declared type, a named type linking to `?search=`, and a footer
+of member count, size and padding), inline
+rename/retype/save/remove controls per member, an
 add-member row, a Rename type control and a Delete type control, a History
 control that loads `GET /api/data-types/<id>/history` into a version list (each
 version naming its source, actor and time, its per-field diff and a Revert
@@ -460,11 +503,17 @@ present, a Download link to the raw read that serves that one format
 (`GET /api/binaries/<id>/remediation/<yara|snort|stix>`), or an
 artifact-specific empty state, then the Snort and YARA notes); and a link to the binary's functions.
 
-Function detail (`#/functions/<id>`) panels: header (id, VA, name, size,
-status, name_source); signature (auto-loads the stored signature through its
+Function detail (`#/functions/<id>`) panels: header (id, VA, a click-to-rename
+name, size, status, name_source, and the stored signature `prototype` with a
+copy control, or `Unknown signature` when none is stored; hover the
+prototype for the return type, parameters and calling convention, with
+named types linking `?search=`);
+signature (auto-loads
+the stored signature through its
 own GET, shows the returned `prototype`, a `signature-not-found` answer showing
 the nothing-stored hint, edits the return type and calling convention with a
-Save, and lists the parameters in a table with inline type/name/`at`/`kind`/`bits`
+Save (a named return or parameter type links to `?search=`), and lists the
+parameters in a table with inline type/name/`at`/`kind`/`bits`
 edit, per-row reorder controls that recompute the arrival locations the
 convention implies, Save, Remove and an add-parameter row, and a `History`
 toggle revealing the function's signature-edit history: one row per recorded
@@ -484,16 +533,21 @@ renders its reason, never an empty diagram); decompilation (auto-loaded,
 backend `<select>`, `POST`
 Decompile or Recompute, stored backend shown); globals, callers and callees
 (three panels sharing one on-demand `references` load, each badged with its
-count; a caller's `from_va` and a callee's target link to that function detail
+count; a caller's `from_va` and name, and a callee's target and name, link
+to that function detail
 when the binary has one at that VA, an import-slot call with no resolved name
-renders as `indirect`, and a global names its address, section and access);
+renders as `indirect`, and a global names its address (linked to Memory,
+with a copy control),
+section and access, plus Filter functions for that address);
 cross-references (its own on-demand load of `GET /api/functions/<id>/xrefs`,
 the engine's live scan rather than the stored dossier, badged with the engine's
 count and carrying one row per referencing instruction: its `from_va` as hex,
 its kind as a badge and the instruction text, with a note when the target is an
 import slot and an empty state naming the address when nothing points at it);
 matches (Apply per row, a Diff link per row to
-`#/diff/<function-id>/<candidate-id>`, candidate linked to its function detail)
+`#/diff/<function-id>/<candidate-id>`, candidate linked to its function detail,
+the candidate's stored prototype, and View function matching opening
+`#/matches?function=<id>`)
 and history (Revert per row), plus the same Comments panel with the function
 scope and a knowledge panel (`panels/KnowledgePanel.tsx`): a Query box and a
 Search documents control reading `GET /api/functions/<id>/knowledge`, which
@@ -502,9 +556,15 @@ function's own name, so the panel reports the chunk count it resolved and
 renders the shared ranked-hit list or its explicit empty state.  `Apply` and `Revert` refetch
 the panels they changed and the function header, so the new name shows.  The
 diff view (`views/DiffView.tsx`) renders the two listings side by side with
-the changed lines marked (delete/insert styling), a `kind` select
-(`decomp`/`disasm`), a normalize checkbox, the similarity and the summary
-counts, loading through the diff route.  The Functions view's filters carry several decompilation needles at once: each
+the changed lines marked (delete/insert styling), a copy control on each
+side's name, a link to that side's binary, a `kind` select (`decomp`/`disasm`),
+a normalize checkbox, Transfer
+symbol (name, signature, or both via `POST /api/functions/<id>/apply-match`),
+a Suggested names list of every recorded candidate (click applies the name),
+the similarity and the summary counts, loading through the diff route.
+The Functions view's filters draw a removable chip per active control
+(source, capability, match, size, name, VA), and carry several decompilation
+needles at once: each
 one is added with Enter, drawn as a chip with its own Remove control, and sent as
 repeated `string` parameters (any-of); an adjacent `regular expressions`
 checkbox sends `regex=true` so every needle is a pattern.  The needles travel in
@@ -591,8 +651,10 @@ each with a copy control, above the tool counts read from `GET /api/config`.
 
 The Auto view (`views/AutoView.tsx`, `#/auto` and `#/auto/<id>`) decomposes one
 binary into worker batches.  Without an id it lists the register and opens a
-row's own page on click; with one, the start form carries the worker (`offline`
-or `llm_c_source`), the concurrency (1 to 32), the functions per leaf batch (1 to
+row's own page on click; with one, the start form carries the worker (`offline`,
+`llm_c_source` or `llm_goal`), the goal (optional, at most 2000 characters, the
+objective `llm_goal` works toward), the concurrency (1 to 32), the functions per
+leaf batch (1 to
 64), the attempts per function (1 to 10), the most task rows the run may create
 (1 to 5000) and the Execute switch, each bound mirroring `auto_mode`'s, and Start
 run posts them to `POST /api/binaries/<id>/auto` (202 with the run id) and
@@ -604,7 +666,9 @@ over the task tree: each node carries its status cell, its kind, its title, the
 worker, its attempt count and the reason an outcome returned, with the attempt
 log and the child batches nested under it.  A dry run is the default and touches
 no source file and no function status; Execute writes the candidate C files into
-the rebrew project and compiles them.  Revert run (behind the confirm pattern)
+the rebrew project and compiles them, and `llm_goal` additionally writes the
+`<binary>.patched` copy holding only the byte edits the binary confirmed.  A
+stored run's goal is shown above the tree.  Revert run (behind the confirm pattern)
 posts to `POST /api/auto/runs/<id>/revert` and reports what it put back, and
 Recover run appears only while the run reads `running`, closing a run a dead
 process left behind and reporting the tasks it interrupted and the writes it kept
@@ -613,15 +677,23 @@ revertible.
 The Matches view (`views/MatchesView.tsx`, `#/matches`) starts from a function
 id: Load reads that function's binary through `GET /api/functions/<id>` and then
 the candidates recorded for it from `GET /api/binaries/<id>/matches`, each row
-carrying the source and candidate function (both linked), the similarity, its
-band, the confidence and the ISA pair (`source_arch` / `candidate_arch`,
-flagged when they differ).  Match settings opens the sheet the next run uses: the
+carrying the source and candidate function (both linked), the source
+name-source, the candidate's
+owning binary (linked), the similarity, its band, the confidence and the ISA
+pair (`source_arch` / `candidate_arch`, flagged when they differ).  A function
+with no recorded candidate is a `No match` row.  Clicking a
+row (not a control) opens the
+diff.  Match settings opens the sheet the next run uses: the
 0-100 similarity floor, the 0-1 confidence floor, the most candidates kept per
 function (the API's `top`, 1 or more, default 10), whether the binary's own
 functions may be candidates, and the platform, architecture, binary and
-collection scopes; Run match posts them to `POST /api/binaries/<id>/match` and
+collection scopes (`?binary_ids=` prefills the binary scope); Run match
+posts them to `POST /api/binaries/<id>/match` and
 renders the run's function, matched and pair counts, the note it carries and the
-journal action the run recorded, then reloads the rows.  Every value that
+journal action the run recorded, then reloads the rows.  The toolbar badge
+reads `Matched: N / M (P%)` from unique source functions over the binary
+total.  Clicking a name-source or quality-legend band filters the table.
+Every value that
 differs from its default shows as a chip above the sheet and clearing the chip
 restores the default, and the transfer panel copies names and signatures from
 the chosen rows through `POST /api/binaries/<id>/matches/transfer` (a dry run is
@@ -629,7 +701,10 @@ the default, so the report is read before anything is written).
 
 The analyses list carries Owner and Seen by columns and a Workspace filter
 (personal, team or public) beside the status and search filters, all of them in
-the route hash, so a filtered list is a link.  The scope is the owning binary's,
+the route hash, so a filtered list is a link.  Clicking a row (not a control)
+opens that binary, or the log drawer when the row is `failed`.  Each row
+downloads the stored binary through
+`GET /api/binaries/<id>/download`.  The scope is the owning binary's,
 which is the object reportal stores a team on, so the write stays
 `PATCH /api/binaries/<id>/scope` (`reportal binary-scope`) rather than a second
 control on the row.
@@ -641,7 +716,25 @@ software-type totals and any note the payload carries.  The bars read
 `GET /api/stats/series` and are computed from stored rows only, so the panel
 never runs an engine and cannot disagree with the lists beside it.
 
-The Data types panel opens with a provenance strip (one toggle per label, carrying the count over the whole model), a Source filter beside the kind and search filters, a Sort select (name or size) with an asc/desc Direction select, and a page-at-a-time list with a Load more control; its six controls live in the route hash, so a filtered and ordered model is a link.  The order is the route's (`?sort=&direction=`), and a type whose size the model states as zero, which is how an unknown one reads, sorts last in either direction.  It also carries a declaration box with Create from declarations and
+The Data types panel opens with a provenance strip (one toggle per label,
+carrying the count over the whole model), a kind strip (one toggle per
+declaration kind, carrying the count over the whole model), a coloured source
+dot on each type
+card, a Source filter beside the search filters (the search
+placeholder states `Search N types or namespaces`, and the needle matches
+the name, the namespace or `namespace::name`),
+a Sort select (name or size) with an asc/desc Direction select, a
+namespace tree whose descendants grey out when a branch is ticked, a
+References control whose Referenced-by names link the type list, a
+pointer/typedef/array target that walks each hop's kind and size, a
+function type's Returns row and parameter table, Clear
+when a filter is on (the count is how many, and it leaves the search
+text), and a
+page-at-a-time list with a Load more control; its six controls live in the
+route hash, so a filtered and ordered model is a link.  The order is the
+route's (`?sort=&direction=`), and a type whose size the model states as
+zero, which is how an unknown one reads, sorts last in either direction.  It
+also carries a declaration box with Create from declarations and
 Update from declarations, posting the pasted C to `POST` or `PUT
 /api/analyses/<id>/data-types` for the binary's latest analysis (the route is
 analysis-scoped) and rendering the created/updated/skipped counts.  The External view
@@ -669,12 +762,15 @@ and the toolbar carries Run pipeline/Re-run and Revert run (which posts the
 revert route and refreshes the history panel).  The Functions view
 (`views/FunctionsView.tsx`, `#/functions` and `#/binaries/<id>/functions`)
 picks a binary, lists its functions with per-row Matches, History and Rename
-actions, and carries a filter panel plus sortable headers: a name search (a
-substring of the function's name), one address (decimal or `0x` hex, which is
-how an analyst has a function they have no name for), the name source,
+actions, and carries a filter panel plus sortable headers: a coloured
+name-source dot beside each name, a name search whose placeholder states
+the total (`Search N functions`) and which narrows as you type, one address
+(decimal or `0x` hex, which is how an analyst has a function they have no
+name for), the name source,
 capability, match state, a size range and a string reference are sent to the
 server as query parameters (`GET /api/binaries/<id>/functions`), the table
-reports the filtered-of-total counts and the empty state names the filter, and
+reports the filtered-of-total counts, Clear states how many filters are on,
+and the empty state names the filter, and
 the sort headers toggle a column and its direction.  The filter and sort state
 lives in the route's hash query (`#/binaries/<id>/functions?sort=size&order=desc`),
 the same convention the router encodes route state with, so a filtered list is
@@ -682,7 +778,8 @@ shareable and survives a reload; the router parses a hash's `?query` into
 `RouteState.query` for the list views.  It also carries a `Bulk actions` panel:
 a prefix input with a
 replace-existing-prefix toggle that posts `POST /api/functions/bulk` for the
-selected rows and reports how many renamed and how many were skipped.
+selected rows (a checked row keeps a left border) and reports how many renamed
+and how many were skipped.
 
 The Tags view (`views/TagsView.tsx`, `#/tags`, in the Targets group) is the
 register's tag vocabulary: every tag with how many binaries and how many
@@ -744,11 +841,19 @@ continuous hex dump: one scrollable region in virtual-address order whose span
 comes from the engine's own section map, with only the rows on screen rendered
 and the bytes read 256 at a time as the viewport approaches a window.  A region
 no section backs is a stated `gap` row, the same one the paged mode renders, so
-the dump never shows invented zeros.  The `Columns` control switches the virtual
+the dump never shows invented zeros.  Zero bytes in the window dump and the
+paged dump are dimmed (`.byte-zero`).  The window dump names Offset and
+Virtual per row (a file read fills Offset; a VA read fills Virtual).
+Enter on the window address box reads the window; Esc clears it.
+The `Columns` control switches the virtual
 and file-offset readings (the file offset is shown beside the virtual address),
-`G` focuses the address box, `Tab` switches the column and the choice is
+`G` focuses the address box (the placeholder is the PE entry point when
+stored, else `0x401000`), `Tab` switches the column, Enter jumps and
+clears, Esc dismisses without jumping, Esc on a dump clears the
+selection, and the choice is
 remembered in `localStorage` under `MEMORY_COLUMN_STORAGE_KEY`.  The section
-table's virtual-address cell links here with `?memory=<address>`, which lands on
+table's virtual-address cell links here with `?memory=<address>`, and the
+file-offset cell with `?memory=<offset>&memoryKind=file`, which lands on
 and selects that row; the smoke's `check_memory_dump` and
 `web/tests/memory-page.spec.ts` assert the landing, the reading and the `G`
 binding.
@@ -797,8 +902,15 @@ The binary detail's Composition panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/composition` and runs it over `POST`, whose body is the
 panel's two scope fields: a comma-separated binary id list and a collection id
 list, empty meaning the whole register.  The panel renders the headline match
-meter, the name-source and quality breakdowns, the hosted category table (each
-category's count, percent and top binaries) and the per-binary rollup, so the
+meter, the name-source breakdown (each source links the function list
+filtered to that label), the quality breakdowns (click a band to filter the
+function rows), the hosted category table (each
+category's count, percent and top binaries, each binary a link plus Scope
+matching), the tags
+pulled from those binaries (each linking the register filtered to that tag)
+and the
+per-binary rollup (each binary a link, plus Scope matching that opens
+Matches scoped to that binary), so the
 scope narrows what the run reads rather than what the matching did.
 
 The binary detail's Sandbox detonation panel (`panels/BinaryPanels.tsx`) reads
@@ -825,8 +937,11 @@ the notes are on the page an operator already opens to manage identity.
 
 The Users view's identity half carries the team structure.  When token auth
 is on and this browser has a user, an API keys panel lists named extra keys
-(`GET /api/iam/keys`, with `last_used_at` empty until the key authenticates),
-mints one (`POST /api/iam/keys`, shown once) and
+(`GET /api/iam/keys`, with `last_used_at` empty until the key authenticates
+and an Access column for `read_only`),
+mints one (`POST /api/iam/keys`, shown once, optional read-only checkbox),
+renames one (`PATCH /api/iam/keys/<id>`, Enter in the name field; the token is
+unchanged) and
 revokes one (`DELETE /api/iam/keys/<id>`); the login token counts toward the
 plan cap and is rotated from the user table, not this panel.  When token auth
 is on and this browser has no user, a Create a workspace panel POSTs
@@ -877,14 +992,21 @@ payload reports the register holds, a Language select built from the
 Order select over `store.BINARY_ORDERS`, with a Clear control that resets all
 six and is disabled while none is set.  Every one of them lives in the route
 hash (`#/binaries?search=&tag=&format=&language=&compiler=&order=`), the
-convention the Analyses view uses, so a filtered register is a link, and the
-panel's subtitle reads `N of M binaries` against the payload's unfiltered
-`total`.  Each row shows the stored `format`, `arch`, recovered `language` and
-recovered `compiler` (n/a when unknown).
+convention the Analyses view uses, so a filtered register is a link.  The view
+reads one page at a time (`?limit=`, `BINARY_PAGE_SIZE` rows) and appends the
+next page with a Load more control below the table, which the panel's subtitle
+and the control's `N of M loaded` line count against the payload's `matched`
+(the rows the filter kept).  A write re-reads the first page and drops the
+appended ones, so a deleted or renamed row never sits in a stale page.  Each row
+shows a hash identicon beside the name, a lock badge when the binary is
+team-scoped, a compact SHA-256 with a copy control, the stored `format`,
+`arch`, recovered `language` and recovered `compiler` (n/a when unknown),
+and the stored `created_at`.
 The register's own
 two pickers (the archive to extract, the family's reference binary) read the
 unfiltered list, so a filter narrows the table without hiding a binary from a
-form that needs one.
+form that needs one; both fetch it through `?summary=true`, so the picker reads
+an id and a name per row instead of every column of the register.
 
 The Binaries view (`views/BinariesView.tsx`) carries the scope of each row as a
 select in the table: `public` for the whole workspace, or a team that owns it
@@ -932,15 +1054,17 @@ Show field for the page size (bounded by `store.MAX_ANALYSIS_LIMIT`, and left
 out of the hash while it is the default) and a Clear control; every one of them
 is in the route hash, so a filtered list is shareable.  The count line reads
 `N of M analyses` and, while the bound is hiding rows, says so and names the
-Show control that lists the rest.  Each row's Actions cell carries View log, Re-analyse (the cluster D
-requeue, which puts the analysis back to pending and clears its finish time) and
+Show control that lists the rest.  Each row's Actions cell carries View log,
+Re-analyse (the cluster D requeue, which puts the analysis back to pending and
+queues jobs for stored scans) and
 Delete, and the bulk toolbar adds Copy hashes beside Add tag, Remove tag and
 Delete.
 
 The Analyses view's log drawer (`views/AnalysesView.tsx`) opens with the
 lifecycle read for that analysis: its status badge, engine, created and finished
 times and the scan and log counts by status and severity, beside an Add log
-entry control, a Requeue button and links to the function map, the re-run
+entry control, a Requeue button (queues stored scans that have a job kind) and
+links to the function map, the re-run
 parameters and the raw bytes.  The writes go through the same routes the CLI and
 MCP use.  Below the lifecycle block the drawer renders the analysis's imported
 functions (`GET /api/analyses/<id>/imported-functions`): one row per import stub
@@ -953,15 +1077,20 @@ its kind, status, the inputs it ran with and when it ran, rendered by the same
 table the binary detail's Scans panel uses (`panels/ScansPanel.tsx`), which is
 what makes an analysis that is not the newest one inspectable.
 
-The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) lists each analysis's
-id, binary (linked to its detail page), platform badges, binary size, engine,
+The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) carries an
+`Upload File` action that opens `#/binaries`, then lists each analysis's
+id, binary (linked to its detail page, with a hash identicon and a lock
+badge when the binary is team-scoped), a compact SHA-256 with a copy
+control, platform badges, binary size, engine,
 created time, status badge (the design language's status hues: `done` is the
 match green, `failed` the fail red, `processing` the live hue) and the owning
 binary's tags as an editor: each tag is a chip with its own remove control and
 the cell carries an add field, both of which post the whole set through
 `PATCH /api/analyses/<id>/tags` (the binary's tags are what reportal tags, so a
-change here and a change in the binary's Tags panel are one write).  A status select, an order select and a search box (the binary's name, its
-SHA-256 or the engine label) write the hash query (`#/analyses?status=failed&search=notepad`), the table states
+change here and a change in the binary's Tags panel are one write).  A status
+select, an order select and a search box (the binary's name, its SHA-256 or
+the engine label) write the hash query
+(`#/analyses?status=failed&search=notepad`), the table states
 `N of M analyses` so a filter is distinguishable from a small project, and a
 filter that matched nothing says so instead of rendering an empty table.  Each
 row has a View log control that opens an on-demand drawer over

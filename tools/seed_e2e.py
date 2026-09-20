@@ -38,7 +38,7 @@ _REPO_ROOT = next(
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from reportal import auth, data_types, store  # noqa: E402
+from reportal import auth, data_types, signatures, store  # noqa: E402
 from tools import smoke_spa  # noqa: E402
 
 WORKSPACE_RELATIVE = Path(".scratch") / "e2e-web"
@@ -76,6 +76,7 @@ TYPES: tuple[dict[str, object], ...] = (
             {"name": "magic", "type": "unsigned short", "pointer": False, "count": None},
             {"name": "flags", "type": "unsigned int", "pointer": False, "count": None},
             {"name": "name", "type": "char", "pointer": False, "count": 32},
+            {"name": "first", "type": "NP_ENTRY", "pointer": True, "count": None},
         ),
         "source": "scan",
     },
@@ -114,7 +115,7 @@ TYPES: tuple[dict[str, object], ...] = (
         "name": "WIN_HANDLE",
         "kind": data_types.KIND_POINTER,
         "namespace": "winnt",
-        "target": "void",
+        "target": "WIN_DWORD",
         "source": "manual",
     },
     {
@@ -122,6 +123,13 @@ TYPES: tuple[dict[str, object], ...] = (
         "kind": data_types.KIND_STRUCT,
         "namespace": "winnt::kernel",
         "members": ({"name": "owner", "type": "unsigned int", "pointer": False, "count": None},),
+        "source": "manual",
+    },
+    {
+        "name": "NP_CALLBACK",
+        "kind": data_types.KIND_FUNCTION,
+        "target": "WIN_DWORD",
+        "members": ({"name": "entry", "type": "NP_ENTRY", "pointer": True, "count": None},),
         "source": "manual",
     },
 )
@@ -173,6 +181,9 @@ def seed(workspace: Path) -> dict[str, object]:
         # Every stored type name, not just the ones seeded here: the workspace
         # builder stores its own, and the panel lists all of them.
         stored_types = [row["name"] for row in store.list_data_types(conn, int(ids["binary_id"]))]
+        signatures.set_parameter(
+            conn, int(ids["function_id"]), index=0, type_text="WIN_DWORD"
+        )
         large_binary_id = _seed_large_binary(conn)
         stale_run = _seed_stale_run(conn, large_binary_id)
         team = auth.create_team(conn, name=TEAM_NAME)

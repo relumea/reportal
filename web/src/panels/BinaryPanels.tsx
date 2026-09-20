@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { Link } from "react-router";
 
-import { api } from "../api";
+import { BINARY_OPTIONS_PATH, api } from "../api";
 import {
   Badge,
   Button,
@@ -17,6 +17,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  HashIdenticon,
   KeyValue,
   Loading,
   Muted,
@@ -35,6 +36,7 @@ import {
 } from "../components";
 import { ENTROPY_MAX, PACKED_ENTROPY_THRESHOLD, qualityHue, statusEntity } from "../design";
 import type { HueFamily } from "../design";
+import { focusPanel } from "../keys";
 import { panelKey, refreshPanel, useLazyPanel, usePanel } from "../panelCache";
 import { useAsync } from "../useAsync";
 import {
@@ -76,10 +78,12 @@ import type {
   ArtifactRatings,
   BehaviorScan,
   Binary,
+  BinaryOption,
   CapabilitiesResult,
   CompositionFunctionRow,
   CompositionCategory,
   CompositionResult,
+  CompositionTag,
   LibraryResult,
   CryptoResult,
   DetectResult,
@@ -95,6 +99,7 @@ import type {
   FunctionRow,
   FunctionTriageResult,
   HardeningScan,
+  ImportEntry,
   ImportTable,
   LineageComparison,
   LineageList,
@@ -129,11 +134,20 @@ import type {
   UnpackResult,
   UnstripProposal,
   UnstripResult,
+  TeamsPayload,
 } from "../types";
 
 // Strings rendered per load; the engine can return tens of thousands.  The
 // panel always states the true total.
 const MAX_STRINGS_SHOWN = 500;
+
+function CountTitle({ label, count }: { label: string; count: ReactNode }): ReactNode {
+  return (
+    <>
+      {label} <Badge>{count}</Badge>
+    </>
+  );
+}
 
 // Raw-file digests the hashes card renders, in display order.
 const HASH_FIELDS = [
@@ -220,8 +234,30 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
   const [name, setName] = useState(binary.name);
   const [notes, setNotes] = useState(binary.notes ?? "");
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
+  const skipBlur = useRef(false);
   const key = panelKey("binary", binary.id);
+  const teams = useAsync(() => api<TeamsPayload>("/teams"), []);
+
+  const setScope = async (value: string): Promise<void> => {
+    setActionError(null);
+    setBusy(true);
+    try {
+      await api(`/binaries/${binary.id}/scope`, {
+        method: "PATCH",
+        json:
+          value === "public"
+            ? { visibility: "public" }
+            : { visibility: "team", team_id: Number(value) },
+      });
+      refreshPanel(key, () => api<Binary>(`/binaries/${binary.id}`));
+    } catch (failure) {
+      setActionError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     setName(binary.name);
@@ -233,7 +269,11 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
     const nextNotes = notes.trim();
     const nameChanged = Boolean(trimmed) && trimmed !== binary.name;
     const notesChanged = nextNotes !== (binary.notes ?? "");
-    if (!nameChanged && !notesChanged) return;
+    if (!nameChanged && !notesChanged) {
+      setEditing(false);
+      setName(binary.name);
+      return;
+    }
     setActionError(null);
     setBusy(true);
     try {
@@ -241,6 +281,7 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
       if (nameChanged) body.name = trimmed;
       if (notesChanged) body.notes = nextNotes;
       await api(`/binaries/${binary.id}`, { method: "PATCH", json: body });
+      setEditing(false);
       refreshPanel(key, () => api<Binary>(`/binaries/${binary.id}`));
     } catch (failure) {
       setActionError(failure);
@@ -255,7 +296,49 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         <a className="back-link" href="#/binaries">
           Back to binaries
         </a>
-        <h2 className="detail-title">{binary.name}</h2>
+        <h2 className="detail-title">
+          {binary.sha256 ? <HashIdenticon hash={binary.sha256} /> : null}
+          {editing ? (
+            <input
+              aria-label="Binary name"
+              value={name}
+              disabled={busy}
+              onChange={(event) => setName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  skipBlur.current = true;
+                  void save();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  skipBlur.current = true;
+                  setEditing(false);
+                  setName(binary.name);
+                }
+              }}
+              onBlur={() => {
+                if (skipBlur.current) {
+                  skipBlur.current = false;
+                  return;
+                }
+                void save();
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="detail-title-name"
+              title="Rename"
+              onClick={() => {
+                setName(binary.name);
+                setEditing(true);
+              }}
+            >
+              {binary.name}
+            </button>
+          )}
+        </h2>
         <p className="detail-subtitle">
           Binary #{binary.id} · {binary.path || NA}
         </p>
@@ -266,9 +349,13 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
           <Badge mono>{binary.arch || NA}</Badge>
           <Badge mono>{binary.size.toLocaleString()} bytes</Badge>
           <Badge mono>{binary.function_count} functions</Badge>
+          <Badge mono>
+            {binary.visibility === "team" ? "team" : "public"}
+          </Badge>
+          {binary.created_at ? <Badge mono>{binary.created_at}</Badge> : null}
         </div>
         <div className="detail-facts">
-          <CopyValue value={binary.sha256} />
+          <CopyValue value={binary.sha256} compact />
         </div>
         {binary.rebrew_project === undefined ? null : binary.rebrew_project ? (
           <Muted>rebrew project: {binary.rebrew_project}</Muted>
@@ -280,15 +367,6 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         )}
       </div>
       <div className="panel-actions">
-        <Field label="Display name">
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void save();
-            }}
-          />
-        </Field>
         <Field label="Notes">
           <input
             value={notes}
@@ -311,6 +389,46 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         <a className="btn btn-ghost" href={`#/binaries/${binary.id}/functions`}>
           Functions
         </a>
+        <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/download`}>
+          Download
+        </a>
+        <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/report/pdf`}>
+          PDF
+        </a>
+        <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/symbols/export`}>
+          Symbols
+        </a>
+        <Button
+          tone="ghost"
+          onClick={() => {
+            focusPanel("Analyses");
+          }}
+        >
+          Logs
+        </Button>
+        <Button
+          tone="ghost"
+          onClick={() => {
+            focusPanel("Tags");
+          }}
+        >
+          Tags
+        </Button>
+        <Field label="Scope">
+          <select
+            aria-label={`scope of ${binary.name}`}
+            value={binary.visibility === "team" ? String(binary.owner_team_id ?? "") : "public"}
+            disabled={busy}
+            onChange={(event) => void setScope(event.target.value)}
+          >
+            <option value="public">public</option>
+            {(teams.data?.teams ?? []).map((team) => (
+              <option key={team.id} value={team.id}>
+                team {team.name}
+              </option>
+            ))}
+          </select>
+        </Field>
         <a className="btn btn-ghost" href={`/reports/${binary.id}/index.html`}>
           Report site
         </a>
@@ -351,6 +469,7 @@ export function IdentityPanel({ binaryId }: { binaryId: number }): ReactNode {
       <PanelBody entry={entry} hint="Loading the PE details" noScanHint={NO_SCAN_MESSAGES.peInfo}>
         {(data) => (
           <IdentityBody
+            binaryId={binaryId}
             result={data}
             fingerprint={fingerprint?.state === "ready" ? fingerprint.data : undefined}
           />
@@ -361,9 +480,11 @@ export function IdentityPanel({ binaryId }: { binaryId: number }): ReactNode {
 }
 
 function IdentityBody({
+  binaryId,
   result,
   fingerprint,
 }: {
+  binaryId: number;
   result: PeInfo;
   fingerprint?: Fingerprint;
 }): ReactNode {
@@ -378,7 +499,14 @@ function IdentityBody({
     ],
     ["base address", result.image_base === undefined ? NA : hex(result.image_base)],
     ["image base", result.image_base === undefined ? NA : hex(result.image_base)],
-    ["entry point", result.entry_point === undefined ? NA : hex(result.entry_point)],
+    [
+      "entry point",
+      result.entry_point === undefined ? (
+        NA
+      ) : (
+        <EntryPointLink binaryId={binaryId} va={result.entry_point} />
+      ),
+    ],
     ["checksum", result.checksum === undefined ? NA : hex(result.checksum)],
     ["number of resources", result.resource_count ?? NA],
     ["import hash", <CopyValue value={fingerprint?.imphash} />],
@@ -402,6 +530,24 @@ function IdentityBody({
   );
 }
 
+function EntryPointLink({ binaryId, va }: { binaryId: number; va: number }): ReactNode {
+  const shown = hex(va);
+  const functions = usePanel<FunctionListPage>(
+    panelKey("binary", binaryId, "functions", "va", va),
+    () => api<FunctionListPage>(`/binaries/${binaryId}/functions?va=${va}&limit=1`),
+  );
+  const hit = functions?.state === "ready" ? functions.data.functions[0] : undefined;
+  const href =
+    hit !== undefined
+      ? `#/functions/${hit.id}`
+      : `#/binaries/${binaryId}/functions?va=${encodeURIComponent(shown)}`;
+  return (
+    <a href={href} title="Open the function at this address">
+      {shown}
+    </a>
+  );
+}
+
 export function HashesPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "fingerprint");
   const path = `/binaries/${binaryId}/fingerprint`;
@@ -415,8 +561,18 @@ export function HashesPanel({ binaryId }: { binaryId: number }): ReactNode {
   };
   return (
     <Panel
-      title="Hashes"
+      title={
+        <CountTitle
+          label="Hashes"
+          count={
+            entry?.state === "ready"
+              ? [...HASH_FIELDS, ...BUILD_HASH_FIELDS].filter((field) => entry.data[field]).length
+              : NA
+          }
+        />
+      }
       subtitle="Raw-file digests and build-identity hashes, computed through the engine."
+      collapsible
       actions={
         <Button tone="primary" pending={busy} onClick={recompute}>
           {entry?.state === "ready" ? "Recompute" : "Compute"}
@@ -497,9 +653,19 @@ export function SecurityMitigationsPanel({ binaryId }: { binaryId: number }): Re
   const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   return (
     <Panel
-      title="Security mitigations"
+      title={
+        <CountTitle
+          label="Security mitigations"
+          count={
+            entry?.state === "ready" && entry.data.security_score
+              ? `${entry.data.security_score.enabled}/${entry.data.security_score.total}`
+              : NA
+          }
+        />
+      }
       subtitle="The loader checks the portal scores, with the raw DllCharacteristics flag behind each."
       hue="near"
+      collapsible
     >
       <PanelBody
         entry={entry}
@@ -579,15 +745,28 @@ export function ExportsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
   const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   return (
-    <Panel title="Exports" subtitle="The PE export table; a forwarded export keeps its target.">
+    <Panel
+      title={
+        <CountTitle
+          label="Exports"
+          count={
+            entry?.state === "ready"
+              ? (entry.data.export_count ?? entry.data.exports?.length ?? NA)
+              : NA
+          }
+        />
+      }
+      subtitle="The PE export table; a forwarded export keeps its target."
+      collapsible
+    >
       <PanelBody entry={entry} hint="Loading the exports" noScanHint={NO_SCAN_MESSAGES.peInfo}>
-        {(data) => <ExportsBody result={data} />}
+        {(data) => <ExportsBody result={data} binaryId={binaryId} />}
       </PanelBody>
     </Panel>
   );
 }
 
-function ExportsBody({ result }: { result: PeInfo }): ReactNode {
+function ExportsBody({ result, binaryId }: { result: PeInfo; binaryId: number }): ReactNode {
   const [filter, setFilter] = useState("");
   const exports = Array.isArray(result.exports) ? result.exports : null;
   if (exports === null) {
@@ -620,7 +799,8 @@ function ExportsBody({ result }: { result: PeInfo }): ReactNode {
           {
             label: "Address",
             mono: true,
-            render: (row) => (row.va === null ? NA : hex(row.va)),
+            render: (row) =>
+              row.va === null ? NA : <EntryPointLink binaryId={binaryId} va={row.va} />,
           },
           { label: "Ordinal", numeric: true, render: (row) => row.ordinal ?? NA },
           { label: "Forwarder", mono: true, render: (row) => row.forwarder ?? NA },
@@ -663,7 +843,13 @@ export function SectionsPanel({
   const coverage = coverageEntry?.state === "ready" ? coverageEntry.data : undefined;
   return (
     <Panel
-      title="Sections"
+      title={
+        <CountTitle
+          label="Sections"
+          count={entry?.state === "ready" ? (entry.data.sections?.length ?? NA) : NA}
+        />
+      }
+      collapsible
       subtitle="Section geometry, entropy and the full IMAGE_SCN_* characteristics."
     >
       <PanelBody entry={entry} hint="Loading the sections" noScanHint={NO_SCAN_MESSAGES.peInfo}>
@@ -762,7 +948,21 @@ function SectionsBody({
               );
             },
           },
-          { label: "File offset", mono: true, render: (row) => hex(row.raw_offset) },
+          {
+            label: "File offset",
+            mono: true,
+            render: (row) => {
+              if (basePath === undefined) return hex(row.raw_offset);
+              return (
+                <Link
+                  className="address-link"
+                  to={`${basePath}?memory=${hex(row.raw_offset)}&memoryKind=file`}
+                >
+                  {hex(row.raw_offset)}
+                </Link>
+              );
+            },
+          },
           { label: "Virtual size", key: "virtual_size", numeric: true },
           { label: "Raw size", key: "raw_size", numeric: true },
           { label: "Entropy", render: (row) => <SectionEntropyCell section={row} /> },
@@ -975,7 +1175,21 @@ export function CodeSignaturePanel({ binaryId }: { binaryId: number }): ReactNod
   const key = panelKey("binary", binaryId, "pe-info");
   const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   return (
-    <Panel title="Code signature" subtitle="Authenticode state and the signers LIEF exposes.">
+    <Panel
+      title={
+        <CountTitle
+          label="Code signature"
+          count={
+            entry?.state === "ready"
+              ? (entry.data.authenticode?.signature_count ??
+                (entry.data.authenticode?.present ? 1 : 0))
+              : NA
+          }
+        />
+      }
+      subtitle="Authenticode state and the signers LIEF exposes."
+      collapsible
+    >
       <PanelBody entry={entry} hint="Loading the code signature" noScanHint={NO_SCAN_MESSAGES.peInfo}>
         {(data) => <CodeSignatureBody result={data} />}
       </PanelBody>
@@ -1012,6 +1226,50 @@ const SECTION_ACCESS = [
 
 function sectionProtections(section: PeSection): string {
   return SECTION_ACCESS.map(([access, letter]) => (section[access] ? letter : "-")).join("");
+}
+
+export function RelocationsPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "pe-info");
+  const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  return (
+    <Panel
+      title={
+        <CountTitle
+          label="Relocations"
+          count={entry?.state === "ready" ? (entry.data.counts?.relocations ?? NA) : NA}
+        />
+      }
+      subtitle="Relocation directory presence and count from the stored PE scan."
+      collapsible
+    >
+      <PanelBody entry={entry} hint="Loading the relocations" noScanHint={NO_SCAN_MESSAGES.peInfo}>
+        {(data) => <RelocationsBody result={data} />}
+      </PanelBody>
+    </Panel>
+  );
+}
+
+function RelocationsBody({ result }: { result: PeInfo }): ReactNode {
+  const present = result.presence?.relocations;
+  const count = result.counts?.relocations;
+  if (present === undefined && count === undefined) {
+    return (
+      <EmptyState>
+        The stored PE details carry no relocation directory. Run PE details.
+      </EmptyState>
+    );
+  }
+  return (
+    <KeyValue
+      rows={[
+        [
+          "directory",
+          present ? <Badge tone="ok">present</Badge> : <Badge>absent</Badge>,
+        ],
+        ["relocations", count ?? 0],
+      ]}
+    />
+  );
 }
 
 export function PackerPanel({ binaryId }: { binaryId: number }): ReactNode {
@@ -1085,6 +1343,7 @@ function PackerBody({ result, peInfo }: { result: FileTypeResult; peInfo?: PeInf
         hue="near"
         title={`marked band: ${PACKED_ENTROPY_THRESHOLD} bits/byte and above, where a section reads as compressed or packed`}
       />
+      {sections.length > 0 ? <SectionEntropyStrip sections={sections} /> : null}
       <Muted>
         {result.count ?? matches.length} matches (
         {FILETYPE_CATEGORIES.map(
@@ -1116,6 +1375,33 @@ function PackerBody({ result, peInfo }: { result: FileTypeResult; peInfo?: PeInf
       ))}
       <RawJson value={result} />
     </>
+  );
+}
+
+/** One hoverable cell per section: high entropy reads packed, low reads sparse. */
+function SectionEntropyStrip({ sections }: { sections: PeSection[] }): ReactNode {
+  return (
+    <div className="entropy-strip" role="img" aria-label="Per-section entropy">
+      {sections.map((section, index) => {
+        const entropy = typeof section.entropy === "number" ? section.entropy : null;
+        const packed = entropy !== null && entropy >= PACKED_ENTROPY_THRESHOLD;
+        const hue = entropy === null ? undefined : packed ? "fail" : "live";
+        const label = section.name || `section ${index}`;
+        const title =
+          entropy === null
+            ? `${label}: entropy unavailable`
+            : `${label}: ${entropy.toFixed(2)} bits/byte`;
+        return (
+          <span
+            key={`${label}-${index}`}
+            className="entropy-strip-cell"
+            data-hue={hue}
+            data-packed={packed ? "true" : undefined}
+            title={title}
+          />
+        );
+      })}
+    </div>
   );
 }
 
@@ -1216,7 +1502,7 @@ export function BenchmarkPanel({ binaryId }: { binaryId: number }): ReactNode {
   const path = `/binaries/${binaryId}/benchmark`;
   const entry = usePanel(key, () => api<BenchmarkResult>(path));
   const candidatesEntry = usePanel(panelKey("binary", binaryId, "benchmark-candidates"), () =>
-    api<{ binaries: Binary[] }>("/binaries"),
+    api<{ binaries: BinaryOption[] }>(BINARY_OPTIONS_PATH),
   );
   const renameKey = panelKey("binary", binaryId, "rename-benchmark");
   const renameEntry = usePanel(renameKey, () =>
@@ -1596,7 +1882,7 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
           <Muted>
             {data.rated} of {data.count} stored artifact(s) rated.
           </Muted>
-          <table className="table">
+          <table className="table" aria-label="Artifact ratings">
             <thead>
               <tr>
                 <th>Artifact</th>
@@ -1812,8 +2098,14 @@ export function ImportsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const load = (): Promise<ImportTable> => api<ImportTable>(`/binaries/${binaryId}/imports`);
   return (
     <Panel
-      title="Imports"
+      title={
+        <CountTitle
+          label="Imports"
+          count={entry?.state === "ready" ? (entry.data.imports?.length ?? NA) : NA}
+        />
+      }
       subtitle="The import table, read from the engine on demand."
+      collapsible
       actions={
         <Button
           pending={busy}
@@ -1827,13 +2119,13 @@ export function ImportsPanel({ binaryId }: { binaryId: number }): ReactNode {
       }
     >
       <PanelBody entry={entry} hint="Loading imports">
-        {(data) => <ImportsBody data={data} />}
+        {(data) => <ImportsBody data={data} binaryId={binaryId} />}
       </PanelBody>
     </Panel>
   );
 }
 
-function ImportsBody({ data }: { data: ImportTable }): ReactNode {
+function ImportsBody({ data, binaryId }: { data: ImportTable; binaryId: number }): ReactNode {
   const [filter, setFilter] = useState("");
   const imports = Array.isArray(data.imports) ? data.imports : [];
   if (!imports.length) return <Muted>No imports.</Muted>;
@@ -1844,6 +2136,8 @@ function ImportsBody({ data }: { data: ImportTable }): ReactNode {
       row.dll.toLowerCase().includes(needle) ||
       row.name.toLowerCase().includes(needle),
   );
+  const hrefFor = (row: ImportEntry): string =>
+    `#/binaries/${binaryId}/functions?name=${encodeURIComponent(row.name)}`;
   return (
     <>
       <Toolbar>
@@ -1862,11 +2156,18 @@ function ImportsBody({ data }: { data: ImportTable }): ReactNode {
       <DataTable
         columns={[
           { label: "Library", key: "dll" },
-          { label: "Function", key: "name", mono: true },
+          {
+            label: "Function",
+            mono: true,
+            render: (row) => <a href={hrefFor(row)}>{row.name}</a>,
+          },
           { label: "IAT", mono: true, render: (row) => row.iat_va || NA },
         ]}
         rows={shown}
         rowKey={(_row, index) => index}
+        onRowClick={(row) => {
+          window.location.hash = hrefFor(row);
+        }}
         empty={<Muted>No imports match the filter.</Muted>}
       />
     </>
@@ -1952,7 +2253,7 @@ function StringsBody({ data, binaryId }: { data: StringTable; binaryId: number }
         <Field label="Filter">
           <input
             type="search"
-            placeholder="substring"
+            placeholder={`Search ${total} strings`}
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
           />
@@ -1997,6 +2298,10 @@ function StringsBody({ data, binaryId }: { data: StringTable; binaryId: number }
         ]}
         rows={shown}
         rowKey={(_row, index) => index}
+        onRowClick={(row) => {
+          if (row.va === null) return;
+          window.location.hash = `#/binaries/${binaryId}/functions?refers_to=${hex(row.va)}`;
+        }}
         empty={<Muted>{needle ? "No strings match the filter." : "No strings."}</Muted>}
       />
       <Muted>Click a string to open the functions that reference its address.</Muted>
@@ -3474,7 +3779,7 @@ export function LineagePanel({ binaryId }: { binaryId: number }): ReactNode {
   const path = `/binaries/${binaryId}/lineage`;
   const entry = usePanel(key, () => api<LineageList>(path));
   const candidatesEntry = usePanel(panelKey("binary", binaryId, "lineage-candidates"), () =>
-    api<{ binaries: Binary[] }>("/binaries"),
+    api<{ binaries: BinaryOption[] }>(BINARY_OPTIONS_PATH),
   );
   const [otherId, setOtherId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -3865,7 +4170,7 @@ export function FirmwarePanel({ binaryId }: { binaryId: number }): ReactNode {
       }
     >
       {error ? <ErrorNote error={error} /> : null}
-      {message ? <Muted>{message}</Muted> : null}
+      <Muted live>{message}</Muted>
       <PanelBody entry={entry} hint="Loading the carve" noScanHint={NO_SCAN_MESSAGES.firmware}>
         {(data) => {
           const regions: FirmwareRegion[] = Array.isArray(data.regions) ? data.regions : [];
@@ -4059,20 +4364,30 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
       title="Composition analysis"
       subtitle="How this binary's functions match the other registered binaries, from the stored matches."
       actions={
-        <Button
-          tone="primary"
-          pending={busy}
-          onClick={() => {
-            setBusy(true);
-            refreshPanel(key, () =>
-              api<CompositionResult>(path, { method: "POST", json: scopeBody() }).finally(() =>
-                setBusy(false),
-              ),
-            );
-          }}
-        >
-          Run analysis
-        </Button>
+        <Toolbar>
+          {entry?.state === "ready" && entry.data.functions[0] ? (
+            <a
+              className="btn btn-ghost"
+              href={`#/matches?function=${entry.data.functions[0].function_id}`}
+            >
+              Open matching view
+            </a>
+          ) : null}
+          <Button
+            tone="primary"
+            pending={busy}
+            onClick={() => {
+              setBusy(true);
+              refreshPanel(key, () =>
+                api<CompositionResult>(path, { method: "POST", json: scopeBody() }).finally(() =>
+                  setBusy(false),
+                ),
+              );
+            }}
+          >
+            Run analysis
+          </Button>
+        </Toolbar>
       }
     >
       <Toolbar>
@@ -4110,8 +4425,10 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
 /** The hosted composition categories, each with the binaries it most matched. */
 function CompositionCategories({
   categories,
+  matchFunctionId,
 }: {
   categories: CompositionCategory[];
+  matchFunctionId: number | null;
 }): ReactNode {
   if (!categories?.length) return null;
   return (
@@ -4129,9 +4446,26 @@ function CompositionCategories({
           {
             label: "Top binaries",
             render: (row) =>
-              row.binaries.length
-                ? row.binaries.map((entry) => `${entry.name} (${entry.count})`).join(", ")
-                : NA,
+              row.binaries.length ? (
+                <span className="toolbar">
+                  {row.binaries.map((entry) => (
+                    <span key={entry.binary_id} className="toolbar">
+                      <a href={`#/binaries/${entry.binary_id}`}>
+                        {entry.name} ({entry.count})
+                      </a>
+                      {matchFunctionId ? (
+                        <a
+                          href={`#/matches?function=${matchFunctionId}&binary_ids=${entry.binary_id}`}
+                        >
+                          Scope matching
+                        </a>
+                      ) : null}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                NA
+              ),
           },
         ]}
         rows={categories}
@@ -4146,23 +4480,68 @@ function CompositionBreakdown({
   title,
   entries,
   hueFor,
+  hrefFor,
+  onSelect,
+  selected,
 }: {
   title: string;
   entries: Array<{ label: string; count: number; percent: number | null }>;
   hueFor?: (label: string) => HueFamily | null;
+  hrefFor?: (label: string) => string;
+  onSelect?: (label: string) => void;
+  selected?: string;
 }): ReactNode {
   return (
     <>
       <h3>{title}</h3>
-      {entries.map((entry) => (
-        <SegmentMeter
-          key={entry.label}
-          label={entry.label}
-          value={entry.percent === null ? null : entry.percent / 100}
-          readout={`${entry.count}${entry.percent === null ? "" : ` (${entry.percent}%)`}`}
-          hue={hueFor?.(entry.label) ?? undefined}
-        />
-      ))}
+      {entries.map((entry) => {
+        const meter = (
+          <SegmentMeter
+            label={entry.label}
+            value={entry.percent === null ? null : entry.percent / 100}
+            readout={`${entry.count}${entry.percent === null ? "" : ` (${entry.percent}%)`}`}
+            hue={hueFor?.(entry.label) ?? undefined}
+          />
+        );
+        const href = hrefFor?.(entry.label);
+        if (href) {
+          return (
+            <a key={entry.label} href={href} className="meter-link">
+              {meter}
+            </a>
+          );
+        }
+        if (onSelect) {
+          return (
+            <button
+              key={entry.label}
+              type="button"
+              className="meter-link"
+              data-selected={selected === entry.label ? "true" : undefined}
+              onClick={() => onSelect(entry.label)}
+            >
+              {meter}
+            </button>
+          );
+        }
+        return <Fragment key={entry.label}>{meter}</Fragment>;
+      })}
+    </>
+  );
+}
+
+function CompositionTags({ tags }: { tags: CompositionTag[] }): ReactNode {
+  if (!tags.length) return null;
+  return (
+    <>
+      <h3>Tags</h3>
+      <Toolbar>
+        {tags.map((tag) => (
+          <a key={tag.id} href={`#/binaries?tag=${encodeURIComponent(tag.name)}`}>
+            {tag.name} ({tag.count})
+          </a>
+        ))}
+      </Toolbar>
     </>
   );
 }
@@ -4177,13 +4556,15 @@ function CompositionFunctionCell({ row }: { row: CompositionFunctionRow }): Reac
 }
 
 function CompositionBody({ result }: { result: CompositionResult }): ReactNode {
+  const [band, setBand] = useState("");
   const total = result.total_functions;
   const matched = result.matched_functions;
   const percent = result.matched_percent;
   const fraction = total > 0 ? matched / total : null;
   const readout = percent === null ? `${matched} / ${total}` : `${matched} / ${total} (${percent}%)`;
   const rows = Array.isArray(result.functions) ? result.functions : [];
-  const shown = rows.slice(0, MAX_COMPOSITION_ROWS_SHOWN);
+  const filtered = band === "" ? rows : rows.filter((row) => row.band === band);
+  const shown = filtered.slice(0, MAX_COMPOSITION_ROWS_SHOWN);
   return (
     <>
       <SegmentMeter
@@ -4200,19 +4581,44 @@ function CompositionBody({ result }: { result: CompositionResult }): ReactNode {
           ["refined", result.refined ? "yes (stored matches)" : "no (no stored matches)"],
         ]}
       />
-      <CompositionBreakdown title="Function name sources" entries={result.name_sources} />
+      <CompositionBreakdown
+        title="Function name sources"
+        entries={result.name_sources}
+        hrefFor={(label) =>
+          `#/binaries/${result.binary_id}/functions?name_source=${encodeURIComponent(label)}`
+        }
+      />
       <CompositionBreakdown
         title="Match quality"
         entries={result.match_quality}
         hueFor={qualityHue}
+        onSelect={(label) => setBand(band === label ? "" : label)}
+        selected={band}
       />
-      <CompositionCategories categories={result.categories} />
+      <CompositionCategories
+        categories={result.categories}
+        matchFunctionId={result.functions[0]?.function_id ?? null}
+      />
+      <CompositionTags tags={result.tags ?? []} />
       <h3>Composition</h3>
       <DataTable
         columns={[
           {
             label: "Binary",
             render: (row) => <a href={`#/binaries/${row.binary_id}`}>{row.name}</a>,
+          },
+          {
+            label: "Scope",
+            render: (row) =>
+              result.functions[0] ? (
+                <a
+                  href={`#/matches?function=${result.functions[0].function_id}&binary_ids=${row.binary_id}`}
+                >
+                  Scope matching
+                </a>
+              ) : (
+                NA
+              ),
           },
           { label: "sha256", mono: true, render: (row) => row.sha256 ?? NA },
           { label: "Functions", numeric: true, render: (row) => row.count },

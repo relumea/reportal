@@ -27,8 +27,11 @@ answers replace each other only within their own kind.
 
 `user_api_keys` holds named extra bearer tokens beside `users.token_hash`.
 Each row is `(user_id, name)` unique, stores only the SHA-256 digest, and
+the name may be renamed without rotating the token.  The row
 counts toward the organisation plan's `max_api_keys` (the login token is
-one).  `last_used_at` is stamped on a successful named-key authenticate and
+one).  `read_only` is 0 unless minted that way; a read-only key authenticates
+as the user but HTTP writes and `/mcp` are 403.  The login token is never
+read-only.  `last_used_at` is stamped on a successful named-key authenticate and
 stays empty until then.  `users.last_used_at` is stamped on a successful
 login-token authenticate and stays empty until then; rotating the login
 token clears it.  A named-key authenticate does not stamp the login

@@ -161,6 +161,106 @@ class TestBinaries:
         assert payload["languages"] == []
         assert payload["compilers"] == []
 
+    def test_summary_projection_costs_a_fraction_of_the_register(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """A picker reads an id and a name per row, not the whole register row.
+
+        Measured in serialized bytes rather than wall clock: the same rows
+        serialize to the same size on any host, so the guard holds on a loaded
+        runner.  The full row carries the sha256, the path, the created time and
+        both aggregate counts, which a select that renders two columns never
+        shows.
+        """
+        for index in range(50):
+            store.add_binary(
+                conn,
+                sha256=f"{index:064x}",
+                name=f"sample-{index}.exe",
+                path=f"/samples/sample-{index}.exe",
+                size=4096 + index,
+                fmt="PE",
+                arch="x86_64",
+            )
+        status, headers, full = wsgi_request("GET", "/api/binaries")
+        summary_status, summary_headers, light = wsgi_request("GET", "/api/binaries?summary=true")
+        register = json_body(full, headers)
+        picker = json_body(light, summary_headers)
+        assert status.startswith("200") and summary_status.startswith("200")
+        assert register["summary"] is False
+        assert picker["summary"] is True
+        # The projection changes the row shape, not which rows the register has.
+        assert picker["count"] == register["count"] == 50
+        assert picker["total"] == register["total"] == 50
+        assert [row["id"] for row in picker["binaries"]] == [
+            row["id"] for row in register["binaries"]
+        ]
+        assert all(set(row) == {"id", "name"} for row in picker["binaries"])
+        assert len(light) * 3 < len(full)
+
+    def test_summary_must_be_a_boolean(self, portal_db: Path) -> None:
+        status, headers, body = wsgi_request("GET", "/api/binaries?summary=maybe")
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "summary must be a boolean"
+
+    def test_the_register_pages_with_limit_and_offset(self, conn: sqlite3.Connection) -> None:
+        for index in range(5):
+            store.add_binary(conn, sha256=f"{index:064x}", name=f"sample-{index}.exe")
+        status, headers, body = wsgi_request("GET", "/api/binaries?limit=2&offset=2")
+        page = json_body(body, headers)
+        assert status.startswith("200")
+        assert [row["name"] for row in page["binaries"]] == ["sample-2.exe", "sample-3.exe"]
+        assert page["count"] == 2
+        # `matched` counts the rows the filter kept; `total` the whole register.
+        assert page["matched"] == 5
+        assert page["total"] == 5
+        assert page["limit"] == 2
+        assert page["offset"] == 2
+
+    def test_a_page_costs_a_fraction_of_the_register(self, conn: sqlite3.Connection) -> None:
+        """The first page must stay a fraction of the register it is cut from.
+
+        Asserted in serialized bytes rather than wall clock: the same rows
+        serialize to the same size on any host, so the guard holds on a loaded
+        runner.
+        """
+        for index in range(300):
+            store.add_binary(
+                conn,
+                sha256=f"{index:064x}",
+                name=f"sample-{index}.exe",
+                path=f"/samples/sample-{index}.exe",
+                size=4096 + index,
+                fmt="PE",
+            )
+        _, headers, full = wsgi_request("GET", "/api/binaries")
+        page_status, page_headers, page = wsgi_request("GET", "/api/binaries?limit=25")
+        register = json_body(full, headers)
+        first_page = json_body(page, page_headers)
+        assert page_status.startswith("200")
+        assert first_page["count"] == 25
+        assert first_page["matched"] == register["count"] == 300
+        assert len(page) * 4 < len(full)
+
+    def test_a_page_counts_the_same_rows_as_the_whole_register(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """A page counts its own rows; the whole register aggregates the tables."""
+        _seed(conn)
+        store.add_binary(conn, sha256="bb" * 32, name="alpha.exe")
+        _, headers, full = wsgi_request("GET", "/api/binaries")
+        _, page_headers, page = wsgi_request("GET", "/api/binaries?limit=1")
+        whole = {row["id"]: row for row in json_body(full, headers)["binaries"]}
+        first = json_body(page, page_headers)["binaries"][0]
+        assert first["function_count"] == whole[first["id"]]["function_count"] == 2
+        assert first["comment_count"] == whole[first["id"]]["comment_count"]
+
+    def test_a_page_outside_its_bounds_is_a_400(self, portal_db: Path) -> None:
+        for query in ("limit=0", f"limit={store.MAX_BINARY_LIMIT + 1}", "offset=-1"):
+            status, headers, body = wsgi_request("GET", f"/api/binaries?{query}")
+            assert status.startswith("400"), query
+            assert json_body(body, headers)["error"].startswith("invalid")
+
     def test_the_register_filters_orders_and_echoes(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
         store.add_binary(conn, sha256="bb" * 32, name="alpha.exe", size=9, fmt="ELF")
@@ -1152,6 +1252,8 @@ class TestMatchRoute:
         assert stored["matches"][0]["difference"] == 10.0
         assert stored["matches"][0]["band"] == "Match"
         assert stored["matches"][0]["settings"] == payload["settings"]
+        assert stored["matches"][0]["candidate_binary_id"] == ids["binary"]
+        assert stored["matches"][0]["candidate_binary_name"]
 
 
 class TestMatchMetrics:
@@ -1170,6 +1272,7 @@ class TestMatchMetrics:
         assert row["similarity"] == pytest.approx(97.5)
         assert row["difference"] == pytest.approx(2.5)
         assert row["band"] == "Strong Match"
+        assert "candidate_prototype" in row
 
     def test_binary_matches_get_is_stored_only_and_notes_missing_settings(
         self, conn: sqlite3.Connection

@@ -21,7 +21,7 @@ function ScansTable({ scans }: { scans: BinaryScan[] }): ReactNode {
   }
   return (
     <div className="table-scroll">
-      <table className="data-table">
+      <table className="data-table" aria-label="Stored scans">
         <thead>
           <tr>
             <th>Kind</th>

@@ -92,6 +92,22 @@ class TestCarve:
 
         assert result["regions"][0]["confidence"] == firmware.CONFIDENCE_EMBEDDED
 
+    def test_lz4_zstd_cpio_and_dtb_magics_are_found(self, tmp_path: Path) -> None:
+        blob = (
+            b"\x04\x22\x4d\x18"
+            + b"\x00" * 32
+            + b"\x28\xb5\x2f\xfd"
+            + b"\x00" * 32
+            + b"070701"
+            + b"\x00" * 32
+            + b"\xd0\x0d\xfe\xed"
+            + b"\x00" * 32
+        )
+        path = tmp_path / "fw.bin"
+        path.write_bytes(blob)
+        kinds = [region["kind"] for region in firmware.carve(path)["regions"]]
+        assert {"lz4", "zstd", "cpio", "dtb"} <= set(kinds)
+
     def test_a_signature_across_a_chunk_boundary_is_found(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

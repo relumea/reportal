@@ -127,7 +127,9 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   an admin; personal profile answers 403 `signup-disabled`; HTTP signup is
   429 `rate-limited` past five attempts from one TCP peer in an hour.
   Authenticated HTTP writes are 429 past 60 in 60 seconds.  Those 429s
-  carry `Retry-After`.  An
+  carry `Retry-After`.  A named extra key may be `read_only`: HTTP writes
+  and `/mcp` then answer 403; the login token is never read-only.  A named
+  extra key may be renamed without rotating the token.  An
   `organisations` table sits one level above teams:
   `GET`/`POST /api/organisations`, `GET`/`DELETE
   /api/organisations/<id>`, `PUT /api/teams/<id>/organisation` (the body's
@@ -497,13 +499,14 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   Functions and Disassembly/AI Decompilation in Match/Diff, `G` for the memory
   go-to, `Cmd/Ctrl+Enter` to save an edited type, Esc to discard, `?` for the
   cheatsheet.
-- reportal: `web/src/keys.ts` registers the view jumps, table row movement, `/`
-  filter focus, Esc and the `?` cheatsheet.  [PARITY.md](PARITY.md) already
-  records that there is no sidebar collapse, in-app history control or
-  focused-row model to bind.
+- reportal: `web/src/keys.ts` registers the view jumps, table row movement,
+  `Shift+J`/`Shift+K` first/last row, `/` filter focus, `P` filters, `R`
+  rename, `mod+enter` type save, Escape type discard, `{`/`}` history,
+  `O`/`F`/`D`/`T`/`S`/`A`/`M` analysis-section jumps, `Shift+G` memory go-to
+  and the `?` cheatsheet.  Bare `g` stays the nav prefix.
 - Build: a sidebar collapse preference (`Cmd/Ctrl+B`), a router-backed history
-  stack, and a selected-row or selected-pane model per view that let the `P`,
-  `R`, `Space`, `G` and `Cmd/Ctrl+Enter` bindings exist at all.
+  stack, and the focused-row / focused-field helpers that let `P`, `R`,
+  `Space` and `Cmd/Ctrl+Enter` exist without a per-view selection model.
 - Size: M.
 - **Status:** Closed for the collapse, the history stack, section cycling and
   the code-view switch.  `Cmd/Ctrl+B` collapses the sidebar to a 64px rail
@@ -514,18 +517,19 @@ reportal's side of every comparison is its FastAPI schema, its MCP registry and
   and `stepHistory` marks the navigation so recording does not push the entry
   the reader just left); the router's own back and forward still work beside it.
   `[` and `]` scroll to the previous and next panel, and `Space` flips a
-  function's Disassembly and Control flow through `toggleFunctionCodeView`,
-  which the mounted `CodeSection` publishes.  The cheatsheet renders all of it
-  from the live registry.  A real defect found while closing this entry is fixed
-  with it: `FunctionsView`'s drafts effect depended on the `filters.strings`
+  function's Disassembly and Control flow, or a diff's Disassembly and AI
+  decompilation, through `toggleFunctionCodeView`.  The cheatsheet renders all
+  of it from the live registry.  A real defect found while closing this entry is
+  fixed with it: `FunctionsView`'s drafts effect depended on the `filters.strings`
   array, which `filtersFromQuery` rebuilds every render, so the view re-rendered
   forever and the router never processed the next location.  Leaving
   `#/functions` for any other view left the shell stuck on Functions with the
   URL changed; the effect now keys on a stable string, and
-  `web/tests/navigation.spec.ts` covers it.  Gaps, stated rather than built: the
-  `P` (filters panel), `R` (rename) and `Cmd/Ctrl+Enter` (save a type) bindings
-  need a per-view selection model reportal does not have, and `G` belongs to the
-  memory dump's own address box.
+  `web/tests/navigation.spec.ts` covers it.  `R` clicks Rename on the focused
+  table row (`clickFocusedRowAction`).  `P` focuses the first toolbar filter
+  control (`focusViewFilters`).  `Cmd/Ctrl+Enter` clicks Save on the focused
+  type (`clickFocusedSave`, `whenTyping`).  `G` belongs to the memory dump's
+  own address box.
 
 ### 13. Regular-expression and multi-value string search
 

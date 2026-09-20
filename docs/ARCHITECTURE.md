@@ -71,6 +71,7 @@ reportal/
 │   ├── auto_store.py         # auto runs, task tree and attempt rows (CRUD)
 │   ├── auto_workers.py       # auto worker registry + the deterministic offline worker
 │   ├── auto_llm_worker.py    # the engine-verified llm_c_source worker
+│   ├── auto_goal_worker.py   # the goal-directed llm_goal worker: patched source + byte edits
 │   ├── auto_mode.py          # auto orchestrator: decompose, fan out, accept, aggregate, persist,
 │   │                          #   revert/recover
 │   ├── llm.py                # optional OpenAI-compatible bridge: chat completions + embeddings
@@ -336,7 +337,10 @@ remote control plane the old posture allowed cannot be reached by forgetting a
 flag.  Only a token's SHA-256 digest is stored; the token is returned once, by
 the call that created or rotated it.  Named extra keys (`user_api_keys`) sit
 beside the login token, count toward the organisation plan's `max_api_keys`,
-and authenticate as the same user.  A successful named-key authenticate stamps
+and authenticate as the same user.  A named key may be `read_only`: HTTP
+writes and `/mcp` then answer 403; the login token is never read-only.  A
+rename changes only the label; the token stays.  A
+successful named-key authenticate stamps
 `user_api_keys.last_used_at`; a successful login-token authenticate stamps
 `users.last_used_at`.  Each column stays empty until that credential fires.
 
@@ -749,6 +753,14 @@ a `Worker` or a zero-argument factory returning one.  Built-ins:
 |--------|-------|--------------|
 | `offline` | nothing | deterministic: skips a function that already matches, reports a real symbol name as matched and an address placeholder as failed, and refuses an execute run |
 | `llm_c_source` | the LLM bridge and (for a context it lacks, or for execute) the engine | gathers the cached NASM listing and the stored decompilation, asks the model for an MSVC6/C89 source file carrying rebrew's `// FUNCTION: <MODULE> 0x<VA>` marker, and verifies it with `rebrew test --json` |
+| `llm_goal` | the LLM bridge, the engine and a run `goal` | asks the model for the patched C file, its unified diff and length-preserving byte edits that satisfy the goal; verifies the source with `rebrew test --json` and applies an edit to the binary only when the engine reads back its `original` bytes, writing `<binary>.patched` beside the binary |
+
+A run may carry a `goal` (CLI `--goal`, body `"goal"`, MCP `goal`), the free-form
+objective handed to every worker as `WorkerContext.goal`.  A goal run plans every
+function of the binary rather than only the unmatched ones, because the function a
+goal names may already have matched.  `llm_goal` never overwrites a candidate
+source the run does not own, and its `planned_paths` reserves the undo inverse for
+both the source and the patched binary before either is written.
 
 `llm_c_source` takes the marker module and the reversed source directory from
 the project's `rebrew-project.toml` the way `rebrew.config` resolves them
@@ -1898,7 +1910,7 @@ action's or one entry's stored inverses and is destructive. `get_auto_run`
 reads an auto run and is read-only; `run_auto`, `revert_auto_run` and
 `recover_auto_run` (which closes a stale run and merges what its unfinished
 tasks recorded) are destructive.  The registry
-declares 261 built-in tools, 122 read-only and 139 destructive.
+declares 262 built-in tools, 122 read-only and 140 destructive.
 
 Stdio (`reportal mcp`) is the local pipe; Streamable HTTP is `POST /mcp`
 (JSON replies) and `GET /mcp` (SSE session stream) on the same FastAPI
@@ -1906,9 +1918,10 @@ process, gated by the portal bearer when auth is on (write, because the
 registry mixes readers and writers). `Last-Event-ID` resumes from
 `MemoryEventStore` (in-process, unbounded, dropped on restart). OAuth
 and JWT are still out: the token is the same portal bearer, or the loopback
-operator while auth is off. Server-initiated logging notifications and
-`tools.listChanged` stay out: one process, one registry snapshot,
-`refresh_tools()` the opt-in reload.
+operator while auth is off. `logging/setLevel` sets the reportal stderr
+logger. Server-initiated logging notifications and `tools.listChanged`
+stay out: one process, one registry snapshot, `refresh_tools()` the opt-in
+reload.
 
 ## SPA
 

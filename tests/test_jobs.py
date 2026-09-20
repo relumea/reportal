@@ -63,17 +63,59 @@ class TestRegistry:
         assert set(jobs.JOB_KINDS) == {
             "ai-enrich",
             "behavior",
+            "benchmark",
             "capabilities",
             "composition",
+            "crypto",
+            "detect",
             "filetype",
+            "firmware",
+            "function-triage",
+            "gobuildinfo",
             "hardening",
+            "library",
+            "lineage",
             "match",
+            "pe-info",
             "protocols",
+            "related",
+            "remediation",
             "report",
             "report-pdf",
             "secrets",
+            "security",
+            "structs",
+            "threat",
+            "triage",
+            "unpack",
             "unstrip",
         }
+
+    def test_a_scan_kind_maps_onto_the_job_that_stores_it(self) -> None:
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_FILETYPE) == ("filetype", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_PE_INFO) == ("pe-info", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_TRIAGE) == ("triage", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_CRYPTO) == ("crypto", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_LIBRARY) == ("library", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_FIRMWARE) == ("firmware", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_SECURITY) == ("security", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_THREAT) == ("threat", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_STRUCTS) == ("structs", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_DETECT) == ("detect", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_GOBUILDINFO) == ("gobuildinfo", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_REMEDIATION) == ("remediation", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_FUNCTION_TRIAGE) == (
+            "function-triage",
+            {},
+        )
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_RELATED) == ("related", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_LINEAGE) == ("lineage", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_BENCHMARK) == ("benchmark", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_EXECUTION) == (
+            "behavior",
+            {"domain": behavior.DOMAIN_EXECUTION},
+        )
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_UNPACK) is None
 
     def test_every_kind_names_its_label_and_its_write(self) -> None:
         for spec in jobs.JOB_KINDS.values():

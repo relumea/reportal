@@ -579,6 +579,19 @@ class TestProvenance:
         assert totals[data_types.SOURCE_AUTO_UNSTRIP] == 1
         assert totals[data_types.SOURCE_AI_AGENT] == 0
 
+    def test_the_kind_totals_name_every_kind_in_order(self) -> None:
+        totals = data_types.kind_totals(
+            [
+                {"kind": data_types.KIND_STRUCT},
+                {"kind": data_types.KIND_STRUCT},
+                {"kind": data_types.KIND_ENUM},
+            ]
+        )
+        assert list(totals) == list(data_types.KNOWN_KINDS)
+        assert totals[data_types.KIND_STRUCT] == 2
+        assert totals[data_types.KIND_ENUM] == 1
+        assert totals[data_types.KIND_POINTER] == 0
+
     def test_the_filter_keeps_one_label(self) -> None:
         types = [
             {"name": "a", "kind": "struct", "namespace": "", "size": 4, "source": "scan"},
@@ -608,6 +621,8 @@ class TestProvenance:
             "Auto Unstrip": 0,
             "AI": 0,
         }
+        assert payload["kinds"][data_types.KIND_STRUCT] == 2
+        assert payload["kinds"][data_types.KIND_ENUM] == 0
 
         filtered, headers, body = wsgi_request(
             "GET", f"/api/binaries/{binary_id}/data-types?source=User"

@@ -200,6 +200,20 @@ def source_totals(types: Sequence[Mapping[str, Any]]) -> dict[str, int]:
     return totals
 
 
+def kind_totals(types: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+    """The count per declaration kind, in :data:`KNOWN_KINDS` order.
+
+    Every kind is present, including a zero, so the strip a reader sees is
+    stable and a missing kind reads as zero rather than as absent.
+    """
+    totals: dict[str, int] = dict.fromkeys(KNOWN_KINDS, 0)
+    for data_type in types:
+        kind = str(data_type.get("kind") or DEFAULT_KIND)
+        if kind in totals:
+            totals[kind] += 1
+    return totals
+
+
 # Source recorded on the history entry a revert appends, the way a rename
 # revert records itself in ``name_history``.
 SOURCE_REVERT = "revert"
@@ -1869,7 +1883,8 @@ def filter_types(
     ``namespace`` matches the path exactly or any descendant (ticking a branch
     includes everything beneath it); ``PROGRAM_NAMESPACE`` selects the types
     with no namespace.  ``search`` is a case-insensitive substring over the
-    type name, its member names and its enum value names.  ``source`` is one of
+    type name, its namespace, ``namespace::name``, its member names and its
+    enum value names.  ``source`` is one of
     :data:`SOURCE_LABELS` and matches the type's provenance, which
     :func:`source_label` derives from its stored source.
     """
@@ -1897,8 +1912,13 @@ def _in_namespace(data_type: Mapping[str, Any], namespace: str) -> bool:
 
 
 def _matches_search(data_type: Mapping[str, Any], needle: str) -> bool:
-    """Whether *needle* (lowercased) appears in the name, a member name or a value name."""
+    """Whether *needle* (lowercased) appears in the name, namespace, member or value."""
     if needle in str(data_type["name"]).lower():
+        return True
+    if needle in str(data_type.get("namespace") or "").lower():
+        return True
+    qualified = f"{data_type.get('namespace') or ''}::{data_type['name']}".lower()
+    if needle in qualified:
         return True
     for member in data_type.get("members") or []:
         if needle in str(member.get("name") or "").lower():

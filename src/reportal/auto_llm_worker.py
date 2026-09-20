@@ -217,8 +217,12 @@ def _fail(ctx: WorkerContext, reason: str, detail: dict[str, Any] | None = None)
     )
 
 
-def _gather(ctx: WorkerContext) -> tuple[str, str] | WorkerResult:
-    """Return ``(disassembly, decompilation)``, or the result that ends the attempt."""
+def gather_context(ctx: WorkerContext) -> tuple[str, str] | WorkerResult:
+    """Return ``(disassembly, decompilation)``, or the result that ends the attempt.
+
+    Shared with the goal worker, which needs the same listing and
+    decompilation to reason about a goal for the function.
+    """
     function_id = int(ctx.function["id"])
     disasm = store.get_disasm(ctx.conn, function_id)
     stored = store.get_decompilation(ctx.conn, function_id)
@@ -251,7 +255,7 @@ def _gather(ctx: WorkerContext) -> tuple[str, str] | WorkerResult:
     return disasm, decomp
 
 
-def _owned_files(ctx: WorkerContext) -> set[str]:
+def owned_files(ctx: WorkerContext) -> set[str]:
     """Paths a previous attempt of this run wrote, which it may overwrite."""
     previous = ctx.previous
     if not isinstance(previous, dict):
@@ -272,7 +276,7 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
     target = target_config(ctx.project_dir)
     if target is None:
         return _skip(ctx, REASON_NO_MARKER)
-    gathered = _gather(ctx)
+    gathered = gather_context(ctx)
     if isinstance(gathered, WorkerResult):
         return gathered
     disassembly, decompilation = gathered
@@ -321,7 +325,7 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
         )
 
     path = Path(target["reversed_dir"]) / f"{source_slug(function)}.c"
-    if path.exists() and str(path) not in _owned_files(ctx):
+    if path.exists() and str(path) not in owned_files(ctx):
         return WorkerResult(
             status=WORKER_SKIPPED,
             function_id=function_id,

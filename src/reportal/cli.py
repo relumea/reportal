@@ -147,6 +147,7 @@ from reportal import (
     external,
     families,
     filetypes,
+    flirt_sigs,
     function_extras,
     function_triage,
     gobuildinfo,
@@ -194,6 +195,7 @@ from reportal._paths import (
     WorkspaceNotFound,
     database_path,
     db_path,
+    ensure_workspace_dirs,
     project_root,
     reports_dir,
 )
@@ -483,7 +485,7 @@ def _write_text_atomic(path: Path, text: str) -> Path:
 def init(
     directory: Path = typer.Option(Path("."), "--dir", help="Directory to initialise"),
 ) -> None:
-    """Create a reportal workspace (reportal.toml + reportal.db)."""
+    """Create a reportal workspace (reportal.toml + reportal.db + folders)."""
     target = directory.expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
     marker = target / MARKER
@@ -492,6 +494,9 @@ def init(
     else:
         marker.write_text(_MARKER_TEMPLATE, encoding="utf-8")
         console.print(f"[green]Wrote[/green] {marker}")
+    created_dirs = ensure_workspace_dirs(target)
+    if created_dirs:
+        console.print(f"[green]Created[/green] {', '.join(f'{name}/' for name in created_dirs)}")
     database = database_path(target)
     created = not database.exists()
     store.init_db(database)
@@ -1785,9 +1790,16 @@ def api_keys(
     table.add_column("Name", style="cyan")
     table.add_column("Created", style="dim")
     table.add_column("Last used", style="dim")
+    table.add_column("Read-only", style="dim")
     for row in keys:
         last = str(row["last_used_at"] or "never")
-        table.add_row(str(row["id"]), str(row["name"]), str(row["created_at"]), last)
+        table.add_row(
+            str(row["id"]),
+            str(row["name"]),
+            str(row["created_at"]),
+            last,
+            "yes" if row.get("read_only") else "no",
+        )
     cap = "unlimited" if limit == plans.UNLIMITED else str(limit)
     console.print(f"\n[bold cyan]{len(keys)} named key(s)[/bold cyan] ({used} of {cap} used)")
     console.print(table)
@@ -1797,6 +1809,9 @@ def api_keys(
 def api_key_add(
     user_id: int = typer.Argument(..., help="User id to mint a named key for"),
     name: str = typer.Option(..., "--name", help="Label for this key"),
+    read_only: bool = typer.Option(
+        False, "--read-only", help="Refuse HTTP writes and /mcp with this key"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Mint one named extra key; shown once, only the digest is stored."""
@@ -1809,7 +1824,7 @@ def api_key_add(
         action = journal.new_action()
         try:
             with journal.journaled(conn, action) as log:
-                key, token = auth.create_api_key(conn, user_id, name)
+                key, token = auth.create_api_key(conn, user_id, name, read_only=read_only)
                 journal.journaled_create(
                     log,
                     table=auth.KEY_TABLE,
@@ -1825,6 +1840,41 @@ def api_key_add(
     console.print(f"[green]Minted[/green] API key {key['id']} ({key['name']})")
     console.print(f"  token: {token}")
     console.print("  This is the only time the token is shown.")
+    _print_journal_action(log, json_output)
+
+
+@app.command("api-key-rename")
+def api_key_rename(
+    key_id: int = typer.Argument(..., help="Named key id to rename"),
+    name: str = typer.Option(..., "--name", help="New label for this key"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rename one named extra key. The token is unchanged."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if auth.get_api_key(conn, key_id) is None:
+            _fail(f"no API key with id {key_id}", json_output)
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table=auth.KEY_TABLE,
+                    where="id = ?",
+                    params=(key_id,),
+                    description=f"renamed API key {key_id}",
+                )
+                key = auth.rename_api_key(conn, key_id, name)
+        except auth.AuthError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    payload = log.attach(key)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"[green]Renamed[/green] API key {key_id} to {key['name']}")
     _print_journal_action(log, json_output)
 
 
@@ -3120,7 +3170,7 @@ def analysis_requeue_command(
     analysis_id: int = typer.Argument(..., help="Analysis id to requeue"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Put an analysis back to pending and clear its finish time; journaled."""
+    """Put an analysis back to pending and queue jobs for stored scans."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
@@ -3151,10 +3201,14 @@ def analysis_requeue_command(
                 key=["id"],
                 description=f"logged the requeue of analysis {analysis_id}",
             )
+            queued = jobs.queue_stored_scans(conn, log, analysis_id)
+            updated = {**updated, "jobs": queued}
     if json_output:
         typer.echo(json.dumps(log.attach(updated)))
         return
     console.print(f"analysis {analysis_id}: {updated.get('status')}")
+    for job in queued:
+        console.print(f"  queued {job['kind']} job {job['id']}")
 
 
 @app.command("analysis-tags")
@@ -7502,6 +7556,11 @@ def auto_command(
     max_tasks: int = typer.Option(
         auto_mode.DEFAULT_MAX_TASKS, "--max-tasks", help="Maximum task rows the run creates"
     ),
+    goal: str = typer.Option(
+        "",
+        "--goal",
+        help="Free-form objective a goal-directed worker works each function toward",
+    ),
     recover: bool = typer.Option(
         False,
         "--recover",
@@ -7514,7 +7573,9 @@ def auto_command(
     A dry run by default: nothing is compiled, no file is written into the
     rebrew project and no function status changes.  ``--recover`` closes the
     binary's latest run when a dead process left it `running`, merging the
-    writes its unfinished tasks recorded into that run's undo plan first.
+    writes its unfinished tasks recorded into that run's undo plan first.  A
+    ``--goal`` is carried into every attempt and plans every function of the
+    binary, not only the ones still unmatched.
     """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
@@ -7538,6 +7599,7 @@ def auto_command(
                 functions_per_task=functions_per_task,
                 max_attempts=max_attempts,
                 max_tasks=max_tasks,
+                goal=goal,
             )
         except ValueError as exc:
             _fail(str(exc), json_output)
@@ -9288,6 +9350,7 @@ def types(
                     "count": len(model),
                     "total": len(all_types),
                     "sources": data_types.source_totals(all_types),
+                    "kinds": data_types.kind_totals(all_types),
                     "sort": sort,
                     "direction": direction,
                     "types": [data_types.encode_type(row) for row in model],
@@ -12340,6 +12403,143 @@ def unstrip_apply(
             except KeyError:
                 _fail(f"no function with id {function_id}", json_output)
             except unstrip.NoProposalError as exc:
+                _fail(str(exc), json_output)
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+        payload = log.attach(change)
+
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(
+            f"[green]Renamed[/green] function {function_id}:"
+            f" {change['old_name']!r} -> {change['new_name']!r}"
+        )
+    _print_journal_action(log, json_output)
+
+
+@app.command("flirt")
+def flirt_command(
+    binary_id: int = typer.Argument(..., help="Binary id to match against the signatures"),
+    arch: str = typer.Option(
+        "", "--arch", help="Architecture to load signatures for (default: the fingerprint's)"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Match a binary against the FLIRT signature catalog and store the reading.
+
+    The catalog must be indexed first (``reportal flirt-refresh``) and named by
+    ``REPORTAL_FLIRT_SIGS_DIR``.  Nothing is renamed: the reading lists the
+    symbols the signatures matched, and ``reportal flirt-apply`` promotes one
+    onto a function.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        _cli_require_binary(conn, binary_id, json_output)
+        try:
+            log, result = _run_scan_command(
+                conn,
+                binary_id,
+                store.SCAN_KIND_FLIRT,
+                lambda: flirt_sigs.run_flirt(conn, binary_id=binary_id, arch=arch),
+            )
+        except flirt_sigs.FlirtError as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+
+    if json_output:
+        typer.echo(json.dumps(log.attach(result)))
+        return
+    _print_journal_action(log, json_output)
+    _print_flirt(result)
+
+
+def _print_flirt(payload: dict[str, Any]) -> None:
+    """Print one signature reading, its libraries first."""
+    libraries = payload.get("libraries") or []
+    console.print(
+        f"\n[bold cyan]binary {payload.get('binary_id')}[/bold cyan]"
+        f" arch {payload.get('arch') or 'unknown'}"
+        f" {payload.get('match_count', 0)} match(es) in {len(libraries)} library(ies)"
+    )
+    for note in payload.get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+    if not libraries:
+        console.print("[yellow]No signature matches.[/yellow]")
+        return
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Library", style="cyan")
+    table.add_column("Matches", justify="right")
+    table.add_column("Symbols")
+    for entry in libraries:
+        names = entry.get("names") or []
+        shown = ", ".join(str(name) for name in names[:4])
+        if len(names) > 4:
+            shown += f", +{len(names) - 4} more"
+        table.add_row(str(entry["library"]), str(entry["matches"]), shown)
+    console.print(table)
+
+
+@app.command("flirt-refresh")
+def flirt_refresh(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Index the configured FLIRT signature checkout into the catalog.
+
+    Reads the directory ``REPORTAL_FLIRT_SIGS_DIR`` names and nothing else.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    root = flirt_sigs.sigs_dir()
+    if root is None or not root.is_dir():
+        _fail(f"set {flirt_sigs.SIGS_DIR_ENV} to a signature checkout", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        result = flirt_sigs.refresh(conn, root)
+        if result["added"] or result["updated"] or result["pruned"]:
+            flirt_sigs.forget_matchers()
+    payload = {"sigs_dir": str(root), **result}
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"[green]Indexed[/green] {root}: {result['added']} added,"
+        f" {result['updated']} updated, {result['unchanged']} unchanged,"
+        f" {result['pruned']} pruned"
+    )
+
+
+@app.command("flirt-apply")
+def flirt_apply(
+    function_id: int = typer.Argument(..., help="Function id to rename"),
+    name: str = typer.Option(..., "--name", help="Matched symbol to apply"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rename one function to a matched library symbol, recording the change.
+
+    The name is the caller's: the matcher reports symbols, not addresses, so
+    which function carries which symbol is not guessed at here.  A function a
+    person named by hand is refused.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                change = journal.journaled_name_change(
+                    conn,
+                    log,
+                    function_id,
+                    lambda: flirt_sigs.apply_proposal(
+                        conn, function_id=function_id, new_name=name
+                    ),
+                )
+            except KeyError:
+                _fail(f"no function with id {function_id}", json_output)
+            except flirt_sigs.ManualNameError as exc:
                 _fail(str(exc), json_output)
             except ValueError as exc:
                 _fail(str(exc), json_output)

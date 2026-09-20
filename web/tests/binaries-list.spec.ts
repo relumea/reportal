@@ -17,6 +17,9 @@ test("the register filters by name, hash and tag, and orders its rows", async ({
   const panel = panelByTitle(page, "Binaries");
   const rows = panel.locator("table.data-table tbody tr");
   await expect(rows.first()).toBeVisible();
+  // The table is named by its panel heading, so a reader entering it hears
+  // which list it is.
+  await expect(page.getByRole("table", { name: "Binaries" })).toBeVisible();
   const search = panel.getByRole("searchbox", { name: /Search/ });
 
   // The name search, applied with Enter, narrows in place.
@@ -43,6 +46,8 @@ test("the register filters by name, hash and tag, and orders its rows", async ({
   await search.press("Enter");
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText(target.name);
+  await expect(rows.first().locator(".hash-identicon")).toHaveCount(1);
+  await expect(rows.first().locator(".copy-row .mono")).toHaveText(/…$/);
 
   // The tag filter, built from the tags the register holds.
   await panel.getByRole("button", { name: "Clear" }).click();

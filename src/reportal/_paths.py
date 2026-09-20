@@ -37,6 +37,31 @@ REPORTS_DIR = "reports"
 # under their content hash.  The caller creates it before writing.
 BINARIES_DIR = "binaries"
 
+# Workspace subdirectory holding imported debug symbols, content-addressed by
+# the symbol file's own sha256.  ``symbols.py`` re-exports this name.
+SYMBOLS_DIR = "symbols"
+
+# Every workspace subdirectory reportal owns.  ``reportal init`` creates them, so
+# a fresh workspace has its folders before the first write.  The workspace's own
+# ``docs/`` is deliberately absent: an empty one would shadow the shipped manual
+# (``docs.documents_dir``).
+WORKSPACE_DIRS = (BINARIES_DIR, REPORTS_DIR, SYMBOLS_DIR)
+
+
+def ensure_workspace_dirs(root: Path) -> list[str]:
+    """Create *root*'s workspace subdirectories, returning the names created.
+
+    An existing directory is left alone and not reported, so the answer is the
+    folders this call made.
+    """
+    created: list[str] = []
+    for name in WORKSPACE_DIRS:
+        directory = root / name
+        if not directory.is_dir():
+            directory.mkdir(parents=True, exist_ok=True)
+            created.append(name)
+    return created
+
 
 class WorkspaceNotFound(FileNotFoundError):  # noqa: N818  # name fixed by the workspace contract
     """No :data:`MARKER` was found walking up from the current directory."""

@@ -130,6 +130,7 @@ def _side(function: dict[str, Any]) -> dict[str, Any]:
         "function_id": int(function["id"]),
         "name": str(function["name"]),
         "va": int(function["va"]),
+        "binary_id": int(function["binary_id"]),
     }
 
 

@@ -127,6 +127,19 @@ export function qualityHue(band: string): HueFamily | null {
   return QUALITY_HUES[band.trim().toLowerCase()] ?? null;
 }
 
+const NAME_SOURCE_HUES: Record<string, HueFamily> = {
+  system: "thunk",
+  "auto unstrip": "live",
+  "ai agent": "near",
+  ai: "near",
+  user: "match",
+};
+
+/** The family hue a function name-source label keeps, or null for No Debug Info. */
+export function nameSourceHue(label: string): HueFamily | null {
+  return NAME_SOURCE_HUES[label.trim().toLowerCase()] ?? null;
+}
+
 // ── Instrument geometry ────────────────────────────────────────────
 
 /** Quantized steps of a level meter; discrete steps stay readable at distance. */

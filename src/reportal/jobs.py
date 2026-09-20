@@ -12,7 +12,8 @@ the local equivalent, deliberately small:
   wrapper over the scan runner the matching route already calls, wrapped in the
   same ``journal.journaled_scan`` the route uses, so a queued scan is journaled
   and revertible exactly like a synchronous one;
-- :func:`submit` queues one, :func:`run_pending` executes the oldest queued job,
+- :func:`submit` queues one, :func:`queue_stored_scans` maps stored scans onto
+  those kinds, :func:`run_pending` executes the oldest queued job,
   and the bounded background pool (:func:`ensure_worker`) is what runs them in a
   serving process, so a route can answer with a run id at once;
 - :func:`events` renders a job's state as server-sent events, so a client can
@@ -36,26 +37,39 @@ import sqlite3
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from reportal import (
     _paths,
     behavior,
+    binary_actions,
     capabilities,
     composition,
     engines,
+    families,
     filetypes,
+    firmware,
+    flirt_sigs,
+    function_triage,
+    gobuildinfo,
     hardening,
     journal,
+    library,
+    lineage,
+    llm,
     matching,
     observability,
     pdf,
     pipeline,
     protocols,
+    related,
+    remediation,
     secrets,
     similarity,
     store,
+    threat,
+    unpack,
     unstrip,
 )
 from reportal._paths import WorkspaceNotFound
@@ -85,6 +99,8 @@ MAX_QUEUED_JOBS = 100
 # Terminal rows kept per submit; the oldest are pruned, so the table is a
 # bounded operational log rather than an unbounded one.
 MAX_KEPT_JOBS = 500
+# Same default the structs HTTP route uses (`api.DEFAULT_STRUCT_LIMIT`).
+DEFAULT_STRUCT_LIMIT = 50
 
 # The background pool: how many jobs run at once, and how often an idle worker
 # looks for one.
@@ -265,6 +281,287 @@ def _engine_report(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
     return engines.get_engine().report(project_dir, _paths.reports_dir(binary_id))
 
 
+def _perform_pe_info(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run the engine's PE metadata scan and store it, journaled like its route."""
+    _binary, path = capabilities.require_binary_file(conn, binary_id)
+    result = engines.get_engine().pe_info(path)
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_PE_INFO, result)
+    return log.attach(result)
+
+
+def _perform_triage(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run the engine's one-shot dossier and store it, journaled like its route."""
+    _binary, path = capabilities.require_binary_file(conn, binary_id)
+    dossier = engines.get_engine().analyze(path)
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_TRIAGE, dossier)
+    return log.attach(dossier)
+
+
+def _perform_crypto(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run the engine's crypto scan and store it, journaled like its route."""
+    _binary, path = capabilities.require_binary_file(conn, binary_id)
+    result = engines.get_engine().crypto_scan(path)
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        journal.journaled_scan_result(conn, log, binary_id, store.SCAN_KIND_CRYPTO, result)
+    return log.attach(result)
+
+
+def _perform_firmware(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Carve a stored firmware image and store it, journaled like its route."""
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        payload = journal.journaled_scan(
+            conn,
+            log,
+            binary_id,
+            store.SCAN_KIND_FIRMWARE,
+            lambda: firmware.scan(conn, binary_id),
+            engine="firmware",
+        )
+    return log.attach(payload)
+
+
+def _run_library(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Identify library functions and store the reading."""
+    raw = params.get("min_confidence")
+    confidence = library.DEFAULT_MIN_CONFIDENCE if raw is None else float(raw)
+    return library.run_library(
+        conn,
+        binary_id=binary_id,
+        engine=engines.get_engine(),
+        min_confidence=confidence,
+    )
+
+
+def _perform_security(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run the engine's security scan and store it, journaled like its route."""
+    project_dir = store.get_rebrew_context(conn, binary_id)
+    if project_dir is None:
+        raise ValueError(f"binary {binary_id} has no rebrew project context")
+    min_severity = str(params.get("min_severity") or engines.DEFAULT_SECURITY_MIN_SEVERITY)
+    result = engines.get_engine().security_scan(project_dir, min_severity)
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        journal.journaled_scan_result(
+            conn,
+            log,
+            binary_id,
+            store.SCAN_KIND_SECURITY,
+            result,
+            params={"min_severity": min_severity},
+        )
+    return log.attach(result)
+
+
+def _run_threat(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Build a local threat report and store it."""
+    return threat.build_threat_report(
+        conn,
+        binary_id=binary_id,
+        engine=engines.get_engine(),
+        narrative=bool(params.get("narrative")),
+    )
+
+
+def _perform_structs(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Recover structs through the engine and store them, journaled like the route."""
+    project_dir = store.get_rebrew_context(conn, binary_id)
+    if project_dir is None:
+        raise ValueError(f"binary {binary_id} has no rebrew project context")
+    decompiler = str(params.get("decompiler") or engines.DEFAULT_DECOMPILER_BACKEND)
+    raw_limit = params.get("limit")
+    limit = DEFAULT_STRUCT_LIMIT if raw_limit is None else int(raw_limit)
+    result = engines.get_engine().structs(project_dir, decompiler=decompiler, limit=limit)
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        journal.journaled_scan_result(
+            conn,
+            log,
+            binary_id,
+            store.SCAN_KIND_STRUCTS,
+            result,
+            params={"decompiler": decompiler, "limit": limit},
+        )
+    return log.attach(result)
+
+
+def _run_detect(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Match a binary against registered families and store the reading."""
+    return families.detect_binary(conn, binary_id=binary_id, engine=engines.get_engine())
+
+
+def _run_gobuildinfo(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Recover Go build information and store it."""
+    return gobuildinfo.recover(conn, binary_id=binary_id)
+
+
+def _run_flirt(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Match the binary against the enabled FLIRT signatures and store it.
+
+    Queued like any other scan: matching reads the whole binary, and an
+    install whose catalog covers a whole toolchain should not hold a request
+    open for it.
+    """
+    return flirt_sigs.run_flirt(conn, binary_id=binary_id, arch=str(params.get("arch") or ""))
+
+
+def _run_remediation(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Generate YARA, Snort and STIX artifacts and store them."""
+    return remediation.build_remediation(conn, binary_id=binary_id, engine=engines.get_engine())
+
+
+def _run_function_triage(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Summarize selected functions and store the aggregate."""
+    raw_ids = params.get("function_ids")
+    function_ids = [int(value) for value in raw_ids] if isinstance(raw_ids, list) else None
+    raw_limit = params.get("limit")
+    limit = function_triage.DEFAULT_LIMIT if raw_limit is None else int(raw_limit)
+    return function_triage.summarize_functions(
+        conn,
+        binary_id=binary_id,
+        function_ids=function_ids,
+        limit=limit,
+        client=llm.get_client(),
+        engine=engines.get_engine(),
+    )
+
+
+def _run_related(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Rank related binaries and store the reading."""
+    raw_limit = params.get("limit")
+    limit = related.DEFAULT_LIMIT if raw_limit is None else int(raw_limit)
+    return related.find_related(
+        conn,
+        binary_id=binary_id,
+        engine=engines.get_engine(),
+        limit=limit,
+        include_unrelated=bool(params.get("include_unrelated")),
+    )
+
+
+def _run_lineage(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Replay stored lineage pairs, or one named partner."""
+    raw_other = params.get("other_binary_id")
+    if raw_other is not None:
+        partners = [int(raw_other)]
+    else:
+        partners = [
+            int(row["right_binary_id"]) for row in lineage.stored_comparisons(conn, binary_id)
+        ]
+    if not partners:
+        raise ValueError(f"binary {binary_id} has no stored lineage comparison")
+    refine = True if params.get("refine") is None else bool(params.get("refine"))
+    last: dict[str, Any] = {}
+    for other_id in partners:
+        comparison = lineage.compare_binaries(
+            conn,
+            left_binary_id=binary_id,
+            right_binary_id=other_id,
+            engine=engines.get_engine(),
+            refine=refine,
+        )
+        lineage.store_comparison(conn, comparison)
+        last = comparison
+    return last
+
+
+def _perform_lineage(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Replay lineage pairs and journal the scan the way the route does."""
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        payload = journal.journaled_scan(
+            conn,
+            log,
+            binary_id,
+            store.SCAN_KIND_LINEAGE,
+            lambda: _run_lineage(conn, binary_id, params),
+        )
+    return log.attach(payload)
+
+
+def _perform_benchmark(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Score a match run against known counterparts and store it."""
+    from reportal import benchmark
+
+    right_binary_id = int(params["right_binary_id"])
+    settings = matching.MatchSettings.from_request(
+        {key: value for key, value in params.items() if key != "right_binary_id"}
+    )
+    settings = replace(settings, binary_ids=(right_binary_id,), include_self=False)
+    result = benchmark.run(
+        conn,
+        left_binary_id=binary_id,
+        right_binary_id=right_binary_id,
+        engine=engines.get_engine(),
+        settings=settings,
+    )
+    action = journal.new_action()
+    with journal.journaled(conn, action) as log:
+        journal.journaled_scan_result(
+            conn,
+            log,
+            binary_id,
+            store.SCAN_KIND_BENCHMARK,
+            result,
+            params={"right_binary_id": right_binary_id, **settings.payload()},
+        )
+    return log.attach(result)
+
+
+def _perform_unpack(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Rebuild a packed image as a new binary. Requeue never maps onto this."""
+    try:
+        return binary_actions.unpack_binary(
+            conn,
+            binary_id,
+            packer=str(params.get("packer") or ""),
+            name=str(params.get("name") or ""),
+        )
+    except binary_actions.ExtractError as exc:
+        raise ValueError(exc.detail) from exc
+
+
 def render_pdf(
     conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -293,6 +590,20 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             run=lambda conn, binary_id, params: filetypes.run_filetype(
                 conn, binary_id=binary_id, engine=engines.get_engine()
             ),
+        ),
+        JobKind(
+            name="pe-info",
+            label="PE identity, sections and security metadata",
+            scan_kinds=store.SCAN_KIND_PE_INFO,
+            run=_perform_pe_info,
+            perform=_perform_pe_info,
+        ),
+        JobKind(
+            name="triage",
+            label="One-shot engine dossier",
+            scan_kinds=store.SCAN_KIND_TRIAGE,
+            run=_perform_triage,
+            perform=_perform_triage,
         ),
         JobKind(
             name="capabilities",
@@ -346,6 +657,115 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             run=lambda conn, binary_id, params: unstrip.run_unstrip(
                 conn, binary_id=binary_id, engine=engines.get_engine()
             ),
+        ),
+        JobKind(
+            name="crypto",
+            label="Crypto constants and API scan",
+            scan_kinds=store.SCAN_KIND_CRYPTO,
+            run=_perform_crypto,
+            perform=_perform_crypto,
+        ),
+        JobKind(
+            name="library",
+            label="Library identification",
+            scan_kinds=store.SCAN_KIND_LIBRARY,
+            params=("min_confidence",),
+            run=_run_library,
+        ),
+        JobKind(
+            name="firmware",
+            label="Firmware region carve",
+            scan_kinds=store.SCAN_KIND_FIRMWARE,
+            run=_perform_firmware,
+            perform=_perform_firmware,
+        ),
+        JobKind(
+            name="security",
+            label="Security findings over reversed sources",
+            scan_kinds=store.SCAN_KIND_SECURITY,
+            params=("min_severity",),
+            run=_perform_security,
+            perform=_perform_security,
+        ),
+        JobKind(
+            name="threat",
+            label="Local threat report",
+            scan_kinds=store.SCAN_KIND_THREAT,
+            params=("narrative",),
+            run=_run_threat,
+        ),
+        JobKind(
+            name="structs",
+            label="Struct recovery through the engine",
+            scan_kinds=store.SCAN_KIND_STRUCTS,
+            params=("decompiler", "limit"),
+            run=_perform_structs,
+            perform=_perform_structs,
+        ),
+        JobKind(
+            name="detect",
+            label="Family detection against stored signatures",
+            scan_kinds=store.SCAN_KIND_DETECT,
+            run=_run_detect,
+        ),
+        JobKind(
+            name="gobuildinfo",
+            label="Go build information recovery",
+            scan_kinds=store.SCAN_KIND_GOBUILDINFO,
+            run=_run_gobuildinfo,
+        ),
+        JobKind(
+            name="remediation",
+            label="YARA, Snort and STIX artifacts",
+            scan_kinds=store.SCAN_KIND_REMEDIATION,
+            run=_run_remediation,
+        ),
+        JobKind(
+            name="flirt",
+            label="FLIRT signature matching",
+            scan_kinds=store.SCAN_KIND_FLIRT,
+            params=("arch",),
+            run=_run_flirt,
+        ),
+        JobKind(
+            name="function-triage",
+            label="Per-function triage summaries",
+            scan_kinds=store.SCAN_KIND_FUNCTION_TRIAGE,
+            params=("limit", "function_ids"),
+            run=_run_function_triage,
+        ),
+        JobKind(
+            name="related",
+            label="Related-binary ranking",
+            scan_kinds=store.SCAN_KIND_RELATED,
+            params=("limit", "include_unrelated"),
+            run=_run_related,
+        ),
+        JobKind(
+            name="lineage",
+            label="Pairwise function lineage",
+            scan_kinds=store.SCAN_KIND_LINEAGE,
+            params=("other_binary_id", "refine"),
+            run=_perform_lineage,
+            perform=_perform_lineage,
+        ),
+        JobKind(
+            name="benchmark",
+            label="Match precision against a labelled partner",
+            scan_kinds=store.SCAN_KIND_BENCHMARK,
+            params=(
+                "right_binary_id",
+                "min_similarity",
+                "min_confidence",
+                "include_self",
+                "top",
+                "platforms",
+                "architectures",
+                "binary_ids",
+                "collection_ids",
+            ),
+            run=_perform_benchmark,
+            perform=_perform_benchmark,
         ),
         JobKind(
             name="behavior",
@@ -402,10 +822,86 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             run=_perform_enrich,
             perform_progress=_perform_enrich,
         ),
+        JobKind(
+            name="unpack",
+            label="Rebuild a packed image as a new binary",
+            scan_kinds=None,
+            params=("packer", "name"),
+            run=_perform_unpack,
+            perform=_perform_unpack,
+        ),
     )
 
 
 JOB_KINDS: dict[str, JobKind] = {kind.name: kind for kind in builtin_kinds()}
+
+
+def job_kind_for_scan(scan_kind: str) -> tuple[str, dict[str, Any]] | None:
+    """The job kind that stores *scan_kind*, plus any domain param it needs.
+
+    Scans with no queued runner (unpack, which creates a new binary) return None:
+    those stay a per-scan POST, not a background job.
+    """
+    for spec in JOB_KINDS.values():
+        if spec.scan_kinds is None:
+            continue
+        if isinstance(spec.scan_kinds, str):
+            if spec.scan_kinds == scan_kind:
+                return spec.name, {}
+            continue
+        for domain, kind in spec.scan_kinds.items():
+            if kind == scan_kind:
+                return spec.name, {"domain": domain}
+    return None
+
+
+def queue_stored_scans(
+    conn: sqlite3.Connection,
+    log: journal.Journal,
+    analysis_id: int,
+    *,
+    submitted_by: str = "",
+    submitted_by_user_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """Queue a job for each stored scan that has a job kind.
+
+    Params the kind does not take are dropped. A scan with no job kind is
+    skipped. Live duplicates return the existing row.
+    """
+    analysis = store.get_analysis(conn, analysis_id)
+    if analysis is None:
+        return []
+    binary_id = int(analysis["binary_id"])
+    queued: list[dict[str, Any]] = []
+    for scan in store.list_scans(conn, analysis_id):
+        mapped = job_kind_for_scan(str(scan["kind"]))
+        if mapped is None:
+            continue
+        kind, extra = mapped
+        allowed = set(JOB_KINDS[kind].params)
+        params = {
+            key: value for key, value in dict(scan.get("params") or {}).items() if key in allowed
+        }
+        params.update(extra)
+        job = submit(
+            conn,
+            kind=kind,
+            binary_id=binary_id,
+            params=params,
+            submitted_by=submitted_by,
+            submitted_by_user_id=submitted_by_user_id,
+        )
+        job_id = int(job["id"])
+        if any(int(row["id"]) == job_id for row in queued):
+            continue
+        journal.journaled_create(
+            log,
+            table=TABLE,
+            key=job_id,
+            description=f"queued {kind} job {job_id} for analysis {analysis_id}",
+        )
+        queued.append(job)
+    return queued
 
 
 # ── Rows ───────────────────────────────────────────────────────────
@@ -674,6 +1170,138 @@ def submit(
         ids = resolved.get("function_ids")
         if ids is not None and (not isinstance(ids, list) or not all(_is_int(v) for v in ids)):
             raise ValueError("function_ids must be a list of function ids")
+    if kind == "library":
+        raw_confidence = resolved.get("min_confidence")
+        if raw_confidence is None:
+            resolved["min_confidence"] = library.DEFAULT_MIN_CONFIDENCE
+        else:
+            try:
+                confidence = float(raw_confidence)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"min_confidence must be a number, got {raw_confidence!r}"
+                ) from exc
+            if not 0.0 <= confidence <= 1.0:
+                raise ValueError(f"min_confidence must be between 0 and 1, got {confidence}")
+            resolved["min_confidence"] = confidence
+    if kind == "security":
+        raw_severity = resolved.get("min_severity")
+        if raw_severity is None:
+            resolved["min_severity"] = engines.DEFAULT_SECURITY_MIN_SEVERITY
+        else:
+            severity = str(raw_severity)
+            if severity not in engines.SECURITY_SEVERITIES:
+                raise ValueError(f"unsupported security severity: {severity}")
+            resolved["min_severity"] = severity
+    if kind == "threat":
+        raw_narrative = resolved.get("narrative")
+        if raw_narrative is None:
+            resolved["narrative"] = False
+        elif not isinstance(raw_narrative, bool):
+            raise ValueError(f"narrative must be a boolean, got {raw_narrative!r}")
+        else:
+            resolved["narrative"] = raw_narrative
+    if kind == "structs":
+        raw_decompiler = resolved.get("decompiler")
+        if raw_decompiler is None:
+            resolved["decompiler"] = engines.DEFAULT_DECOMPILER_BACKEND
+        else:
+            decompiler = str(raw_decompiler)
+            if decompiler not in engines.DECOMPILER_BACKENDS:
+                raise ValueError(f"unsupported decompiler backend: {decompiler}")
+            resolved["decompiler"] = decompiler
+        raw_limit = resolved.get("limit")
+        if raw_limit is None:
+            resolved["limit"] = DEFAULT_STRUCT_LIMIT
+        else:
+            try:
+                limit = int(raw_limit)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"limit must be an integer, got {raw_limit!r}") from exc
+            if limit < 0:
+                raise ValueError(f"limit must not be negative: {limit}")
+            resolved["limit"] = limit
+    if kind == "function-triage":
+        raw_limit = resolved.get("limit")
+        if raw_limit is None:
+            resolved["limit"] = function_triage.DEFAULT_LIMIT
+        else:
+            try:
+                limit = int(raw_limit)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"limit must be an integer, got {raw_limit!r}") from exc
+            if not 1 <= limit <= function_triage.MAX_LIMIT:
+                raise ValueError(
+                    f"limit must be between 1 and {function_triage.MAX_LIMIT}, got {limit}"
+                )
+            resolved["limit"] = limit
+        ids = resolved.get("function_ids")
+        if ids is not None and (not isinstance(ids, list) or not all(_is_int(v) for v in ids)):
+            raise ValueError("function_ids must be a list of function ids")
+    if kind == "related":
+        raw_limit = resolved.get("limit")
+        if raw_limit is None:
+            resolved["limit"] = related.DEFAULT_LIMIT
+        else:
+            try:
+                limit = int(raw_limit)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"limit must be an integer, got {raw_limit!r}") from exc
+            if limit <= 0:
+                raise ValueError(f"limit must be positive, got {limit}")
+            if limit > related.MAX_LIMIT:
+                raise ValueError(f"limit must be at most {related.MAX_LIMIT}, got {limit}")
+            resolved["limit"] = limit
+        raw_unrelated = resolved.get("include_unrelated")
+        if raw_unrelated is None:
+            resolved["include_unrelated"] = False
+        elif not isinstance(raw_unrelated, bool):
+            raise ValueError(f"include_unrelated must be a boolean, got {raw_unrelated!r}")
+        else:
+            resolved["include_unrelated"] = raw_unrelated
+    if kind == "lineage":
+        raw_other = resolved.get("other_binary_id")
+        if raw_other is not None:
+            if not _is_int(raw_other):
+                raise ValueError(f"other_binary_id must be an integer, got {raw_other!r}")
+            if int(raw_other) == binary_id:
+                raise ValueError(f"binary {binary_id} cannot be compared with itself")
+            resolved["other_binary_id"] = int(raw_other)
+        raw_refine = resolved.get("refine")
+        if raw_refine is None:
+            resolved["refine"] = True
+        elif not isinstance(raw_refine, bool):
+            raise ValueError(f"refine must be a boolean, got {raw_refine!r}")
+        else:
+            resolved["refine"] = raw_refine
+    if kind == "benchmark":
+        raw_right = resolved.get("right_binary_id")
+        if isinstance(raw_right, bool) or not isinstance(raw_right, int):
+            raise ValueError("right_binary_id is required")
+        if raw_right == binary_id:
+            raise ValueError("a benchmark compares two different binaries")
+        resolved["right_binary_id"] = raw_right
+        if not similarity.available():
+            raise ValueError(
+                "function matching requires the optional 'similarity' extra"
+                " (uv sync --extra similarity)"
+            )
+        try:
+            settings = matching.MatchSettings.from_request(resolved)
+            matching.resolve_scope(conn, settings)
+        except matching.InvalidSettingsError as exc:
+            raise ValueError(f"{exc.error}: {exc.detail}") from exc
+    if kind == "unpack":
+        raw_packer = resolved.get("packer")
+        if raw_packer is None:
+            resolved["packer"] = ""
+        else:
+            packer = str(raw_packer).strip().lower()
+            if packer and packer not in unpack.PACKERS:
+                raise ValueError(f"packer must be one of {', '.join(unpack.PACKERS)}")
+            resolved["packer"] = packer
+        raw_name = resolved.get("name")
+        resolved["name"] = "" if raw_name is None else str(raw_name).strip()
     ensure_schema(conn)
     # Stable encoding so a double-click that rebuilds the same params map still
     # matches the queued row; without sort_keys, insertion order alone would

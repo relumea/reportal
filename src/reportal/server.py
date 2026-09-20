@@ -417,6 +417,8 @@ def authenticate(request: Request) -> tuple[str, Response | None]:
         needed = auth.required_permission(request.method, request.url.path)
         if needed not in auth.permissions_for(str(user["role"])):
             return "", json_error(403, error=auth.ERROR_FORBIDDEN, detail=auth.FORBIDDEN_DETAIL)
+        if user.get("api_key_read_only") and needed != auth.PERMISSION_READ:
+            return "", json_error(403, error=auth.ERROR_FORBIDDEN, detail=auth.READ_ONLY_KEY_DETAIL)
         refusal = _enforce_scope(conn, request, user)
     write_key = f"user:{int(user['id'])}"
     if not auth.is_read_method(request.method) and not auth.write_allowed(write_key):

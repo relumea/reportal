@@ -8,6 +8,7 @@ import {
   CheckboxField,
   CodeBlock,
   ConfirmButton,
+  CopyValue,
   DataTable,
   EmptyState,
   EngineNote,
@@ -256,7 +257,7 @@ export function DecompilationPanel({ functionId }: { functionId: number }): Reac
 
 interface ReferencesData {
   result: FunctionReferences;
-  functionsByVa: Map<number, number>;
+  functionsByVa: Map<number, FunctionRow>;
 }
 
 const REFERENCES_HINT =
@@ -275,8 +276,8 @@ function useReferences(functionId: number, binaryId: number): {
     const functionsByVa = await api<{ functions: FunctionRow[] }>(
       `/binaries/${binaryId}/functions`,
     ).then(
-      (data) => new Map<number, number>(data.functions.map((row) => [row.va, row.id])),
-      () => new Map<number, number>(),
+      (data) => new Map<number, FunctionRow>(data.functions.map((row) => [row.va, row])),
+      () => new Map<number, FunctionRow>(),
     );
     const result = await api<FunctionReferences>(`/functions/${functionId}/references`);
     return { result, functionsByVa };
@@ -330,7 +331,14 @@ function GlobalsPanel({
                 {
                   label: "Address",
                   mono: true,
-                  render: (row) => hex(row.address),
+                  render: (row) => (
+                    <>
+                      <a href={`#/binaries/${binaryId}?memory=${hex(row.address)}`}>
+                        {hex(row.address)}
+                      </a>
+                      <CopyValue value={hex(row.address)} />
+                    </>
+                  ),
                 },
                 { label: "Section", mono: true, render: (row) => row.section ?? NA },
                 {
@@ -345,6 +353,14 @@ function GlobalsPanel({
                     ),
                 },
                 { label: "Kind", mono: true, render: (row) => row.kind },
+                {
+                  label: "Functions",
+                  render: (row) => (
+                    <a href={`#/binaries/${binaryId}/functions?refers_to=${hex(row.address)}`}>
+                      Filter functions
+                    </a>
+                  ),
+                },
               ]}
               rows={loaded.result.globals}
               rowKey={(row, index) => `${row.address}-${row.kind}-${index}`}
@@ -392,8 +408,7 @@ function CallersPanel({
                 },
                 {
                   label: "Name",
-                  render: (row) =>
-                    row.name === null ? <span className="muted">{NA}</span> : row.name,
+                  render: (row) => functionNameLink(loaded.functionsByVa, row.from_va, row.name),
                 },
               ]}
               rows={loaded.result.callers}
@@ -440,19 +455,18 @@ export function CalleesPanel({
                   mono: true,
                   render: (row) => {
                     const target = loaded.functionsByVa.get(row.to_va);
-                    return target === undefined ? hex(row.to_va) : <a href={`#/functions/${target}`}>{hex(row.to_va)}</a>;
+                    return target === undefined ? (
+                      hex(row.to_va)
+                    ) : (
+                      <a href={`#/functions/${target.id}`}>{hex(row.to_va)}</a>
+                    );
                   },
                 },
                 {
                   label: "Name",
                   render: (row) => {
                     if (row.name !== null) {
-                      const target = loaded.functionsByVa.get(row.to_va);
-                      return target === undefined ? (
-                        row.name
-                      ) : (
-                        <a href={`#/functions/${target}`}>{row.name}</a>
-                      );
+                      return functionNameLink(loaded.functionsByVa, row.to_va, row.name);
                     }
                     return row.indirect ? (
                       <Badge tone="info">indirect</Badge>
@@ -524,7 +538,7 @@ function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
             </EmptyState>
           ) : (
             <>
-              <table className="table">
+              <table className="table" aria-label="Cross references">
                 <thead>
                   <tr>
                     <th>From</th>
@@ -555,10 +569,37 @@ function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
   );
 }
 
-function fromVaLink(functionsByVa: Map<number, number>, va: number): ReactNode {
-  const functionId = functionsByVa.get(va);
-  if (functionId === undefined) return hex(va);
-  return <a href={`#/functions/${functionId}`}>{hex(va)}</a>;
+function functionAtVa(
+  functionsByVa: Map<number, FunctionRow>,
+  va: number,
+): FunctionRow | undefined {
+  const exact = functionsByVa.get(va);
+  if (exact !== undefined) return exact;
+  let best: FunctionRow | undefined;
+  for (const fn of functionsByVa.values()) {
+    if (va < fn.va || va >= fn.va + fn.size) continue;
+    if (best === undefined || fn.va > best.va) best = fn;
+  }
+  return best;
+}
+
+function fromVaLink(functionsByVa: Map<number, FunctionRow>, va: number): ReactNode {
+  const fn = functionAtVa(functionsByVa, va);
+  if (fn === undefined) return hex(va);
+  return <a href={`#/functions/${fn.id}`}>{hex(va)}</a>;
+}
+
+function functionNameLink(
+  functionsByVa: Map<number, FunctionRow>,
+  va: number,
+  name: string | null,
+): ReactNode {
+  const fn = functionAtVa(functionsByVa, va);
+  const label = name ?? fn?.name ?? "";
+  if (fn === undefined) {
+    return label === "" ? <span className="muted">{NA}</span> : label;
+  }
+  return <a href={`#/functions/${fn.id}`}>{label || `#${fn.id}`}</a>;
 }
 
 export function MatchesPanel({
@@ -606,6 +647,11 @@ export function MatchesPanel({
     <Panel
       title="Matches"
       subtitle="Candidates recorded for this function, newest first."
+      actions={
+        <a className="btn btn-ghost" href={`#/matches?function=${functionId}`}>
+          View function matching
+        </a>
+      }
     >
       {actionError ? <ErrorNote error={actionError} /> : null}
       <PanelBody entry={entry} hint="Loading matches">
@@ -620,6 +666,15 @@ export function MatchesPanel({
               },
               { label: "VA", mono: true, render: (row) => hex(row.candidate_va) },
               { label: "Name", key: "candidate_name" },
+              {
+                label: "Signature",
+                render: (row) =>
+                  row.candidate_prototype ? (
+                    <code className="mono">{row.candidate_prototype}</code>
+                  ) : (
+                    NA
+                  ),
+              },
               { label: "Status", render: (row) => <StatusCell status={row.candidate_status} /> },
               {
                 label: "Similarity",

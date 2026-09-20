@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
+import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { api, isApiErrorCode } from "../api";
 import {
@@ -14,18 +14,22 @@ import {
   KeyValue,
   Loading,
   Muted,
+  NameSourceDot,
   Note,
   Panel,
   Toolbar,
+  TypeNameLink,
 } from "../components";
 import {
   DATA_TYPE_KIND_LABELS,
   DATA_TYPE_KINDS,
   DECOMPILER_BACKENDS,
   DEFAULT_DECOMPILER_BACKEND,
+  typeSourceLabel,
 } from "../constants";
 import { useNavigate } from "react-router";
 
+import { setTypeEditRestore } from "../keys";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import { useAsync } from "../useAsync";
 import type {
@@ -76,6 +80,24 @@ const SOURCE_SCAN = "scan";
 const STRUCTS_NO_SCAN = "No structs recovered yet. Run the engine to recover them.";
 const NO_TYPES_HINT = "No types yet. Import the stored structs scan to seed the model.";
 
+function restoreOnFocus(
+  restore: () => boolean,
+): {
+  onFocus: () => void;
+  onBlur: () => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
+} {
+  return {
+    onFocus: () => setTypeEditRestore(restore),
+    onBlur: () => setTypeEditRestore(null),
+    onKeyDown: (event) => {
+      if (event.key !== "Escape") return;
+      if (!restore()) return;
+      event.preventDefault();
+    },
+  };
+}
+
 /** Render a member's type the way the exported C header does. */
 function memberTypeText(member: DataTypeMember): string {
   const base = member.pointer ? `${member.type} *` : member.type;
@@ -112,6 +134,27 @@ function parseValueInput(text: string): number | null {
 /** The kind badge's label; mirrors the API's kind vocabulary. */
 function kindLabel(kind: DataTypeKind): string {
   return DATA_TYPE_KIND_LABELS[kind];
+}
+
+function targetIdent(name: string): string {
+  return name.replace(/(?:\s*(?:\*+|\[\d*\]))+$/g, "").trim();
+}
+
+const CHAIN_KINDS = new Set<DataTypeKind>(["pointer", "typedef", "array"]);
+
+/** Walk pointer/typedef/array hops until a leaf or a cycle. */
+function targetChain(start: DataType, typesByName: Map<string, DataType>): DataType[] {
+  const hops: DataType[] = [];
+  const seen = new Set<number>([start.id]);
+  let current: DataType | undefined = start;
+  while (current && CHAIN_KINDS.has(current.kind) && current.target) {
+    const next = typesByName.get(targetIdent(current.target));
+    if (!next || seen.has(next.id)) break;
+    hops.push(next);
+    seen.add(next.id);
+    current = next;
+  }
+  return hops;
 }
 
 export function DataTypesPanel({
@@ -159,6 +202,8 @@ export function DataTypesPanel({
   };
   const setKind = (value: string): void => apply({ kind: value });
   const setNamespace = (value: string): void => apply({ namespace: value });
+  const filterCount = [kind, namespace, source].filter(Boolean).length;
+  const clearFilters = (): void => apply({ kind: "", namespace: "", source: "" });
   const setSearch = (value: string): void => apply({ search: value });
   const setSource = (value: string): void => apply({ source: value });
   const setSort = (value: string): void => apply({ sort: value });
@@ -406,9 +451,13 @@ export function DataTypesPanel({
         />
       </Field>
       {bulkError ? <ErrorNote error={bulkError} /> : null}
-      {bulkStatus ? <Badge hue="match">{bulkStatus}</Badge> : null}
-      {status ? <Badge hue="match">{status}</Badge> : null}
-      {signatureStatus ? <Badge hue="match">{signatureStatus}</Badge> : null}
+      {/* One region, mounted before its text, so a paste, import or signature
+          edit is announced when it lands. */}
+      <span role="status">
+        {bulkStatus ? <Badge hue="match">{bulkStatus}</Badge> : null}
+        {status ? <Badge hue="match">{status}</Badge> : null}
+        {signatureStatus ? <Badge hue="match">{signatureStatus}</Badge> : null}
+      </span>
       {actionError ? <ErrorNote error={actionError} /> : null}
       {forceNeeded ? (
         <Note tone="warn">
@@ -445,18 +494,6 @@ export function DataTypesPanel({
         </Muted>
       ) : null}
       <Toolbar>
-        {/* The filter is named for what it narrows; each type card carries its
-            own Kind control, so one plain "Kind" would name two controls. */}
-        <Field label="Kind filter">
-          <select value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="">All kinds</option>
-            {DATA_TYPE_KINDS.map((option) => (
-              <option key={option} value={option}>
-                {kindLabel(option)}
-              </option>
-            ))}
-          </select>
-        </Field>
         <Field label="Source filter">
           <select value={source} onChange={(event) => setSource(event.target.value)}>
             <option value="">All sources</option>
@@ -488,11 +525,20 @@ export function DataTypesPanel({
         <Field label="Filter">
           <input
             type="search"
-            placeholder="name, member or enum value"
+            placeholder={
+              entry?.state === "ready"
+                ? `Search ${entry.data.total} types or namespaces`
+                : "name, member or enum value"
+            }
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
         </Field>
+        {filterCount > 0 ? (
+          <Button tone="ghost" onClick={clearFilters}>
+            Clear ({filterCount})
+          </Button>
+        ) : null}
       </Toolbar>
       {!entry || entry.state === "loading" ? (
         <Loading label="Loading the type model" />
@@ -504,6 +550,11 @@ export function DataTypesPanel({
             nodes={entry.data.namespaces}
             selected={namespace}
             onSelect={setNamespace}
+          />
+          <KindStrip
+            kinds={entry.data.kinds ?? {}}
+            selected={kind}
+            onSelect={setKind}
           />
           <ProvenanceStrip
             sources={entry.data.sources ?? {}}
@@ -547,12 +598,43 @@ const TYPE_SORTS = ["name", "size"] as const;
 const SORT_DIRECTIONS = ["asc", "desc"] as const;
 
 /**
- * The provenance strip: how many types came from each source, each count a
+ * The kind strip: how many types of each declaration kind, each count a
  * filter control.
  *
  * The counts are over the whole model rather than the filtered page, so a
- * reader can see that ticking `System` will leave something before ticking it.
+ * reader can see that ticking `enum` will leave something before ticking it.
  */
+function KindStrip({
+  kinds,
+  selected,
+  onSelect,
+}: {
+  kinds: Record<string, number>;
+  selected: string;
+  onSelect: (kind: string) => void;
+}): ReactNode {
+  return (
+    <Toolbar>
+      {DATA_TYPE_KINDS.map((option) => (
+        <Button
+          key={option}
+          size="sm"
+          tone={selected === option ? "primary" : "ghost"}
+          title={kindLabel(option)}
+          onClick={() => onSelect(selected === option ? "" : option)}
+        >
+          {kindLabel(option)}: {kinds[option] ?? 0}
+        </Button>
+      ))}
+      {selected ? (
+        <Button size="sm" tone="ghost" onClick={() => onSelect("")}>
+          Clear kind
+        </Button>
+      ) : null}
+    </Toolbar>
+  );
+}
+
 function ProvenanceStrip({
   sources,
   selected,
@@ -661,12 +743,16 @@ function NamespaceNode({
   collapsed: boolean;
   onSelect: (path: string) => void;
 }): ReactNode {
+  const covered = selected !== "" && node.path.startsWith(`${selected}::`);
+  const active = selected === node.path;
   return (
     <li>
       <button
         type="button"
-        className={selected === node.path ? "tree-node is-active" : "tree-node"}
-        aria-pressed={selected === node.path}
+        className={
+          covered ? "tree-node is-covered" : active ? "tree-node is-active" : "tree-node"
+        }
+        aria-pressed={active}
         onClick={() => onSelect(node.path)}
       >
         {node.name} <span className="muted">({node.count})</span>
@@ -706,6 +792,8 @@ function TypeList({
 }): ReactNode {
   const members = data.types.reduce((total, dataType) => total + dataType.members.length, 0);
   const scanned = data.types.filter((dataType) => dataType.source === SOURCE_SCAN).length;
+  const knownTypes = new Set(data.types.map((entry) => entry.name));
+  const typesByName = new Map(data.types.map((entry) => [entry.name, entry]));
   const filterLabel = [kind, namespace, search.trim()].filter(Boolean).join(", ");
   if (data.types.length === 0) {
     return filterLabel ? (
@@ -723,7 +811,10 @@ function TypeList({
       {data.types.map((dataType) => (
         <DataTypeCard
           key={dataType.id}
+          binaryId={data.binary_id}
           dataType={dataType}
+          knownTypes={knownTypes}
+          typesByName={typesByName}
           onChange={onChanged}
           onNote={onNote}
         />
@@ -733,11 +824,17 @@ function TypeList({
 }
 
 function DataTypeCard({
+  binaryId,
   dataType,
+  knownTypes,
+  typesByName,
   onChange,
   onNote,
 }: {
+  binaryId: number;
   dataType: DataType;
+  knownTypes: Set<string>;
+  typesByName: Map<string, DataType>;
   onChange: () => void;
   onNote: (note: string) => void;
 }): ReactNode {
@@ -795,18 +892,28 @@ function DataTypeCard({
     <Card
       title={
         <>
+          <NameSourceDot label={typeSourceLabel(dataType.source || "manual")} />{" "}
           <Badge mono>{dataType.name}</Badge> <Badge>{kindLabel(dataType.kind)}</Badge>{" "}
           {dataType.namespace ? dataType.namespace : "program-defined"} · {dataType.size} bytes ·{" "}
           {dataType.kind === "enum"
             ? `${dataType.values.length} values`
             : `${dataType.members.length} members`}{" "}
-          · {dataType.source || "manual"}
+          · {typeSourceLabel(dataType.source || "manual")}
         </>
       }
       actions={
         <>
           <Field label="Rename">
-            <input type="text" value={name} onChange={(event) => setName(event.target.value)} />
+            <input
+              type="text"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              {...restoreOnFocus(() => {
+                if (name === dataType.name) return false;
+                setName(dataType.name);
+                return true;
+              })}
+            />
           </Field>
           <Button size="sm" pending={busy === "rename"} onClick={rename}>
             Rename type
@@ -842,6 +949,11 @@ function DataTypeCard({
             placeholder="program-defined"
             value={namespace}
             onChange={(event) => setNamespace(event.target.value)}
+            {...restoreOnFocus(() => {
+              if (namespace === dataType.namespace) return false;
+              setNamespace(dataType.namespace);
+              return true;
+            })}
           />
         </Field>
         <Field label="Size">
@@ -850,6 +962,12 @@ function DataTypeCard({
             min="0"
             value={sizeText}
             onChange={(event) => setSizeText(event.target.value)}
+            {...restoreOnFocus(() => {
+              const original = String(dataType.size);
+              if (sizeText === original) return false;
+              setSizeText(original);
+              return true;
+            })}
           />
         </Field>
         <Button size="sm" tone="primary" pending={busy === "fields"} onClick={saveFields}>
@@ -860,29 +978,91 @@ function DataTypeCard({
       <CodeBlock text={dataType.as_c} title="As C" />
       {dataType.kind === "enum" ? (
         <EnumValues dataType={dataType} onChange={onChange} onNote={onNote} />
-      ) : dataType.kind === "struct" || dataType.kind === "union" ? (
-        <MemberTable
-          dataType={dataType}
-          onChange={onChange}
-          addName={memberName}
-          addType={memberType}
-        />
+      ) : dataType.kind === "struct" || dataType.kind === "union" || dataType.kind === "function" ? (
+        <>
+          {dataType.kind === "function" ? (
+            <KeyValue
+              rows={[
+                [
+                  "Returns",
+                  dataType.target ? (
+                    <TypeNameLink
+                      binaryId={binaryId}
+                      name={dataType.target}
+                      knownTypes={knownTypes}
+                    />
+                  ) : (
+                    "n/a"
+                  ),
+                ],
+              ]}
+            />
+          ) : null}
+          <MemberTable
+            binaryId={binaryId}
+            dataType={dataType}
+            knownTypes={knownTypes}
+            onChange={onChange}
+            addName={memberName}
+            addType={memberType}
+          />
+        </>
       ) : (
         <KeyValue
           rows={[
-            ["Target", dataType.target || "n/a"],
+            [
+              dataType.kind === "pointer"
+                ? "Points at"
+                : dataType.kind === "array"
+                  ? "Element type"
+                  : dataType.kind === "typedef"
+                    ? "Aliases"
+                    : "Target",
+              dataType.target ? (
+                <TypeNameLink binaryId={binaryId} name={dataType.target} knownTypes={knownTypes} />
+              ) : (
+                "n/a"
+              ),
+            ],
+            [
+              "Chain",
+              (() => {
+                const hops = targetChain(dataType, typesByName);
+                if (!hops.length) return "n/a";
+                return (
+                  <span>
+                    {hops.map((hop, index) => (
+                      <span key={hop.id}>
+                        {index > 0 ? " then " : null}
+                        <TypeNameLink
+                          binaryId={binaryId}
+                          name={hop.name}
+                          knownTypes={knownTypes}
+                        />{" "}
+                        ({kindLabel(hop.kind)} · {hop.size} bytes)
+                      </span>
+                    ))}
+                  </span>
+                );
+              })(),
+            ],
             ["Element count", dataType.element_count === null ? "n/a" : String(dataType.element_count)],
           ]}
         />
       )}
       {memberKind ? (
         <Toolbar>
-          <Field label="Add member">
+          <Field label={dataType.kind === "function" ? "Add parameter" : "Add member"}>
             <input
               type="text"
               placeholder="name"
               value={memberName}
               onChange={(event) => setMemberName(event.target.value)}
+              {...restoreOnFocus(() => {
+                if (memberName === "") return false;
+                setMemberName("");
+                return true;
+              })}
             />
           </Field>
           <Field label="Type">
@@ -891,6 +1071,11 @@ function DataTypeCard({
               placeholder="unsigned int"
               value={memberType}
               onChange={(event) => setMemberType(event.target.value)}
+              {...restoreOnFocus(() => {
+                if (memberType === "") return false;
+                setMemberType("");
+                return true;
+              })}
             />
           </Field>
           <Button size="sm" tone="primary" pending={busy === "add"} onClick={addMember}>
@@ -900,7 +1085,9 @@ function DataTypeCard({
       ) : null}
       {error ? <ErrorNote error={error} /> : null}
       {showHistory ? <DataTypeHistorySection dataTypeId={dataType.id} onChange={onChange} /> : null}
-      {showReferences ? <TypeReferences dataTypeId={dataType.id} /> : null}
+      {showReferences ? (
+        <TypeReferences dataTypeId={dataType.id} binaryId={binaryId} />
+      ) : null}
     </Card>
   );
 }
@@ -1006,31 +1193,41 @@ function DataTypeHistorySection({
 }
 
 function MemberTable({
+  binaryId,
   dataType,
+  knownTypes,
   onChange,
   addName,
   addType,
 }: {
+  binaryId: number;
   dataType: DataType;
+  knownTypes: Set<string>;
   onChange: () => void;
   addName: string;
   addType: string;
 }): ReactNode {
+  const padding = dataType.members
+    .filter((member) => member.is_gap === true)
+    .reduce((total, member) => total + member.size, 0);
+  const isFunction = dataType.kind === "function";
   return (
     <>
       {dataType.kind === "union" ? <Muted>All members overlap.</Muted> : null}
       {dataType.members.length === 0 ? (
-        <EmptyState>No members yet. Add one below.</EmptyState>
+        <EmptyState>
+          {isFunction ? "No parameters yet. Add one below." : "No members yet. Add one below."}
+        </EmptyState>
       ) : (
         <div className="table-scroll">
-          <table className="data-table">
+          <table className="data-table" aria-label={isFunction ? "Function parameters" : "Type members"}>
             <thead>
               <tr>
-                <th className="num">Offset</th>
+                {isFunction ? null : <th className="num">Offset</th>}
                 <th className="num">Size</th>
-                <th>Member</th>
+                <th>{isFunction ? "Parameter" : "Member"}</th>
                 <th>Type</th>
-                <th className="num">Bits</th>
+                {isFunction ? null : <th className="num">Bits</th>}
                 <th>Actions</th>
               </tr>
             </thead>
@@ -1038,15 +1235,25 @@ function MemberTable({
               {dataType.members.map((member, index) => (
                 <MemberRow
                   key={`${member.name}-${index}`}
+                  binaryId={binaryId}
                   dataTypeId={dataType.id}
                   member={member}
+                  knownTypes={knownTypes}
                   onChange={onChange}
                   addName={addName}
                   addType={addType}
+                  hideLayout={isFunction}
                 />
               ))}
             </tbody>
           </table>
+          <Muted>
+            {isFunction
+              ? `${dataType.members.length} parameters`
+              : `${dataType.members.length} members · ${dataType.size} bytes${
+                  padding > 0 ? ` · ${padding} bytes padding` : ""
+                }`}
+          </Muted>
         </div>
       )}
     </>
@@ -1102,7 +1309,7 @@ function EnumValues({
         <EmptyState>No enum values stored.</EmptyState>
       ) : (
         <div className="table-scroll">
-          <table className="data-table">
+          <table className="data-table" aria-label="Enum values">
             <thead>
               <tr>
                 <th>Name</th>
@@ -1207,6 +1414,11 @@ function EnumValueRow({
           aria-label={`Name of enum value ${value.name}`}
           value={name}
           onChange={(event) => setName(event.target.value)}
+          {...restoreOnFocus(() => {
+            if (name === value.name) return false;
+            setName(value.name);
+            return true;
+          })}
         />
       </td>
       <td className="num">
@@ -1215,6 +1427,12 @@ function EnumValueRow({
           aria-label={`Value of enum value ${value.name}`}
           value={valueText}
           onChange={(event) => setValueText(event.target.value)}
+          {...restoreOnFocus(() => {
+            const original = String(value.value);
+            if (valueText === original) return false;
+            setValueText(original);
+            return true;
+          })}
         />
       </td>
       <td className="num mono">{hex}</td>
@@ -1237,7 +1455,13 @@ function EnumValueRow({
 }
 
 /** The two reverse indices the API builds for one type, loaded on demand. */
-function TypeReferences({ dataTypeId }: { dataTypeId: number }): ReactNode {
+function TypeReferences({
+  dataTypeId,
+  binaryId,
+}: {
+  dataTypeId: number;
+  binaryId: number;
+}): ReactNode {
   const key = panelKey("data-type", dataTypeId, "references");
   const entry = usePanel(key, () => api<DataTypeReferences>(`/data-types/${dataTypeId}/references`));
   if (!entry || entry.state === "loading") {
@@ -1255,7 +1479,7 @@ function TypeReferences({ dataTypeId }: { dataTypeId: number }): ReactNode {
         <EmptyState>Nothing references this type.</EmptyState>
       ) : (
         <div className="table-scroll">
-          <table className="data-table">
+          <table className="data-table" aria-label="Type references">
             <thead>
               <tr>
                 <th>Type</th>
@@ -1267,7 +1491,13 @@ function TypeReferences({ dataTypeId }: { dataTypeId: number }): ReactNode {
             <tbody>
               {data.referenced_by.map((reference) => (
                 <tr key={reference.id}>
-                  <td className="mono">{reference.name}</td>
+                  <td className="mono">
+                    <a
+                      href={`#/binaries/${binaryId}?search=${encodeURIComponent(reference.name)}`}
+                    >
+                      {reference.name}
+                    </a>
+                  </td>
                   <td>{reference.kind}</td>
                   <td>{reference.namespace || "program-defined"}</td>
                   <td>{reference.relationships.join(", ")}</td>
@@ -1282,7 +1512,7 @@ function TypeReferences({ dataTypeId }: { dataTypeId: number }): ReactNode {
         <EmptyState>No stored signature names this type.</EmptyState>
       ) : (
         <div className="table-scroll">
-          <table className="data-table">
+          <table className="data-table" aria-label="Function usages">
             <thead>
               <tr>
                 <th>Function</th>
@@ -1307,17 +1537,23 @@ function TypeReferences({ dataTypeId }: { dataTypeId: number }): ReactNode {
 }
 
 function MemberRow({
+  binaryId,
   dataTypeId,
   member,
+  knownTypes,
   onChange,
   addName,
   addType,
+  hideLayout = false,
 }: {
+  binaryId: number;
   dataTypeId: number;
   member: DataTypeMember;
+  knownTypes: Set<string>;
   onChange: () => void;
   addName: string;
   addType: string;
+  hideLayout?: boolean;
 }): ReactNode {
   const [name, setName] = useState(member.name);
   const [typeText, setTypeText] = useState(memberTypeInput(member));
@@ -1389,7 +1625,7 @@ function MemberRow({
   const isGap = member.is_gap === true;
   return (
     <tr>
-      <td className="num">{`0x${member.offset.toString(16)}`}</td>
+      {hideLayout ? null : <td className="num">{`0x${member.offset.toString(16)}`}</td>}
       <td className="num">{member.size}</td>
       <td>
         <input
@@ -1397,6 +1633,11 @@ function MemberRow({
           aria-label={`Name of member ${member.name}`}
           value={name}
           onChange={(event) => setName(event.target.value)}
+          {...restoreOnFocus(() => {
+            if (name === member.name) return false;
+            setName(member.name);
+            return true;
+          })}
         />
         {isGap ? <span className="muted"> padding</span> : null}
       </td>
@@ -1406,18 +1647,38 @@ function MemberRow({
           aria-label={`Type of member ${member.name}`}
           value={typeText}
           onChange={(event) => setTypeText(event.target.value)}
+          {...restoreOnFocus(() => {
+            const original = memberTypeInput(member);
+            if (typeText === original) return false;
+            setTypeText(original);
+            return true;
+          })}
         />
+        {knownTypes.has(member.type) ? (
+          <>
+            {" "}
+            <TypeNameLink binaryId={binaryId} name={member.type} knownTypes={knownTypes} />
+          </>
+        ) : null}
         {member.note ? <span className="muted"> {member.note}</span> : null}
       </td>
-      <td className="num bits-cell">
-        <input
-          type="text"
-          aria-label={`Bit width of member ${member.name}`}
-          placeholder="-"
-          value={bitsText}
-          onChange={(event) => setBitsText(event.target.value)}
-        />
-      </td>
+      {hideLayout ? null : (
+        <td className="num bits-cell">
+          <input
+            type="text"
+            aria-label={`Bit width of member ${member.name}`}
+            placeholder="-"
+            value={bitsText}
+            onChange={(event) => setBitsText(event.target.value)}
+            {...restoreOnFocus(() => {
+              const original = member.bits === null ? "" : String(member.bits);
+              if (bitsText === original) return false;
+              setBitsText(original);
+              return true;
+            })}
+          />
+        </td>
+      )}
       <td>
         <div className="actions-cell">
           <Button size="sm" pending={busy === "save"} onClick={save}>
@@ -1433,7 +1694,7 @@ function MemberRow({
           >
             Insert after
           </Button>
-          {isGap ? (
+          {hideLayout ? null : isGap ? (
             <Button size="sm" tone="ghost" pending={busy === "ungap"} onClick={fromGap}>
               Convert to member
             </Button>

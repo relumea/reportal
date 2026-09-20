@@ -1,8 +1,19 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ReactNode } from "react";
 
-import { api } from "../api";
-import { Badge, CopyValue, ErrorNote, Loading, Panel, StatusCell, hex } from "../components";
+import { api, isApiErrorCode } from "../api";
+import {
+  Badge,
+  CopyValue,
+  ErrorNote,
+  Loading,
+  NameSourceDot,
+  Panel,
+  StatusCell,
+  TypeNameLink,
+  hex,
+} from "../components";
+import { SIGNATURE_NOT_FOUND, nameSourceLabel } from "../constants";
 import {
   AiSection,
   CodeSection,
@@ -16,24 +27,149 @@ import { FunctionExtrasPanel } from "../panels/FunctionExtrasPanel";
 import { FunctionKnowledgePanel } from "../panels/KnowledgePanel";
 import { PipelinePanel } from "../panels/PipelinePanel";
 import { SignaturePanel } from "../panels/SignaturePanel";
-import type { FunctionRow } from "../types";
+import { panelKey, usePanel } from "../panelCache";
+import type { DataTypeList, FunctionRow, FunctionSignatureDetail } from "../types";
 import { useAsync } from "../useAsync";
 import { ChatAboutButton } from "./ConversationsView";
 
-function FunctionHeader({ fn }: { fn: FunctionRow }): ReactNode {
+function FunctionHeader({ fn, onRenamed }: { fn: FunctionRow; onRenamed: () => void }): ReactNode {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(fn.name);
+  const [busy, setBusy] = useState(false);
+  const [renameError, setRenameError] = useState<unknown>(null);
+  const skipBlur = useRef(false);
+  const signatureKey = panelKey("fn", fn.id, "signature");
+  const signature = usePanel<FunctionSignatureDetail>(signatureKey, () =>
+    api<FunctionSignatureDetail>(`/functions/${fn.id}/signature`),
+  );
+  const typesKey = panelKey("binary", fn.binary_id, "data-types", "");
+  const types = usePanel<DataTypeList>(typesKey, () =>
+    api<DataTypeList>(`/binaries/${fn.binary_id}/data-types`),
+  );
+  const knownTypes = new Set(
+    types?.state === "ready" ? types.data.types.map((entry) => entry.name) : [],
+  );
+  const prototype =
+    signature?.state === "ready"
+      ? signature.data.prototype
+      : signature?.state === "error" && isApiErrorCode(signature.error, SIGNATURE_NOT_FOUND)
+        ? "Unknown signature"
+        : null;
+  const shown = fn.name || `Function #${fn.id}`;
+  const save = async (): Promise<void> => {
+    const name = draft.trim();
+    if (!name || name === fn.name) {
+      setEditing(false);
+      setDraft(fn.name);
+      return;
+    }
+    setBusy(true);
+    setRenameError(null);
+    try {
+      await api(`/functions/${fn.id}/rename`, { method: "POST", json: { name, actor: "spa" } });
+      setEditing(false);
+      onRenamed();
+    } catch (failure) {
+      setRenameError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <header className="detail-head">
       <div className="detail-heading">
         <a className="back-link" href={`#/binaries/${fn.binary_id}/functions`}>
           Back to functions
         </a>
-        <h2 className="detail-title">{fn.name || `Function #${fn.id}`}</h2>
+        <h2 className="detail-title">
+          <NameSourceDot label={nameSourceLabel(fn.name, fn.name_source)} />
+          {editing ? (
+            <input
+              aria-label="Function name"
+              value={draft}
+              disabled={busy}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  skipBlur.current = true;
+                  void save();
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  skipBlur.current = true;
+                  setEditing(false);
+                  setDraft(fn.name);
+                }
+              }}
+              onBlur={() => {
+                if (skipBlur.current) {
+                  skipBlur.current = false;
+                  return;
+                }
+                void save();
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="detail-title-name"
+              title="Rename"
+              onClick={() => {
+                setDraft(fn.name);
+                setEditing(true);
+              }}
+            >
+              {shown}
+            </button>
+          )}
+          {fn.name ? <CopyValue value={fn.name} /> : null}
+        </h2>
+        {renameError ? <ErrorNote error={renameError} /> : null}
         <p className="detail-subtitle">
           Function #{fn.id} · {hex(fn.va)} · {fn.size} bytes
         </p>
+        {prototype ? (
+          <p className="detail-subtitle">
+            <CopyValue value={prototype} />
+            {signature?.state === "ready" ? (
+              <span className="sig-hover" title="Signature breakdown">
+                {signature.data.parameters.length === 0 ? (
+                  "Takes no arguments"
+                ) : (
+                  signature.data.parameters.map((parameter, index) => (
+                    <span key={parameter.index}>
+                      {index > 0 ? "; " : null}
+                      <TypeNameLink
+                        binaryId={fn.binary_id}
+                        name={parameter.type}
+                        knownTypes={knownTypes}
+                      />
+                      {parameter.name ? ` ${parameter.name}` : ""}
+                      {parameter.at ? ` ${parameter.at}` : ""}
+                    </span>
+                  ))
+                )}
+                {signature.data.calling_convention
+                  ? ` · ${signature.data.calling_convention}`
+                  : ""}
+                {signature.data.return_type ? (
+                  <>
+                    {" · returns "}
+                    <TypeNameLink
+                      binaryId={fn.binary_id}
+                      name={signature.data.return_type}
+                      knownTypes={knownTypes}
+                    />
+                  </>
+                ) : null}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
         <div className="detail-facts">
           <StatusCell status={fn.status} />
-          <Badge mono>{fn.name_source || "n/a"}</Badge>
+          <Badge mono>{nameSourceLabel(fn.name, fn.name_source)}</Badge>
           <Badge mono>binary #{fn.binary_id}</Badge>
         </div>
         <div className="detail-facts">
@@ -69,8 +205,12 @@ export function FunctionDetail({ functionId }: { functionId: number }): ReactNod
 
   return (
     <>
-      <FunctionHeader fn={fn} />
-      <SignaturePanel functionId={functionId} analysisId={fn.analysis_id} />
+      <FunctionHeader fn={fn} onRenamed={onMutated} />
+      <SignaturePanel
+        functionId={functionId}
+        analysisId={fn.analysis_id}
+        binaryId={fn.binary_id}
+      />
       <CodeSection functionId={functionId} />
       <DecompilationPanel functionId={functionId} />
       <ReferencesSection functionId={functionId} binaryId={fn.binary_id} />

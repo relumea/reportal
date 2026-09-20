@@ -109,6 +109,27 @@ class TestDirectory:
         assert listing[1]["title"] == "Beta"
         assert listing[2]["title"] == "Changelog"
 
+    def test_a_subdirectory_page_keeps_its_directory_in_the_slug(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """The subsystems/ and cookbook/ pages the wheel ships read as `<dir>/<stem>`."""
+        root = _workspace(tmp_path, monkeypatch)
+        nested = root / "docs" / "subsystems"
+        nested.mkdir()
+        (nested / "store.md").write_text("# Store\n\nBody.\n", encoding="utf-8")
+        assert [entry["slug"] for entry in docs.pages()] == [
+            "alpha",
+            "beta",
+            "subsystems/store",
+            "changelog",
+        ]
+        payload = docs.page("subsystems/store")
+        assert payload["title"] == "Store"
+        assert payload["source"] == "subsystems/store.md"
+        assert payload["previous"] == {"slug": "beta", "title": "Beta"}
+        assert payload["next"] == {"slug": "changelog", "title": "Changelog"}
+        assert docs.excerpts()[2]["source"] == "subsystems/store.md"
+
     def test_an_oversized_page_is_cut_on_a_byte_boundary(
         self, tmp_path: Path, monkeypatch: Any
     ) -> None:
@@ -197,7 +218,21 @@ class TestPage:
         _workspace(tmp_path, monkeypatch)
         assert docs.page("changelog")["title"] == "Changelog"
 
-    @pytest.mark.parametrize("slug", ["nope", "", "  ", "../alpha", ".hidden", "docs/alpha"])
+    @pytest.mark.parametrize(
+        "slug",
+        [
+            "nope",
+            "",
+            "  ",
+            "../alpha",
+            ".hidden",
+            "docs/alpha",
+            "subsystems",
+            "subsystems/../alpha",
+            "/alpha",
+            "subsystems/store/extra",
+        ],
+    )
     def test_a_slug_that_is_not_a_page_is_refused(
         self, tmp_path: Path, monkeypatch: Any, slug: str
     ) -> None:
@@ -241,6 +276,22 @@ class TestRoutes:
         status, headers, body = wsgi_request("GET", "/api/docs/nope")
         assert status.startswith("404")
         assert json_body(body, headers)["error"] == docs.ERROR_NO_DOC
+
+    def test_a_subdirectory_page_is_served_by_its_path(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        root = tmp_path / "ws"
+        self._seed(tmp_path, monkeypatch)
+        (root / "docs" / "subsystems").mkdir()
+        (root / "docs" / "subsystems" / "store.md").write_text(
+            "# Store\n\nBody.\n", encoding="utf-8"
+        )
+        status, headers, body = wsgi_request("GET", "/api/docs/subsystems/store")
+        assert status.startswith("200")
+        assert json_body(body, headers)["title"] == "Store"
+        # The wildcard segment is still validated: an escaping slug is refused.
+        status, _headers, _body = wsgi_request("GET", "/api/docs/subsystems/../alpha")
+        assert status.startswith(("404", "400"))
 
     def test_no_directory_is_404_no_docs(self, tmp_path: Path, monkeypatch: Any) -> None:
         monkeypatch.chdir(tmp_path)

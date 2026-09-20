@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
-import { api } from "../api";
+import { BINARY_OPTIONS_PATH, api } from "../api";
 import {
   Button,
   DataTable,
   EmptyState,
   ErrorNote,
   Field,
+  NameSourceDot,
   Note,
   Panel,
   StatusCell,
@@ -23,9 +24,11 @@ import {
   FUNCTION_NAME_SOURCES,
   FUNCTION_ORDERS,
   FUNCTION_SORTS,
+  SEARCH_DEBOUNCE_MS,
+  nameSourceLabel,
 } from "../constants";
 import type { FunctionOrder, FunctionSort } from "../constants";
-import type { Binary, BulkResult, FunctionListPage, FunctionRow, HistoryRow } from "../types";
+import type { BinaryOption, BulkResult, FunctionListPage, FunctionRow, HistoryRow } from "../types";
 import { useAsync } from "../useAsync";
 
 /** The function-list filters one hash carries; every one is optional. */
@@ -66,6 +69,24 @@ const DEFAULT_FILTERS: FunctionFilters = {
 
 function oneOf<T extends string>(value: string | undefined, allowed: readonly string[], fallback: T): T {
   return value !== undefined && allowed.includes(value) ? (value as T) : fallback;
+}
+
+/** One removable chip naming an active list filter. */
+function FilterChip({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}): ReactNode {
+  return (
+    <span className="chip">
+      <span className="chip-label">{label}</span>
+      <button type="button" className="chip-clear" aria-label={`Clear ${label}`} onClick={onClear}>
+        x
+      </button>
+    </span>
+  );
 }
 
 /** Read the filters from the route's hash query, dropping values the API refuses. */
@@ -138,18 +159,24 @@ function SortHeader({
   onSort: (column: FunctionSort) => void;
 }): ReactNode {
   const active = sort === column;
+  const direction = order === "asc" ? "ascending" : "descending";
   return (
     <Button
       size="sm"
       tone="ghost"
-      title={`Sort by ${label}${active ? (order === "asc" ? " (descending)" : " (ascending)") : ""}`}
+      title={`Sort by ${label}${active ? ` (${direction})` : ""}`}
+      aria-label={`Sort by ${label}${active ? `, currently ${direction}` : ""}`}
       onClick={() => onSort(column)}
     >
-      {active ? `${label} ${order === "asc" ? "▲" : "▼"}` : label}
+      {label}
+      {active ? (
+        <span aria-hidden="true">{order === "asc" ? " ▲" : " ▼"}</span>
+      ) : null}
     </Button>
   );
 }
 
+/** The `aria-sort` a sortable column carries, so the header states the order. */
 export function FunctionsView({
   binaryId,
   query,
@@ -204,7 +231,7 @@ export function FunctionsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
-  const binariesResult = useAsync(() => api<{ binaries: Binary[] }>("/binaries"), []);
+  const binariesResult = useAsync(() => api<{ binaries: BinaryOption[] }>(BINARY_OPTIONS_PATH), []);
   const binaries = binariesResult.data?.binaries;
   const effectiveId = selected ?? binaries?.[0]?.id ?? null;
 
@@ -215,16 +242,17 @@ export function FunctionsView({
   );
   const functions = functionsResult.data?.functions;
   const total = functionsResult.data?.total ?? 0;
-  const filtered =
-    filters.nameSource !== "" ||
-    filters.capability !== "" ||
-    filters.match !== "" ||
-    filters.minSize !== "" ||
-    filters.maxSize !== "" ||
-    filters.name !== "" ||
-    filters.va !== "" ||
-    filters.strings.length > 0 ||
-    filters.refersTo !== "";
+  const filterCount =
+    Number(filters.nameSource !== "") +
+    Number(filters.capability !== "") +
+    Number(filters.match !== "") +
+    Number(filters.minSize !== "") +
+    Number(filters.maxSize !== "") +
+    Number(filters.name !== "") +
+    Number(filters.va !== "") +
+    filters.strings.length +
+    Number(filters.refersTo !== "");
+  const filtered = filterCount > 0;
 
   const path = effectiveId === null ? "/functions" : `/binaries/${effectiveId}/functions`;
 
@@ -234,6 +262,15 @@ export function FunctionsView({
       search: createSearchParams(filterQuery({ ...filters, ...patch })).toString(),
     });
   };
+
+  useEffect(() => {
+    const name = drafts.name.trim();
+    if (name === filters.name) return undefined;
+    const handle = window.setTimeout(() => apply({ name }), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+    // apply is recreated every render; the name draft is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drafts.name, filters.name, path]);
 
   const applyDrafts = (): void => {
     const needle = drafts.string.trim();
@@ -256,6 +293,10 @@ export function FunctionsView({
       filters.sort === column && filters.order === "asc" ? "desc" : "asc";
     apply({ sort: column, order });
   };
+
+  /** The `aria-sort` each sortable header carries, so the table states its order. */
+  const sortState = (column: FunctionSort): "ascending" | "descending" | "none" =>
+    filters.sort === column ? (filters.order === "asc" ? "ascending" : "descending") : "none";
 
   const clearFilters = (): void => {
     setDrafts({ minSize: "", maxSize: "", name: "", va: "", string: "" });
@@ -426,7 +467,7 @@ export function FunctionsView({
           <Field label="Name" hint="a substring; Enter applies">
             <input
               type="search"
-              placeholder="sub_1000"
+              placeholder={total ? `Search ${total} functions` : "sub_1000"}
               value={drafts.name}
               onChange={(event) => setDrafts({ ...drafts, name: event.target.value })}
               onKeyDown={(event) => {
@@ -495,10 +536,41 @@ export function FunctionsView({
           </Button>
           {filtered ? (
             <Button tone="ghost" onClick={clearFilters}>
-              Clear
+              Clear ({filterCount})
             </Button>
           ) : null}
         </Toolbar>
+        {filterCount > 0 ? (
+          <div className="chips">
+            {filters.nameSource ? (
+              <FilterChip
+                label={`Source ${filters.nameSource}`}
+                onClear={() => apply({ nameSource: "" })}
+              />
+            ) : null}
+            {filters.capability ? (
+              <FilterChip
+                label={`Capability ${filters.capability}`}
+                onClear={() => apply({ capability: "" })}
+              />
+            ) : null}
+            {filters.match ? (
+              <FilterChip label={`Match ${filters.match}`} onClear={() => apply({ match: "" })} />
+            ) : null}
+            {filters.minSize ? (
+              <FilterChip label={`Min ${filters.minSize}`} onClear={() => apply({ minSize: "" })} />
+            ) : null}
+            {filters.maxSize ? (
+              <FilterChip label={`Max ${filters.maxSize}`} onClear={() => apply({ maxSize: "" })} />
+            ) : null}
+            {filters.name ? (
+              <FilterChip label={`Name ${filters.name}`} onClear={() => apply({ name: "" })} />
+            ) : null}
+            {filters.va ? (
+              <FilterChip label={`VA ${filters.va}`} onClear={() => apply({ va: "" })} />
+            ) : null}
+          </div>
+        ) : null}
         {binariesResult.error ? (
           <ErrorNote error={binariesResult.error} onRetry={binariesResult.reload} />
         ) : null}
@@ -559,6 +631,7 @@ export function FunctionsView({
                 {
                   label: "VA",
                   mono: true,
+                  sort: sortState("va"),
                   header: (
                     <SortHeader
                       column="va"
@@ -572,6 +645,7 @@ export function FunctionsView({
                 },
                 {
                   label: "Name",
+                  sort: sortState("name"),
                   header: (
                     <SortHeader
                       column="name"
@@ -581,11 +655,17 @@ export function FunctionsView({
                       onSort={toggleSort}
                     />
                   ),
-                  render: (row) => row.name,
+                  render: (row) => (
+                    <span className="toolbar">
+                      <NameSourceDot label={nameSourceLabel(row.name, row.name_source)} />
+                      {row.name}
+                    </span>
+                  ),
                 },
                 {
                   label: "Size",
                   numeric: true,
+                  sort: sortState("size"),
                   header: (
                     <SortHeader
                       column="size"
@@ -599,6 +679,7 @@ export function FunctionsView({
                 },
                 {
                   label: "Status",
+                  sort: sortState("status"),
                   header: (
                     <SortHeader
                       column="status"
@@ -638,6 +719,7 @@ export function FunctionsView({
               ]}
               rows={functions}
               rowKey={(row) => row.id}
+              rowClassName={(row) => (checked.has(row.id) ? "row-selected" : undefined)}
               onRowClick={(row) => navigate(`/functions/${row.id}`)}
               windowed
             />
@@ -675,7 +757,7 @@ export function FunctionsView({
             </label>
           </Toolbar>
           {bulkError ? <ErrorNote error={bulkError} /> : null}
-          {bulkMessage ? <p className="muted">{bulkMessage}</p> : null}
+          <p className="muted" role="status">{bulkMessage}</p>
         </Panel>
       ) : null}
       {historyFor !== null ? (

@@ -27,14 +27,22 @@ test("a filter narrows the row set and states the counts", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}/functions`);
   const panel = panelByTitle(page, "Functions");
   await expect(panel.getByText("6 of 6 functions")).toBeVisible();
+  await expect(panel.getByPlaceholder("Search 6 functions")).toBeVisible();
+  await expect(panel.locator(".name-source-dot").first()).toBeVisible();
+  await panel.locator("table.data-table input[type='checkbox']").first().check();
+  await expect(panel.locator("tr.row-selected")).toHaveCount(1);
 
   await panel.getByLabel("Match").selectOption("unmatched");
   await expect(page).toHaveURL(/match=unmatched/);
   // One of the six seeded functions is the source of a stored match.
   await expect(panel.getByText("5 of 6 functions")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Clear (1)", exact: true })).toBeVisible();
+  await expect(panel.getByLabel("Clear Match unmatched")).toBeVisible();
 
   await page.reload();
   await expect(panel.getByText("5 of 6 functions")).toBeVisible();
+  await panel.getByRole("button", { name: "Clear (1)", exact: true }).click();
+  await expect(panel.getByText("6 of 6 functions")).toBeVisible();
 });
 
 test("a filter that matches nothing explains itself", async ({ page }) => {
@@ -49,12 +57,20 @@ test("a header sorts the listing and keeps the order in the URL", async ({ page 
   const sizes = async (): Promise<number[]> =>
     (await panel.locator(SIZE_COLUMN).allInnerTexts()).map(Number);
 
-  await panel.getByRole("button", { name: /^Size/ }).click();
+  // The button's own name carries the direction and the column states it in the
+  // accessibility tree, so the order is never a glyph alone.
+  const sizeButton = panel.getByRole("button", { name: /^Sort by Size/ });
+  const sizeHeader = panel.locator("th").filter({ hasText: /^Size/ });
+  await expect(sizeHeader).toHaveAttribute("aria-sort", "none");
+
+  await sizeButton.click();
   await expect(page).toHaveURL(/sort=size/);
+  await expect(sizeHeader).toHaveAttribute("aria-sort", "ascending");
   await expect.poll(async () => isSorted(await sizes(), true)).toBe(true);
 
-  await panel.getByRole("button", { name: /^Size/ }).click();
+  await sizeButton.click();
   await expect(page).toHaveURL(/order=desc/);
+  await expect(sizeHeader).toHaveAttribute("aria-sort", "descending");
   await expect.poll(async () => isSorted(await sizes(), false)).toBe(true);
 });
 
@@ -71,7 +87,6 @@ test("the name and address filters narrow the list through the API", async ({ pa
 
   const nameField = panel.getByRole("searchbox", { name: "Name" });
   await nameField.fill(name);
-  await nameField.press("Enter");
 
   await expect(page).toHaveURL(new RegExp(`name=${name}`));
   // The needle is a substring, so it can match more than one name; what the

@@ -16,10 +16,11 @@ test("clicking a string opens the functions that reference it", async ({ page })
   await expect(strings.locator("table.data-table tbody tr").first()).toBeVisible({
     timeout: 60_000,
   });
+  await expect(strings.getByPlaceholder(/Search \d+ strings/)).toBeVisible();
 
-  const link = strings.locator('a[href*="refers_to="]').first();
-  await expect(link).toBeVisible();
-  await link.click();
+  const row = strings.locator("table.data-table tbody tr").first();
+  await expect(row.locator('a[href*="refers_to="]').first()).toBeVisible();
+  await row.click();
 
   await expect(page).toHaveURL(/refers_to=/);
   const functions = panelByTitle(page, "Functions");

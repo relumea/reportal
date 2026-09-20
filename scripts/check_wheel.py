@@ -7,9 +7,10 @@ packaged.  A wheel without the built UI would ship a server whose SPA routes
 404, so a missing asset is a hard failure rather than a warning.
 
 It also checks that the packaged ``manual/`` directory carries every in-app
-docs page (``docs.PAGE_ORDER`` plus ``CHANGELOG.md``): a wheel that omits any
-of them makes ``GET /api/docs`` thin or 404 ``no-docs`` on every host without
-a checkout.
+docs page: ``docs.PAGE_ORDER`` plus ``CHANGELOG.md`` plus every top-level page
+and one-level subdirectory page under ``docs/``.  A wheel that omits any of
+them makes ``GET /api/docs`` thin or 404 ``no-docs`` on every host without a
+checkout.
 
 It also checks that every packaged module exists in ``src/reportal``: setuptools
 reuses an existing ``build/lib`` tree without pruning it, so a module deleted
@@ -32,9 +33,30 @@ MANUAL_PREFIX = "reportal/manual/"
 MANUAL_REQUIRED = tuple(f"{MANUAL_PREFIX}{stem}.md" for stem in PAGE_ORDER) + (
     f"{MANUAL_PREFIX}{CHANGELOG_FILE}",
 )
+DOCS_DIR = Path("docs")
 LICENSE_SUFFIX = ".dist-info/licenses/LICENSE"
 PACKAGE_PREFIX = "reportal/"
 SOURCE_DIR = Path("src/reportal")
+
+
+def packaged_pages(docs_dir: Path = DOCS_DIR) -> tuple[str, ...]:
+    """Every repository manual page, as its wheel-relative path.
+
+    The in-app reader serves the top-level pages and one level of
+    subdirectories (``subsystems/``, ``cookbook/`` and the indexes beside
+    them), so a wheel that omits one serves a thinner manual than the
+    checkout.  A missing ``docs/`` tree answers an empty tuple; the
+    ``PAGE_ORDER`` pages are checked separately.
+    """
+    if not docs_dir.is_dir():
+        return ()
+    found: list[str] = []
+    for pattern in ("*.md", "*/*.md"):
+        found.extend(
+            f"{MANUAL_PREFIX}{path.relative_to(docs_dir).as_posix()}"
+            for path in docs_dir.glob(pattern)
+        )
+    return tuple(sorted(found))
 
 
 def stale_modules(names: set[str]) -> list[str]:
@@ -52,9 +74,9 @@ def stale_modules(names: set[str]) -> list[str]:
     return sorted(missing)
 
 
-def missing_manual(names: set[str]) -> list[str]:
+def missing_manual(names: set[str], required: tuple[str, ...] = MANUAL_REQUIRED) -> list[str]:
     """Required packaged-manual paths absent from the wheel."""
-    return [path for path in MANUAL_REQUIRED if path not in names]
+    return [path for path in required if path not in names]
 
 
 def newest_wheel(dist_dir: Path = DIST_DIR) -> Path | None:
@@ -85,7 +107,8 @@ def main() -> int:
     css = [name for name in bundles if name.endswith(".css")]
     gz = [name for name in bundles if name.endswith((".js.gz", ".css.gz"))]
     has_license = any(name.endswith(LICENSE_SUFFIX) for name in names)
-    manual_gaps = missing_manual(names)
+    required = tuple(dict.fromkeys(MANUAL_REQUIRED + packaged_pages()))
+    manual_gaps = missing_manual(names, required)
     missing = [
         label
         for label, present in (
@@ -94,7 +117,7 @@ def main() -> int:
             ("an assets/*.css bundle", bool(css)),
             ("an assets/*.js.gz or *.css.gz sibling", bool(gz)),
             (f"*{LICENSE_SUFFIX}", has_license),
-            *((path, path in names) for path in MANUAL_REQUIRED),
+            *((path, path in names) for path in required),
         )
         if not present
     ]

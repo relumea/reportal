@@ -3,7 +3,8 @@
 An auto run decomposes a binary into batches of functions and hands each batch
 to a worker.  A worker is a name, a description and a ``run(context)`` call that
 inspects one function and returns a :class:`WorkerResult`.  Built-in workers
-live in this module and in :mod:`reportal.auto_llm_worker`; a third party
+live in this module, :mod:`reportal.auto_llm_worker` and
+:mod:`reportal.auto_goal_worker`; a third party
 declares an entry point in the :data:`WORKER_ENTRY_POINT_GROUP` group whose
 value is ``module:attr`` naming a :class:`Worker` or a zero-argument factory
 returning one.  Discovery mirrors ``reportal.components``: a broken registration
@@ -51,6 +52,9 @@ WORKER_OFFLINE = "offline"
 # Name of the engine-verified LLM worker.
 WORKER_LLM_C_SOURCE = "llm_c_source"
 
+# Name of the goal-directed LLM worker.
+WORKER_LLM_GOAL = "llm_goal"
+
 # A function whose name is an address placeholder was never identified, so the
 # offline worker treats it as unmarked.  Everything else is "marked" work.
 _ADDRESS_NAME = re.compile(r"^(?:sub|func|fcn|loc|unk)_[0-9a-fA-F]+$")
@@ -75,6 +79,9 @@ REASON_ENGINE_UNAVAILABLE = "engine-unavailable"
 # Reason a worker reports when the binary has no stored rebrew project.
 REASON_NO_ENGINE_CONTEXT = "no-engine-context"
 
+# Reason a goal-directed worker reports when the run carries no goal.
+REASON_NO_GOAL = "no-goal"
+
 
 @dataclass
 class WorkerContext:
@@ -84,7 +91,8 @@ class WorkerContext:
     orchestrator resolved; either may be an unusable instance (``available()``
     False) rather than None, which is how a worker reports the skip reason
     instead of crashing.  ``previous`` is the last attempt's detail when the
-    orchestrator is retrying this function.
+    orchestrator is retrying this function.  ``goal`` is the run's free-form
+    objective, empty for a run that carries none.
     """
 
     conn: sqlite3.Connection
@@ -95,6 +103,7 @@ class WorkerContext:
     execute: bool
     keep_failures: bool = False
     previous: dict[str, Any] | None = None
+    goal: str = ""
 
 
 @dataclass
@@ -218,9 +227,14 @@ def _ensure_builtins() -> None:
             return
         _builtins_loaded = True
         module = importlib.import_module("reportal.auto_llm_worker")
+        goal_module = importlib.import_module("reportal.auto_goal_worker")
         register_worker(offline_worker(), origin=BUILTIN_ORIGIN)
         register_worker(
             replace(module.llm_c_source_worker(), planned_paths=planned_llm_source_paths),
+            origin=BUILTIN_ORIGIN,
+        )
+        register_worker(
+            replace(goal_module.llm_goal_worker(), planned_paths=planned_goal_paths),
             origin=BUILTIN_ORIGIN,
         )
 
@@ -241,6 +255,31 @@ def planned_llm_source_paths(ctx: WorkerContext) -> Sequence[str]:
         return ()
     stem = worker_module.source_slug(ctx.function)
     return (str(Path(str(target["reversed_dir"])) / f"{stem}.c"),)
+
+
+def planned_goal_paths(ctx: WorkerContext) -> Sequence[str]:
+    """The persistent paths the goal worker may write for *ctx*.
+
+    The candidate source it names for the function plus, when the binary is
+    known, the patched copy of it the worker derives from the model's byte
+    edits.  Resolved here without writing, so the orchestrator reserves the
+    undo inverse before either write.  A dry run and a run with no goal resolve
+    to none, because the worker writes nothing then.
+    """
+    if not ctx.execute or not ctx.goal.strip() or ctx.project_dir is None:
+        return ()
+    worker_module = importlib.import_module("reportal.auto_llm_worker")
+    goal_module = importlib.import_module("reportal.auto_goal_worker")
+    target = worker_module.target_config(ctx.project_dir)
+    if target is None:
+        return ()
+    paths = [
+        str(Path(str(target["reversed_dir"])) / f"{worker_module.source_slug(ctx.function)}.c")
+    ]
+    binary = goal_module.binary_path_for(ctx)
+    if binary is not None:
+        paths.append(str(goal_module.patched_binary_path(binary)))
+    return tuple(paths)
 
 
 def _ensure_entry_points() -> None:

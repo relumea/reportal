@@ -104,7 +104,7 @@ export function BinaryCollectionsPanel({ binaryId }: { binaryId: number }): Reac
         <Button tone="primary" pending={busy === "add"} disabled={pick === ""} onClick={add}>
           Add
         </Button>
-        {notice ? <Muted>{notice}</Muted> : null}
+        <Muted live>{notice}</Muted>
       </Toolbar>
       {actionError ? <ErrorNote error={actionError} /> : null}
       {allEntry?.state === "error" ? (
@@ -127,7 +127,7 @@ export function BinaryCollectionsPanel({ binaryId }: { binaryId: number }): Reac
               <EmptyState>This binary is in no collection.</EmptyState>
             ) : (
               <div className="table-scroll">
-                <table className="data-table">
+                <table className="data-table" aria-label="Collections">
                   <thead>
                     <tr>
                       <th>ID</th>

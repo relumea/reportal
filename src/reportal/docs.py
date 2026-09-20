@@ -12,6 +12,10 @@ fenced code, unordered and ordered lists, block quotes and tables are blocks,
 and inline emphasis is left as its literal markdown.  A construct outside the
 subset becomes a paragraph, which is readable rather than lost.
 
+A page's slug is its path under the documentation directory without the
+extension, so ``docs/ERRORS.md`` is ``errors`` and ``docs/subsystems/store.md``
+is ``subsystems/store``.
+
 Where the documents live is resolved once per request: an explicit
 `REPORTAL_DOCS` override, the workspace's own `docs/` directory, the checkout
 the package was installed from, or the packaged `manual/` directory the wheel
@@ -52,11 +56,14 @@ SCOPE_ID = 0
 ERROR_NO_DOCS = "no-docs"
 ERROR_NO_DOC = "no-doc"
 
-# The page order a reader sees: the index first, then the manual in the order a
-# person reads it, then the reference material.
+# The page order a reader sees: the index first, the standard beside it, then
+# the manual in the order a person reads it, then the reference material.  The
+# subdirectory pages (subsystems/, cookbook/) follow this list, sorted by
+# directory and name, and the changelog is last.
 PAGE_ORDER: tuple[str, ...] = (
     "README",
     "ARCHITECTURE",
+    "AGENTS",
     "API",
     "CLI",
     "SPA",
@@ -64,6 +71,9 @@ PAGE_ORDER: tuple[str, ...] = (
     "COMPONENTS",
     "THREAT_MODEL",
     "ERRORS",
+    "CONFIG",
+    "MCP_TOOLS",
+    "MODULE_MAP",
     "PARITY",
     "TODO",
     "DEPLOY",
@@ -144,8 +154,25 @@ def changelog_path() -> Path | None:
 
 
 def _slug_of(path: Path) -> str:
-    """One file's slug: its stem, lowercased."""
-    return path.stem.lower()
+    """One file's slug: its path under the documentation directory, lowercased.
+
+    A page in a subdirectory keeps that directory in its slug, so
+    ``docs/subsystems/store.md`` is ``subsystems/store``.  The changelog beside
+    the directory is ``changelog``.
+    """
+    return _relative_of(path).removesuffix(".md").lower()
+
+
+def _relative_of(path: Path) -> str:
+    """One file's path relative to the documentation directory, or its name."""
+    directory = documents_dir()
+    if directory is not None:
+        for base in (directory, directory.parent):
+            try:
+                return path.relative_to(base).as_posix()
+            except ValueError:
+                continue
+    return path.name
 
 
 def _title_of(text: str, fallback: str) -> str:
@@ -191,12 +218,24 @@ def _read(path: Path) -> str:
 
 
 def _slug_path(slug: str) -> Path:
-    """The file one slug names; raises :class:`UnknownDocError` when there is none."""
+    """The file one slug names; raises :class:`UnknownDocError` when there is none.
+
+    A slug is a relative markdown path without its extension, so
+    ``subsystems/store`` names ``docs/subsystems/store.md``.  A slug that
+    escapes the directory (a parent segment, an absolute or hidden name) is
+    refused rather than resolved.
+    """
     resolved = str(slug or "").strip().lower()
-    if not resolved or "/" in resolved or "\\" in resolved or resolved.startswith("."):
+    parts = resolved.split("/")
+    if (
+        not resolved
+        or "\\" in resolved
+        or resolved.startswith((".", "/"))
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
         raise UnknownDocError(f"{slug!r} is not a documentation page")
     changelog = changelog_path()
-    if changelog is not None and resolved == _slug_of(changelog):
+    if len(parts) == 1 and changelog is not None and resolved == _slug_of(changelog):
         return changelog
     directory = documents_dir()
     if directory is None:
@@ -204,10 +243,10 @@ def _slug_path(slug: str) -> Path:
             f"no documentation directory: set {DOCS_ENV}, run from a workspace with"
             " a docs/ directory, or read the repository"
         )
-    candidate = directory / f"{resolved}.md"
+    candidate = directory.joinpath(*parts[:-1], f"{parts[-1]}.md")
     if candidate.is_file():
         return candidate
-    for path in sorted(directory.glob("*.md")):
+    for path in _page_files():
         if _slug_of(path) == resolved:
             return path
     raise UnknownDocError(f"no documentation page named {slug!r}")
@@ -381,7 +420,7 @@ def page(slug: str) -> dict[str, Any]:
         "blocks": parsed,
         "previous": previous,
         "next": following,
-        "source": path.name,
+        "source": _relative_of(path),
         "version": __version__,
     }
 
@@ -403,7 +442,7 @@ def excerpts() -> list[dict[str, str]]:
             {
                 "slug": _slug_of(entry),
                 "title": _title_of(text, entry.stem),
-                "source": entry.name,
+                "source": _relative_of(entry),
                 "text": text,
             }
         )
@@ -411,7 +450,12 @@ def excerpts() -> list[dict[str, str]]:
 
 
 def _page_files() -> list[Path]:
-    """Every document file, in reading order: the same list :func:`pages` uses."""
+    """Every document file, in reading order: the same list :func:`pages` uses.
+
+    Top-level pages come first in :data:`PAGE_ORDER`, then the remaining
+    top-level pages by name, then the subdirectory pages by directory and name,
+    then the changelog.
+    """
     directory = documents_dir()
     if directory is None:
         return []
@@ -422,11 +466,13 @@ def _page_files() -> list[Path]:
         if path.name == CHANGELOG_FILE:
             continue
         available.setdefault(path.stem, path)
+    nested = sorted(directory.glob("*/*.md"))
     ordered: list[Path] = []
     for stem in PAGE_ORDER:
         if stem in available:
             ordered.append(available.pop(stem))
     ordered.extend(available[stem] for stem in sorted(available))
+    ordered.extend(nested)
     changelog = changelog_path()
     if changelog is not None:
         ordered.append(changelog)

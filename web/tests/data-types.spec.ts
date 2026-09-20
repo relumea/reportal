@@ -14,6 +14,7 @@ const STRUCT_NAME = "NP_HEADER";
 const ENUM_NAME = "NP_FLAGS";
 const NAMESPACED_TYPEDEF = "WIN_DWORD";
 const NAMESPACED_POINTER = "WIN_HANDLE";
+const FUNCTION_TYPE = "NP_CALLBACK";
 
 function panelTypes(page: Page) {
   return panelByTitle(page, "Data types");
@@ -24,11 +25,52 @@ test("the kind filter narrows the type list", async ({ page }) => {
   const types = panelTypes(page);
 
   await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
-  await types.getByRole("combobox", { name: "Kind filter", exact: true }).selectOption("enum");
+  await expect(types.locator(".name-source-dot").first()).toBeVisible();
+  const typeLink = types.getByRole("link", { name: "NP_ENTRY" }).first();
+  await expect(typeLink).toHaveAttribute("href", /search=NP_ENTRY/);
+  await expect(types.getByText(/3 members · \d+ bytes/).first()).toBeVisible();
+  const entryCard = types.locator(".card").filter({ hasText: "NP_ENTRY" }).first();
+  await entryCard.getByRole("button", { name: "References" }).click();
+  await expect(entryCard.getByRole("heading", { name: "Referenced by" })).toBeVisible();
+  await expect(
+    entryCard.getByRole("link", { name: "NP_HEADER" }),
+  ).toHaveAttribute("href", /search=NP_HEADER/);
+  await expect(types.locator(".code-scroll").first()).toHaveAttribute("title", "Click to copy");
+  await types.getByRole("button", { name: /^enum: / }).click();
 
   await expect(types.getByText(ENUM_NAME, { exact: false }).first()).toBeVisible();
   await expect(types.getByText(STRUCT_NAME, { exact: false })).toHaveCount(0);
   await expect(types.getByText(`1 of ${state.types.length} types`, { exact: false })).toBeVisible();
+  await types.getByRole("button", { name: "Clear (1)", exact: true }).click();
+  await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
+  await expect(types.getByRole("button", { name: /Clear/ })).toHaveCount(0);
+});
+
+test("a function type shows its return and parameters", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const types = panelTypes(page);
+  await types.getByPlaceholder(/Search \d+ types or namespaces/).fill(FUNCTION_TYPE);
+  const card = types.locator(".card").filter({ hasText: FUNCTION_TYPE }).first();
+  await expect(card.getByText("Returns")).toBeVisible();
+  await expect(card.getByRole("link", { name: NAMESPACED_TYPEDEF }).first()).toBeVisible();
+  await expect(card.getByRole("columnheader", { name: "Parameter" })).toBeVisible();
+  await expect(card.getByRole("columnheader", { name: "Offset" })).toHaveCount(0);
+  await expect(card.getByLabel("Name of member entry")).toHaveValue("entry");
+  await expect(card.getByLabel("Type of member entry")).toHaveValue("NP_ENTRY *");
+  await expect(card.getByText("1 parameters")).toBeVisible();
+});
+
+test("the search matches a namespace", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const types = panelTypes(page);
+  await types.getByPlaceholder(/Search \d+ types or namespaces/).fill("winnt");
+  await expect(types.getByText(NAMESPACED_TYPEDEF, { exact: false }).first()).toBeVisible();
+  await expect(types.getByText("Aliases").first()).toBeVisible();
+  const handleCard = types.locator(".card").filter({ hasText: NAMESPACED_POINTER }).first();
+  await expect(handleCard.getByRole("link", { name: NAMESPACED_TYPEDEF }).first()).toBeVisible();
+  await expect(handleCard.getByText(/typedef · \d+ bytes/)).toBeVisible();
+  await expect(types.getByText(STRUCT_NAME, { exact: false })).toHaveCount(0);
+  await expect(types.getByRole("button", { name: /Clear/ })).toHaveCount(0);
 });
 
 test("the namespace tree filters by branch and collapses", async ({ page }) => {
@@ -43,7 +85,7 @@ test("the namespace tree filters by branch and collapses", async ({ page }) => {
   await expect(types.getByText(STRUCT_NAME, { exact: false })).toHaveCount(0);
   await expect(types.getByText(`3 of ${state.types.length} types`, { exact: false })).toBeVisible();
 
-  await expect(types.getByRole("button", { name: /^kernel / })).toBeVisible();
+  await expect(types.getByRole("button", { name: /^kernel / })).toHaveClass(/is-covered/);
   await types.getByRole("button", { name: "Collapse", exact: true }).click();
   await expect(types.getByRole("button", { name: /^kernel / })).toHaveCount(0);
 });

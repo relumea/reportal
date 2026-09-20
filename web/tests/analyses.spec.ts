@@ -14,11 +14,22 @@ const state = e2eState();
 test("the list filters to the seeded analysis and its log opens on demand", async ({ page }) => {
   await page.goto("/#/analyses");
   const panel = panelByTitle(page, "Analyses");
+  await expect(panel.getByRole("button", { name: "Upload File" })).toBeVisible();
   await panel.getByLabel("Search", { exact: true }).fill("notepad.exe");
   await panel.getByRole("button", { name: "Search" }).click();
   await expect(page).toHaveURL(/search=notepad/);
   const rows = panel.locator("table.data-table tbody tr");
   await expect(rows).toHaveCount(1);
+  await expect(rows.first().locator(".hash-identicon")).toHaveCount(1);
+  await expect(rows.first().locator(".copy-row .mono")).toHaveText(/…$/);
+  await expect(rows.first().getByTitle("team-scoped")).toHaveCount(0);
+  await expect(
+    rows.first().getByRole("link", { name: "Download" }),
+  ).toHaveAttribute("href", `/api/binaries/${state.ids.binary_id}/download`);
+  await rows.first().locator("td").nth(1).click();
+  await expect(page).toHaveURL(new RegExp(`#/binaries/${state.ids.binary_id}`));
+  await page.goBack();
+  await expect(page).toHaveURL(/search=notepad/);
 
   // The filter survives a reload through the hash.
   await page.reload();

@@ -138,12 +138,12 @@
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.35);
 
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 14px;
-  --text-lg: 16px;
-  --text-xl: 20px;
-  --text-2xl: 26px;
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.625rem;
 
   --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
@@ -359,12 +359,12 @@
   --radius-lg: 0;
   --radius-pill: 0;
 
-  --text-xs: 11px;
-  --text-sm: 11px;
-  --text-base: 11px;
-  --text-lg: 13px;
-  --text-xl: 15px;
-  --text-2xl: 20px;
+  --text-xs: 0.6875rem;
+  --text-sm: 0.6875rem;
+  --text-base: 0.6875rem;
+  --text-lg: 0.8125rem;
+  --text-xl: 0.9375rem;
+  --text-2xl: 1.25rem;
 
   --font-sans: "MS Sans Serif", "Microsoft Sans Serif", Tahoma, Verdana, sans-serif;
   --font-mono: "Lucida Console", "Courier New", monospace;
@@ -476,6 +476,16 @@ code {
 
 .muted:last-child {
   margin-bottom: 0;
+}
+
+/* A live region exists before its text does, so an empty one must take no
+   room; the space returns with the message it announces. */
+p.muted[role="status"] {
+  margin: 0;
+}
+
+p.muted[role="status"]:not(:empty) {
+  margin-bottom: var(--space-3);
 }
 
 :focus-visible {
@@ -673,6 +683,20 @@ code {
   padding: var(--space-4) var(--space-5);
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
+}
+
+.panel-fold {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.panel-fold:hover {
+  color: var(--accent);
 }
 
 .panel-heading {
@@ -937,6 +961,18 @@ input[type="file"]::file-selector-button:hover {
   flex-wrap: nowrap;
 }
 
+/* A narrow cell must not shrink an action: at phone width a text link squeezed
+   below its content wraps one glyph per line ("Zipped" measured 18x56).  The
+   cell keeps its intrinsic width and the table's own scroller carries the
+   overflow, which is what `.table-scroll` is for.  The minimum height gives a
+   bare link the 24px target a pointer and a thumb can hit. */
+.actions-cell > * {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+
 /* ── Badges ───────────────────────────────────────────────────────── */
 
 .badge {
@@ -1102,6 +1138,32 @@ input[type="file"]::file-selector-button:hover {
   min-width: 0;
 }
 
+.entropy-strip {
+  display: flex;
+  gap: var(--meter-gap);
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--ramp-track);
+}
+
+.entropy-strip-cell {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: var(--meter-height);
+  border-radius: 1px;
+  background: var(--meter-unlit);
+}
+
+.entropy-strip-cell[data-hue] {
+  background: var(--hue-ink);
+}
+
+.entropy-strip-cell[data-packed="true"] {
+  background: var(--hue-ink, var(--status-fail));
+}
+
 .quality-legend {
   display: flex;
   flex-wrap: wrap;
@@ -1113,9 +1175,20 @@ input[type="file"]::file-selector-button:hover {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--text-muted);
+  font: inherit;
   font-size: var(--text-xs);
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.quality-legend-item[data-selected="true"] {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .quality-legend-item[data-empty="true"] {
@@ -1369,6 +1442,28 @@ a.covmap-cell:focus-visible {
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
+}
+
+.meter-link {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.meter-link[data-selected="true"] .meter-label {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.meter-link:hover .meter-label {
+  color: var(--text);
 }
 
 .meter-head {
@@ -1703,19 +1798,6 @@ a.covmap-cell:focus-visible {
   white-space: nowrap;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .flash,
-  .data-table tbody tr.flash td,
-  .live-dot {
-    animation: none;
-  }
-
-  .meter-seg,
-  .skip-link {
-    transition: none;
-  }
-}
-
 @media (min-width: 1180px) {
   .cockpit {
     grid-template-columns: minmax(0, 1fr) var(--cockpit-rail);
@@ -1816,6 +1898,20 @@ a.covmap-cell:focus-visible {
   overflow-wrap: anywhere;
 }
 
+.name-source-dot {
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--hue-ink, var(--text-muted));
+}
+
+.name-source-dot.idle {
+  background: var(--text-muted);
+  opacity: 0.45;
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;
@@ -1858,6 +1954,7 @@ a.covmap-cell:focus-visible {
   padding: var(--space-3);
   overflow: auto;
   max-height: 560px;
+  cursor: copy;
   font: var(--text-sm) / 1.5 var(--font-mono);
   white-space: pre;
   tab-size: 4;
@@ -2119,6 +2216,10 @@ pre.code {
   cursor: pointer;
 }
 
+.data-table tr.row-selected {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .data-table tr.clickable:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -2181,10 +2282,46 @@ pre.code {
 }
 
 .detail-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
+}
+
+.detail-title-name {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: text;
+  text-align: left;
+}
+
+.detail-title input {
+  min-width: 8em;
+  font: inherit;
+  font-weight: inherit;
+}
+
+.hash-identicon {
+  display: inline-grid;
+  grid-template-columns: repeat(5, 3px);
+  grid-template-rows: repeat(5, 3px);
+  gap: 1px;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.hash-identicon-cell {
+  background: color-mix(in srgb, currentcolor 18%, transparent);
+}
+
+.hash-identicon-cell.on {
+  background: currentcolor;
 }
 
 .detail-subtitle {
@@ -2193,6 +2330,13 @@ pre.code {
   color: var(--text-muted);
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
+}
+
+.sig-hover {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
 }
 
 .detail-facts {
@@ -2409,6 +2553,10 @@ pre.code {
 .tree-node.is-active {
   background: var(--surface-2);
   outline: 1px solid var(--border-strong);
+}
+
+.tree-node.is-covered {
+  color: var(--text-muted);
 }
 
 /* One type's edit history: one entry per version, each carrying its field diff. */
@@ -2978,6 +3126,25 @@ kbd.key {
     width: 100%;
     flex: 1 1 100%;
   }
+
+  /* Phone ergonomics: the desktop densities (24px buttons, a 15px checkbox)
+     stay on the desktop, where the pointer is precise and the table is dense.
+     At thumb width every control reaches the size a finger can hit. */
+  .btn,
+  .btn-sm,
+  .sidebar-toggle {
+    min-height: 32px;
+    min-width: 32px;
+  }
+
+  .nav-link {
+    min-height: 40px;
+  }
+
+  input[type="checkbox"] {
+    width: 24px;
+    height: 24px;
+  }
 }
 
 /* ── Full-file memory page ────────────────────────────────────────────
@@ -3511,4 +3678,28 @@ kbd.key {
 
 .plan-card-features li:first-child {
   border-top: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash,
+  .data-table tbody tr.flash td,
+  .live-dot {
+    animation: none;
+  }
+
+  /* The placeholder keeps its shape and the button keeps saying pending, so
+     neither state is lost; only the movement stops. */
+  .skeleton-row {
+    animation: none;
+    background: var(--surface-3);
+  }
+
+  .btn-spinner {
+    animation-duration: 2.4s;
+  }
+
+  .meter-seg,
+  .skip-link {
+    transition: none;
+  }
 }

@@ -27,6 +27,7 @@ import {
   FirmwarePanel,
   SandboxPanel,
   RelatedPanel,
+  RelocationsPanel,
   RemediationPanel,
   ReportPanel,
   SecretsPanel,
@@ -75,8 +76,9 @@ export function BinaryDetail({
           <ExportsPanel binaryId={binary.id} />
           <SectionsPanel binaryId={binary.id} basePath={`/binaries/${binary.id}`} />
           <CoverageMapPanel binaryId={binary.id} />
-          <MemoryPanel binaryId={binary.id} focus={query.memory} />
+          <MemoryPanel binaryId={binary.id} focus={query.memory} focusKind={query.memoryKind} />
           <CodeSignaturePanel binaryId={binary.id} />
+          <RelocationsPanel binaryId={binary.id} />
           <DetailCoveragePanel binaryId={binary.id} />
           <ScansPanel binaryId={binary.id} />
           <PackerPanel binaryId={binary.id} />

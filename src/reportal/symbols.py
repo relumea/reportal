@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from reportal import data_types, journal, pdb, store
+from reportal._paths import SYMBOLS_DIR
 
 # The table the ingested symbol files live in (created on first use).
 TABLE = "symbol_files"
@@ -56,7 +57,6 @@ SYMBOL_NAME_SOURCE = "symbol"
 
 # The kinds a caller can ingest, and the workspace directory the raw files land in.
 KINDS: tuple[str, ...] = (SOURCE_ELF, SOURCE_DWARF, SOURCE_PDB)
-SYMBOLS_DIR = "symbols"
 
 # Bounds: a symbol table is untrusted input, so every list is capped.
 MAX_SYMBOLS = 200_000

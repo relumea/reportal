@@ -11,8 +11,10 @@ request back into reportal.  Stdio is the local pipe (`reportal mcp`);
 Streamable HTTP is the same registry at ``/mcp``, gated by the portal bearer
 when auth is on.  POST answers JSON; GET with ``Accept: text/event-stream``
 is the SSE session stream, resumed through :class:`MemoryEventStore`.
-Diagnostics go to stderr through the logging module.  ``run_server`` drives
-the stdio transport from one ``anyio`` run, so the CLI stays synchronous.
+Diagnostics go to stderr through the logging module.  ``logging/setLevel``
+sets that logger's floor; ``notifications/message`` is not pushed.
+``run_server`` drives the stdio transport from one ``anyio`` run, so the CLI
+stays synchronous.
 """
 
 from __future__ import annotations
@@ -56,6 +58,20 @@ HTTP_PATH = "/mcp"
 MAX_REPLAY_EVENTS = 1024
 
 _log = logging.getLogger(__name__)
+
+# MCP syslog names onto Python levels. notice sits with info; alert and
+# emergency sit with critical. The session floor is the reportal logger, so
+# stderr diagnostics respect it and stdout stays protocol JSON.
+_MCP_TO_PYTHON: dict[str, int] = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "notice": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+    "alert": logging.CRITICAL,
+    "emergency": logging.CRITICAL,
+}
 
 
 def tool_descriptor(tool: Tool) -> types.Tool:
@@ -125,8 +141,22 @@ async def _call_tool(context: Any, params: types.CallToolRequestParams) -> types
     return _result(payload, is_error)
 
 
+async def _set_logging_level(
+    context: Any, params: types.SetLevelRequestParams
+) -> types.EmptyResult:
+    """Set the reportal stderr logger from ``logging/setLevel``.
+
+    The SDK still dispatches this on protocol 2025-06-18. Server-initiated
+    ``notifications/message`` stays out: stdout is protocol JSON only.
+    """
+    logging.getLogger("reportal").setLevel(_MCP_TO_PYTHON[params.level])
+    return types.EmptyResult()
+
+
 def build_server() -> Server:
     """Build the MCP server over the live tool registry."""
+    # ponytail: on_set_logging_level is deprecated for 2026-07-28; keep it
+    # while initialize still negotiates 2025-06-18 with the hosted portal.
     return Server(
         SERVER_NAME,
         version=SERVER_VERSION,
@@ -134,6 +164,7 @@ def build_server() -> Server:
         instructions=SERVER_INSTRUCTIONS,
         on_list_tools=_list_tools,
         on_call_tool=_call_tool,
+        on_set_logging_level=_set_logging_level,
     )
 
 

@@ -70,6 +70,18 @@ class TestFilterTypes:
         selected = data_types.filter_types(TYPES, search="np_flag_a")
         assert [data_type["name"] for data_type in selected] == ["NP_FLAGS"]
 
+    def test_search_matches_a_namespace(self) -> None:
+        selected = data_types.filter_types(TYPES, search="winnt")
+        assert [data_type["name"] for data_type in selected] == [
+            "WIN_DWORD",
+            "WIN_HANDLE",
+            "KERNEL_MUTEX",
+        ]
+
+    def test_search_matches_namespace_and_name_together(self) -> None:
+        selected = data_types.filter_types(TYPES, search="winnt::win_dword")
+        assert [data_type["name"] for data_type in selected] == ["WIN_DWORD"]
+
     def test_filters_stack(self) -> None:
         selected = data_types.filter_types(TYPES, namespace="winnt", kind=data_types.KIND_POINTER)
         assert [data_type["name"] for data_type in selected] == ["WIN_HANDLE"]

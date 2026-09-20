@@ -32,6 +32,26 @@ def test_missing_manual_lists_required_paths() -> None:
     assert mod.missing_manual(set(required)) == []  # type: ignore[attr-defined]
 
 
+def test_packaged_pages_walks_one_subdirectory_level(tmp_path: Path) -> None:
+    mod = _load()
+    docs_dir = tmp_path / "docs"
+    (docs_dir / "subsystems").mkdir(parents=True)
+    (docs_dir / "subsystems" / "store.md").write_text("# Store\n", encoding="utf-8")
+    (docs_dir / "subsystems" / "README.md").write_text("# Subsystems\n", encoding="utf-8")
+    (docs_dir / "ERRORS.md").write_text("# Errors\n", encoding="utf-8")
+    (docs_dir / "subsystems" / "note.txt").write_text("ignored\n", encoding="utf-8")
+    pages = mod.packaged_pages(docs_dir)  # type: ignore[attr-defined]
+    assert pages == (
+        "reportal/manual/ERRORS.md",
+        "reportal/manual/subsystems/README.md",
+        "reportal/manual/subsystems/store.md",
+    )
+    missing = mod.missing_manual(  # type: ignore[attr-defined]
+        {"reportal/manual/subsystems/store.md"}, pages
+    )
+    assert missing == ["reportal/manual/ERRORS.md", "reportal/manual/subsystems/README.md"]
+
+
 def test_stale_modules_ignores_nested_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

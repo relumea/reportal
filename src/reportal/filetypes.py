@@ -267,6 +267,24 @@ SIGNATURES: tuple[FileSignature, ...] = (
         SignatureMatch(section_prefixes=("fsg",), strings=_regex(r"FSG!")),
     ),
     FileSignature(
+        "MEW",
+        CATEGORY_PACKER,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(section_prefixes=("mew",), strings=_regex(r"\bMEW\b")),
+    ),
+    FileSignature(
+        "Upack",
+        CATEGORY_PACKER,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(section_prefixes=("upack",), strings=_regex(r"\bUpack\b")),
+    ),
+    FileSignature(
+        "kkrunchy",
+        CATEGORY_PACKER,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"kkrunchy")),
+    ),
+    FileSignature(
         "PKLITE",
         CATEGORY_PACKER,
         CONFIDENCE_LOW,
@@ -351,6 +369,36 @@ SIGNATURES: tuple[FileSignature, ...] = (
         CONFIDENCE_LOW,
         SignatureMatch(strings=_regex(r"Armadillo", r"Silicon Realms")),
     ),
+    FileSignature(
+        "ASProtect",
+        CATEGORY_PROTECTOR,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(section_prefixes=(".aspr",), strings=_regex(r"ASProtect")),
+    ),
+    FileSignature(
+        "ConfuserEx",
+        CATEGORY_PROTECTOR,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"ConfuserEx", r"ConfusedByAttribute")),
+    ),
+    FileSignature(
+        ".NET Reactor",
+        CATEGORY_PROTECTOR,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"\.NET Reactor", r"NRorb")),
+    ),
+    FileSignature(
+        "SmartAssembly",
+        CATEGORY_PROTECTOR,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"SmartAssembly", r"PoweredByAttribute")),
+    ),
+    FileSignature(
+        "ILProtector",
+        CATEGORY_PROTECTOR,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"ILProtector")),
+    ),
     # ── Installers ─────────────────────────────────────────────────────────
     FileSignature(
         "NSIS",
@@ -377,6 +425,18 @@ SIGNATURES: tuple[FileSignature, ...] = (
         CATEGORY_INSTALLER,
         CONFIDENCE_LOW,
         SignatureMatch(strings=_regex(r"InstallShield")),
+    ),
+    FileSignature(
+        "7-Zip SFX",
+        CATEGORY_INSTALLER,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"7-Zip", r"7zS\.sfx", r"7z\.sfx")),
+    ),
+    FileSignature(
+        "WiX",
+        CATEGORY_INSTALLER,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"Windows Installer XML", r"\bWiX\b", r"WixUI")),
     ),
     # ── Runtimes ───────────────────────────────────────────────────────────
     FileSignature(
@@ -425,6 +485,48 @@ SIGNATURES: tuple[FileSignature, ...] = (
             section_prefixes=("__swift",),
             strings=_regex(r"libswift", r"swift_allocObject", r"\bswift_once\b"),
         ),
+    ),
+    FileSignature(
+        "PyInstaller",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(strings=_regex(r"PyInstaller", r"MEI\d{12}")),
+    ),
+    FileSignature(
+        "Nuitka",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(strings=_regex(r"Nuitka", r"nuitka_onefile")),
+    ),
+    FileSignature(
+        "cx_Freeze",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"cx_Freeze")),
+    ),
+    FileSignature(
+        "AutoIt",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(strings=_regex(r"AutoIt", r"AU3!EA06")),
+    ),
+    FileSignature(
+        "Electron",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"ELECTRON_RUN_AS_NODE", r"app\.asar")),
+    ),
+    FileSignature(
+        "Nim",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_MEDIUM,
+        SignatureMatch(strings=_regex(r"nimrtl", r"NimMain", r"@nim\.")),
+    ),
+    FileSignature(
+        "Zig",
+        CATEGORY_RUNTIME,
+        CONFIDENCE_LOW,
+        SignatureMatch(strings=_regex(r"zig_probe_stack", r"__zig")),
     ),
     # ── Toolchains ─────────────────────────────────────────────────────────
     FileSignature(

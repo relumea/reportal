@@ -16,10 +16,12 @@ import {
   Badge,
   Button,
   ConfirmButton,
+  CopyValue,
   DataTable,
   EmptyState,
   ErrorNote,
   Field,
+  HashIdenticon,
   KeyValue,
   Loading,
   Muted,
@@ -515,9 +517,11 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
         title="Analyses"
         subtitle="One row per analysis: the binary it belongs to, how far it got and what ran."
         actions={
-          <Button tone="ghost" onClick={() => navigate("/binaries")}>
-            Binaries
-          </Button>
+          <Toolbar>
+            <Button tone="primary" onClick={() => navigate("/binaries")}>
+              Upload File
+            </Button>
+          </Toolbar>
         }
       >
         <Toolbar>
@@ -652,7 +656,20 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 { label: "ID", key: "id", numeric: true },
                 {
                   label: "Binary",
-                  render: (row) => <a href={`#/binaries/${row.binary_id}`}>{row.binary_name}</a>,
+                  render: (row) => (
+                    <span className="toolbar">
+                      {row.binary_sha256 ? <HashIdenticon hash={row.binary_sha256} /> : null}
+                      {row.visibility === "team" ? (
+                        <Badge
+                          mono
+                          title={`team-scoped${row.owner_team_name ? `: ${row.owner_team_name}` : ""}`}
+                        >
+                          lock
+                        </Badge>
+                      ) : null}
+                      <a href={`#/binaries/${row.binary_id}`}>{row.binary_name}</a>
+                    </span>
+                  ),
                 },
                 {
                   label: "Platform",
@@ -669,6 +686,10 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                   render: (row) => row.binary_size.toLocaleString(),
                 },
                 { label: "Engine", key: "engine" },
+                {
+                  label: "SHA-256",
+                  render: (row) => <CopyValue value={row.binary_sha256} compact />,
+                },
                 { label: "Created", key: "created_at", mono: true },
                 { label: "Status", render: (row) => <StatusCell status={row.status} /> },
                 {
@@ -705,6 +726,12 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                       >
                         View log
                       </Button>
+                      <a
+                        className="btn btn-sm btn-ghost"
+                        href={`/api/binaries/${row.binary_id}/download`}
+                      >
+                        Download
+                      </a>
                       <Button
                         size="sm"
                         pending={busy === `requeue-${row.id}`}
@@ -725,6 +752,13 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               ]}
               rows={analyses}
               rowKey={(row) => row.id}
+              onRowClick={(row) => {
+                if (row.status === "failed") {
+                  setLogFor(row.id);
+                  return;
+                }
+                navigate(`/binaries/${row.binary_id}`);
+              }}
             />
           </>
         )}
@@ -778,7 +812,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
             </Field>
           </Toolbar>
           {bulkError ? <ErrorNote error={bulkError} /> : null}
-          {bulkMessage ? <p className="muted">{bulkMessage}</p> : null}
+          <p className="muted" role="status">{bulkMessage}</p>
           {bulkAction ? (
             <p className="muted">
               Revert this action: <a href={`#/journal/${bulkAction}`}>{bulkAction}</a>

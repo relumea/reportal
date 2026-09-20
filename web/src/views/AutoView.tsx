@@ -25,6 +25,7 @@ import {
   AUTO_CONCURRENCY_MIN,
   AUTO_FUNCTIONS_PER_TASK_MAX,
   AUTO_FUNCTIONS_PER_TASK_MIN,
+  AUTO_GOAL_MAX,
   AUTO_MAX_ATTEMPTS_MAX,
   AUTO_MAX_ATTEMPTS_MIN,
   AUTO_MAX_TASKS_MAX,
@@ -129,6 +130,7 @@ interface AutoRunOptions {
   functionsPerTask: number;
   maxAttempts: number;
   maxTasks: number;
+  goal: string;
 }
 
 function StartForm({
@@ -146,12 +148,20 @@ function StartForm({
   const [functionsPerTask, setFunctionsPerTask] = useState(DEFAULT_AUTO_FUNCTIONS_PER_TASK);
   const [maxAttempts, setMaxAttempts] = useState(DEFAULT_AUTO_MAX_ATTEMPTS);
   const [maxTasks, setMaxTasks] = useState(DEFAULT_AUTO_MAX_TASKS);
+  const [goal, setGoal] = useState("");
   return (
     <form
       className="toolbar"
       onSubmit={(event) => {
         event.preventDefault();
-        onStart(worker, { execute, concurrency, functionsPerTask, maxAttempts, maxTasks });
+        onStart(worker, {
+          execute,
+          concurrency,
+          functionsPerTask,
+          maxAttempts,
+          maxTasks,
+          goal: goal.trim(),
+        });
       }}
     >
       <Field label="Worker">
@@ -167,6 +177,17 @@ function StartForm({
             </option>
           ))}
         </select>
+      </Field>
+      <Field label="Goal" hint={`optional, at most ${AUTO_GOAL_MAX} characters; used by the llm_goal worker`}>
+        <input
+          id="auto-goal"
+          type="text"
+          maxLength={AUTO_GOAL_MAX}
+          value={goal}
+          disabled={disabled}
+          placeholder="Extract the licence check, drop the demo timer, ..."
+          onChange={(event) => setGoal(event.target.value)}
+        />
       </Field>
       <Field label="Concurrency">
         <input
@@ -252,6 +273,7 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
           functions_per_task: options.functionsPerTask,
           max_attempts: options.maxAttempts,
           max_tasks: options.maxTasks,
+          goal: options.goal,
         },
       });
       setNotice(`Started auto run #${started.run_id}.`);
@@ -355,6 +377,11 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
         disabled={running}
         pending={busy === "start"}
       />
+      {data?.goal ? (
+        <Muted>
+          Goal for run #{data.run_id}: {data.goal}
+        </Muted>
+      ) : null}
       {running ? (
         <Muted>
           A run is working. This view refreshes itself; Recover closes a run whose process died
@@ -363,11 +390,12 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
       ) : (
         <Muted>
           A dry run touches no source file and no function status. Execute writes candidate C files
-          into the rebrew project and compiles them.
+          into the rebrew project and compiles them; the llm_goal worker also writes a
+          &lt;binary&gt;.patched copy holding only the byte edits the binary confirmed.
         </Muted>
       )}
       {actionError ? <ErrorNote error={actionError} /> : null}
-      {notice ? <Muted>{notice}</Muted> : null}
+      <Muted live>{notice}</Muted>
       {body}
     </Panel>
   );

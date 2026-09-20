@@ -1,6 +1,6 @@
 # Threat model
 
-Last reviewed: 2026-09-17.
+Last reviewed: 2026-09-20.
 
 This is a source-derived model of reportal's exposure, not a live probe.  It
 names the boundary, the control that exists, and the residual risk a reader
@@ -68,7 +68,7 @@ it is written out in full below.
      shown once, and it is 256 bits of `secrets.token_urlsafe` randomness.
    The static SPA shell and its assets stay public in both modes: they carry no
    portal data, and a browser cannot attach a header to the initial document
-   request.  Two `/api` paths stay public while auth is on: the Stripe webhook (HMAC, not a portal token) and `POST /api/signup` (SaaS only; personal answers 403 `signup-disabled`; HTTP signup is capped at `auth.SIGNUP_MAX_HITS` per TCP peer per hour).  Every other `/api` route, `/api/health` included, is behind the gate.  `POST /mcp` is the same bearer as `/api` and needs write (a viewer is 403), because the MCP registry mixes readers and writers on one session.
+   request.  Two `/api` paths stay public while auth is on: the Stripe webhook (HMAC, not a portal token) and `POST /api/signup` (SaaS only; personal answers 403 `signup-disabled`; HTTP signup is capped at `auth.SIGNUP_MAX_HITS` per TCP peer per hour).  Every other `/api` route, `/api/health` included, is behind the gate.  `/mcp` (`GET`/`POST`/`DELETE` via `server.MCP_PATH`) is the same bearer as `/api` and needs write (a viewer is 403), because the MCP registry mixes readers and writers on one session.
    Authorization beyond the route kind is per object: a binary or a collection
    carries a `visibility` (`public` or `team`) and an `owner_team_id`, and
    `server._enforce_scope` resolves the object a path names (a function, an
@@ -184,9 +184,10 @@ it is written out in full below.
     from caller-supplied checkout metadata.  Checkout and portal sessions still
     need an authenticated tenant admin (`api.start_billing_checkout`).  Public
     `/pricing` (`ui.py` / `landing.py`) and `GET /api/plans` advertise catalog
-    text only.  Residual: when `auth.required()` is true, the bearer middleware
-    (`server._reportal_headers` → `server.authenticate`) still gates every
-    `/api` path, including this webhook, before signature verification runs.
+    text only.  Residual: `server.authenticate` returns early for
+    `WEBHOOK_PATH` with no bearer check (`server.py`); only
+    `billing.verify_webhook` authenticates the caller.  A leaked webhook
+    secret forges entitlement events until rotated.
 
 ## Attack surface and entry points
 
@@ -212,8 +213,12 @@ it is written out in full below.
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm.LlmClient.chat`, `llm._parse_json` |
 | Metered AI / auto usage | Authenticated tenant request; organisation from active team | `server._charge_credits`, `metering.charge_task`, `metering.record_usage` |
 | Agent tool calls | LLM endpoint response, gated by an analyst's confirmation | `agent._drive`, `agent.confirm`, `mcp_server.call_tool` |
-| MCP stdio client | Local process on stdin | `mcp_server.py`, `mcp_tools.py` |
+| MCP stdio client | Local process on stdin | `cli.mcp`, `mcp_server.py`, `mcp_tools.py` |
+| MCP HTTP session | Network client; same bearer as `/api`, needs write | `server.MCP_PATH` (`GET`/`POST`/`DELETE`), `mcp_server.http_lifespan`; `GET` SSE resumes via `Last-Event-ID` |
+| SaaS HTTP signup | Network client; creates the first token | `api` `POST /api/signup`, `server.SIGNUP_PATH`; capped by `auth.signup_allowed` |
+| Named API key (optional read-only) | Network client; digest auth as the owning user | `auth.authenticate` / `user_api_keys`; `api_key_read_only` refuses writes and `/mcp` |
 | CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
+| systemd unit template | Host operator; binds loopback, hardens the service | `deploy/reportal.service`, `deploy/reportal-backup.service` |
 | Stripe secret / webhook secret / price ids | Environment (`REPORTAL_STRIPE_*`) | `billing._webhook_secret`, `settings.py` billing.* |
 | Background continuations (pipeline/auto workers, agent loop, conversation
   context) | The authorized request that started them; no second principal |
@@ -275,15 +280,18 @@ it is written out in full below.
   activity series narrow their binary-owned counts to the caller's scope; the
   match, composition, lineage, related and benchmark runs score only visible
   binaries, so the remaining aggregate leak is counts, not content.
-- **Multi-tenancy.**  One process owns one workspace and one database
-  (`_paths.project_root`).  Concurrent independent users are outside the model,
-  as is per-tenant isolation.
+- **Cross-workspace isolation.**  One process owns one workspace and one
+  database (`_paths.project_root`).  The `saas` profile isolates tenants
+  inside that database (organisations, teams, `auth.visible_clause`,
+  metering); separate workspaces on one host are separate processes and are
+  outside this model.
 - **A reverse-proxy deployment.**  reportal's own token gate is the only
   authentication it implements; an operator who fronts it with a proxy owns
-  that layer's configuration (TLS, client certificates, rate limits).  A proxy
-  that must admit Stripe to `/api/billing/webhook` while keeping bearer auth on
-  the rest of `/api` is outside reportal: the process itself has no path
-  exemption for that route (`server._reportal_headers`).
+  that layer's configuration (TLS, client certificates, extra rate limits).
+  The process already exempts `WEBHOOK_PATH` and `SIGNUP_PATH` from the
+  bearer check (`server.authenticate`); a proxy does not need to invent that
+  exemption, but it does own whether those paths are reachable from the
+  internet.
 - **Engine and toolchain isolation.**  The rebrew package runs in the portal
   process with the operator's privileges; reportal does not sandbox it.  The
   same holds for the external unpacker: `reportal unpack` runs `upx -d` on a
@@ -322,6 +330,11 @@ path named.  None of these are demonstrated here.
   client only stores and attaches the bearer (`web/src/api.ts`).  A script on
   the portal origin reads `TOKEN_STORAGE_KEY` from `localStorage`.  There is no
   HttpOnly cookie session to fall back on.
+- **Present a write-capable key as read-only.**  A named key created with
+  `read_only` refuses HTTP writes and `/mcp` (`server.authenticate` checks
+  `api_key_read_only`).  Enforcement is server-side; a client that omits the
+  flag or stores the full login token still has whatever privilege that
+  credential carries.  Login tokens are never read-only.
 - **Register a path instead of uploading bytes.**  `reportal add-binary` /
   `register_binary` records a filesystem path the server later reads for engine
   work.  A caller who can name paths the portal user can read enlarges the read

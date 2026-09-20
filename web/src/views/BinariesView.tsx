@@ -1,16 +1,18 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
-import { api } from "../api";
+import { api, errorText } from "../api";
 import {
   Badge,
   Button,
   ConfirmButton,
+  CopyValue,
   DataTable,
   EmptyState,
   ErrorNote,
   Field,
+  HashIdenticon,
   Muted,
   Panel,
   Toolbar,
@@ -25,6 +27,8 @@ import {
 } from "../constants";
 import type {
   BinaryListPayload,
+  BinaryListRow,
+  BinaryOptionListPayload,
   BulkResult,
   Collection,
   Family,
@@ -33,15 +37,21 @@ import type {
   TeamsPayload,
   ExtractResult,
   TagRow,
+  SymbolFile,
   UploadBatchResult,
   UploadFileOptions,
 } from "../types";
 import { useAsync } from "../useAsync";
 
+/** Rows one register page holds; the table windows the rows it renders. */
+const BINARY_PAGE_SIZE = 200;
+
 /** One file queued for upload, with the options its own row carries. */
 interface UploadRow {
   key: string;
   file: File;
+  /** SHA-256 of the file bytes, filled after the browser hashes it. */
+  sha256: string;
   name: string;
   tags: string[];
   format: string;
@@ -49,6 +59,25 @@ interface UploadRow {
   compiler: string;
   /** The team to register the binary into; "" leaves it public and ownerless. */
   scope: string;
+  /** Optional PDB or ELF/DWARF file ingested after the binary registers. */
+  symbols: File | null;
+}
+
+/** Archive suffixes `POST /api/binaries/<id>/extract` reads; longer first. */
+const ARCHIVE_SUFFIXES = [
+  ".tar.gz",
+  ".tar.bz2",
+  ".tar.xz",
+  ".zip",
+  ".apk",
+  ".tar",
+  ".tgz",
+  ".gz",
+] as const;
+
+function isArchiveName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return ARCHIVE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
 /** The comma-or-Enter chip control one upload row applies its tags with. */
@@ -121,7 +150,7 @@ function filtersFromQuery(query: Record<string, string>): BinaryFilters {
   };
 }
 
-/** The API path one filter set reads. */
+/** The API path one filter set reads: its first page. */
 function registerPath(filters: BinaryFilters): string {
   const params = new URLSearchParams();
   if (filters.search.trim()) params.set("search", filters.search.trim());
@@ -130,6 +159,7 @@ function registerPath(filters: BinaryFilters): string {
   if (filters.language) params.set("language", filters.language);
   if (filters.compiler) params.set("compiler", filters.compiler);
   params.set("order", filters.order);
+  params.set("limit", String(BINARY_PAGE_SIZE));
   return `/binaries?${params.toString()}`;
 }
 
@@ -146,10 +176,25 @@ export function BinariesView({
     () => api<BinaryListPayload>(path),
     [path],
   );
+  // The register is read a page at a time: a workspace of twenty thousand
+  // samples would otherwise arrive as megabytes of JSON before the first row
+  // renders.  The extra pages are keyed by the path they were read under, so a
+  // filter change drops them without a frame of the old register.
+  const [extra, setExtra] = useState<{ path: string; rows: BinaryListRow[] }>({
+    path,
+    rows: [],
+  });
+  const extraRows = extra.path === path ? extra.rows : [];
   const tagData = useAsync(() => api<{ tags: TagRow[] }>("/tags"), []);
   // The extract and family pickers choose from the whole register, so they read
-  // it unfiltered rather than the slice the table is showing.
-  const register = useAsync(() => api<BinaryListPayload>("/binaries"), []);
+  // it unfiltered rather than the slice the table is showing.  They render an id
+  // and a name, so the fetch asks for the summary projection: the full row
+  // carries the sha256, the operator notes and both aggregate counts, which is
+  // megabytes of JSON over a large register for two columns.
+  const register = useAsync(
+    () => api<BinaryOptionListPayload>("/binaries?summary=true"),
+    [],
+  );
   const familyData = useAsync(() => api<FamilyList>("/families"), []);
   const collectionData = useAsync(() => api<{ collections: Collection[] }>("/collections"), []);
   const teamData = useAsync(() => api<TeamsPayload>("/teams"), []);
@@ -162,6 +207,32 @@ export function BinariesView({
       : String(me.data.user.active_team_id);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
+
+  useEffect(() => {
+    const pending = uploadRows.filter((row) => row.sha256 === "");
+    if (!pending.length) return;
+    let cancelled = false;
+    void Promise.all(
+      pending.map(async (row) => {
+        const digest = await crypto.subtle.digest("SHA-256", await row.file.arrayBuffer());
+        const hex = Array.from(new Uint8Array(digest))
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+        return { key: row.key, sha256: hex };
+      }),
+    ).then((hashed) => {
+      if (cancelled) return;
+      setUploadRows((current) =>
+        current.map((row) => {
+          const hit = hashed.find((entry) => entry.key === row.key);
+          return hit === undefined || row.sha256 !== "" ? row : { ...row, sha256: hit.sha256 };
+        }),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [uploadRows]);
   const [dragging, setDragging] = useState(false);
   const [configure, setConfigure] = useState({ format: "", arch: "", compiler: "", scope: "" });
   // The stored archives this session uploaded, so the batch can be unpacked in
@@ -171,9 +242,11 @@ export function BinariesView({
   const [extractPassword, setExtractPassword] = useState("");
   const [extractResult, setExtractResult] = useState<ExtractResult | null>(null);
   const [extractError, setExtractError] = useState<unknown>(null);
+  const [rowExtractBusy, setRowExtractBusy] = useState<string | null>(null);
   const [uploadCollection, setUploadCollection] = useState("");
   const [uploadResult, setUploadResult] = useState<UploadBatchResult | null>(null);
   const [uploadError, setUploadError] = useState<unknown>(null);
+  const [symbolNotes, setSymbolNotes] = useState<string[]>([]);
   const [familyName, setFamilyName] = useState("");
   const [familyAlias, setFamilyAlias] = useState("");
   const [familyBinaryId, setFamilyBinaryId] = useState("");
@@ -193,6 +266,12 @@ export function BinariesView({
       else next.add(binaryId);
       return next;
     });
+  };
+
+  /** Re-read the first page and drop the appended ones, so a write does not sit beside stale pages. */
+  const refresh = (): void => {
+    setExtra({ path, rows: [] });
+    reload();
   };
 
   const runBulk = async (action: string, tag: string): Promise<void> => {
@@ -216,7 +295,7 @@ export function BinariesView({
       );
       setBulkAction(result.journal_action ?? "");
       setSelected(new Set());
-      reload();
+      refresh();
     } catch (failure) {
       setBulkError(failure);
     } finally {
@@ -235,7 +314,7 @@ export function BinariesView({
             ? { visibility: "public" }
             : { visibility: "team", team_id: Number(value) },
       });
-      reload();
+      refresh();
     } catch (failure) {
       setBulkError(failure);
     } finally {
@@ -267,13 +346,64 @@ export function BinariesView({
       });
       setExtractResult(result);
       setExtractPassword("");
-      reload();
+      refresh();
       collectionData.reload();
       register.reload();
     } catch (failure) {
       setExtractError(failure);
     } finally {
       setBusy("");
+    }
+  };
+
+  const extractRow = async (row: UploadRow): Promise<void> => {
+    setExtractError(null);
+    setExtractResult(null);
+    setRowExtractBusy(row.key);
+    try {
+      const body = new FormData();
+      body.append("file", row.file, row.file.name);
+      const collectionIds = uploadCollection ? [Number(uploadCollection)] : [];
+      body.append(
+        "files",
+        JSON.stringify([
+          {
+            name: row.name.trim() || undefined,
+            tags: row.tags,
+            format: row.format || undefined,
+            arch: row.arch || undefined,
+            compiler: row.compiler || undefined,
+            collection_ids: collectionIds,
+            ...(row.scope === ""
+              ? {}
+              : { visibility: "team" as const, team_id: Number(row.scope) }),
+          },
+        ]),
+      );
+      const uploaded = await api<UploadBatchResult>("/binaries", { method: "POST", body });
+      const entry = uploaded.files[0];
+      if (entry === undefined || entry.binary_id === null || entry.error) {
+        setExtractError(
+          new Error(entry?.error?.detail ?? "Upload failed before extract."),
+        );
+        return;
+      }
+      const result = await api<ExtractResult>(`/binaries/${entry.binary_id}/extract`, {
+        method: "POST",
+        json: {
+          password: extractPassword || undefined,
+          collection_id: extractCollection ? Number(extractCollection) : 0,
+        },
+      });
+      setExtractResult(result);
+      setUploadRows((current) => current.filter((queued) => queued.key !== row.key));
+      refresh();
+      collectionData.reload();
+      register.reload();
+    } catch (failure) {
+      setExtractError(failure);
+    } finally {
+      setRowExtractBusy(null);
     }
   };
 
@@ -286,15 +416,17 @@ export function BinariesView({
       const accepted = Array.from(picked).slice(0, Math.max(room, 0));
       return [
         ...current,
-        ...accepted.map((file) => ({
-          key: `${file.name}-${file.lastModified}-${file.size}-${current.length + accepted.indexOf(file)}`,
+        ...accepted.map((file, index) => ({
+          key: `${file.name}-${file.lastModified}-${file.size}-${current.length + index}`,
           file,
+          sha256: "",
           name: "",
           tags: [],
           format: "",
           arch: "",
           compiler: "",
           scope: activeTeam,
+          symbols: null,
         })),
       ];
     });
@@ -321,6 +453,7 @@ export function BinariesView({
   const upload = async (): Promise<void> => {
     setUploadError(null);
     setUploadResult(null);
+    setSymbolNotes([]);
     if (!uploadRows.length) {
       setUploadError(new Error("Choose at least one file."));
       return;
@@ -343,10 +476,29 @@ export function BinariesView({
     setBusy("upload");
     try {
       const result = await api<UploadBatchResult>("/binaries", { method: "POST", body });
+      const notes = await Promise.all(
+        result.files.map(async (entry, index) => {
+          const symbols = uploadRows[index]?.symbols;
+          if (!symbols || entry.binary_id === null || entry.error) return "";
+          try {
+            const payload = new FormData();
+            payload.append("file", symbols);
+            payload.append("apply", "true");
+            const report = await api<SymbolFile>(`/binaries/${entry.binary_id}/symbols`, {
+              method: "POST",
+              body: payload,
+            });
+            return ` Symbols: ${report.symbols} name(s), ${report.types} type(s).`;
+          } catch (failure) {
+            return ` Symbols failed (${errorText(failure)}).`;
+          }
+        }),
+      );
+      setSymbolNotes(notes);
       setUploadResult(result);
       setUploadRows([]);
       if (fileRef.current) fileRef.current.value = "";
-      reload();
+      refresh();
       register.reload();
     } catch (failure) {
       setUploadError(failure);
@@ -355,10 +507,28 @@ export function BinariesView({
     }
   };
 
-  const binaries = data?.binaries ?? null;
+  const binaries = data === null || data === undefined ? null : [...data.binaries, ...extraRows];
+  const matched = data?.matched ?? 0;
   const teams = teamData.data?.teams ?? [];
   const families = familyData.data?.families ?? null;
   const collections = collectionData.data?.collections ?? [];
+
+  /** Read the next page and append it; the register is read a page at a time. */
+  const loadMore = async (): Promise<void> => {
+    setBulkError(null);
+    setBusy("more");
+    try {
+      const next = await api<BinaryListPayload>(`${path}&offset=${binaries?.length ?? 0}`);
+      setExtra((current) => {
+        const rows = current.path === path ? current.rows : [];
+        return { path, rows: [...rows, ...next.binaries] };
+      });
+    } catch (failure) {
+      setBulkError(failure);
+    } finally {
+      setBusy("");
+    }
+  };
 
   const registerFamily = async (): Promise<void> => {
     setFamilyError(null);
@@ -536,6 +706,11 @@ export function BinariesView({
                     <span>
                       <span>{row.file.name}</span>
                       <span className="muted"> {row.file.size.toLocaleString()} B</span>
+                      {row.sha256 ? (
+                        <CopyValue value={row.sha256} compact />
+                      ) : (
+                        <span className="muted"> hashing</span>
+                      )}
                     </span>
                   ),
                 },
@@ -626,6 +801,18 @@ export function BinariesView({
                   ),
                 },
                 {
+                  label: "Debug symbols",
+                  render: (row) => (
+                    <input
+                      type="file"
+                      aria-label={`debug symbols for ${row.file.name}`}
+                      onChange={(event) =>
+                        updateRow(row.key, { symbols: event.target.files?.[0] ?? null })
+                      }
+                    />
+                  ),
+                },
+                {
                   label: "Scope",
                   render: (row) => (
                     <select
@@ -646,15 +833,30 @@ export function BinariesView({
                 {
                   label: "",
                   render: (row) => (
-                    <Button
-                      size="sm"
-                      tone="ghost"
-                      onClick={() =>
-                        setUploadRows((current) => current.filter((entry) => entry.key !== row.key))
-                      }
-                    >
-                      Remove
-                    </Button>
+                    <>
+                      {isArchiveName(row.file.name) ? (
+                        <Button
+                          size="sm"
+                          tone="ghost"
+                          pending={rowExtractBusy === row.key}
+                          aria-label={`extract ${row.file.name}`}
+                          onClick={() => void extractRow(row)}
+                        >
+                          Extract
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="sm"
+                        tone="ghost"
+                        onClick={() =>
+                          setUploadRows((current) =>
+                            current.filter((entry) => entry.key !== row.key),
+                          )
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </>
                   ),
                 },
               ]}
@@ -664,6 +866,11 @@ export function BinariesView({
           </>
         ) : null}
         {uploadError ? <ErrorNote error={uploadError} /> : null}
+        <p className="muted" role="status">
+          {uploadResult
+            ? `${uploadResult.count} file(s): ${uploadResult.duplicates} already stored, ${uploadResult.errors} refused.`
+            : ""}
+        </p>
         {uploadResult ? (
           <div className="upload-results">
             {uploadResult.duplicates > 0 ? (
@@ -676,10 +883,6 @@ export function BinariesView({
                 {uploadResult.errors} file(s) were refused; each row states why.
               </p>
             ) : null}
-            <p className="muted">
-              {uploadResult.count} file(s): {uploadResult.duplicates} already stored,{" "}
-              {uploadResult.errors} refused.
-            </p>
             <ul>
               {uploadResult.files.map((entry, index) => (
                 <li key={`${entry.file}-${index}`} className={entry.error ? "upload-error" : undefined}>
@@ -694,6 +897,7 @@ export function BinariesView({
                       ? " Workspace scope."
                       : ` Team #${entry.owner_team_id} scope.`}
                   {entry.tags.length ? ` Tags: ${entry.tags.join(", ")}.` : ""}
+                  {symbolNotes[index] ?? ""}
                 </li>
               ))}
             </ul>
@@ -757,12 +961,13 @@ export function BinariesView({
           rather than dropped silently.
         </Muted>
         {extractError ? <ErrorNote error={extractError} /> : null}
+        <p className="muted" role="status">
+          {extractResult
+            ? `${extractResult.kept} of ${extractResult.members.length} member(s) registered into ${extractResult.collection_name} (${extractResult.skipped} skipped).`
+            : ""}
+        </p>
         {extractResult ? (
           <div className="upload-results">
-            <p className="muted">
-              {extractResult.kept} of {extractResult.members.length} member(s) registered into{" "}
-              {extractResult.collection_name} ({extractResult.skipped} skipped).
-            </p>
             <ul>
               {extractResult.members.map((entry) => (
                 <li key={entry.name} className={entry.skipped ? "upload-error" : undefined}>
@@ -862,7 +1067,7 @@ export function BinariesView({
       </Panel>
       <Panel
         title="Binaries"
-        subtitle={`${data?.count ?? 0} of ${data?.total ?? 0} binaries`}
+        subtitle={`${binaries?.length ?? 0} of ${matched} binaries`}
         actions={
           <>
             <Button tone="ghost" onClick={() => navigate("/analyses")}>
@@ -979,7 +1184,21 @@ export function BinariesView({
                 ),
               },
               { label: "ID", key: "id", numeric: true },
-              { label: "Name", key: "name" },
+              {
+                label: "Name",
+                key: "name",
+                render: (row) => (
+                  <span className="toolbar">
+                    {row.sha256 ? <HashIdenticon hash={row.sha256} /> : null}
+                    {row.visibility === "team" ? (
+                      <Badge mono title="team-scoped">
+                        lock
+                      </Badge>
+                    ) : null}
+                    {row.name}
+                  </span>
+                ),
+              },
               {
                 label: "Format",
                 render: (row) => (
@@ -998,10 +1217,10 @@ export function BinariesView({
               },
               {
                 label: "SHA-256",
-                mono: true,
-                render: (row) => <span title={row.sha256}>{row.sha256.slice(0, 16)}</span>,
+                render: (row) => <CopyValue value={row.sha256} compact />,
               },
               { label: "Functions", key: "function_count", numeric: true },
+              { label: "Created", key: "created_at", mono: true },
               {
                 label: "Comments",
                 numeric: true,
@@ -1046,6 +1265,16 @@ export function BinariesView({
             }
           />
         )}
+        {binaries !== null && binaries.length < matched ? (
+          <Toolbar>
+            <Button pending={busy === "more"} onClick={() => void loadMore()}>
+              Load more
+            </Button>
+            <Muted>
+              {binaries.length} of {matched} loaded
+            </Muted>
+          </Toolbar>
+        ) : null}
       </Panel>
       {binaries && binaries.length > 0 ? (
         <Panel
@@ -1090,7 +1319,7 @@ export function BinariesView({
             </Field>
           </Toolbar>
           {bulkError ? <ErrorNote error={bulkError} /> : null}
-          {bulkMessage ? <p className="muted">{bulkMessage}</p> : null}
+          <p className="muted" role="status">{bulkMessage}</p>
           {bulkAction ? (
             <p className="muted">
               Revert this action: <a href={`#/journal/${bulkAction}`}>{bulkAction}</a>

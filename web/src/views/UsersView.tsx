@@ -53,6 +53,7 @@ import { useAsync } from "../useAsync";
 function ApiKeysPanel(): ReactNode {
   const keys = useAsync(() => api<ApiKeysPayload>("/iam/keys"), []);
   const [name, setName] = useState("");
+  const [readOnly, setReadOnly] = useState(false);
   const [minted, setMinted] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -65,10 +66,14 @@ function ApiKeysPanel(): ReactNode {
     if (!trimmed) return;
     setError(null);
     setBusy(true);
-    api<ApiKeyCreated>("/iam/keys", { method: "POST", json: { name: trimmed } })
+    api<ApiKeyCreated>("/iam/keys", {
+      method: "POST",
+      json: { name: trimmed, read_only: readOnly },
+    })
       .then((created) => {
         setMinted(created.token);
         setName("");
+        setReadOnly(false);
         keys.reload();
       })
       .catch((failure: unknown) => setError(failure))
@@ -91,6 +96,14 @@ function ApiKeysPanel(): ReactNode {
             }}
           />
         </Field>
+        <label className="checkbox-field">
+          <input
+            type="checkbox"
+            checked={readOnly}
+            onChange={(event) => setReadOnly(event.target.checked)}
+          />
+          read-only
+        </label>
         <Button tone="primary" pending={busy} disabled={!name.trim()} onClick={mint}>
           Mint key
         </Button>
@@ -113,7 +126,31 @@ function ApiKeysPanel(): ReactNode {
           empty={<Muted>No named keys. The login token still authenticates.</Muted>}
           columns={[
             { label: "ID", key: "id", numeric: true },
-            { label: "Name", key: "name" },
+            {
+              label: "Name",
+              render: (row) => (
+                <input
+                  defaultValue={row.name}
+                  aria-label={`Rename API key ${row.id}`}
+                  disabled={busy}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    const next = event.currentTarget.value.trim();
+                    if (!next || next === row.name) return;
+                    setError(null);
+                    setBusy(true);
+                    api(`/iam/keys/${row.id}`, { method: "PATCH", json: { name: next } })
+                      .then(() => keys.reload())
+                      .catch((failure: unknown) => setError(failure))
+                      .finally(() => setBusy(false));
+                  }}
+                />
+              ),
+            },
+            {
+              label: "Access",
+              render: (row) => (row.read_only ? "read-only" : "full"),
+            },
             { label: "Created", key: "created_at", mono: true },
             {
               label: "Last used",
@@ -225,7 +262,7 @@ function TokenField({ onSaved }: { onSaved: () => void }): ReactNode {
           Clear
         </Button>
       </Toolbar>
-      {message ? <Muted>{message}</Muted> : null}
+      <Muted live>{message}</Muted>
     </>
   );
 }

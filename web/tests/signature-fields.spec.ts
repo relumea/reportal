@@ -12,6 +12,7 @@ test("editing the arrival location changes the rendered prototype", async ({ pag
   await page.goto(`/#/functions/${state.ids.function_id}`);
   const panel = panelByTitle(page, "Signature");
   await expect(panel.getByText("prototype")).toBeVisible();
+  await expect(page.locator(".detail-head .copy-row .mono").nth(1)).not.toHaveText("");
 
   const at = panel.getByLabel("Arrival location of parameter 0");
   await at.fill("[esp+4]");
@@ -19,6 +20,13 @@ test("editing the arrival location changes the rendered prototype", async ({ pag
 
   // The rendered prototype annotates the field the model now carries.
   await expect(panel.getByText(/at \[esp\+4\]/)).toBeVisible();
+
+  await panel.getByLabel("Return type").fill("NP_HEADER");
+  await panel.getByRole("button", { name: "Save head" }).click();
+  await expect(panel.getByRole("link", { name: "NP_HEADER" })).toHaveAttribute(
+    "href",
+    /search=NP_HEADER/,
+  );
 });
 
 test("the signature history lists a recorded version and reverts it", async ({ page }) => {

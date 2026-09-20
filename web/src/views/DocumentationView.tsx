@@ -1,7 +1,9 @@
 // The Documentation view: the portal's own manual, rendered in the portal.
 //
-// The server reads `docs/*.md` and `CHANGELOG.md` and answers a page as
-// *blocks* rather than markup (`GET /api/docs`, `GET /api/docs/<slug>`), so
+// The server reads the markdown under `docs/` (top level and one subdirectory
+// level, so `docs/subsystems/store.md` has the slug `subsystems/store`) and
+// `CHANGELOG.md`, and answers a page as *blocks* rather than markup
+// (`GET /api/docs`, `GET /api/docs/<slug>`, the slug a path), so
 // nothing is ever injected as HTML and the SPA carries no markdown library.
 // This view is the renderer: an inline pass for links, code spans and
 // emphasis, and one element per block kind.  The index is the same view with
@@ -93,7 +95,7 @@ function DocList({ ordered, items }: { ordered: boolean; items: DocListItem[] })
 function DocTable({ header, rows }: { header: string[]; rows: string[][] }): ReactNode {
   return (
     <div className="doc-table-wrap">
-      <table className="doc-table">
+      <table className="doc-table" aria-label="Documentation table">
         {header.length ? (
           <thead>
             <tr>

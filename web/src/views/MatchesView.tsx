@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 import type { ReactNode } from "react";
 
-import { api } from "../api";
+import { BINARY_OPTIONS_PATH, api } from "../api";
 import {
   Badge,
   Button,
@@ -24,6 +25,7 @@ import {
   DEFAULT_MIN_MATCH_CONFIDENCE,
   DEFAULT_MIN_SIMILARITY,
   DEFAULT_TRANSFER_MODE,
+  FUNCTION_NAME_SOURCES,
   MATCH_ARCHITECTURES,
   MATCH_ARCHITECTURE_LABELS,
   MATCH_METRICS,
@@ -32,13 +34,15 @@ import {
   MATCH_PLATFORM_LABELS,
   TRANSFER_MODES,
   TRANSFER_MODE_LABELS,
+  nameSourceLabel,
 } from "../constants";
-import { METER_SEGMENTS, qualityHue } from "../design";
+import { METER_SEGMENTS, nameSourceHue, qualityHue } from "../design";
 import type {
-  Binary,
   BinaryMatchesPayload,
   BinaryMatchRow,
+  BinaryOption,
   Collection,
+  FunctionListPage,
   FunctionRow,
   MatchMetric,
   MatchRunPayload,
@@ -61,6 +65,36 @@ function rowKey(row: BinaryMatchRow): string {
   return `${row.source_function_id}:${row.candidate_function_id}`;
 }
 
+function unmatchedRow(fn: FunctionRow): BinaryMatchRow {
+  return {
+    source_function_id: fn.id,
+    source_name: fn.name,
+    source_va: fn.va,
+    source_name_source: fn.name_source,
+    candidate_function_id: 0,
+    candidate_name: "",
+    candidate_va: 0,
+    candidate_binary_id: 0,
+    candidate_binary_name: "",
+    similarity: 0,
+    confidence: 0,
+    difference: 100,
+    band: "No Match",
+    source_arch: "",
+    candidate_arch: "",
+    cross_arch: false,
+    settings: null,
+  };
+}
+
+function hasCandidate(row: BinaryMatchRow): boolean {
+  return row.candidate_function_id > 0;
+}
+
+function sourceLabel(row: BinaryMatchRow): string {
+  return nameSourceLabel(row.source_name, row.source_name_source);
+}
+
 /** The band a stacked-bar segment belongs to, by cumulative share of *total*. */
 function bandAt(counts: Map<string, number>, total: number, index: number): string | null {
   if (total <= 0) return null;
@@ -77,9 +111,13 @@ function bandAt(counts: Map<string, number>, total: number, index: number): stri
 function QualityBar({
   counts,
   total,
+  selected,
+  onSelect,
 }: {
   counts: Map<string, number>;
   total: number;
+  selected: string;
+  onSelect: (band: string) => void;
 }): ReactNode {
   return (
     <div className="quality-bar">
@@ -108,15 +146,55 @@ function QualityBar({
         {QUALITY_BANDS.map((band) => {
           const count = counts.get(band) ?? 0;
           return (
-            <span
+            <button
               key={band}
+              type="button"
               className="quality-legend-item"
               data-hue={qualityHue(band) ?? undefined}
               data-empty={count === 0 ? "true" : undefined}
+              data-selected={selected === band ? "true" : undefined}
+              onClick={() => onSelect(selected === band ? "" : band)}
             >
               <span className="quality-swatch" aria-hidden="true" />
               {band} <span className="num">{count}</span>
-            </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function SourceBar({
+  counts,
+  selected,
+  onSelect,
+}: {
+  counts: Map<string, number>;
+  selected: string;
+  onSelect: (label: string) => void;
+}): ReactNode {
+  return (
+    <div className="quality-bar">
+      <div className="meter-head">
+        <span className="meter-label">Function name sources</span>
+      </div>
+      <div className="quality-legend">
+        {FUNCTION_NAME_SOURCES.map((label) => {
+          const count = counts.get(label) ?? 0;
+          return (
+            <button
+              key={label}
+              type="button"
+              className="quality-legend-item"
+              data-hue={nameSourceHue(label) ?? undefined}
+              data-empty={count === 0 ? "true" : undefined}
+              data-selected={selected === label ? "true" : undefined}
+              onClick={() => onSelect(selected === label ? "" : label)}
+            >
+              <span className="quality-swatch" aria-hidden="true" />
+              {label} <span className="num">{count}</span>
+            </button>
           );
         })}
       </div>
@@ -156,6 +234,8 @@ export function MatchesView({
   functionId: number | null;
   onSelectFunction: (functionId: number | null) => void;
 }): ReactNode {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [draft, setDraft] = useState(functionId === null ? "" : String(functionId));
 
   useEffect(() => {
@@ -174,9 +254,21 @@ export function MatchesView({
     [binaryId],
     binaryId !== null,
   );
-  const binariesResult = useAsync<{ binaries: Binary[] }>(() => api(`/binaries`), []);
+  const functionsResult = useAsync<FunctionListPage>(
+    () => api<FunctionListPage>(`/binaries/${binaryId}/functions?limit=1`),
+    [binaryId],
+    binaryId !== null,
+  );
+  const unmatchedResult = useAsync<FunctionListPage>(
+    () => api<FunctionListPage>(`/binaries/${binaryId}/functions?match=unmatched`),
+    [binaryId],
+    binaryId !== null,
+  );
+  const binariesResult = useAsync<{ binaries: BinaryOption[] }>(() => api(BINARY_OPTIONS_PATH), []);
   const collectionsResult = useAsync<{ collections: Collection[] }>(() => api(`/collections`), []);
 
+  const [bandFilter, setBandFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [minSimilarity, setMinSimilarity] = useState(DEFAULT_MIN_SIMILARITY);
   const [minConfidence, setMinConfidence] = useState(DEFAULT_MIN_MATCH_CONFIDENCE);
@@ -184,7 +276,12 @@ export function MatchesView({
   const [top, setTop] = useState(DEFAULT_MATCH_TOP);
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [architectures, setArchitectures] = useState<string[]>([]);
-  const [scopeBinaries, setScopeBinaries] = useState<number[]>([]);
+  const [scopeBinaries, setScopeBinaries] = useState<number[]>(() =>
+    (params.get("binary_ids") ?? "")
+      .split(",")
+      .map((part) => Number(part.trim()))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  );
   const [scopeCollections, setScopeCollections] = useState<number[]>([]);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<unknown>(null);
@@ -203,23 +300,50 @@ export function MatchesView({
   const [bulkError, setBulkError] = useState<unknown>(null);
   const [bulkReport, setBulkReport] = useState<TransferReport | null>(null);
 
-  const rows = matchesResult.data?.matches ?? [];
+  const recorded = matchesResult.data?.matches ?? [];
+  const rows = useMemo(
+    () => [...recorded, ...(unmatchedResult.data?.functions ?? []).map(unmatchedRow)],
+    [recorded, unmatchedResult.data],
+  );
 
   const ranked = useMemo(() => {
-    const sorted = [...rows];
+    const filtered = rows.filter((row) => {
+      if (bandFilter !== "" && row.band !== bandFilter) return false;
+      if (sourceFilter !== "" && sourceLabel(row) !== sourceFilter) return false;
+      return true;
+    });
+    const sorted = [...filtered];
     sorted.sort((left, right) => {
       if (metric === "confidence") return right.confidence - left.confidence;
       if (metric === "difference") return left.difference - right.difference;
       return right.similarity - left.similarity;
     });
     return sorted;
-  }, [rows, metric]);
+  }, [rows, metric, bandFilter, sourceFilter]);
 
   const bandCounts = useMemo(() => {
     const counts = new Map<string, number>(QUALITY_BANDS.map((band) => [band, 0]));
     for (const row of rows) counts.set(row.band, (counts.get(row.band) ?? 0) + 1);
     return counts;
   }, [rows]);
+
+  const sourceCounts = useMemo(() => {
+    const counts = new Map<string, number>(FUNCTION_NAME_SOURCES.map((label) => [label, 0]));
+    for (const row of rows) {
+      const label = sourceLabel(row);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    return counts;
+  }, [rows]);
+
+  const matchedCount = useMemo(() => {
+    return new Set(recorded.map((row) => row.source_function_id)).size;
+  }, [recorded]);
+  const functionTotal = functionsResult.data?.total ?? null;
+  const matchedPercent =
+    functionTotal === null || functionTotal === 0
+      ? 0
+      : Math.round((100 * matchedCount) / functionTotal);
 
   const toggleValue = (
     values: string[],
@@ -316,7 +440,7 @@ export function MatchesView({
   const openBulk = (): void => {
     const names: Record<string, boolean> = {};
     const signatures: Record<string, boolean> = {};
-    for (const row of rows) {
+    for (const row of recorded) {
       const key = rowKey(row);
       names[key] = row.candidate_name.trim() !== "" && row.candidate_name !== row.source_name;
       signatures[key] = false;
@@ -338,7 +462,7 @@ export function MatchesView({
       candidate_function_id: number;
       mode: TransferMode;
     }> = [];
-    for (const row of rows) {
+    for (const row of recorded) {
       const key = rowKey(row);
       const wantsName = bulkNames[key] ?? false;
       const wantsSignature = bulkSignatures[key] ?? false;
@@ -484,9 +608,14 @@ export function MatchesView({
           >
             Run match
           </Button>
-          <Button disabled={binaryId === null || rows.length === 0} onClick={openBulk}>
+          <Button disabled={binaryId === null || recorded.length === 0} onClick={openBulk}>
             Bulk transfer
           </Button>
+          {functionTotal !== null ? (
+            <Badge hue="match">
+              Matched: {matchedCount} / {functionTotal} ({matchedPercent}%)
+            </Badge>
+          ) : null}
         </Toolbar>
       }
     >
@@ -638,10 +767,20 @@ export function MatchesView({
                   </Button>
                 ))}
                 <span className="muted">
-                  {rows.length} candidate{rows.length === 1 ? "" : "s"} recorded
+                  {recorded.length} candidate{recorded.length === 1 ? "" : "s"} recorded
                 </span>
               </Toolbar>
-              <QualityBar counts={bandCounts} total={rows.length} />
+              <SourceBar
+                counts={sourceCounts}
+                selected={sourceFilter}
+                onSelect={setSourceFilter}
+              />
+              <QualityBar
+                counts={bandCounts}
+                total={rows.length}
+                selected={bandFilter}
+                onSelect={setBandFilter}
+              />
               {bulkOpen ? (
                 <Panel
                   title="Bulk transfer"
@@ -766,11 +905,25 @@ export function MatchesView({
                   },
                   {
                     label: "Candidate",
-                    render: (row) => (
-                      <a href={`#/functions/${row.candidate_function_id}`}>
-                        {row.candidate_name} @ {hex(row.candidate_va)}
-                      </a>
-                    ),
+                    render: (row) =>
+                      hasCandidate(row) ? (
+                        <a href={`#/functions/${row.candidate_function_id}`}>
+                          {row.candidate_name} @ {hex(row.candidate_va)}
+                        </a>
+                      ) : (
+                        <Badge>No match</Badge>
+                      ),
+                  },
+                  {
+                    label: "Binary",
+                    render: (row) =>
+                      hasCandidate(row) ? (
+                        <a href={`#/binaries/${row.candidate_binary_id}`}>
+                          {row.candidate_binary_name}
+                        </a>
+                      ) : (
+                        NA
+                      ),
                   },
                   {
                     label: MATCH_METRIC_LABELS[metric],
@@ -796,6 +949,7 @@ export function MatchesView({
                   {
                     label: "Transfer",
                     render: (row) => {
+                      if (!hasCandidate(row)) return NA;
                       const key = rowKey(row);
                       const report = rowReports[key];
                       return (
@@ -845,6 +999,10 @@ export function MatchesView({
                 rows={ranked}
                 windowed
                 rowKey={(row) => rowKey(row)}
+                onRowClick={(row) => {
+                  if (!hasCandidate(row)) return;
+                  navigate(`/diff/${row.source_function_id}/${row.candidate_function_id}`);
+                }}
                 empty={
                   <EmptyState>
                     No matches recorded for this binary. Use Run match after setting a scope.

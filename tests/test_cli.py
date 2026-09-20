@@ -24,7 +24,7 @@ from conftest import (
 )
 from typer.testing import CliRunner
 
-from reportal import __version__, auth, cli, engines, jobs, llm, similarity, store
+from reportal import __version__, _paths, auth, cli, engines, jobs, llm, similarity, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -189,6 +189,22 @@ class TestInit:
         assert (tmp_path / "reportal.toml").is_file()
         assert (tmp_path / "reportal.db").is_file()
         assert "Next steps" in result.output
+
+    def test_init_creates_workspace_folders(self, tmp_path: Path) -> None:
+        result = runner.invoke(cli.app, ["init", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+        for name in _paths.WORKSPACE_DIRS:
+            assert (tmp_path / name).is_dir()
+        assert "binaries/" in result.output
+
+    def test_init_leaves_existing_folders_alone(self, tmp_path: Path) -> None:
+        keep = tmp_path / _paths.BINARIES_DIR / "keep"
+        keep.parent.mkdir(parents=True)
+        keep.write_text("stored", encoding="utf-8")
+        result = runner.invoke(cli.app, ["init", "--dir", str(tmp_path)])
+        assert result.exit_code == 0
+        assert keep.read_text(encoding="utf-8") == "stored"
+        assert f"{_paths.BINARIES_DIR}/" not in result.output
 
     def test_init_is_idempotent(self, tmp_path: Path) -> None:
         runner.invoke(cli.app, ["init", "--dir", str(tmp_path)])

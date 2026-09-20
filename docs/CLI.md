@@ -7,7 +7,7 @@ Typer app and are the authority when the two disagree; README.md carries
 worked examples.
 
 ```bash
-reportal init [--dir PATH]                 # write reportal.toml + reportal.db
+reportal init [--dir PATH]                 # write reportal.toml + reportal.db + the workspace folders
 reportal import-rebrew <project-dir> [--json]
                                            # ingest a rebrew workspace (idempotent; stores its context)
                                            #   plus the target binary's import stubs as THUNK rows
@@ -266,13 +266,15 @@ reportal components-deactivate <name> [--json]
                                            #   it provided and report what it journaled
 reportal integrations [--json]             # list every plugin seam with the parts its registry
                                            #   currently holds
-reportal auto <binary-id> [--worker offline|llm_c_source] [--execute] [--concurrency N]
-             [--functions-per-task N] [--max-attempts N] [--max-tasks N] [--recover] [--json]
-                                           # decompose a binary's unmatched functions into batches,
-                                           #   work them and report the coverage delta; dry-run by
-                                           #   default, --execute writes C files into the rebrew
-                                           #   project and compiles them, --recover closes the
-                                           #   binary's latest stale run first
+reportal auto <binary-id> [--worker offline|llm_c_source|llm_goal] [--goal TEXT] [--execute]
+             [--concurrency N] [--functions-per-task N] [--max-attempts N] [--max-tasks N]
+             [--recover] [--json]
+                                           # decompose a binary's functions into batches, work them
+                                           #   and report the coverage delta; dry-run by default,
+                                           #   --execute writes C files into the rebrew project and
+                                           #   compiles them, --goal is the objective llm_goal works
+                                           #   toward (and plans matched functions too), --recover
+                                           #   closes the binary's latest stale run first
 reportal auto-recover <run-id> [--json]    # close a run a dead process left `running`, merging the
                                            #   writes its unfinished tasks recorded into its plan
 reportal auto-revert <run-id> [--json]     # remove the files one stored auto run wrote, restore the
@@ -727,9 +729,12 @@ reportal api-keys <user-id> [--json]
                                            # named extra keys, without digests;
                                            #   used counts the login token too;
                                            #   last_used_at empty until the key fires
-reportal api-key-add <user-id> --name TEXT [--json]
+reportal api-key-add <user-id> --name TEXT [--read-only] [--json]
                                            # mint one named extra key; shown once;
-                                           #   counts toward the plan's max_api_keys
+                                           #   counts toward the plan's max_api_keys;
+                                           #   --read-only refuses HTTP writes and /mcp
+reportal api-key-rename <key-id> --name TEXT [--json]
+                                           # rename one named extra key; token unchanged
 reportal api-key-rm <key-id> [--json]
                                            # delete one named extra key; journaled;
                                            #   the login token is rotated, not here
@@ -762,7 +767,7 @@ reportal analysis-update <id> --engine TEXT [--json]
                                            # relabel the analysis's engine; journaled
 reportal analysis-log <id> MESSAGE [--severity info|warn|error] [--json]
                                            # append one log entry; journaled
-reportal analysis-requeue <id> [--json]    # back to pending, finish time cleared, logged
+reportal analysis-requeue <id> [--json]    # back to pending, queue jobs for stored scans
 reportal analysis-tags <id> NAME... [--json]
                                            # replace the tags on the analysis's binary
 reportal imported-functions <id> [--limit N] [--json]

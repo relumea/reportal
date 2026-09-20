@@ -29,8 +29,8 @@ import {
   MEMORY_SCROLL_WINDOW,
   type MemoryAddressKind,
 } from "../constants";
-import { panelKey, useLazyPanel } from "../panelCache";
-import type { MemoryPage, MemoryPageRow, MemoryPageSection, MemoryWindow } from "../types";
+import { panelKey, useLazyPanel, usePanel } from "../panelCache";
+import type { MemoryPage, MemoryPageRow, MemoryPageSection, MemoryWindow, PeInfo } from "../types";
 
 // Printable ASCII range the gutter renders literally; everything else is a dot.
 const PRINTABLE_MIN = 0x20;
@@ -48,6 +48,17 @@ const GOTO_KINDS: readonly { value: GotoKind; label: string }[] = [
 // than a guess or a fabricated zero window.
 const NO_READ_HINT = "Enter an address and read a window of this binary's bytes.";
 const ADDRESS_REQUIRED = "An address is required before reading";
+const DEFAULT_GOTO = "0x401000";
+
+/** The PE entry point as a go-to placeholder, or a conventional VA. */
+function useEntryPlaceholder(binaryId: number): string {
+  const pe = usePanel<PeInfo>(panelKey("binary", binaryId, "pe-info"), () =>
+    api<PeInfo>(`/binaries/${binaryId}/pe-info`),
+  );
+  return pe?.state === "ready" && typeof pe.data.entry_point === "number"
+    ? hex(pe.data.entry_point)
+    : DEFAULT_GOTO;
+}
 
 /** Parse a lowercase hex window into its bytes. */
 function bytesOf(hexText: string): number[] {
@@ -64,23 +75,34 @@ function gutterOf(byte: number): string {
   return byte >= PRINTABLE_MIN && byte <= PRINTABLE_MAX ? String.fromCharCode(byte) : ".";
 }
 
-/** One grid row: its virtual address when the read was addressed by one, bytes, gutter. */
+/** One grid row: file offset, virtual address, bytes, gutter. */
 interface MemoryRow {
-  address: number | null;
-  hex: string;
+  offset: number | null;
+  virtual: number | null;
+  bytes: number[];
   gutter: string;
 }
 
-/** Split a window into 16-byte rows, numbering them from the window's VA. */
+function parseAddr(text: string | null): number | null {
+  if (!text) return null;
+  const value = Number.parseInt(text, 16);
+  return Number.isNaN(value) ? null : value;
+}
+
+/** Split a window into 16-byte rows, numbering Offset and Virtual. */
 function gridRows(window: MemoryWindow): MemoryRow[] {
   const bytes = bytesOf(window.bytes);
-  const start = window.va === null ? null : Number.parseInt(window.va, 16);
+  const requested = parseAddr(window.address);
+  const vaStart = parseAddr(window.va);
+  const fileStart = window.kind === "file" ? requested : null;
+  const virtualStart = vaStart ?? (window.kind === "file" ? null : requested);
   const rows: MemoryRow[] = [];
   for (let offset = 0; offset < bytes.length; offset += MEMORY_BYTES_PER_ROW) {
     const slice = bytes.slice(offset, offset + MEMORY_BYTES_PER_ROW);
     rows.push({
-      address: start === null || Number.isNaN(start) ? null : start + offset,
-      hex: slice.map((byte) => byte.toString(16).padStart(2, "0")).join(" "),
+      offset: fileStart === null ? null : fileStart + offset,
+      virtual: virtualStart === null ? null : virtualStart + offset,
+      bytes: slice,
       gutter: slice.map(gutterOf).join(""),
     });
   }
@@ -119,10 +141,13 @@ function cArrayCopy(bytes: number[]): string {
 export function MemoryPanel({
   binaryId,
   focus,
+  focusKind,
 }: {
   binaryId: number;
   /** An address from the route hash, linked from the section table. */
   focus?: string;
+  /** `file` when the linked address is a file offset. */
+  focusKind?: string;
 }): ReactNode {
   const [mode, setMode] = useState<"window" | "file" | "continuous">(
     focus === undefined ? "window" : "continuous",
@@ -158,13 +183,14 @@ export function MemoryPanel({
       ) : mode === "file" ? (
         <FileMode binaryId={binaryId} />
       ) : (
-        <ContinuousMode binaryId={binaryId} focus={focus} />
+        <ContinuousMode binaryId={binaryId} focus={focus} focusKind={focusKind} />
       )}
     </Panel>
   );
 }
 
 function WindowMode({ binaryId }: { binaryId: number }): ReactNode {
+  const placeholder = useEntryPlaceholder(binaryId);
   const key = panelKey("binary", binaryId, "memory");
   const [entry, load] = useLazyPanel<MemoryWindow>(key);
   const [address, setAddress] = useState("");
@@ -180,6 +206,11 @@ function WindowMode({ binaryId }: { binaryId: number }): ReactNode {
   };
 
   const missingAddress = address.trim() === "";
+  const runRead = (): void => {
+    if (missingAddress) return;
+    setAttempted(true);
+    load(read);
+  };
 
   return (
     <>
@@ -187,9 +218,16 @@ function WindowMode({ binaryId }: { binaryId: number }): ReactNode {
         <Field label="Address">
           <input
             type="text"
-            placeholder="0x401000"
+            placeholder={placeholder}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") runRead();
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setAddress("");
+              }
+            }}
           />
         </Field>
         <Field label="Kind">
@@ -214,10 +252,7 @@ function WindowMode({ binaryId }: { binaryId: number }): ReactNode {
           tone="primary"
           disabled={missingAddress}
           title={missingAddress ? ADDRESS_REQUIRED : undefined}
-          onClick={() => {
-            setAttempted(true);
-            load(read);
-          }}
+          onClick={runRead}
         >
           Read
         </Button>
@@ -260,16 +295,37 @@ function MemoryBody({ window }: { window: MemoryWindow }): ReactNode {
       <DataTable
         columns={[
           {
-            label: "Address",
+            label: "Offset",
             mono: true,
             numeric: true,
-            render: (row) => (row.address === null ? NA : `0x${row.address.toString(16)}`),
+            render: (row) => (row.offset === null ? NA : hex(row.offset)),
           },
-          { label: "Bytes", mono: true, render: (row) => row.hex },
+          {
+            label: "Virtual",
+            mono: true,
+            numeric: true,
+            render: (row) => (row.virtual === null ? NA : hex(row.virtual)),
+          },
+          {
+            label: "Bytes",
+            mono: true,
+            render: (row) => (
+              <span className="memory-bytes">
+                {row.bytes.map((byte, index) => (
+                  <span key={index}>
+                    {index > 0 ? " " : null}
+                    <span className={byte === 0 ? "byte byte-zero" : "byte"}>
+                      {byte.toString(16).padStart(2, "0")}
+                    </span>
+                  </span>
+                ))}
+              </span>
+            ),
+          },
           { label: "ASCII", mono: true, render: (row) => row.gutter },
         ]}
         rows={rows}
-        rowKey={(row, index) => `${row.address ?? "file"}-${index}`}
+        rowKey={(row, index) => `${row.offset ?? row.virtual ?? "file"}-${index}`}
       />
     </>
   );
@@ -297,6 +353,7 @@ function extendSelection(
 }
 
 function FileMode({ binaryId }: { binaryId: number }): ReactNode {
+  const placeholder = useEntryPlaceholder(binaryId);
   const key = panelKey("binary", binaryId, "memory-page");
   const [entry, load] = useLazyPanel<MemoryPage>(key);
   const [start, setStart] = useState("");
@@ -369,7 +426,7 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
         <Field label="Go to">
           <input
             type="text"
-            placeholder="0x401000"
+            placeholder={placeholder}
             value={goto}
             onChange={(event) => setGoto(event.target.value)}
             onKeyDown={(event) => {
@@ -443,7 +500,16 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
                 </Toolbar>
               )}
               {copied ? <Note>Copied: {copied}</Note> : null}
-              <PageRows page={page} selection={selection} onSelect={selectByte} />
+              <PageRows
+                page={page}
+                selection={selection}
+                onSelect={selectByte}
+                onClear={() => {
+                  setAnchor(null);
+                  setSelection(null);
+                  setCopied("");
+                }}
+              />
             </>
           )}
         </PanelBody>
@@ -460,13 +526,26 @@ function PageRows({
   page,
   selection,
   onSelect,
+  onClear,
 }: {
   page: MemoryPage;
   selection: Selection | null;
   onSelect: (address: number, extend: boolean) => void;
+  onClear: () => void;
 }): ReactNode {
   return (
-    <div className="memory-grid">
+    <div
+      className="memory-grid"
+      tabIndex={0}
+      role="region"
+      aria-label="Paged hex dump"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && selection !== null) {
+          event.preventDefault();
+          onClear();
+        }
+      }}
+    >
       {page.rows.map((row, index) => (
         <PageRow
           key={`${row.kind}-${row.address}-${index}`}
@@ -583,11 +662,16 @@ function storedColumnKind(): MemoryAddressKind {
 function ContinuousMode({
   binaryId,
   focus,
+  focusKind,
 }: {
   binaryId: number;
   focus?: string;
+  focusKind?: string;
 }): ReactNode {
-  const [column, setColumn] = useState<MemoryAddressKind>(storedColumnKind);
+  const placeholder = useEntryPlaceholder(binaryId);
+  const linkedKind: MemoryAddressKind | null =
+    focusKind === "file" || focusKind === "va" || focusKind === "rva" ? focusKind : null;
+  const [column, setColumn] = useState<MemoryAddressKind>(linkedKind ?? storedColumnKind);
   const [bytes, setBytes] = useState<Map<number, number>>(new Map());
   const [gaps, setGaps] = useState<Array<{ address: number; length: number }>>([]);
   const [sections, setSections] = useState<MemoryPageSection[]>([]);
@@ -812,6 +896,8 @@ function ContinuousMode({
       node.scrollTop = 0;
       setScrollTop(0);
     }
+    setGoto("");
+    node?.focus();
   };
 
   // The hosted portal's `G` focuses the address box and `Tab` toggles the
@@ -824,16 +910,23 @@ function ContinuousMode({
     } else if (event.key === "Tab") {
       event.preventDefault();
       remember(column === "file" ? "va" : "file");
+    } else if (event.key === "Escape" && selection !== null) {
+      event.preventDefault();
+      setAnchor(null);
+      setSelection(null);
+      setCopied("");
     }
   };
 
   // A linked address (the section table's virtual-address column) opens on its
   // own row, selected, so the section table and a byte range are one click
   // apart.  The ref keeps a later re-render from dragging the reader back.
-  const landed = useRef(false);
+  const landed = useRef<string | null>(null);
   useEffect(() => {
-    if (focus === undefined || landed.current || span === null) return;
-    landed.current = true;
+    if (focus === undefined || span === null) return;
+    const token = `${focus}:${focusKind ?? ""}`;
+    if (landed.current === token) return;
+    landed.current = token;
     const parsed = Number.parseInt(/^0x/i.test(focus) ? focus : `0x${focus}`, 16);
     if (Number.isNaN(parsed)) return;
     const row = Math.floor((parsed - span.low) / MEMORY_BYTES_PER_ROW);
@@ -843,7 +936,10 @@ function ContinuousMode({
     setScrollTop(row * ROW_HEIGHT);
     setAnchor(parsed);
     setSelection({ start: parsed, end: parsed });
-  }, [focus, span]);
+    remember(linkedKind ?? "va");
+    // `remember` writes the column; a later restart follows `column`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus, focusKind, span]);
 
   const firstRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - CONTINUOUS_OVERSCAN);
   const rows: DumpRow[] = [];
@@ -874,11 +970,18 @@ function ContinuousMode({
             ref={gotoRef}
             type="text"
             aria-label="Go to address"
-            placeholder={column === "file" ? "0x600" : "0x1001000"}
+            placeholder={column === "file" ? "0x600" : placeholder}
             value={goto}
             onChange={(event) => setGoto(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") jump();
+              if (event.key === "Enter") {
+                event.preventDefault();
+                jump();
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                setGoto("");
+                container.current?.focus();
+              }
             }}
           />
         </Field>
@@ -953,7 +1056,9 @@ function ContinuousMode({
         </div>
       </div>
       <Muted>
-        Press G to focus the address box and Tab to switch the offset and virtual columns; the
+        Press G to focus the address box, Tab to switch the offset and virtual columns, Enter
+        to jump and clear, Esc to dismiss without jumping, and Esc on the dump to
+        clear a selection. The
         choice is remembered across sessions. Only the rows on screen are rendered and the bytes
         arrive {CONTINUOUS_WINDOW} at a time, so a large binary scrolls without loading whole.
       </Muted>

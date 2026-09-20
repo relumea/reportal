@@ -324,7 +324,10 @@ class TestMatchBinary:
         rows = matching.binary_match_rows(conn, ids["a"])
         assert rows[0]["similarity"] == pytest.approx(95.0)
         assert rows[0]["source_name"] == "a1"
+        assert rows[0]["source_name_source"] == ""
         assert rows[0]["candidate_name"] == "a2"
+        assert rows[0]["candidate_binary_id"] == ids["a"]
+        assert rows[0]["candidate_binary_name"] == "a.exe"
         assert set(rows[0]) >= {"source_va", "candidate_va", "confidence"}
         assert rows[0]["source_arch"] == ""
         assert rows[0]["candidate_arch"] == ""

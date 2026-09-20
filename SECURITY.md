@@ -26,8 +26,11 @@ Verified against the code; the living detail is
 - Default HTTP bind is loopback (`cli.serve`, `server.LOOPBACK_HOSTS`).  A
   non-loopback bind refuses to start until token auth is required and an
   enabled user exists (`cli._require_lan_auth`).
-- Token auth is off by default.  When on, every `/api` route goes through
-  `server.authenticate` (digest compare, role permission, object scope).
+- Token auth is off by default.  When on, `/api` and `/mcp` go through
+  `server.authenticate` (digest compare, role permission, object scope),
+  with two public exceptions while auth is required: `POST
+  /api/billing/webhook` (`server.WEBHOOK_PATH`, HMAC only) and SaaS `POST
+  /api/signup` (`server.SIGNUP_PATH`).
 - Sample detonation is off by default and requires an installed sandbox
   runner (`sandbox.py`).
 - Remote URL ingest and remote external sources are off by default
@@ -35,12 +38,16 @@ Verified against the code; the living detail is
 - The optional LLM bridge makes no network call until an endpoint is
   configured (`llm.py`).
 - Stripe webhooks are refused unless a webhook signing secret is configured
-  (`billing.verify_webhook`).  When auth is required, the bearer middleware
-  still sits in front of that route; see the threat model residual.
+  (`billing.verify_webhook`).  That HMAC (plus timestamp window) is the only
+  gate for `WEBHOOK_PATH`; the bearer check is skipped by design
+  (`server.authenticate`).
 - Secret-store API responses never return credential values
   (`secret_store`); values are plaintext in the workspace SQLite file.
-- reportal does not claim encryption at rest, multi-tenant isolation across
-  workspaces, or request rate limiting.
+- Authenticated HTTP writes are capped at `auth.WRITE_MAX_HITS` per
+  `auth.WRITE_WINDOW_S`; SaaS signup is capped per TCP peer
+  (`auth.SIGNUP_MAX_HITS`).  Auth-off loopback, CLI and MCP stay
+  unbounded.  reportal does not claim encryption at rest, multi-tenant
+  isolation across workspaces, or a general per-request rate limit.
 
 ## Threat model
 

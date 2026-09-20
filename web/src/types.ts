@@ -12,6 +12,8 @@ export interface Binary {
   compiler: string;
   /** Operator note; empty when none. */
   notes: string;
+  /** When the binary was stored. */
+  created_at?: string;
   function_count: number;
   /** `public` to every authenticated caller, `team` to the owners' members. */
   visibility: "public" | "team";
@@ -121,6 +123,7 @@ export interface MatchRow {
   candidate_va: number;
   candidate_name: string;
   candidate_status: string;
+  candidate_prototype: string | null;
   similarity: number;
   confidence: number;
   /** The complement `100 - similarity`, derived by the server, never stored. */
@@ -139,9 +142,12 @@ export interface BinaryMatchRow {
   source_function_id: number;
   source_name: string;
   source_va: number;
+  source_name_source: string;
   candidate_function_id: number;
   candidate_name: string;
   candidate_va: number;
+  candidate_binary_id: number;
+  candidate_binary_name: string;
   similarity: number;
   confidence: number;
   difference: number;
@@ -212,6 +218,7 @@ export interface DiffSide {
   function_id: number;
   name: string;
   va: number;
+  binary_id: number;
 }
 
 export interface DiffSummary {
@@ -250,20 +257,49 @@ export interface Tag {
 /** `GET /api/binaries`: the register with the filters the route applied. */
 export interface BinaryListPayload {
   binaries: BinaryListRow[];
+  /** The rows this page returned. */
   count: number;
+  /** The rows the filters kept, which is what a paging control counts against. */
+  matched: number;
+  /** Every binary the caller may see, unfiltered. */
   total: number;
+  /** The page size the route applied, null when it returned the whole register. */
+  limit: number | null;
+  offset: number;
   search: string | null;
   tag: string | null;
   format: string | null;
   language: string | null;
   compiler: string | null;
   order: string;
+  /** True when the route projected each row down to its id and name. */
+  summary: boolean;
   /** The formats the register holds, which is what the filter control offers. */
   formats: string[];
   /** The recovered languages the register holds. */
   languages: string[];
   /** The recovered toolchains the register holds. */
   compilers: string[];
+}
+
+/**
+ * One row of `GET /api/binaries?summary=true`: the whole register projected to
+ * the two columns a picker renders, instead of every full register row.
+ */
+export interface BinaryOption {
+  id: number;
+  name: string;
+}
+
+/** `GET /api/binaries?summary=true`: the whole register, id and name per row. */
+export interface BinaryOptionListPayload {
+  binaries: BinaryOption[];
+  count: number;
+  matched: number;
+  total: number;
+  limit: number | null;
+  offset: number;
+  summary: boolean;
 }
 
 /** One row of `GET /api/tags`: a tag with how many objects carry it. */
@@ -536,6 +572,8 @@ export interface DataTypeList {
   namespaces: NamespaceNode[];
   /** The count per provenance label over the whole model. */
   sources: Record<string, number>;
+  /** The count per declaration kind over the whole model. */
+  kinds?: Record<string, number>;
 }
 
 /** One type that mentions another, with the relationship it carries. */
@@ -1565,6 +1603,7 @@ export interface AutoRun {
   binary_id: number;
   status: string;
   worker: string;
+  goal: string;
   config: Record<string, unknown>;
   created_at: string;
   finished_at: string | null;
@@ -1877,6 +1916,13 @@ export interface CompositionBinary {
   percent: number | null;
 }
 
+/** One tag pulled from the binaries a composition matched. */
+export interface CompositionTag {
+  id: number;
+  name: string;
+  count: number;
+}
+
 /** One function row of a composition analysis; a null matched binary is No Match. */
 export interface CompositionFunctionRow {
   function_id: number;
@@ -1921,6 +1967,7 @@ export interface CompositionResult {
   category_notes: string[];
   scope: CompositionScope;
   composition: CompositionBinary[];
+  tags: CompositionTag[];
   functions: CompositionFunctionRow[];
   notes: string[];
 }
@@ -2462,6 +2509,7 @@ export interface ApiKey {
   name: string;
   created_at: string;
   last_used_at: string;
+  read_only: boolean;
 }
 
 /** `GET /api/iam/keys`. `limit` is null when the plan is unlimited. */

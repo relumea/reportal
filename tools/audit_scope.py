@@ -122,7 +122,9 @@ def main() -> int:
             if gated or key in HANDLER_SCOPED:
                 pass
             else:
-                ids = re.findall(r"\{([^}]+)\}", route)
+                # A parameter may carry a Starlette converter (`{slug:path}`);
+                # the name is before the colon.
+                ids = re.findall(r"\{([^}:]+)", route)
                 scoped_ids = [name for name in ids if name not in UNSCOPED_ID_NAMES]
                 if scoped_ids:
                     problems.append(f"UNCOVERED object-id route: {key}")

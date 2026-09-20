@@ -93,6 +93,10 @@ SCAN_KIND_UNPACK = "unpack"
 SCAN_KIND_BENCHMARK = "benchmark"
 SCAN_KIND_FIRMWARE = "firmware"
 SCAN_KIND_GOBUILDINFO = "gobuildinfo"
+# Which FLIRT signature sets matched which symbols of a binary
+# (:mod:`reportal.flirt_sigs`).  The reading is a catalog lookup, not an engine
+# call, so it is stored like any other scan and never runs rebrew.
+SCAN_KIND_FLIRT = "flirt"
 
 # Per-section byte coverage is reportal's own metric over the stored function
 # table and the stored `pe-info` section table.  The hosted portal publishes no
@@ -652,6 +656,9 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # Last time a named extra key authenticated. A row that predates the
     # column has never been seen, so the empty default reads as never.
     ("user_api_keys", "last_used_at", "TEXT NOT NULL DEFAULT ''"),
+    # Named-key write flag. A row that predates the column is a full key,
+    # so the default 0 matches what those tokens already did.
+    ("user_api_keys", "read_only", "INTEGER NOT NULL DEFAULT 0"),
     # Last time the login token authenticated. A row that predates the
     # column has never been seen, so the empty default reads as never.
     ("users", "last_used_at", "TEXT NOT NULL DEFAULT ''"),
@@ -730,6 +737,12 @@ def init_db(db_path: Path) -> None:
         # Metering adds columns to the organisations table auth just created,
         # so it follows identity and precedes the generic column upgrade.
         metering.ensure_schema(conn)
+        # The FLIRT catalog imports this module for its clock, so it is
+        # imported here rather than at the top: the cycle is broken by loading
+        # it after the clock exists.
+        from reportal import flirt_sigs
+
+        flirt_sigs.ensure_schema(conn)
         _upgrade_schema(conn)
 
 
@@ -837,6 +850,12 @@ BINARY_ORDERS: dict[str, str] = {
 
 DEFAULT_BINARY_ORDER = "id"
 
+# Rows the register answers per page by default, and the largest page it takes.
+# The caller asks for a page; a caller that names none still reads the whole
+# register, which is what the CLI, the MCP tools and `related.py` rely on.
+DEFAULT_BINARY_LIMIT = 200
+MAX_BINARY_LIMIT = 1000
+
 
 def list_binaries(
     conn: sqlite3.Connection,
@@ -848,6 +867,9 @@ def list_binaries(
     compiler: str | None = None,
     order: str = DEFAULT_BINARY_ORDER,
     visible_to: Mapping[str, Any] | None = None,
+    summary: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
     """The binaries, in *order*, each with its function and comment counts.
 
@@ -864,13 +886,43 @@ def list_binaries(
     *visible_to* is the authenticated caller (None while auth is off); a
     non-admin caller sees only the public binaries and its own teams', which is
     what `auth.visible_clause` expresses.
+
+    *summary* projects each row down to its ``id`` and ``name``, which is what a
+    picker that offers the whole register needs: the full row carries the
+    sha256, the operator notes and both aggregate counts, so a twenty-thousand
+    sample register costs megabytes of JSON for two columns a select renders.
+
+    *limit* and *offset* cut one page out of the register, bounded by
+    :data:`MAX_BINARY_LIMIT`; ``limit`` None (the default) reads every row, which
+    is what a caller that walks the register whole wants.  The page is cut after
+    the order is applied, so two pages of one filter set do not repeat a row.
     """
     if order not in BINARY_ORDERS:
         raise ValueError(f"unknown binary order: {order}")
-    # Aggregate counts once per table rather than with a correlated subquery
-    # per binary: a register of hundreds of samples otherwise rescans
-    # functions/comments once per row.
-    sql = """
+    if limit is not None and not 1 <= limit <= MAX_BINARY_LIMIT:
+        raise ValueError(f"limit must be between 1 and {MAX_BINARY_LIMIT}")
+    if offset < 0:
+        raise ValueError(f"offset must not be negative, got {offset}")
+    if summary:
+        sql = "SELECT b.id AS id, b.name AS name FROM binaries b"
+    elif limit is not None:
+        # A page wants the counts of its own rows: the aggregate join below
+        # groups the whole functions table before LIMIT is applied, which
+        # measures at 10ms over 200k functions for 200 rows, where the
+        # correlated form asks the two indices once per row.
+        sql = """
+        SELECT b.*,
+               (SELECT COUNT(*) FROM functions f JOIN analyses a ON f.analysis_id = a.id
+                WHERE a.binary_id = b.id) AS function_count,
+               (SELECT COUNT(*) FROM comments c
+                WHERE c.scope_kind = 'binary' AND c.scope_id = b.id) AS comment_count
+        FROM binaries b
+    """
+    else:
+        # Aggregate counts once per table rather than with a correlated subquery
+        # per binary: a register of hundreds of samples otherwise rescans
+        # functions/comments once per row.
+        sql = """
         SELECT b.*, COALESCE(fc.function_count, 0) AS function_count,
                COALESCE(cc.comment_count, 0) AS comment_count
         FROM binaries b
@@ -898,6 +950,9 @@ def list_binaries(
     )
     sql += where
     sql += f" ORDER BY {BINARY_ORDERS[order]}"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params.extend((limit, offset))
     return _rows(conn.execute(sql, params))
 
 
@@ -1543,10 +1598,9 @@ def update_analysis(
 def requeue_analysis(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any] | None:
     """Put one analysis back to ``pending`` and clear its finish time.
 
-    The hosted requeue re-runs the analysis; locally the scans are the engine
-    calls, so this only moves the lifecycle row and lets a caller queue the work
-    it wants (``POST /api/jobs`` with a scan kind) with the state left
-    consistent.  A log entry records the transition.
+    The hosted requeue re-runs the analysis. Locally this moves the lifecycle
+    row; the HTTP, CLI and MCP callers then queue a job for each stored scan
+    that has a job kind. A log entry records the transition.
     """
     analysis = get_analysis(conn, analysis_id)
     if analysis is None:
@@ -2340,6 +2394,33 @@ def function_ids(
     return {int(row["id"]) for row in conn.execute(sql, params)}
 
 
+def _binary_function_rows(
+    conn: sqlite3.Connection,
+    binary_id: int,
+    limit: int | None,
+    *,
+    exclude_statuses: Sequence[str] = (),
+) -> list[dict[str, Any]]:
+    """Functions of *binary_id*, smallest first then VA, minus *exclude_statuses*."""
+    sql = (
+        "SELECT f.*, a.binary_id AS binary_id FROM functions f"
+        " JOIN analyses a ON f.analysis_id = a.id"
+        " WHERE a.binary_id = ?"
+    )
+    params: list[Any] = [binary_id]
+    if exclude_statuses:
+        placeholders = ", ".join("?" for _ in exclude_statuses)
+        sql += f" AND COALESCE(f.status, '') NOT IN ({placeholders})"
+        params.extend(exclude_statuses)
+    sql += " ORDER BY f.size ASC, f.va ASC, f.id ASC"
+    if limit is not None:
+        if not 1 <= limit <= MAX_FUNCTION_LIMIT:
+            raise ValueError(f"limit must be between 1 and {MAX_FUNCTION_LIMIT}")
+        sql += " LIMIT ?"
+        params.append(limit)
+    return _rows(conn.execute(sql, params))
+
+
 def list_outstanding_functions(
     conn: sqlite3.Connection,
     *,
@@ -2352,22 +2433,22 @@ def list_outstanding_functions(
     ones in Python; filtering and ordering in SQLite keeps a mostly-matched
     binary from shipping its whole table into the planner.
     """
-    statuses = sorted(MATCHED_STATUSES)
-    placeholders = ", ".join("?" for _ in statuses)
-    sql = (
-        "SELECT f.*, a.binary_id AS binary_id FROM functions f"
-        " JOIN analyses a ON f.analysis_id = a.id"
-        " WHERE a.binary_id = ?"
-        f" AND COALESCE(f.status, '') NOT IN ({placeholders})"
-        " ORDER BY f.size ASC, f.va ASC, f.id ASC"
-    )
-    params: list[Any] = [binary_id, *statuses]
-    if limit is not None:
-        if not 1 <= limit <= MAX_FUNCTION_LIMIT:
-            raise ValueError(f"limit must be between 1 and {MAX_FUNCTION_LIMIT}")
-        sql += " LIMIT ?"
-        params.append(limit)
-    return _rows(conn.execute(sql, params))
+    return _binary_function_rows(conn, binary_id, limit, exclude_statuses=sorted(MATCHED_STATUSES))
+
+
+def list_binary_functions(
+    conn: sqlite3.Connection,
+    *,
+    binary_id: int,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Every function of *binary_id*, smallest first then VA.
+
+    A goal-directed auto run patches the function a goal names, which may
+    already carry a matching status, so it plans from this selection rather
+    than :func:`list_outstanding_functions`.
+    """
+    return _binary_function_rows(conn, binary_id, limit)
 
 
 def function_rollup(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
@@ -2534,19 +2615,24 @@ def list_matches_for_functions(
 def list_matches_for_binary(conn: sqlite3.Connection, binary_id: int) -> list[dict[str, Any]]:
     """Every match whose source is a function of *binary_id*, best similarity first.
 
-    Each row carries the source function's id, name and VA beside the candidate
-    columns :func:`list_matches` already reports, so a binary-wide reader does
-    not walk the functions table and query matches once per row.
+    Each row carries the source function's id, name, VA and name source beside
+    the candidate columns :func:`list_matches` already reports, plus the
+    candidate function's owning binary, so a binary-wide reader does not walk
+    the functions table and query matches once per row.
     """
     cur = conn.execute(
         """
         SELECT m.*, cf.va AS candidate_va, cf.name AS candidate_name,
                cf.status AS candidate_status,
-               sf.id AS source_function_id, sf.name AS source_name, sf.va AS source_va
+               sf.id AS source_function_id, sf.name AS source_name, sf.va AS source_va,
+               sf.name_source AS source_name_source,
+               cb.id AS candidate_binary_id, cb.name AS candidate_binary_name
         FROM matches m
         JOIN functions sf ON m.function_id = sf.id
         JOIN analyses a ON a.id = sf.analysis_id
         JOIN functions cf ON m.candidate_function_id = cf.id
+        JOIN analyses ca ON ca.id = cf.analysis_id
+        JOIN binaries cb ON cb.id = ca.binary_id
         WHERE a.binary_id = ?
         ORDER BY m.similarity DESC, m.id
         """,

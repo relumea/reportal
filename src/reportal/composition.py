@@ -1,10 +1,10 @@
 """Composition analysis of one stored binary against its stored matches.
 
-The hosted portal's binary detail page answers four questions about a binary's
-place in the corpus: how many of its functions matched anything (``Matched: N /
-M``), where its function names came from, how strong those matches are, and
-which other binary each function matched.  :func:`compute_composition` answers
-all four from the store alone.
+The hosted portal's binary detail page answers how many of a binary's
+functions matched anything (``Matched: N / M``), where its function names
+came from, how strong those matches are, which other binary each function
+matched, and which tags those binaries carry.  :func:`compute_composition`
+answers them from the store alone.
 
 Every input is already stored: this binary's functions come from
 :func:`store.list_functions`, the match edges from
@@ -397,6 +397,19 @@ def _composition_rows(rows: list[dict[str, Any]], total: int) -> list[dict[str, 
     )
 
 
+def _composition_tags(
+    conn: sqlite3.Connection, composition: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Tags on the matched binaries, counted by how many of those binaries carry each."""
+    counts: dict[str, dict[str, Any]] = {}
+    for entry in composition:
+        for tag in store.get_binary_tags(conn, int(entry["binary_id"])):
+            name = str(tag["name"])
+            bucket = counts.setdefault(name, {"id": int(tag["id"]), "name": name, "count": 0})
+            bucket["count"] += 1
+    return sorted(counts.values(), key=lambda row: (-int(row["count"]), str(row["name"])))
+
+
 def _binary_sha256(conn: sqlite3.Connection, binary_id: int) -> str | None:
     """The stored sha256 of one binary, or None when the row has none."""
     binary = store.get_binary(conn, binary_id)
@@ -496,6 +509,7 @@ def compute_composition(
         "category_notes": list(CATEGORY_NOTES),
         "scope": scope_payload,
         "composition": composition,
+        "tags": _composition_tags(conn, composition),
         "functions": rows[:MAX_ROWS],
         "notes": notes,
     }

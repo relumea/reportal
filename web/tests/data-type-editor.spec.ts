@@ -46,6 +46,9 @@ test("a member's bit width is set and cleared", async ({ page }) => {
 
   const row = memberRow(card, "flags");
   await row.getByLabel("Bit width of member flags", { exact: true }).fill("5");
+  await row.getByLabel("Bit width of member flags", { exact: true }).press("Escape");
+  await expect(row.getByLabel("Bit width of member flags", { exact: true })).toHaveValue("");
+  await row.getByLabel("Bit width of member flags", { exact: true }).fill("5");
   await row.getByRole("button", { name: "Save", exact: true }).click();
   await expect(card.getByText("flags : 5", { exact: false })).toBeVisible();
 
@@ -126,6 +129,7 @@ test("the kind, namespace and declared size save together and warn", async ({ pa
   await card.getByRole("combobox", { name: "Kind", exact: true }).selectOption("union");
   await card.getByLabel("Namespace", { exact: true }).fill("");
   await card.getByLabel("Size", { exact: true }).fill("4");
-  await card.getByRole("button", { name: "Save fields", exact: true }).click();
+  await card.getByLabel("Size", { exact: true }).focus();
+  await page.keyboard.press("Control+Enter");
   await expect(card.getByText("disagrees with the members", { exact: false })).toHaveCount(0);
 });

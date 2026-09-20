@@ -1524,6 +1524,7 @@ def _seed_lineage(
         name=LINEAGE_OTHER_NAME,
         path=str(binary_path),
     )
+    store.add_binary_tag(conn, other_binary_id, store.create_tag(conn, TAG_NAME))
     other_analysis_id = store.create_analysis(
         conn, binary_id=other_binary_id, engine="rebrew-import", status="done"
     )

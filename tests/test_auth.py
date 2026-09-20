@@ -93,6 +93,7 @@ class TestStore:
         assert extra != login
         assert "token_hash" not in key
         assert key["last_used_at"] == ""
+        assert key["read_only"] is False
         assert user["last_used_at"] == ""
         assert auth.authenticate(conn, extra) == user
         assert auth.count_api_keys(conn, int(user["id"])) == 2
@@ -117,6 +118,19 @@ class TestStore:
         auth.update_user(conn, int(user["id"]), disabled=True)
         assert auth.authenticate(conn, extra) is None
 
+    def test_a_read_only_named_key_marks_the_user(self, conn: sqlite3.Connection) -> None:
+        user, login = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        key, extra = auth.create_api_key(conn, int(user["id"]), "ci", read_only=True)
+
+        assert key["read_only"] is True
+        hit = auth.authenticate(conn, extra)
+        assert hit is not None
+        assert hit["id"] == user["id"]
+        assert hit["api_key_read_only"] is True
+        login_hit = auth.authenticate(conn, login)
+        assert login_hit is not None
+        assert "api_key_read_only" not in login_hit
+
     def test_a_named_key_refuses_a_blank_or_duplicate_name(self, conn: sqlite3.Connection) -> None:
         user, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
         auth.create_api_key(conn, int(user["id"]), "ci")
@@ -124,6 +138,21 @@ class TestStore:
             auth.create_api_key(conn, int(user["id"]), "   ")
         with pytest.raises(auth.InvalidUserError):
             auth.create_api_key(conn, int(user["id"]), "CI")
+
+    def test_a_named_key_renames_without_rotating(self, conn: sqlite3.Connection) -> None:
+        user, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        key, extra = auth.create_api_key(conn, int(user["id"]), "ci")
+        auth.create_api_key(conn, int(user["id"]), "other")
+
+        renamed = auth.rename_api_key(conn, int(key["id"]), "prod")
+        assert renamed["name"] == "prod"
+        assert auth.authenticate(conn, extra) == user
+        same = auth.rename_api_key(conn, int(key["id"]), "prod")
+        assert same["name"] == "prod"
+        with pytest.raises(auth.InvalidUserError):
+            auth.rename_api_key(conn, int(key["id"]), "OTHER")
+        with pytest.raises(auth.UnknownUserError):
+            auth.rename_api_key(conn, 4242, "gone")
 
     def test_a_duplicate_name_is_refused_case_insensitively(self, conn: sqlite3.Connection) -> None:
         auth.add_user(conn, name="Ana", role=auth.ROLE_ANALYST)
@@ -281,6 +310,7 @@ class TestApiGate:
         extra = str(payload["token"])
         assert extra.startswith(auth.TOKEN_PREFIX)
         assert payload["last_used_at"] == ""
+        assert payload["read_only"] is False
         listed, keys = _send("GET", "/api/iam/keys", token=token)
         assert listed.startswith("200")
         assert keys["count"] == 1
@@ -295,12 +325,60 @@ class TestApiGate:
         assert stamped.startswith("200")
         assert after["keys"][0]["last_used_at"]
 
+        renamed, updated = _send(
+            "PATCH", f"/api/iam/keys/{payload['id']}", token=token, body={"name": "prod"}
+        )
+        assert renamed.startswith("200")
+        assert updated["name"] == "prod"
+        assert "token" not in updated
+        still, who = _send("GET", "/api/iam/me", token=extra)
+        assert still.startswith("200")
+        assert who["user"]["name"] == "ana"
+        other, _ = _send("POST", "/api/iam/keys", token=token, body={"name": "other"})
+        assert other.startswith("201")
+        clash, body = _send(
+            "PATCH", f"/api/iam/keys/{payload['id']}", token=token, body={"name": "other"}
+        )
+        assert clash.startswith("400")
+        assert body["error"] == auth.ERROR_INVALID_API_KEY
+        missing, gone_name = _send("PATCH", "/api/iam/keys/4242", token=token, body={"name": "x"})
+        assert missing.startswith("404")
+        assert gone_name["error"] == auth.ERROR_API_KEY_NOT_FOUND
+
         revoked, gone = _send("DELETE", f"/api/iam/keys/{payload['id']}", token=token)
         assert revoked.startswith("200")
         assert gone["deleted"] is True
         status, missing = _send("GET", "/api/iam/me", token=extra)
         assert status.startswith("401")
         assert missing["error"] == auth.ERROR_UNAUTHORIZED
+
+    def test_a_read_only_named_key_reads_and_refuses_writes(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        user, token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        minted, payload = _send(
+            "POST", "/api/iam/keys", token=token, body={"name": "ci", "read_only": True}
+        )
+        assert minted.startswith("201")
+        assert payload["read_only"] is True
+        extra = str(payload["token"])
+
+        read_status, _ = _send("GET", "/api/binaries", token=extra)
+        write_status, body = _send(
+            "POST", "/api/binaries", token=extra, body={"sha256": "a" * 64, "name": "x"}
+        )
+        mcp_status, mcp_body = _send("POST", "/mcp", token=extra, body={"jsonrpc": "2.0"})
+
+        assert read_status.startswith("200")
+        assert write_status.startswith("403")
+        assert body["error"] == auth.ERROR_FORBIDDEN
+        assert body["detail"] == auth.READ_ONLY_KEY_DETAIL
+        assert mcp_status.startswith("403")
+        assert mcp_body["detail"] == auth.READ_ONLY_KEY_DETAIL
+
+        login_write, _ = _send("POST", "/api/users/feedback", token=token, body={"message": "ok"})
+        assert login_write.startswith(("201", "200"))
 
     def test_a_viewer_may_read_but_not_write(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
@@ -529,6 +607,7 @@ class TestCli:
         assert minted.exit_code == 0, minted.output
         payload = json.loads(minted.stdout)
         assert payload["name"] == "ci"
+        assert payload["read_only"] is False
         assert payload["token"].startswith(auth.TOKEN_PREFIX)
         with contextlib.closing(store.connect(db)) as conn:
             assert auth.authenticate(conn, payload["token"]) is not None
@@ -539,6 +618,22 @@ class TestCli:
         assert keys["count"] == 1
         assert keys["used"] == 2
         assert "token" not in keys["keys"][0]
+        assert keys["keys"][0]["read_only"] is False
+
+        renamed = runner.invoke(
+            cli.app, ["api-key-rename", str(payload["id"]), "--name", "prod", "--json"]
+        )
+        assert renamed.exit_code == 0, renamed.output
+        assert json.loads(renamed.stdout)["name"] == "prod"
+        with contextlib.closing(store.connect(db)) as conn:
+            assert auth.authenticate(conn, payload["token"]) is not None
+
+        readonly = runner.invoke(
+            cli.app,
+            ["api-key-add", str(user["id"]), "--name", "ro", "--read-only", "--json"],
+        )
+        assert readonly.exit_code == 0, readonly.output
+        assert json.loads(readonly.stdout)["read_only"] is True
 
         revoked = runner.invoke(cli.app, ["api-key-rm", str(payload["id"]), "--json"])
         assert revoked.exit_code == 0, revoked.output
@@ -554,6 +649,7 @@ class TestCli:
         assert runner.invoke(cli.app, ["user-rm", "4242", "--yes"]).exit_code == 1
         assert runner.invoke(cli.app, ["api-keys", "4242"]).exit_code == 1
         assert runner.invoke(cli.app, ["api-key-add", "4242", "--name", "ci"]).exit_code == 1
+        assert runner.invoke(cli.app, ["api-key-rename", "4242", "--name", "ci"]).exit_code == 1
         assert runner.invoke(cli.app, ["api-key-rm", "4242"]).exit_code == 1
 
     def test_user_edit_sets_the_role_and_disables(self, tmp_path: Path, monkeypatch: Any) -> None:

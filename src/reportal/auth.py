@@ -10,7 +10,9 @@ least one user exists; see `docs/THREAT_MODEL.md`.
 
 A user has a name, one of :data:`ROLES` and a token.  Extra named API keys
 live beside that login token, capped by the organisation's plan
-(``max_api_keys``).  Only a token's SHA-256
+(``max_api_keys``).  A named key may be ``read_only``: HTTP writes and
+``/mcp`` (which needs write) then answer 403; the login token is never
+read-only.  Only a token's SHA-256
 digest is stored: the token is generated with :func:`secrets.token_urlsafe` and
 shown once, at creation or rotation, so the database never carries a usable
 credential.  A 256-bit random token is not guessable, so a plain digest is the
@@ -81,7 +83,7 @@ _ADMIN_PREFIXES: tuple[str, ...] = ("/api/users",)
 # Paths under an admin prefix that every authenticated caller owns: the hosted
 # portal's `users/activity` and `users/feedback` are self-service, so an analyst
 # reads its own activity and writes its own note rather than needing an admin.
-# Named API keys are the same: a caller mints and revokes its own keys.
+# Named API keys are the same: a caller mints, renames and revokes its own keys.
 _SELF_PATHS: tuple[str, ...] = (
     "/api/users/activity",
     "/api/users/feedback",
@@ -169,6 +171,7 @@ CREATE TABLE IF NOT EXISTS user_api_keys (
     token_hash   TEXT NOT NULL UNIQUE,
     created_at   TEXT NOT NULL,
     last_used_at TEXT NOT NULL DEFAULT '',
+    read_only    INTEGER NOT NULL DEFAULT 0,
     UNIQUE (user_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_user_api_keys_user ON user_api_keys(user_id);
@@ -257,6 +260,7 @@ _write_monotonic = time.monotonic
 # Fixed details the authentication failures report; neither echoes the token.
 UNAUTHORIZED_DETAIL = "send Authorization: Bearer <token>"
 FORBIDDEN_DETAIL = "this token's role does not carry the required permission"
+READ_ONLY_KEY_DETAIL = "this API key is read-only"
 
 # What an install without a user has to do, reported by `serve` and the CLI.
 NO_USER_DETAIL = "no user token exists; create one with 'reportal user-add <name> --role admin'"
@@ -631,12 +635,14 @@ def _api_key_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     """One named key as the API reports it: the digest never leaves this module."""
     keys = set(row.keys())
     last_used = str(row["last_used_at"] or "") if "last_used_at" in keys else ""
+    read_only = bool(row["read_only"]) if "read_only" in keys else False
     return {
         "id": int(row["id"]),
         "user_id": int(row["user_id"]),
         "name": str(row["name"]),
         "created_at": str(row["created_at"]),
         "last_used_at": last_used,
+        "read_only": read_only,
     }
 
 
@@ -691,7 +697,7 @@ def count_api_keys(conn: sqlite3.Connection, user_id: int) -> int:
 def list_api_keys(conn: sqlite3.Connection, user_id: int) -> list[dict[str, Any]]:
     """Named keys *user_id* minted, oldest first, without digests."""
     rows = conn.execute(
-        f"SELECT id, user_id, name, created_at, last_used_at FROM {KEY_TABLE}"
+        f"SELECT id, user_id, name, created_at, last_used_at, read_only FROM {KEY_TABLE}"
         " WHERE user_id = ? ORDER BY id ASC",
         (user_id,),
     ).fetchall()
@@ -701,14 +707,20 @@ def list_api_keys(conn: sqlite3.Connection, user_id: int) -> list[dict[str, Any]
 def get_api_key(conn: sqlite3.Connection, key_id: int) -> dict[str, Any] | None:
     """One named key by id, without its digest, or None."""
     row = conn.execute(
-        f"SELECT id, user_id, name, created_at, last_used_at FROM {KEY_TABLE} WHERE id = ?",
+        f"SELECT id, user_id, name, created_at, last_used_at, read_only"
+        f" FROM {KEY_TABLE} WHERE id = ?",
         (key_id,),
     ).fetchone()
     return _api_key_row(row) if row else None
 
 
-def create_api_key(conn: sqlite3.Connection, user_id: int, name: str) -> tuple[dict[str, Any], str]:
+def create_api_key(
+    conn: sqlite3.Connection, user_id: int, name: str, *, read_only: bool = False
+) -> tuple[dict[str, Any], str]:
     """Mint one named extra key for *user_id*; the token is shown once.
+
+    *read_only* keys authenticate as the user but HTTP writes (and ``/mcp``)
+    answer 403. The login token is never read-only.
 
     Raises :class:`UnknownUserError` when the user is unknown,
     :class:`InvalidUserError` for a blank or already-used name, and
@@ -729,9 +741,10 @@ def create_api_key(conn: sqlite3.Connection, user_id: int, name: str) -> tuple[d
     token = new_token()
     try:
         cursor = conn.execute(
-            f"INSERT INTO {KEY_TABLE} (user_id, name, token_hash, created_at, last_used_at)"
-            " VALUES (?, ?, ?, ?, '')",
-            (user_id, cleaned, hash_token(token), now()),
+            f"INSERT INTO {KEY_TABLE}"
+            " (user_id, name, token_hash, created_at, last_used_at, read_only)"
+            " VALUES (?, ?, ?, ?, '', ?)",
+            (user_id, cleaned, hash_token(token), now(), 1 if read_only else 0),
         )
     except sqlite3.IntegrityError:
         raise InvalidUserError(
@@ -741,6 +754,27 @@ def create_api_key(conn: sqlite3.Connection, user_id: int, name: str) -> tuple[d
     key = get_api_key(conn, int(cursor.lastrowid or 0))
     assert key is not None, "the row was just created"
     return key, token
+
+
+def rename_api_key(conn: sqlite3.Connection, key_id: int, name: str) -> dict[str, Any]:
+    """Rename one named extra key. The token is unchanged.
+
+    Raises :class:`UnknownUserError` when the key is unknown and
+    :class:`InvalidUserError` for a blank or already-used name.
+    """
+    if get_api_key(conn, key_id) is None:
+        raise UnknownUserError(ERROR_API_KEY_NOT_FOUND, f"no API key with id {key_id}")
+    cleaned = _validated_api_key_name(name)
+    try:
+        conn.execute(f"UPDATE {KEY_TABLE} SET name = ? WHERE id = ?", (cleaned, key_id))
+    except sqlite3.IntegrityError:
+        raise InvalidUserError(
+            ERROR_INVALID_API_KEY, f"an API key named {cleaned!r} already exists"
+        ) from None
+    conn.commit()
+    key = get_api_key(conn, key_id)
+    assert key is not None, "the row was just renamed"
+    return key
 
 
 def revoke_api_key(conn: sqlite3.Connection, key_id: int) -> dict[str, Any]:
@@ -1371,7 +1405,8 @@ def authenticate(conn: sqlite3.Connection, token: str) -> dict[str, Any] | None:
     The digest of every user login token and every named extra key is compared
     in constant time, and a disabled user never authenticates.  A successful
     login-token authenticate stamps ``users.last_used_at``; a named-key
-    authenticate stamps ``user_api_keys.last_used_at`` instead.
+    authenticate stamps ``user_api_keys.last_used_at`` instead.  A
+    read-only named key returns the user with ``api_key_read_only`` set.
     """
     if not token:
         return None
@@ -1386,7 +1421,9 @@ def authenticate(conn: sqlite3.Connection, token: str) -> dict[str, Any] | None:
             )
             conn.commit()
             return get_user(conn, int(row["id"]))
-    for row in conn.execute(f"SELECT id, user_id, token_hash FROM {KEY_TABLE}").fetchall():
+    for row in conn.execute(
+        f"SELECT id, user_id, token_hash, read_only FROM {KEY_TABLE}"
+    ).fetchall():
         if not hmac.compare_digest(str(row["token_hash"]), digest):
             continue
         user = get_user(conn, int(row["user_id"]))
@@ -1397,6 +1434,8 @@ def authenticate(conn: sqlite3.Connection, token: str) -> dict[str, Any] | None:
             (now(), int(row["id"])),
         )
         conn.commit()
+        if int(row["read_only"] or 0):
+            return {**user, "api_key_read_only": True}
         return user
     return None
 

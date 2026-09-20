@@ -69,6 +69,7 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
     <Panel
       title="Debug symbols"
       subtitle="A PDB or an ELF/DWARF file: its names are applied to matching functions and its types are added to the type model."
+      collapsible
       actions={
         <Button size="sm" tone="ghost" onClick={refresh}>
           Refresh
@@ -92,7 +93,7 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
         <Button tone="primary" pending={busy === "upload"} disabled={!file} onClick={() => void upload()}>
           Ingest symbols
         </Button>
-        {status ? <span className="muted">{status}</span> : null}
+        <span className="muted" role="status">{status}</span>
       </Toolbar>
       <Toolbar>
         <span className="muted">Stored renames as a script:</span>
@@ -129,7 +130,7 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
         )
       ) : (
         <>
-          <table className="table">
+          <table className="table" aria-label="Stored symbol files">
             <thead>
               <tr>
                 <th>Kind</th>

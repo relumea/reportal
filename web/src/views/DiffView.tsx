@@ -1,10 +1,37 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Badge, Button, ErrorNote, Field, Loading, NA, Panel, Toolbar, hex } from "../components";
-import { DEFAULT_DIFF_KIND, DEFAULT_DIFF_NORMALIZE, DIFF_KINDS } from "../constants";
-import type { DiffEntry, DiffSide, FunctionDiff } from "../types";
+import {
+  Badge,
+  Button,
+  CopyValue,
+  ErrorNote,
+  Field,
+  Loading,
+  NA,
+  Note,
+  Panel,
+  Toolbar,
+  hex,
+} from "../components";
+import {
+  DEFAULT_DIFF_KIND,
+  DEFAULT_DIFF_NORMALIZE,
+  DEFAULT_TRANSFER_MODE,
+  DIFF_KINDS,
+  TRANSFER_MODE_LABELS,
+  TRANSFER_MODES,
+} from "../constants";
+import type {
+  DiffEntry,
+  DiffSide,
+  FunctionDiff,
+  MatchRow,
+  TransferMode,
+  TransferRowReport,
+} from "../types";
+import { setCodeViewSwitch } from "../panels/codeViewSwitch";
 import { useAsync } from "../useAsync";
 
 function rowClass(op: DiffEntry["op"]): string {
@@ -14,10 +41,15 @@ function rowClass(op: DiffEntry["op"]): string {
 }
 
 function SideHeader({ side }: { side: DiffSide }): ReactNode {
+  const label = side.name || `Function #${side.function_id}`;
   return (
-    <a href={`#/functions/${side.function_id}`}>
-      #{side.function_id} {side.name || NA} @ {hex(side.va)}
-    </a>
+    <span className="toolbar">
+      <a href={`#/functions/${side.function_id}`}>
+        #{side.function_id} {label} @ {hex(side.va)}
+      </a>
+      <a href={`#/binaries/${side.binary_id}`}>binary #{side.binary_id}</a>
+      {side.name ? <CopyValue value={side.name} /> : null}
+    </span>
   );
 }
 
@@ -39,6 +71,40 @@ export function DiffView({
 }): ReactNode {
   const [kind, setKind] = useState<string>(DEFAULT_DIFF_KIND);
   const [normalize, setNormalize] = useState(DEFAULT_DIFF_NORMALIZE);
+  const [mode, setMode] = useState<TransferMode>(DEFAULT_TRANSFER_MODE);
+  const [busy, setBusy] = useState(false);
+  const [transferError, setTransferError] = useState<unknown>(null);
+  const [transferReport, setTransferReport] = useState<TransferRowReport | null>(null);
+
+  const transfer = async (fromId = candidateId): Promise<void> => {
+    setBusy(true);
+    setTransferError(null);
+    try {
+      const report = await api<TransferRowReport>(`/functions/${functionId}/apply-match`, {
+        method: "POST",
+        json: { candidate_function_id: fromId, mode: fromId === candidateId ? mode : "name", actor: "spa" },
+      });
+      setTransferReport(report);
+    } catch (failure) {
+      setTransferError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+  // Hosted Space on Match/Diff toggles Disassembly and AI decompilation.
+  // CodeSection publishes the same seam for Disassembly / Control flow.
+  useEffect(() => {
+    setCodeViewSwitch(() =>
+      setKind((current) => (current === "disasm" ? "decomp" : "disasm")),
+    );
+    return () => {
+      setCodeViewSwitch(null);
+    };
+  }, []);
+  const matchesResult = useAsync<{ matches: MatchRow[] }>(
+    () => api(`/functions/${functionId}/matches`),
+    [functionId],
+  );
   const result = useAsync<FunctionDiff>(
     () =>
       api<FunctionDiff>(
@@ -63,7 +129,7 @@ export function DiffView({
           <Badge tone="delete">delete {diff.summary.delete}</Badge>
         </div>
         <div className="table-scroll">
-          <table className="diff-table">
+          <table className="diff-table" aria-label="Disassembly diff">
             <thead>
               <tr>
                 <th>
@@ -118,10 +184,50 @@ export function DiffView({
             />
             Normalize
           </label>
+          <Field label="Transfer">
+            <select
+              aria-label="Transfer mode"
+              value={mode}
+              onChange={(event) => setMode(event.target.value as TransferMode)}
+            >
+              {TRANSFER_MODES.map((option) => (
+                <option key={option} value={option}>
+                  {TRANSFER_MODE_LABELS[option]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Button pending={busy} onClick={() => void transfer()}>
+            Transfer symbol
+          </Button>
           <Button onClick={result.reload}>Reload</Button>
         </Toolbar>
       }
     >
+      {transferError ? <ErrorNote error={transferError} /> : null}
+      {transferReport ? (
+        <Note>
+          {transferReport.status}
+          {transferReport.detail ? `: ${transferReport.detail}` : ""}
+        </Note>
+      ) : null}
+      {matchesResult.data?.matches.length ? (
+        <>
+          <h3>Suggested names</h3>
+          <Toolbar>
+            {matchesResult.data.matches.map((row) => (
+              <Button
+                key={row.id}
+                size="sm"
+                pending={busy}
+                onClick={() => void transfer(row.candidate_function_id)}
+              >
+                {row.candidate_name || `#${row.candidate_function_id}`} ({row.confidence})
+              </Button>
+            ))}
+          </Toolbar>
+        </>
+      ) : null}
       {body}
     </Panel>
   );

@@ -171,7 +171,7 @@ function StringsSection({
           {rows.length === 0 ? (
             <EmptyState>No analyst strings recorded yet.</EmptyState>
           ) : (
-            <table className="table">
+            <table className="table" aria-label="Analyst strings">
               <thead>
                 <tr>
                   <th>Value</th>
@@ -231,7 +231,6 @@ export function AnalysisStringsPanel({ analysisId }: { analysisId: number }): Re
   const path = `/analyses/${analysisId}/strings`;
   const key = panelKey("analysis", analysisId, "strings");
   const load = (): Promise<AnalysisStrings> => api<AnalysisStrings>(path);
-  const entry = usePanel<AnalysisStrings>(key, load);
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
@@ -285,7 +284,7 @@ export function AnalysisStringsPanel({ analysisId }: { analysisId: number }): Re
           <Button tone="primary" type="submit" pending={busy}>
             Replace list
           </Button>
-          {entry?.state === "ready" && status ? <span className="muted">{status}</span> : null}
+          <span className="muted" role="status">{status}</span>
         </Toolbar>
       </form>
       {actionError ? <ErrorNote error={actionError} /> : null}
@@ -331,7 +330,7 @@ function CanonicalNamePanel({ functionId }: { functionId: number }): ReactNode {
         <Button tone="primary" pending={busy} onClick={() => void run()}>
           Apply canonical name
         </Button>
-        {message ? <span className="muted">{message}</span> : null}
+        <span className="muted" role="status">{message}</span>
       </Toolbar>
       {actionError ? <ErrorNote error={actionError} /> : null}
     </Panel>
@@ -378,7 +377,7 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
               </EmptyState>
             ) : (
               <>
-                <table className="table">
+                <table className="table" aria-label="Indirect call sites">
                   <thead>
                     <tr>
                       <th>Line</th>
@@ -411,7 +410,7 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
             data.capabilities.length === 0 ? (
               <EmptyState>No capability rule matched this function.</EmptyState>
             ) : (
-              <table className="table">
+              <table className="table" aria-label="Capabilities">
                 <thead>
                   <tr>
                     <th>Capability</th>
@@ -553,7 +552,7 @@ function CalleesPanel({ functionId }: { functionId: number }): ReactNode {
             {data.declared.length === 0 ? (
               <EmptyState>No declared callee edges yet.</EmptyState>
             ) : (
-              <table className="table">
+              <table className="table" aria-label="Callees">
                 <thead>
                   <tr>
                     <th>Callee</th>

@@ -23,6 +23,12 @@ Planning and execution are separate calls (:func:`create_auto_run` then
 thread and run it in a background thread; each batch task stores the functions
 it was planned for, so execution never depends on in-process state.
 
+A run carries an optional free-form goal (``--goal``): the objective a
+goal-directed worker works each planned function toward, passed to every worker
+as ``WorkerContext.goal``.  A goal run plans every function of the binary, not
+only the ones still unmatched, because the function a goal names may already
+have matched.
+
 Acceptance writes are gated on ``execute``: a dry run records the run, its
 tasks and its attempts but changes no function status and writes no file.  An
 executing run reserves the inverse of each write before it happens (a file the
@@ -77,6 +83,10 @@ MAX_CONCURRENCY = 32
 DEFAULT_FUNCTIONS_PER_TASK = 1
 MIN_FUNCTIONS_PER_TASK = 1
 MAX_FUNCTIONS_PER_TASK = 64
+
+# Longest goal a run may carry.  It is prompt text, not a document: the worker
+# that reads it bounds it once more when it builds its messages.
+MAX_GOAL_CHARS = 2000
 
 # Attempts per function before the batch gives up on it.
 DEFAULT_MAX_ATTEMPTS = 2
@@ -161,6 +171,7 @@ class AutoParams:
     disabled: frozenset[str]
     task_timeout: float
     keep_failures: bool = KEEP_FAILED_SOURCES
+    goal: str = ""
 
     def as_config(self) -> dict[str, Any]:
         """The JSON object stored in the run's ``config_json``."""
@@ -174,6 +185,7 @@ class AutoParams:
             "disabled": sorted(self.disabled),
             "task_timeout": self.task_timeout,
             "keep_failures": self.keep_failures,
+            "goal": self.goal,
         }
 
 
@@ -199,6 +211,16 @@ def _bounded_timeout(value: float) -> float:
     return timeout
 
 
+def _goal_text(value: str) -> str:
+    """Return *value* stripped, inside :data:`MAX_GOAL_CHARS`, else raise."""
+    if not isinstance(value, str):
+        raise ValueError("goal must be a string")
+    goal = value.strip()
+    if len(goal) > MAX_GOAL_CHARS:
+        raise ValueError(f"goal must be at most {MAX_GOAL_CHARS} characters")
+    return goal
+
+
 def build_params(
     *,
     worker: str = auto_workers.WORKER_OFFLINE,
@@ -209,12 +231,14 @@ def build_params(
     max_tasks: int = DEFAULT_MAX_TASKS,
     disabled: Iterable[str] = (),
     task_timeout: float | None = None,
+    goal: str = "",
 ) -> AutoParams:
     """Validate one run's inputs; raises :class:`ValueError` naming the field.
 
     The worker name is resolved here, so an unknown worker fails before a run
     row exists.  *disabled* names workers a caller has switched off; asking a
-    run to use one is an error rather than a silently ignored input.
+    run to use one is an error rather than a silently ignored input.  *goal* is
+    the run's free-form objective, empty when the run carries none.
     """
     if not isinstance(execute, bool):
         raise ValueError("execute must be a boolean")
@@ -240,6 +264,7 @@ def build_params(
         task_timeout=_bounded_timeout(
             DEFAULT_TASK_TIMEOUT_SECONDS if task_timeout is None else task_timeout
         ),
+        goal=_goal_text(goal),
     )
 
 
@@ -247,13 +272,21 @@ def build_params(
 
 
 def select_functions(
-    conn: sqlite3.Connection, binary_id: int, *, limit: int | None = None
+    conn: sqlite3.Connection,
+    binary_id: int,
+    *,
+    limit: int | None = None,
+    include_matched: bool = False,
 ) -> list[dict[str, Any]]:
     """Functions of *binary_id* that still need work, smallest first then VA.
 
     A function already in a matching status is not work; everything else (a
-    STUB, a NEAR_MATCHING, an empty status) is selected.
+    STUB, a NEAR_MATCHING, an empty status) is selected.  *include_matched*
+    selects every function instead, which is what a goal-directed run needs:
+    the function a goal names may already have matched.
     """
+    if include_matched:
+        return store.list_binary_functions(conn, binary_id=binary_id, limit=limit)
     return store.list_outstanding_functions(conn, binary_id=binary_id, limit=limit)
 
 
@@ -551,6 +584,7 @@ def _run_function(
             execute=params.execute,
             keep_failures=params.keep_failures,
             previous=previous,
+            goal=params.goal,
         )
         owned = {
             str(path) for path in (previous or {}).get("written_files", []) if isinstance(path, str)
@@ -1249,6 +1283,7 @@ def run_summary(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
         "binary_id": int(run["binary_id"]),
         "status": str(run["status"]),
         "worker": str(run["config"].get("worker", "")),
+        "goal": str(run["config"].get("goal", "")),
         "config": run["config"],
         "created_at": run["created_at"],
         "finished_at": run["finished_at"],
@@ -1278,6 +1313,7 @@ def run_auto(
     engine: engines.RebrewEngine | None = None,
     llm_client: llm.LlmClient | None = None,
     task_timeout: float | None = None,
+    goal: str = "",
 ) -> dict[str, Any]:
     """Decompose one binary's outstanding functions, work them, report the delta.
 
@@ -1286,7 +1322,9 @@ def run_auto(
     the named worker over bounded threads, aggregates each batch's verified
     results, and closes the run with the coverage it measured.  ``execute``
     gates every write into the rebrew project; without it nothing is compiled
-    and no function status changes.  Raises :class:`ValueError` for a bad input
+    and no function status changes.  A non-empty *goal* is the run's free-form
+    objective, handed to every worker and planned over every function rather
+    than only the unmatched ones.  Raises :class:`ValueError` for a bad input
     and :class:`KeyError` for an unknown binary.
     """
     params = build_params(
@@ -1298,10 +1336,11 @@ def run_auto(
         max_tasks=max_tasks,
         disabled=disabled,
         task_timeout=task_timeout,
+        goal=goal,
     )
     if store.get_binary(conn, binary_id) is None:
         raise KeyError(f"no binary with id {binary_id}")
-    functions = select_functions(conn, binary_id)
+    functions = select_functions(conn, binary_id, include_matched=bool(params.goal))
     run_id = create_auto_run(conn, binary_id=binary_id, params=params, functions=functions)
     try:
         return execute_auto_run(

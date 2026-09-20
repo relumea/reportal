@@ -137,14 +137,24 @@ Non-obvious:
 
 | Topic | Doc |
 |-------|-----|
+| Documentation standard | `docs/AGENTS.md` |
+| One page per subsystem | `docs/subsystems/README.md` |
+| How-to guides for a seam | `docs/cookbook/README.md` |
 | HTTP routes | `docs/API.md` |
 | SPA | `docs/SPA.md` |
 | Schema | `docs/DATA_MODEL.md` |
-| Modules / engines / billing | `docs/ARCHITECTURE.md` |
+| Modules / engines / billing | `docs/ARCHITECTURE.md` (generated module list: `docs/MODULE_MAP.md`) |
 | Components / effects | `docs/COMPONENTS.md` |
 | Threat boundaries | `docs/THREAT_MODEL.md` |
 | Errors | `docs/ERRORS.md` |
+| Settings catalog | `docs/CONFIG.md` (generated) |
+| MCP tool catalog | `docs/MCP_TOOLS.md` (generated) |
 | Hosted parity / MCP counts | `docs/PARITY.md` |
+
+Generated catalogs are written by `.venv/bin/python scripts/gen_docs.py`;
+`tests/test_generated_docs.py` fails on a hand edit. Every module under
+`src/reportal/` is owned by exactly one `docs/subsystems/*.md` `Sources:` line,
+checked by `tests/test_docs_structure.py`.
 
 ## MCP
 
@@ -155,7 +165,7 @@ Tools are plugins in `mcp_tools.py`
 (`reportal.mcp_tools` entry points). Handlers call internals directly, never
 HTTP back into reportal. Read tools stay stored-only; writers carry
 `destructiveHint: true`. Counts are pinned by `tests/test_mcp.py` (currently
-261 / 122 read-only / 139 destructive); update the test when the registry
+262 / 122 read-only / 140 destructive); update the test when the registry
 changes, not a prose list here.
 
 ## Engines and matching

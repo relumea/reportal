@@ -70,6 +70,8 @@ class TestResolution:
         ids = _seed(conn, decomp=True)
         payload = diffview.function_diff(conn, fake_engine, function_id=ids["left"])
         assert payload["right"]["function_id"] == ids["right"]
+        assert payload["left"]["binary_id"] == ids["binary"]
+        assert payload["right"]["binary_id"] == ids["binary"]
 
     def test_omitted_candidate_without_a_match_raises_404(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn, match=False)

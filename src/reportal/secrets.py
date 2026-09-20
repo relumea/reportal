@@ -141,7 +141,7 @@ SECRET_PATTERNS: tuple[SecretPattern, ...] = (
     ),
     SecretPattern(
         name="github-token",
-        pattern=_pattern(r"\bgh[pousr]_[A-Za-z0-9]{36}\b"),
+        pattern=_pattern(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,})\b"),
         confidence=CONFIDENCE_HIGH,
         description="GitHub token",
     ),
@@ -159,9 +159,57 @@ SECRET_PATTERNS: tuple[SecretPattern, ...] = (
     ),
     SecretPattern(
         name="openai-api-key",
-        pattern=_pattern(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+        pattern=_pattern(r"\bsk-(?!ant-)[A-Za-z0-9_-]{20,}\b"),
         confidence=CONFIDENCE_HIGH,
         description="OpenAI-style sk- key",
+    ),
+    SecretPattern(
+        name="anthropic-api-key",
+        pattern=_pattern(r"\bsk-ant-[A-Za-z0-9_-]{20,}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="Anthropic API key",
+    ),
+    SecretPattern(
+        name="discord-bot-token",
+        pattern=_pattern(r"\b[MN][A-Za-z\d]{23,}\.[\w-]{6}\.[\w-]{27,}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="Discord bot token",
+    ),
+    SecretPattern(
+        name="telegram-bot-token",
+        pattern=_pattern(r"\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="Telegram bot token",
+    ),
+    SecretPattern(
+        name="npm-token",
+        pattern=_pattern(r"\bnpm_[A-Za-z0-9]{36}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="npm access token",
+    ),
+    SecretPattern(
+        name="gitlab-token",
+        pattern=_pattern(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="GitLab personal access token",
+    ),
+    SecretPattern(
+        name="huggingface-token",
+        pattern=_pattern(r"\bhf_[A-Za-z0-9]{34,}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="Hugging Face access token",
+    ),
+    SecretPattern(
+        name="sendgrid-key",
+        pattern=_pattern(r"\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="SendGrid API key",
+    ),
+    SecretPattern(
+        name="twilio-account-sid",
+        pattern=_pattern(r"\bAC[0-9a-f]{32}\b"),
+        confidence=CONFIDENCE_HIGH,
+        description="Twilio Account SID",
     ),
     SecretPattern(
         name="jwt",

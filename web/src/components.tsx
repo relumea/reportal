@@ -4,7 +4,16 @@
 // in styles.css under the matching class names, driven by the token layer;
 // the semantic hue names live in design.ts.
 
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 
 import { errorText, isApiErrorCode } from "./api";
@@ -13,6 +22,7 @@ import {
   RAMP_STEPS,
   categoryHue,
   levelOf,
+  nameSourceHue,
   statusEntity,
 } from "./design";
 import type { HueFamily, Level, StatusEntity } from "./design";
@@ -35,8 +45,19 @@ export function cellText(value: unknown): ReactNode {
 
 // ── Text helpers ───────────────────────────────────────────────────
 
-export function Muted({ children }: { children: ReactNode }): ReactNode {
-  return <p className="muted">{children}</p>;
+export function Muted({
+  children,
+  live = false,
+}: {
+  children: ReactNode;
+  /** Announce this line when it appears; for the result of a write a reader cannot see. */
+  live?: boolean;
+}): ReactNode {
+  return (
+    <p className="muted" role={live ? "status" : undefined}>
+      {children}
+    </p>
+  );
 }
 
 /**
@@ -53,12 +74,58 @@ export function EngineNote({ model }: { model?: string | null }): ReactNode {
 }
 
 /** Monospace value with its own copy control; `NA` when the value is empty. */
-export function CopyValue({ value }: { value: string | null | undefined }): ReactNode {
+export function CopyValue({
+  value,
+  compact,
+}: {
+  value: string | null | undefined;
+  /** Show the first 12 characters; the copy control still writes the full value. */
+  compact?: boolean;
+}): ReactNode {
   if (!value) return NA;
+  const shown = compact && value.length > 12 ? `${value.slice(0, 12)}…` : value;
   return (
     <span className="copy-row">
-      <span className="mono">{value}</span>
+      <span className="mono" title={compact ? value : undefined}>
+        {shown}
+      </span>
       <CopyButton text={value} />
+    </span>
+  );
+}
+
+const IDENTICON_CELLS = 5;
+
+function identiconBits(hash: string): boolean[] {
+  const cells: boolean[] = [];
+  for (let i = 0; i < IDENTICON_CELLS * 3; i += 1) {
+    const nibble = Number.parseInt(hash[i] ?? "0", 16);
+    cells.push((nibble & 1) === 1);
+  }
+  return cells;
+}
+
+/** 5×5 hash identicon from a hex digest. Symmetric so a SHA-256 looks like a face. */
+export function HashIdenticon({ hash }: { hash: string }): ReactNode {
+  const bits = identiconBits(hash);
+  const hue = Number.parseInt(hash.slice(0, 2) || "0", 16);
+  const color = `hsl(${hue} 42% 46%)`;
+  const cells: ReactNode[] = [];
+  for (let row = 0; row < IDENTICON_CELLS; row += 1) {
+    for (let col = 0; col < IDENTICON_CELLS; col += 1) {
+      const mirror = col > 2 ? 4 - col : col;
+      const on = bits[row * 3 + mirror] === true;
+      cells.push(
+        <span
+          key={`${row}-${col}`}
+          className={on ? "hash-identicon-cell on" : "hash-identicon-cell"}
+        />,
+      );
+    }
+  }
+  return (
+    <span className="hash-identicon" aria-hidden="true" style={{ color }}>
+      {cells}
     </span>
   );
 }
@@ -281,6 +348,19 @@ export function StatusCell({ status }: { status?: string | null }): ReactNode {
   return <Badge entity={statusEntity(label) ?? undefined}>{label}</Badge>;
 }
 
+/** Coloured name-source dot; hosted Functions list uses this beside the name. */
+export function NameSourceDot({ label }: { label: string }): ReactNode {
+  const hue = nameSourceHue(label);
+  return (
+    <span
+      className={hue ? "name-source-dot" : "name-source-dot idle"}
+      data-hue={hue ?? undefined}
+      title={label}
+      aria-label={label}
+    />
+  );
+}
+
 export function ConfidenceBadge({ level }: { level: string }): ReactNode {
   const key = levelOf(level);
   if (!key) return <Badge>{level || NA}</Badge>;
@@ -420,6 +500,28 @@ export function Readout({
 
 // ── Fields ─────────────────────────────────────────────────────────
 
+/** A named type that exists in this binary's model, linking to `?search=`. */
+export function TypeNameLink({
+  binaryId,
+  name,
+  knownTypes,
+  fallback = true,
+}: {
+  binaryId: number;
+  name: string;
+  knownTypes: Set<string>;
+  /** When false, an unknown name renders nothing (an input already shows it). */
+  fallback?: boolean;
+}): ReactNode {
+  const ident = name.replace(/(?:\s*(?:\*+|\[\d*\]))+$/g, "").trim();
+  if (!ident || !knownTypes.has(ident)) return fallback ? name : null;
+  return (
+    <a href={`#/binaries/${binaryId}?search=${encodeURIComponent(ident)}`} title={`Show type ${ident}`}>
+      {name}
+    </a>
+  );
+}
+
 export function Field({
   label,
   hint,
@@ -537,13 +639,29 @@ export function EmptyState({
 // ── Code ───────────────────────────────────────────────────────────
 
 export function CodeBlock({ text, title }: { text: string; title?: string }): ReactNode {
+  const [copied, setCopied] = useState(false);
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
   return (
     <div className="code-block">
       <div className="code-head">
         <span className="code-title">{title ?? "output"}</span>
         <CopyButton text={text} />
       </div>
-      <pre className="code-scroll">{text}</pre>
+      <pre
+        className="code-scroll"
+        title="Click to copy"
+        onClick={() => void copy()}
+      >
+        {text}
+      </pre>
+      {copied ? <span className="muted">Copied</span> : null}
     </div>
   );
 }
@@ -572,6 +690,9 @@ export function RawJson({ value }: { value: unknown }): ReactNode {
   );
 }
 
+/** The heading id of the nearest `Panel`, which names the tables inside it. */
+const PanelHeading = createContext<string | null>(null);
+
 // ── Table ──────────────────────────────────────────────────────────
 
 export interface Column<T> {
@@ -584,6 +705,12 @@ export interface Column<T> {
   numeric?: boolean;
   /** Render the raw value in the monospace face. */
   mono?: boolean;
+  /**
+   * The sorted state of this column, for the `aria-sort` a reader needs to hear
+   * which column orders the table and in which direction.  A sort control in
+   * `header` must set it, since the glyph alone is not announced.
+   */
+  sort?: "ascending" | "descending" | "none";
 }
 
 function isInteractive(target: EventTarget | null): boolean {
@@ -625,6 +752,7 @@ export function DataTable<T>({
   rowClassName,
   empty,
   windowed = false,
+  label,
 }: {
   columns: Array<Column<T>>;
   rows: T[];
@@ -639,8 +767,11 @@ export function DataTable<T>({
    *  and 300k nodes in the DOM.  Requires uniform row heights, so it is opt-in
    *  per table rather than the default. */
   windowed?: boolean;
+  /** The table's accessible name; the enclosing `Panel` heading when omitted. */
+  label?: string;
 }): ReactNode {
   const active = windowed && rows.length > WINDOW_THRESHOLD;
+  const panelHeading = useContext(PanelHeading);
   const scroll = useRef<HTMLDivElement | null>(null);
   const [rowHeight, setRowHeight] = useState(WINDOW_ROW_HEIGHT);
   const [range, setRange] = useState({ start: 0, end: Math.min(rows.length, WINDOW_THRESHOLD) });
@@ -686,11 +817,23 @@ export function DataTable<T>({
     );
   return (
     <div className="table-scroll" ref={scroll}>
-      <table className="data-table">
+      {/* The window leaves most rows out of the DOM, so the count tells a
+          reader how long the list is and each row says where it sits in it.
+          The name comes from the panel heading unless the call site names it. */}
+      <table
+        className="data-table"
+        aria-rowcount={rows.length + 1}
+        aria-label={label}
+        aria-labelledby={label === undefined ? (panelHeading ?? undefined) : undefined}
+      >
         <thead>
-          <tr>
+          <tr aria-rowindex={1}>
             {columns.map((column) => (
-              <th key={column.label} className={column.numeric ? "num" : undefined}>
+              <th
+                key={column.label}
+                className={column.numeric ? "num" : undefined}
+                aria-sort={column.sort}
+              >
                 {column.header ?? column.label}
               </th>
             ))}
@@ -709,7 +852,7 @@ export function DataTable<T>({
                   .join(" ") || undefined
               }
               tabIndex={onRowClick ? 0 : undefined}
-              role={onRowClick ? "link" : undefined}
+              aria-rowindex={index + 2}
               onClick={
                 onRowClick
                   ? (event: MouseEvent<HTMLTableRowElement>) => {
@@ -759,6 +902,7 @@ export function Panel({
   actions,
   hue,
   className,
+  collapsible = false,
   children,
 }: {
   title: ReactNode;
@@ -768,18 +912,45 @@ export function Panel({
   hue?: HueFamily;
   /** Extra classes, e.g. the change flash or a cockpit column span. */
   className?: string;
+  /** Start folded; the heading and actions stay visible. */
+  collapsible?: boolean;
   children?: ReactNode;
 }): ReactNode {
+  // The heading names the tables inside the panel, so a reader entering one
+  // hears which list it is without the call site repeating the title.
+  const titleId = useId();
+  const [open, setOpen] = useState(!collapsible);
   return (
-    <section className={className ? `panel ${className}` : "panel"} data-hue={hue}>
+    <section
+      className={className ? `panel ${className}` : "panel"}
+      data-hue={hue}
+      tabIndex={-1}
+    >
       <div className="panel-head">
         <div className="panel-heading">
-          <h2 className="panel-title">{title}</h2>
+          <h2 className="panel-title" id={titleId}>
+            {collapsible ? (
+              <button
+                type="button"
+                className="panel-fold"
+                aria-expanded={open}
+                onClick={() => setOpen((value) => !value)}
+              >
+                {title}
+              </button>
+            ) : (
+              title
+            )}
+          </h2>
           {subtitle ? <div className="panel-subtitle">{subtitle}</div> : null}
         </div>
         {actions ? <div className="panel-actions">{actions}</div> : null}
       </div>
-      <div className="panel-body">{children}</div>
+      {open ? (
+        <div className="panel-body">
+          <PanelHeading.Provider value={titleId}>{children}</PanelHeading.Provider>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -799,13 +970,18 @@ export function Card({
   className?: string;
   children: ReactNode;
 }): ReactNode {
+  // A table inside the card is named by the card's own title, which is closer
+  // to it than the panel heading outside.
+  const titleId = useId();
   return (
     <div className={className ? `card ${className}` : "card"} data-hue={hue}>
       <div className="card-head">
-        <div className="card-title">{title}</div>
+        <div className="card-title" id={titleId}>
+          {title}
+        </div>
         {actions ? <div className="panel-actions">{actions}</div> : null}
       </div>
-      {children}
+      <PanelHeading.Provider value={titleId}>{children}</PanelHeading.Provider>
     </div>
   );
 }

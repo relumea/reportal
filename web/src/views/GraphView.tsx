@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 
-import { api, isApiErrorCode } from "../api";
+import { BINARY_OPTIONS_PATH, api, isApiErrorCode } from "../api";
 import {
   Badge,
   Button,
@@ -17,7 +17,7 @@ import {
 } from "../components";
 import { GRAPH_NO_GRAPH, GRAPH_NODE_KINDS, MAX_GRAPH_ROWS_SHOWN } from "../constants";
 import type {
-  Binary,
+  BinaryOption,
   GraphBackends,
   GraphBuildResult,
   GraphNeighbor,
@@ -161,7 +161,7 @@ function GraphPanel({ binaryId }: { binaryId: number }): ReactNode {
           </Toolbar>
         }
       >
-        {message ? <Muted>{message}</Muted> : null}
+        <Muted live>{message}</Muted>
         {actionError ? <ErrorNote error={actionError} /> : null}
         {graphResult.error ? (
           isApiErrorCode(graphResult.error, GRAPH_NO_GRAPH) ? (
@@ -345,7 +345,7 @@ function GraphBackendPanel({ binaryId }: { binaryId: number }): ReactNode {
       {active !== null && !active.available ? (
         <Muted>Unavailable: {active.unavailable_reason}</Muted>
       ) : null}
-      {message ? <Muted>{message}</Muted> : null}
+      <Muted live>{message}</Muted>
       {actionError ? <ErrorNote error={actionError} /> : null}
       {hits !== null ? (
         <DataTable
@@ -365,7 +365,7 @@ function GraphBackendPanel({ binaryId }: { binaryId: number }): ReactNode {
 
 /** Knowledge graph view: pick a binary, rebuild its graph and walk the nodes. */
 export function GraphView(): ReactNode {
-  const binariesResult = useAsync(() => api<{ binaries: Binary[] }>("/binaries"), []);
+  const binariesResult = useAsync(() => api<{ binaries: BinaryOption[] }>(BINARY_OPTIONS_PATH), []);
   const binaries = binariesResult.data?.binaries ?? [];
   const [selectedId, setSelectedId] = useState("");
   const activeId = selectedId || (binaries[0] ? String(binaries[0].id) : "");

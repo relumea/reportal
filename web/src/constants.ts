@@ -159,9 +159,12 @@ export type ConversationScopeKind = (typeof CONVERSATION_SCOPE_KINDS)[number];
 
 // Auto-mode workers exposed in the start form; mirrors the built-in names in
 // auto_workers (a third party can register more).
-export const AUTO_WORKERS = ["offline", "llm_c_source"] as const;
+export const AUTO_WORKERS = ["offline", "llm_c_source", "llm_goal"] as const;
 export type AutoWorker = (typeof AUTO_WORKERS)[number];
 export const DEFAULT_AUTO_WORKER: AutoWorker = AUTO_WORKERS[0];
+
+// Longest goal the start form sends; mirrors auto_mode.MAX_GOAL_CHARS.
+export const AUTO_GOAL_MAX = 2000;
 
 // Error code the stored-only auto GET answers when a binary has no run;
 // mirrors the API's 404 no-run.
@@ -339,6 +342,44 @@ export const FUNCTION_NAME_SOURCES = [
   "User",
   "No Debug Info",
 ] as const;
+
+const NAME_SOURCE_MAP: Record<string, (typeof FUNCTION_NAME_SOURCES)[number]> = {
+  import: "System",
+  rebrew: "System",
+  symbol: "System",
+  unstrip: "Auto Unstrip",
+  renames: "AI Agent",
+};
+const PLACEHOLDER_PREFIXES = ["sub_", "fcn_", "FUNC_"] as const;
+
+/** Portal label for a stored function name and source. */
+export function nameSourceLabel(
+  name: string,
+  source: string,
+): (typeof FUNCTION_NAME_SOURCES)[number] {
+  const stripped = name.trim();
+  if (!stripped || PLACEHOLDER_PREFIXES.some((prefix) => stripped.startsWith(prefix))) {
+    return "No Debug Info";
+  }
+  const key = source.trim().toLowerCase();
+  return NAME_SOURCE_MAP[key] ?? (key.startsWith("ai") ? "AI Agent" : "User");
+}
+
+const TYPE_SOURCE_MAP: Record<string, string> = {
+  scan: "System",
+  symbol: "System",
+  manual: "User",
+  unstrip: "Auto Unstrip",
+  ai: "AI",
+};
+
+/** Portal provenance label for a stored data-type source. */
+export function typeSourceLabel(source: string): string {
+  const key = source.trim().toLowerCase();
+  if (TYPE_SOURCE_MAP[key]) return TYPE_SOURCE_MAP[key];
+  if (key.startsWith("ai") && key.length > 2) return "AI";
+  return "User";
+}
 
 // Capability names the function filter offers, in the rule table's order;
 // mirrors the API's capabilities.CAPABILITIES.  The API refuses any other

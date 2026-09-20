@@ -70,6 +70,7 @@ from reportal import (
     families,
     filetypes,
     firmware,
+    flirt_sigs,
     function_extras,
     function_triage,
     gobuildinfo,
@@ -131,7 +132,14 @@ from reportal.binary_actions import (
     firmware_extract_binary,
     unpack_binary,
 )
-from reportal.server import db, json_body, json_error, json_response, optional_json_body
+from reportal.server import (
+    JsonError,
+    db,
+    json_body,
+    json_error,
+    json_response,
+    optional_json_body,
+)
 from reportal.surface import classified as _classified
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
 from reportal.surface import journaled_signature_write as _journal_signature_write
@@ -400,15 +408,33 @@ def list_binaries(request: Request) -> Response:
     carrying that exact tag name, ``?format=`` one stored format,
     ``?language=`` one recovered source language, ``?compiler=`` one recovered
     toolchain and ``?order=`` one of :data:`reportal.store.BINARY_ORDERS`; an
-    unknown order is a 400.  The body echoes the filters it applied, carries
-    ``count`` against ``total`` so a filter that matched nothing is
-    distinguishable from an empty register, and names the ``formats``,
-    ``languages`` and ``compilers`` the register holds, which is what the
-    SPA's controls are built from.
+    unknown order is a 400.  ``?summary=true`` projects every row down to its
+    ``id`` and ``name``, which is what a picker that offers the whole register
+    needs; anything but a boolean is a 400.  ``?limit=`` cuts one page bounded
+    by :data:`reportal.store.MAX_BINARY_LIMIT` and ``?offset=`` moves into the
+    register, so a large register is read a page at a time; a limit outside the
+    bound or a negative offset is a 400, and a caller that names no limit still
+    reads the whole register.  The body echoes the filters it applied, carries
+    ``count`` (this page) against ``matched`` (the rows the filter kept) and
+    ``total`` (the whole register, unfiltered), so a filter that matched nothing
+    is distinguishable from an empty register, and names the ``formats``,
+    ``languages`` and ``compilers`` the register holds, which is what the SPA's
+    controls are built from.
     """
     order = _query_text(request, "order") or store.DEFAULT_BINARY_ORDER
     if order not in store.BINARY_ORDERS:
         return _invalid_query("order", order, sorted(store.BINARY_ORDERS))
+    summary = _query_bool(request, "summary", False)
+    limit = _query_int(request, "limit")
+    if limit is not None and not 1 <= limit <= store.MAX_BINARY_LIMIT:
+        return json_error(
+            400,
+            error="invalid limit",
+            detail=f"limit must be between 1 and {store.MAX_BINARY_LIMIT}",
+        )
+    offset = _query_int(request, "offset") or 0
+    if offset < 0:
+        return json_error(400, error="invalid offset", detail="offset must not be negative")
     search = _query_text(request, "search")
     tag = _query_text(request, "tag")
     fmt = _query_text(request, "format")
@@ -424,6 +450,18 @@ def list_binaries(request: Request) -> Response:
             compiler=compiler,
             order=order,
             visible_to=_caller(request),
+            summary=summary,
+            limit=limit,
+            offset=offset,
+        )
+        matched = store.count_binaries(
+            conn,
+            search=search,
+            tag=tag,
+            fmt=fmt,
+            language=language,
+            compiler=compiler,
+            visible_to=_caller(request),
         )
         total = store.count_binaries(conn, visible_to=_caller(request))
         facets = store.binary_filter_values(conn)
@@ -431,13 +469,17 @@ def list_binaries(request: Request) -> Response:
         {
             "binaries": binaries,
             "count": len(binaries),
+            "matched": matched,
             "total": total,
+            "limit": limit,
+            "offset": offset,
             "search": search,
             "tag": tag,
             "format": fmt,
             "language": language,
             "compiler": compiler,
             "order": order,
+            "summary": summary,
             "formats": facets["formats"],
             "languages": facets["languages"],
             "compilers": facets["compilers"],
@@ -1702,7 +1744,8 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
 
     ``?source=`` filters by provenance (`System`, `User`, `Auto Unstrip`, `AI`)
     and the payload always carries ``sources``: the count per label over the
-    whole model, which is the strip the panel renders above the list.
+    whole model, which is the strip the panel renders above the list, and
+    ``kinds``: the count per declaration kind over the whole model.
     ``?sort=`` is one of :data:`reportal.data_types.TYPE_SORTS` (``name``, the
     default, or ``size``) and ``?direction=`` one of
     :data:`reportal.data_types.SORT_DIRECTIONS`; a type whose size the model
@@ -1750,6 +1793,7 @@ def list_binary_data_types(request: Request, binary_id: int) -> Response:
             "types": [data_types.encode_type(data_type) for data_type in selected],
             "namespaces": data_types.namespace_tree(types),
             "sources": data_types.source_totals(types),
+            "kinds": data_types.kind_totals(types),
         }
     )
 
@@ -4526,8 +4570,9 @@ def revert_function_name(request: Request, function_id: int, history_id: int) ->
 def function_matches(function_id: int) -> Response:
     """The recorded match candidates of one function, with the derived metrics.
 
-    Each row carries ``difference`` (the complement ``100 - similarity``) and
-    the quality ``band`` beside the stored similarity and confidence.
+    Each row carries ``difference`` (the complement ``100 - similarity``), the
+    quality ``band``, and the candidate's stored ``candidate_prototype`` (null
+    when none).
     """
     with contextlib.closing(_open()) as conn:
         if store.get_function(conn, function_id) is None:
@@ -4535,7 +4580,13 @@ def function_matches(function_id: int) -> Response:
                 404, error="function not found", detail=f"no function with id {function_id}"
             )
         matches = store.list_matches(conn, function_id)
-    return json_response({"matches": [_match_view(row) for row in matches]})
+        rows = [_match_view(row) for row in matches]
+        for row in rows:
+            signature = signatures.get_signature(conn, int(row["candidate_function_id"]))
+            row["candidate_prototype"] = (
+                signatures.render_prototype(signature) if signature is not None else None
+            )
+    return json_response({"matches": rows})
 
 
 @router.post("/api/functions/{function_id}/apply-match")
@@ -6001,6 +6052,7 @@ def _auto_params(body: dict[str, Any]) -> auto_mode.AutoParams:
             ),
             max_attempts=_optional_int(body, "max_attempts", auto_mode.DEFAULT_MAX_ATTEMPTS),
             max_tasks=_optional_int(body, "max_tasks", auto_mode.DEFAULT_MAX_TASKS),
+            goal=_optional_str(body, "goal", ""),
         )
     except ValueError as exc:
         raise json_error(400, error="invalid params", detail=str(exc)) from exc
@@ -6227,7 +6279,9 @@ def start_auto_run(
     ``GET /api/binaries/<id>/auto`` for live progress instead of blocking for
     minutes.  Body fields are all optional: ``worker`` (default the offline
     worker), ``execute`` (default false), ``concurrency``,
-    ``functions_per_task``, ``max_attempts`` and ``max_tasks``.  At most
+    ``functions_per_task``, ``max_attempts``, ``max_tasks`` and ``goal`` (the
+    free-form objective a goal-directed worker works toward, which plans every
+    function rather than only the unmatched ones).  At most
     :data:`MAX_BACKGROUND_AUTO_RUNS` runs execute at once; past that the route
     answers 503 without creating a run.  Under the SaaS profile a tenant past
     its auto-run allowance is refused 402 before anything is created.
@@ -6248,7 +6302,9 @@ def start_auto_run(
     try:
         with contextlib.closing(_open()) as conn:
             _require_binary(conn, binary_id)
-            functions = auto_mode.select_functions(conn, binary_id)
+            functions = auto_mode.select_functions(
+                conn, binary_id, include_matched=bool(params.goal)
+            )
             run_id = auto_mode.create_auto_run(
                 conn, binary_id=binary_id, params=params, functions=functions
             )
@@ -9952,10 +10008,12 @@ def export_decompiler_script(binary_id: int, request: Request) -> Response:
 
 # ── Documentation ──────────────────────────────────────────────────
 #
-# The portal ships its own manual: `docs/*.md` and `CHANGELOG.md` are read from
-# the workspace, the checkout or an explicit `REPORTAL_DOCS` override and served
-# as structured blocks, which the SPA renders without any markup injection.  A
-# page's slug is its filename stem, so `GET /api/docs/errors` is `docs/ERRORS.md`.
+# The portal ships its own manual: the markdown under `docs/` and `CHANGELOG.md`
+# are read from the workspace, the checkout or an explicit `REPORTAL_DOCS`
+# override and served as structured blocks, which the SPA renders without any
+# markup injection.  A page's slug is its path under `docs/` without the
+# extension, so `GET /api/docs/errors` is `docs/ERRORS.md` and
+# `GET /api/docs/subsystems/store` is `docs/subsystems/store.md`.
 
 
 @router.get("/api/docs")
@@ -9968,9 +10026,14 @@ def list_docs() -> Response:
     return json_response({"pages": listing, "count": len(listing)})
 
 
-@router.get("/api/docs/{slug}")
+@router.get("/api/docs/{slug:path}")
 def get_doc(slug: str) -> Response:
-    """One page's title, its on-this-page headings and its blocks."""
+    """One page's title, its on-this-page headings and its blocks.
+
+    The slug is a path: a subdirectory page reads ``/api/docs/subsystems/store``.
+    ``docs._slug_path`` refuses anything that escapes the directory, so the
+    wildcard segment is validated rather than resolved.
+    """
     try:
         payload = docs_mod.page(slug)
     except docs_mod.DocsError as exc:
@@ -10340,12 +10403,12 @@ def append_analysis_log(analysis_id: int, body: dict[str, Any] = Depends(json_bo
 
 
 @router.post("/api/analyses/{analysis_id}/requeue")
-def requeue_analysis(analysis_id: int) -> Response:
-    """Put an analysis back to ``pending`` and clear its finish time; journaled.
+def requeue_analysis(analysis_id: int, request: Request) -> Response:
+    """Put an analysis back to ``pending``, then queue jobs for stored scans.
 
-    Locally the scans are the engine calls, so this moves the lifecycle row and
-    leaves the caller to queue the work it wants (`POST /api/jobs` with a scan
-    kind); the transition is logged.
+    Scans with a job kind are submitted with their recorded params (keys the
+    kind does not take are dropped). Scans with no job kind stay a per-scan
+    POST. Journaled; a revert restores the lifecycle row, the log and the jobs.
     """
     with contextlib.closing(_open()) as conn:
         if store.get_analysis(conn, analysis_id) is None:
@@ -10353,30 +10416,41 @@ def requeue_analysis(analysis_id: int) -> Response:
                 404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
             )
         action = journal.new_action()
-        with journal.journaled(conn, action) as log:
-            journal.journaled_rows(
-                conn,
-                log,
-                table="analyses",
-                where="id = ?",
-                params=(analysis_id,),
-                description=f"requeued analysis {analysis_id}",
-            )
-            logged_before = journal.snapshot_rows(
-                conn, table=analysis_log.TABLE, where="analysis_id = ?", params=(analysis_id,)
-            )
-            updated = store.requeue_analysis(conn, analysis_id)
-            journal.journaled_new_rows(
-                conn,
-                log,
-                table=analysis_log.TABLE,
-                where="analysis_id = ?",
-                params=(analysis_id,),
-                before=logged_before,
-                key=["id"],
-                description=f"logged the requeue of analysis {analysis_id}",
-            )
-    return json_response(log.attach(updated or {}))
+        try:
+            with journal.journaled(conn, action) as log:
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table="analyses",
+                    where="id = ?",
+                    params=(analysis_id,),
+                    description=f"requeued analysis {analysis_id}",
+                )
+                logged_before = journal.snapshot_rows(
+                    conn, table=analysis_log.TABLE, where="analysis_id = ?", params=(analysis_id,)
+                )
+                updated = store.requeue_analysis(conn, analysis_id)
+                journal.journaled_new_rows(
+                    conn,
+                    log,
+                    table=analysis_log.TABLE,
+                    where="analysis_id = ?",
+                    params=(analysis_id,),
+                    before=logged_before,
+                    key=["id"],
+                    description=f"logged the requeue of analysis {analysis_id}",
+                )
+                caller = _caller(request)
+                queued = jobs.queue_stored_scans(
+                    conn,
+                    log,
+                    analysis_id,
+                    submitted_by="" if caller is None else str(caller["name"]),
+                    submitted_by_user_id=_caller_id(request),
+                )
+        except ValueError as exc:
+            return json_error(400, error="invalid job", detail=str(exc))
+    return json_response(log.attach({**(updated or {}), "jobs": queued}))
 
 
 @router.get("/api/analyses/{analysis_id}/tags")
@@ -10601,12 +10675,13 @@ def create_api_key(request: Request, body: dict[str, Any] = Depends(json_body)) 
             detail="minting an API key needs token auth; create a user first",
         )
     name = _require_str(body, "name")
+    read_only = _optional_bool(body, "read_only", False)
     user_id = int(caller["id"])
     with contextlib.closing(_open()) as conn:
         action = journal.new_action()
         try:
             with journal.journaled(conn, action) as log:
-                key, token = auth.create_api_key(conn, user_id, name)
+                key, token = auth.create_api_key(conn, user_id, name, read_only=read_only)
                 journal.journaled_create(
                     log,
                     table=auth.KEY_TABLE,
@@ -10618,6 +10693,43 @@ def create_api_key(request: Request, body: dict[str, Any] = Depends(json_body)) 
                 return json_error(402, error=exc.code, detail=exc.detail)
             return _auth_failure(exc)
     return json_response(log.attach({**key, "token": token}), status=201)
+
+
+@router.patch("/api/iam/keys/{key_id}")
+def rename_api_key(
+    key_id: int, request: Request, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Rename one of the caller's named extra keys; journaled. The token is unchanged."""
+    caller = _caller(request)
+    if caller is None:
+        return json_error(
+            400,
+            error=auth.ERROR_INVALID_API_KEY,
+            detail="renaming an API key needs token auth",
+        )
+    name = _require_str(body, "name")
+    user_id = int(caller["id"])
+    with contextlib.closing(_open()) as conn:
+        key = auth.get_api_key(conn, key_id)
+        if key is None or int(key["user_id"]) != user_id:
+            return json_error(
+                404, error=auth.ERROR_API_KEY_NOT_FOUND, detail=f"no API key with id {key_id}"
+            )
+        action = journal.new_action()
+        try:
+            with journal.journaled(conn, action) as log:
+                journal.journaled_rows(
+                    conn,
+                    log,
+                    table=auth.KEY_TABLE,
+                    where="id = ?",
+                    params=(key_id,),
+                    description=f"renamed API key {key_id}",
+                )
+                updated = auth.rename_api_key(conn, key_id, name)
+        except auth.AuthError as exc:
+            return _auth_failure(exc)
+    return json_response(log.attach(updated))
 
 
 @router.delete("/api/iam/keys/{key_id}")
@@ -12096,3 +12208,144 @@ def get_analysis_sandbox_status(analysis_id: int) -> Response:
                 404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
             )
         return json_response(sandbox.status_payload(conn, analysis_id))
+
+
+# ── FLIRT signatures ───────────────────────────────────────────────
+#
+# The catalog is global: a signature set is a fact about a toolchain, not a
+# tenant's object, so these routes do not take the visibility path.  A scan is
+# cached under the signature library's key, so the same binary uploaded by two
+# tenants is matched once.
+
+
+def _flirt_root() -> Path | JsonError:
+    """The configured signature checkout, or an error response when there is none."""
+    root = flirt_sigs.sigs_dir()
+    if root is None or not root.is_dir():
+        return json_error(
+            400,
+            error="no-signature-dir",
+            detail=f"set {flirt_sigs.SIGS_DIR_ENV} to a signature checkout",
+        )
+    return root
+
+
+@router.get("/api/flirt/sigsets")
+def list_flirt_sigsets(request: Request) -> Response:
+    """The indexed signature catalog, optionally narrowed to one architecture."""
+    arch = request.query_params.get("arch", "").strip()
+    root = flirt_sigs.sigs_dir()
+    with contextlib.closing(_open()) as conn:
+        rows = flirt_sigs.list_sigsets(conn, arch=arch or None)
+    return json_response(
+        {
+            "sigsets": rows,
+            "sigs_dir": str(root) if root else "",
+            "env": flirt_sigs.SIGS_DIR_ENV,
+        }
+    )
+
+
+@router.post("/api/flirt/sigsets/refresh")
+def refresh_flirt_sigsets() -> Response:
+    """Re-index the configured signature checkout into the catalog.
+
+    Reads the directory the install configured and nothing else: an operator
+    names the checkout through the environment, so a request cannot point the
+    indexer at an arbitrary path on the host.
+    """
+    root = _flirt_root()
+    if not isinstance(root, Path):
+        return root
+    with contextlib.closing(_open()) as conn:
+        result = flirt_sigs.refresh(conn, root)
+        if result["added"] or result["updated"] or result["pruned"]:
+            # The library changed, so every compiled engine is stale.
+            flirt_sigs.forget_matchers()
+    return json_response({"sigs_dir": str(root), **result})
+
+
+@router.post("/api/binaries/{binary_id}/flirt")
+def scan_binary_flirt(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Match one binary against the enabled signatures and store the reading.
+
+    The architecture is the caller's ``arch`` when given, else the stored
+    fingerprint's.  The file is read whole and matched in this threadpool
+    thread; a scan long enough to time out belongs in the queued job of the
+    same name rather than inline.
+    """
+    requested = body.get("arch")
+    if requested is not None and not isinstance(requested, str):
+        return json_error(400, error="invalid arch", detail="arch must be a string")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                payload = journal.journaled_scan(
+                    conn,
+                    log,
+                    binary_id,
+                    store.SCAN_KIND_FLIRT,
+                    lambda: flirt_sigs.run_flirt(conn, binary_id=binary_id, arch=requested or ""),
+                )
+            except flirt_sigs.FlirtError as exc:
+                return json_error(400, error=exc.code, detail=exc.detail)
+    return json_response({"binary_id": binary_id, **payload})
+
+
+@router.get("/api/binaries/{binary_id}/flirt")
+def get_binary_flirt(binary_id: int) -> Response:
+    """The stored signature reading of one binary, without re-matching it."""
+    with contextlib.closing(_open()) as conn:
+        if store.get_binary(conn, binary_id) is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        payload = flirt_sigs.stored_reading(conn, binary_id)
+    if payload is None:
+        return json_error(
+            404,
+            error="no-flirt-scan",
+            detail=f"binary {binary_id} has no stored signature reading",
+        )
+    return json_response({"binary_id": binary_id, **payload})
+
+
+@router.post("/api/binaries/{binary_id}/flirt/apply")
+def apply_binary_flirt(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Rename one function to a matched library symbol, recording the change.
+
+    The name comes from the caller rather than the stored reading: the matcher
+    reports symbols, not addresses, so which function carries which symbol is
+    the caller's knowledge and is not invented here.
+    """
+    function_id = _require_int(body, "function_id")
+    name = _require_str(body, "name")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                change = journal.journaled_name_change(
+                    conn,
+                    log,
+                    function_id,
+                    lambda: flirt_sigs.apply_proposal(
+                        conn, function_id=function_id, new_name=name
+                    ),
+                )
+            except KeyError:
+                return json_error(
+                    404, error="function not found", detail=f"no function with id {function_id}"
+                )
+            except flirt_sigs.ManualNameError as exc:
+                return json_error(400, error="manual-name", detail=str(exc))
+            except ValueError as exc:
+                return json_error(400, error="invalid name", detail=str(exc))
+            function = store.get_function(conn, function_id)
+    return json_response({**change, "function": function})

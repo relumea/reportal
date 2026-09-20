@@ -53,6 +53,7 @@ class TestRegistry:
         names = [worker.name for worker in auto_workers.workers()]
         assert auto_workers.WORKER_OFFLINE in names
         assert auto_workers.WORKER_LLM_C_SOURCE in names
+        assert auto_workers.WORKER_LLM_GOAL in names
 
     def test_get_worker_resolves_by_name(self) -> None:
         worker = auto_workers.get_worker(auto_workers.WORKER_OFFLINE)

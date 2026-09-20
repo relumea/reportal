@@ -16,9 +16,16 @@ import type { Params, RouteObject } from "react-router";
 import { api } from "./api";
 import { ErrorNote, Loading } from "./components";
 import {
+  clickFocusedRowAction,
+  clickFocusedSave,
   cycleViewSection,
+  discardFocusedTypeEdit,
+  focusMemoryGoto,
+  focusPanel,
   focusViewFilter,
+  focusViewFilters,
   installShortcuts,
+  jumpTableRow,
   moveTableRow,
   registerShortcut,
 } from "./keys";
@@ -143,8 +150,8 @@ class ViewLoadBoundary extends Component<
 
 // The `g` prefix jumps to a sidebar view: its initial where that is unique,
 // otherwise a letter from the word (`g o` for Auto-mode, `g n` for
-// Conversations, `g p` for Components).  Every key names a control that exists,
-// the sidebar link to that view.
+// Conversations, `g p` for Components, `g y` for Billing).  Every key names a
+// control that exists, the sidebar link to that view.
 const NAV_JUMPS: ReadonlyArray<readonly [string, NavView]> = [
   ["d", "dashboard"],
   ["s", "search"],
@@ -166,6 +173,7 @@ const NAV_JUMPS: ReadonlyArray<readonly [string, NavView]> = [
   ["u", "users"],
   ["q", "jobs"],
   ["l", "models"],
+  ["y", "billing"],
 ];
 
 /** What a matched route contributes to the shell: the sidebar section it
@@ -195,6 +203,21 @@ function FunctionsRoute({ onOpenMatches }: { onOpenMatches: (id: number) => void
       query={Object.fromEntries(params)}
       onOpenMatches={onOpenMatches}
     />
+  );
+}
+
+function MatchesRoute({
+  functionId,
+  onSelectFunction,
+}: {
+  functionId: number | null;
+  onSelectFunction: (functionId: number | null) => void;
+}): ReactNode {
+  const [params] = useSearchParams();
+  const fromQuery = Number(params.get("function"));
+  const queried = Number.isFinite(fromQuery) && fromQuery > 0 ? fromQuery : null;
+  return (
+    <MatchesView functionId={queried ?? functionId} onSelectFunction={onSelectFunction} />
   );
 }
 
@@ -404,6 +427,61 @@ export function App(): ReactNode {
         }),
       ),
       registerShortcut({
+        combo: "o",
+        scope: "view",
+        description: "Jump to Overview",
+        handler: () => focusPanel("Binary details"),
+      }),
+      registerShortcut({
+        combo: "f",
+        scope: "view",
+        description: "Jump to Functions",
+        handler: () => {
+          const match = window.location.hash.match(/#\/binaries\/(\d+)/);
+          navigate(match ? `/binaries/${match[1]}/functions` : "/functions");
+        },
+      }),
+      registerShortcut({
+        combo: "d",
+        scope: "view",
+        description: "Jump to Match / Diff",
+        handler: () => {
+          if (!focusPanel("Matches")) navigate("/matches");
+        },
+      }),
+      registerShortcut({
+        combo: "t",
+        scope: "view",
+        description: "Jump to Data Types",
+        handler: () => focusPanel("Data types"),
+      }),
+      registerShortcut({
+        combo: "s",
+        scope: "view",
+        description: "Jump to Sandbox",
+        handler: () => focusPanel("Sandbox"),
+      }),
+      registerShortcut({
+        combo: "a",
+        scope: "view",
+        description: "Jump to Agents",
+        handler: () => {
+          if (!focusPanel("Conversations")) navigate("/conversations");
+        },
+      }),
+      registerShortcut({
+        combo: "m",
+        scope: "view",
+        description: "Jump to Memory",
+        handler: () => focusPanel("Memory"),
+      }),
+      registerShortcut({
+        combo: "shift+g",
+        scope: "view",
+        description: "Focus the memory address box",
+        handler: () => focusMemoryGoto(),
+      }),
+      registerShortcut({
         combo: "j",
         scope: "view",
         description: "Focus the next row of the view's table",
@@ -416,10 +494,48 @@ export function App(): ReactNode {
         handler: () => moveTableRow(-1),
       }),
       registerShortcut({
+        combo: "shift+j",
+        scope: "view",
+        description: "Focus the last row of the view's table",
+        handler: () => jumpTableRow(true),
+      }),
+      registerShortcut({
+        combo: "shift+k",
+        scope: "view",
+        description: "Focus the first row of the view's table",
+        handler: () => jumpTableRow(false),
+      }),
+      registerShortcut({
+        combo: "r",
+        scope: "view",
+        description: "Rename the focused function",
+        handler: () => clickFocusedRowAction("Rename"),
+      }),
+      registerShortcut({
         combo: "/",
         scope: "view",
         description: "Focus the view's filter box",
         handler: () => focusViewFilter(),
+      }),
+      registerShortcut({
+        combo: "p",
+        scope: "view",
+        description: "Focus the view's filters",
+        handler: () => focusViewFilters(),
+      }),
+      registerShortcut({
+        combo: "mod+enter",
+        scope: "view",
+        description: "Save the focused type",
+        whenTyping: true,
+        handler: () => clickFocusedSave(),
+      }),
+      registerShortcut({
+        combo: "escape",
+        scope: "view",
+        description: "Discard the focused type edit",
+        whenTyping: true,
+        handler: () => discardFocusedTypeEdit(),
       }),
       registerShortcut({
         combo: "[",
@@ -434,9 +550,9 @@ export function App(): ReactNode {
         handler: () => cycleViewSection(1),
       }),
       registerShortcut({
-        combo: "Space",
+        combo: "space",
         scope: "view",
-        description: "Toggle Disassembly and Control flow",
+        description: "Toggle Disassembly and Control flow or AI decompilation",
         handler: () => toggleFunctionCodeView(),
       }),
       registerShortcut({
@@ -453,6 +569,18 @@ export function App(): ReactNode {
       }),
       registerShortcut({
         combo: "alt+arrowright",
+        scope: "global",
+        description: "Go forward in this tab's view history",
+        handler: () => stepHistory(1),
+      }),
+      registerShortcut({
+        combo: "{",
+        scope: "global",
+        description: "Go back in this tab's view history",
+        handler: () => stepHistory(-1),
+      }),
+      registerShortcut({
+        combo: "}",
         scope: "global",
         description: "Go forward in this tab's view history",
         handler: () => stepHistory(1),
@@ -521,7 +649,10 @@ export function App(): ReactNode {
     {
       path: "/matches",
       element: (
-        <MatchesView functionId={selectedFunctionId} onSelectFunction={setSelectedFunctionId} />
+        <MatchesRoute
+          functionId={selectedFunctionId}
+          onSelectFunction={setSelectedFunctionId}
+        />
       ),
       handle: { view: "matches", title: "Matches" },
     },

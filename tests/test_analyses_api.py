@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import analysis_log, auth, journal, store
+from reportal import analysis_log, auth, jobs, journal, store
 
 
 def _seed(conn: sqlite3.Connection) -> dict[str, int]:
@@ -253,6 +253,7 @@ class TestRequeue:
         assert status.startswith("200")
         assert payload["status"] == "pending"
         assert payload["finished_at"] is None
+        assert payload["jobs"] == []
         entries, _ = analysis_log.list_entries(conn, ids["analysis"])
         assert "requeued" in str(entries[0]["message"])
         journal.revert_action(conn, payload["journal_action"])
@@ -268,6 +269,23 @@ class TestRequeue:
 
         assert status.startswith("404")
         assert payload["error"] == "analysis not found"
+
+    def test_it_queues_stored_scans_that_have_a_job_kind(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.set_scan(conn, ids["analysis"], store.SCAN_KIND_FILETYPE, {"count": 1})
+        store.set_scan(conn, ids["analysis"], store.SCAN_KIND_TRIAGE, {"ok": True})
+        store.set_scan(conn, ids["analysis"], store.SCAN_KIND_UNPACK, {"ok": True})
+        store.update_analysis_status(conn, ids["analysis"], status="done")
+
+        status, payload = _send("POST", f"/api/analyses/{ids['analysis']}/requeue")
+
+        assert status.startswith("200")
+        assert [job["kind"] for job in payload["jobs"]] == ["triage", "filetype"]
+        listed, _ = jobs.list_jobs(conn, binary_id=ids["binary"])
+        assert [job["kind"] for job in listed] == ["filetype", "triage"]
+        journal.revert_action(conn, payload["journal_action"])
+        leftover, _ = jobs.list_jobs(conn, binary_id=ids["binary"])
+        assert leftover == []
 
 
 class TestTags:

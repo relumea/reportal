@@ -2,8 +2,9 @@
 """Copy the repository manual into ``src/reportal/manual`` for the wheel.
 
 ``docs.py`` resolves an installed wheel's in-app manual from this directory.
-The repository's ``docs/*.md`` and ``CHANGELOG.md`` stay the source of truth;
-this step mirrors them into the package tree so ``package-data`` can ship them.
+The repository's ``docs/`` tree and ``CHANGELOG.md`` stay the source of truth;
+this step mirrors them, subdirectories included, into the package tree so
+``package-data`` can ship them.
 """
 
 from __future__ import annotations
@@ -28,9 +29,11 @@ def sync(dest: Path = DEST, docs_src: Path = DOCS_SRC, changelog: Path = CHANGEL
     if not docs_src.is_dir():
         sys.stderr.write(f"no documentation directory at {docs_src}\n")
         return -1
-    wanted: dict[str, Path] = {
-        path.name: path for path in sorted(docs_src.glob("*.md")) if path.is_file()
-    }
+    wanted: dict[str, Path] = {}
+    for pattern in ("*.md", "*/*.md"):
+        for path in sorted(docs_src.glob(pattern)):
+            if path.is_file():
+                wanted[path.relative_to(docs_src).as_posix()] = path
     if changelog.is_file():
         wanted[changelog.name] = changelog
     required = [f"{stem}.md" for stem in PAGE_ORDER]
@@ -46,16 +49,21 @@ def sync(dest: Path = DEST, docs_src: Path = DOCS_SRC, changelog: Path = CHANGEL
     written = 0
     for name, source in wanted.items():
         target = dest / name
+        target.parent.mkdir(parents=True, exist_ok=True)
         payload = source.read_bytes()
         if target.is_file() and target.read_bytes() == payload:
             continue
         target.write_bytes(payload)
         written += 1
         sys.stdout.write(f"{name}\n")
-    for stale in dest.glob("*.md"):
-        if stale.name not in wanted:
-            stale.unlink()
-            sys.stdout.write(f"removed stale {stale.name}\n")
+    for pattern in ("*.md", "*/*.md"):
+        for stale in sorted(dest.glob(pattern)):
+            if stale.relative_to(dest).as_posix() not in wanted:
+                stale.unlink()
+                sys.stdout.write(f"removed stale {stale.relative_to(dest).as_posix()}\n")
+    for directory in sorted(dest.glob("*/")):
+        if directory.is_dir() and not any(directory.iterdir()):
+            directory.rmdir()
     return written
 
 

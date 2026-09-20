@@ -23,19 +23,28 @@ test("a file-offset read renders the window's own bytes", async ({ page }) => {
   // A read needs an address, and the refusal is visible on the control.
   const read = memory.getByRole("button", { name: "Read" });
   await expect(read).toBeDisabled();
+  await expect(memory.getByLabel("Address", { exact: true })).toHaveAttribute(
+    "placeholder",
+    /^0x[0-9a-f]+$/i,
+  );
   await expect(read).toHaveAttribute("title", /address is required/i);
   await expect(memory.getByText("Enter an address")).toBeVisible();
 
   await memory.getByRole("combobox", { name: "Kind", exact: true }).selectOption("file");
   await memory.getByLabel("Address", { exact: true }).fill("0");
   await memory.getByLabel("Length", { exact: true }).fill("16");
-  await read.click();
+  await memory.getByLabel("Address", { exact: true }).press("Enter");
 
   // Offset 0 of a PE is its DOS header, so the window starts with the MZ magic
   // and its gutter reads as text.  The grid is the only place those appear.
   const grid = memory.locator("table.data-table");
+  await expect(grid.getByRole("columnheader", { name: "Offset" })).toBeVisible();
+  await expect(grid.getByRole("columnheader", { name: "Virtual" })).toBeVisible();
   await expect(grid.getByText("4d 5a", { exact: false })).toBeVisible();
   await expect(grid.getByText("MZ", { exact: false })).toBeVisible();
+  await expect(grid.locator(".byte-zero").first()).toBeVisible();
+  await memory.getByLabel("Address", { exact: true }).press("Escape");
+  await expect(memory.getByLabel("Address", { exact: true })).toHaveValue("");
 });
 
 test("filtering the type list narrows it and counts stay exact", async ({ page }) => {
@@ -56,6 +65,70 @@ test("filtering the type list narrows it and counts stay exact", async ({ page }
   await expect(types.getByText("No type matches", { exact: false })).toBeVisible();
 });
 
+test("the binary header name is click-to-rename", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await expect(page.getByRole("link", { name: "Download", exact: true })).toHaveAttribute(
+    "href",
+    `/api/binaries/${state.ids.binary_id}/download`,
+  );
+  await expect(page.getByRole("link", { name: "PDF", exact: true })).toHaveAttribute(
+    "href",
+    `/api/binaries/${state.ids.binary_id}/report/pdf`,
+  );
+  await expect(page.getByRole("link", { name: "Symbols", exact: true })).toHaveAttribute(
+    "href",
+    `/api/binaries/${state.ids.binary_id}/symbols/export`,
+  );
+  await expect(page.getByLabel("scope of notepad.exe")).toHaveValue("public");
+  await expect(page.locator(".detail-facts").first()).toContainText(/\d{2}:\d{2}/);
+  await page.getByRole("button", { name: "Tags", exact: true }).click();
+  await expect(page.locator("#content section.panel:focus")).toContainText("Tags");
+  const nameButton = page.getByRole("button", { name: "notepad.exe", exact: true });
+  await nameButton.click();
+  const input = page.getByLabel("Binary name");
+  await expect(input).toHaveValue("notepad.exe");
+  await input.fill("should-not-stick");
+  await input.press("Escape");
+  await expect(page.getByRole("button", { name: "notepad.exe", exact: true })).toBeVisible();
+});
+
+test("the function header name is click-to-rename", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const nameButton = page.getByRole("button", { name: state.function_name, exact: true });
+  await nameButton.click();
+  const input = page.getByLabel("Function name");
+  await expect(input).toHaveValue(state.function_name);
+  await input.fill("should-not-stick");
+  await input.press("Escape");
+  await expect(
+    page.getByRole("button", { name: state.function_name, exact: true }),
+  ).toBeVisible();
+});
+
+test("the function header signature shows its breakdown", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await expect(page.locator(".sig-hover")).toContainText("smokeArg");
+  await expect(page.locator(".sig-hover").getByRole("link", { name: "WIN_DWORD" })).toHaveAttribute(
+    "href",
+    /search=WIN_DWORD/,
+  );
+});
+
+test("function matches opens the matching view", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const matches = panelByTitle(page, "Matches");
+  await expect(matches.getByRole("columnheader", { name: "Signature" })).toBeVisible();
+  const link = matches.getByRole("link", { name: "View function matching" });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute(
+    "href",
+    `#/matches?function=${state.ids.function_id}`,
+  );
+  await link.click();
+  await expect(page).toHaveURL(`/#/matches?function=${state.ids.function_id}`);
+  await expect(page.getByText(/\d+ candidates? recorded/)).toBeVisible();
+});
+
 test("the cross-references panel scans on demand and renders what the engine found", async ({
   page,
 }) => {
@@ -71,6 +144,82 @@ test("the cross-references panel scans on demand and renders what the engine fou
   // empty state, and the fixture's guard already fails the test on a refusal.
   await expect(xrefs.locator("table, .empty-state")).toBeVisible();
   await expect(xrefs.getByRole("alert")).toHaveCount(0);
+});
+
+test("function globals link Memory and the function list", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const globals = page
+    .locator(".panel")
+    .filter({ has: page.getByRole("button", { name: "Load references" }) })
+    .first();
+  await globals.getByRole("button", { name: "Load references" }).click();
+  const table = globals.locator("table.data-table");
+  await expect(table.or(globals.locator(".empty-state"))).toBeVisible();
+  if ((await table.count()) === 0) return;
+  await expect(table.locator("a[href*='memory=']").first()).toBeVisible();
+  await expect(table.locator(".copy-row").first()).toBeVisible();
+  await expect(table.getByRole("link", { name: "Filter functions" }).first()).toBeVisible();
+});
+
+test("function callers names link a function", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const callers = page
+    .locator(".panel")
+    .filter({ has: page.getByRole("heading", { name: /^Callers / }) });
+  await callers.getByRole("button", { name: "Load references" }).click();
+  const table = callers.locator("table.data-table");
+  await expect(table.or(callers.locator(".empty-state"))).toBeVisible();
+  if ((await table.count()) === 0) return;
+  await expect(table.locator("a[href^='#/functions/']").first()).toBeVisible();
+});
+
+test("composition analysis opens the matching view", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const composition = panelByTitle(page, "Composition analysis");
+  const link = composition.getByRole("link", { name: "Open matching view" });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", /#\/matches\?function=\d+/);
+  const topBinary = composition.locator("table.data-table a[href^='#/binaries/']").first();
+  await expect(topBinary).toBeVisible();
+  await expect(composition.getByRole("heading", { name: "Categories" })).toBeVisible();
+  const scopeMatch = composition.getByRole("link", { name: "Scope matching" });
+  await expect(scopeMatch.first()).toHaveAttribute(
+    "href",
+    /#\/matches\?function=\d+&binary_ids=\d+/,
+  );
+  await expect(scopeMatch).not.toHaveCount(0);
+  const sourceFilter = composition.locator("a.meter-link[href*='name_source=']").first();
+  await expect(sourceFilter).toBeVisible();
+  const quality = composition.locator("button.meter-link").first();
+  await quality.click();
+  await expect(quality).toHaveAttribute("data-selected", "true");
+  const tagLink = composition.locator("a[href^='#/binaries?tag=']").first();
+  await expect(tagLink).toBeVisible();
+  await expect(sourceFilter).toHaveAttribute(
+    "href",
+    new RegExp(`#/binaries/${state.ids.binary_id}/functions\\?name_source=`),
+  );
+  await link.click();
+  await expect(page).toHaveURL(/#\/matches\?function=/);
+  await expect(page.getByText(/\d+ candidates? recorded/)).toBeVisible();
+});
+
+test("the binary details entry point links to a function", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const details = panelByTitle(page, "Binary details");
+  const link = details.getByTitle("Open the function at this address");
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", /#\/(functions\/\d+|binaries\/\d+\/functions\?va=)/);
+  await expect(page.getByRole("heading", { name: /^Sections \d+$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Security mitigations \d+\/\d+$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Relocations \d+$/ })).toBeVisible();
+  const imports = page
+    .locator(".panel")
+    .filter({ has: page.getByRole("heading", { name: /^Imports / }) });
+  await imports.locator("button.panel-fold").click();
+  await imports.getByRole("button", { name: "Load imports" }).click();
+  const importLink = imports.locator("table.data-table a[href*='functions?name=']").first();
+  await expect(importLink).toBeVisible({ timeout: 60_000 });
 });
 
 test("the scans panel lists the stored scans and the inputs they ran with", async ({ page }) => {

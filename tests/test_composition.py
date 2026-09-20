@@ -442,6 +442,13 @@ class TestCategories:
             {"binary_id": right, "name": "right.exe", "count": 1}
         ]
 
+    def test_tags_come_from_the_matched_binaries(self, conn: sqlite3.Connection) -> None:
+        left, right, _source = _matched_pair(conn)
+        tag_id = store.create_tag(conn, "library")
+        store.add_binary_tag(conn, right, tag_id)
+        payload = composition.compute_composition(conn, binary_id=left)
+        assert payload["tags"] == [{"id": tag_id, "name": "library", "count": 1}]
+
 
 class TestCompositionScope:
     """The candidate scope the hosted settings sheet offers (entry 15)."""

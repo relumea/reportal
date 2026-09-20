@@ -36,6 +36,8 @@ test("Ctrl+K opens the modal and Enter opens the highlighted hit", async ({ page
   await page.keyboard.type("Notepad");
   const row = hit(page, "binary").filter({ hasText: "notepad.exe" }).first();
   await expect(row).toBeVisible();
+  await expect(row.locator(".copy-row")).toBeVisible();
+  await expect(row.getByText(/T\d{2}:\d{2}/)).toBeVisible();
   await expect(row).toHaveAttribute("aria-selected", "true");
 
   await page.keyboard.press("Enter");
@@ -95,6 +97,13 @@ test("Tab cycles the query type and keeps the focus trapped", async ({ page }) =
   await page.keyboard.press("Shift+Tab");
   await expect(all).toHaveAttribute("aria-selected", "true");
   expect(await page.evaluate<boolean>(INPUT_FOCUSED)).toBe(true);
+});
+
+test("a 64-character hex paste selects the SHA-256 query type", async ({ page }) => {
+  await page.goto("/#/binaries");
+  await openModal(page);
+  await page.keyboard.insertText("a".repeat(64));
+  await expect(page.getByRole("tab", { name: "SHA-256" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("the arrow keys move the highlight and the tag query narrows the results", async ({ page }) => {

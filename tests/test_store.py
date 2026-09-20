@@ -163,6 +163,25 @@ class TestBinaries:
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("an unknown order must be refused")
 
+    def test_the_register_pages_and_bounds_its_page(self, conn: sqlite3.Connection) -> None:
+        for index in range(5):
+            store.add_binary(conn, sha256=f"{index:064x}", name=f"sample-{index}.exe")
+
+        page = store.list_binaries(conn, limit=2, offset=2)
+        assert [row["name"] for row in page] == ["sample-2.exe", "sample-3.exe"]
+        # Two pages of one filter set do not repeat a row.
+        first = store.list_binaries(conn, limit=3)
+        second = store.list_binaries(conn, limit=3, offset=3)
+        assert [row["id"] for row in first] + [row["id"] for row in second] == [
+            row["id"] for row in store.list_binaries(conn)
+        ]
+
+        for bad_limit in (0, store.MAX_BINARY_LIMIT + 1):
+            with pytest.raises(ValueError):
+                store.list_binaries(conn, limit=bad_limit)
+        with pytest.raises(ValueError):
+            store.list_binaries(conn, offset=-1)
+
     def test_the_format_facet_names_what_the_register_holds(self, conn: sqlite3.Connection) -> None:
         store.add_binary(conn, sha256="aa" * 32, name="a.exe", fmt="PE")
         store.add_binary(conn, sha256="bb" * 32, name="b.exe", fmt="ELF")

@@ -35,7 +35,7 @@ under the hyphenated heading.
 - Debug symbols: [symbols-unreadable](#symbols-unreadable), [no-symbols](#no-symbols)
 - Go binaries: [not-go](#not-go), [unreadable](#unreadable)
 - Agent artifacts: [no-artifact](#no-artifact)
-- Stored-only reads: [no-scan](#no-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
+- Stored-only reads: [no-scan](#no-scan), [no-flirt-scan](#no-flirt-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [no-signature-dir](#no-signature-dir), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
 - Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
 - Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [mcp-unavailable](#mcp-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
 - Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
@@ -456,6 +456,19 @@ known resource. Check the path; the API's routes are listed in `docs/API.md`.
 the matching POST (or the CLI command `detail` names) first; reportal never runs
 an engine on a read.
 
+### no-flirt-scan
+
+`404`. The route serves a binary's stored FLIRT signature matches and it has
+none yet. `POST /api/binaries/<id>/flirt` matches it once; every later read is
+served from the cache under the signature library's key.
+
+### no-signature-dir
+
+`400`. A FLIRT route needs the indexed signature catalog and the install
+configured no checkout. Set `REPORTAL_FLIRT_SIGS_DIR` to a signature checkout
+and `POST /api/flirt/sigsets/refresh`; that variable is the only path the
+indexer reads.
+
 ### no-artifact
 
 `404`. The route serves a stored AI artifact or detection artifact and none is
@@ -784,7 +797,9 @@ send the token `reportal user-add` or `reportal user-token` printed:
 
 `403`. The token is valid but its role does not carry the permission the request
 needs: a `viewer` may only read, an `analyst` may read and write, and the user
-table is `admin` only. Ask an operator for a role with `reportal user-edit
+table is `admin` only. A named key minted `read_only` is the same status on
+HTTP writes and `/mcp` (`this API key is read-only`); the login token is never
+read-only. Ask an operator for a role with `reportal user-edit
 <id> --role analyst`. The secret store reports the same status as `secret
 forbidden` when the role is not enough: a workspace secret needs an admin, and a
 team secret needs that team's membership (or an admin).
@@ -798,7 +813,8 @@ update with neither `role` nor `disabled`. Roles are `viewer`, `analyst` and
 ### invalid-api-key
 
 `400` (`invalid-api-key`). A named extra key was missing `name`, blank after
-strip, oversized, or already used by this user. Send a unique label.
+strip, oversized, or already used by this user (mint or rename). Send a unique
+label.
 
 ### api-key-not-found
 

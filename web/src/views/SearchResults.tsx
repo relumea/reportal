@@ -10,7 +10,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import { hex } from "../components";
+import { CopyValue, hex } from "../components";
 import type {
   SearchBinaryRow,
   SearchCollectionRow,
@@ -76,10 +76,11 @@ function hitMeta(hit: SearchHit): ReactNode {
     return (
       <>
         <span className="search-row-kind">{hitKindLabel(hit)}</span>
-        <span title={hit.row.sha256}>{hit.row.sha256.slice(0, 16)}</span>
+        <CopyValue value={hit.row.sha256} compact />
         <span>{hit.row.size.toLocaleString()} B</span>
         <span>{[hit.row.format, hit.row.arch].filter(Boolean).join(" / ") || "n/a"}</span>
         {_tags(hit.row.tags)}
+        <span className="muted">{hit.row.created_at}</span>
         <span className="muted">matched {hit.row.match}</span>
       </>
     );
@@ -90,6 +91,7 @@ function hitMeta(hit: SearchHit): ReactNode {
         <span className="search-row-kind">{hitKindLabel(hit)}</span>
         <span>{hit.row.binary_count} binaries</span>
         {_tags([hit.row.description].filter(Boolean))}
+        <span className="muted">{hit.row.created_at}</span>
         <span className="muted">matched {hit.row.match}</span>
       </>
     );

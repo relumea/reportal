@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import zipfile
 from collections.abc import Iterator
@@ -49,8 +50,11 @@ runner = CliRunner()
 def _isolate_live_state() -> Iterator[None]:
     """Drop the process-wide live composition around each test."""
     pipeline.reset_live_state()
+    log = logging.getLogger("reportal")
+    previous = log.level
     yield
     pipeline.reset_live_state()
+    log.setLevel(previous)
 
 
 def _drop_action(payload: dict[str, Any]) -> dict[str, Any]:
@@ -299,6 +303,7 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "add_user",
         "rotate_user_token",
         "create_api_key",
+        "rename_api_key",
         "revoke_api_key",
         "update_user",
         "delete_user",
@@ -493,9 +498,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 261
+        assert len(names) == 262
         assert len(_READ_ONLY_TOOLS) == 122
-        assert len(_DESTRUCTIVE_TOOLS) == 139
+        assert len(_DESTRUCTIVE_TOOLS) == 140
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
@@ -643,6 +648,12 @@ class TestProtocol:
             "version": __version__,
         }
         assert result["capabilities"]["tools"] == {"listChanged": False}
+        assert result["capabilities"]["logging"] == {}
+
+    def test_logging_set_level_sets_the_reportal_logger(self) -> None:
+        (reply,) = protocol([_request(1, "logging/setLevel", {"level": "debug"})], responses=1)
+        assert reply["result"] == {}
+        assert logging.getLogger("reportal").level == logging.DEBUG
 
     def test_the_initialized_notification_has_no_reply(self) -> None:
         replies = protocol(
@@ -2958,6 +2969,7 @@ class TestHttp:
             "title": "reportal",
             "version": __version__,
         }
+        assert result["capabilities"]["logging"] == {}
 
     def test_a_missing_lifespan_is_503(self, portal_db: Path) -> None:
         from conftest import json_body, wsgi_request

@@ -32,12 +32,30 @@ GOOGLE_KEY = "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY"
 GOOGLE_KEY_SHORT = "AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBW"
 GITHUB_TOKEN = "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
 GITHUB_TOKEN_SHORT = "ghp_1234567890abcdefghijklmnopqrstuvwxy"
+GITHUB_PAT = "github_pat_" + "A" * 22
+GITHUB_PAT_SHORT = "github_pat_" + "A" * 21
 SLACK_TOKEN = "xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuvwxyz"
 SLACK_TOKEN_MISS = "xoxz-123456789012-1234567890123"
 STRIPE_KEY = "sk_live_51H8Q2eKZabcdefghijklmnop"
 STRIPE_KEY_SHORT = "sk_live_short"
 OPENAI_KEY = "sk-proj-abcdefghijklmnopqrstuvwxyz012345"
 OPENAI_KEY_SHORT = "sk-short"
+ANTHROPIC_KEY = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345"
+ANTHROPIC_KEY_SHORT = "sk-ant-short"
+DISCORD_TOKEN = "MTIzNDU2Nzg5MDEyMzQ1Njc4.Gabcde.abcdefghijklmnopqrstuvwxyz012"
+DISCORD_TOKEN_MISS = "XTIzNDU2Nzg5MDEyMzQ1Njc4.Gabcde.abcdefghijklmnopqrstuvwxyz012"
+TELEGRAM_TOKEN = "123456789:AAEabcdefghijklmnopqrstuvwxyz012345"
+TELEGRAM_TOKEN_MISS = "123456789:BBabcdefghijklmnopqrstuvwxyz012345"
+NPM_TOKEN = "npm_abcdefghijklmnopqrstuvwxyz0123456789"
+NPM_TOKEN_SHORT = "npm_abcdefghijklmnopqrstuvwxyz012345678"
+GITLAB_TOKEN = "glpat-abcdefghijklmnopqrst"
+GITLAB_TOKEN_SHORT = "glpat-abcdefghijklmnopqrs"
+HF_TOKEN = "hf_" + "a" * 34
+HF_TOKEN_SHORT = "hf_" + "a" * 33
+SENDGRID_KEY = "SG." + "A" * 22 + "." + "B" * 43
+SENDGRID_KEY_MISS = "SG." + "A" * 22 + "." + "B" * 20
+TWILIO_SID = "AC" + "a" * 32
+TWILIO_SID_MISS = "AC" + "A" * 32
 JWT = (
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0."
     "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
@@ -64,9 +82,18 @@ POSITIVE_CASES = [
     ("aws-secret-access-key", AWS_SECRET_ASSIGNMENT, AWS_SECRET),
     ("google-api-key", GOOGLE_KEY, GOOGLE_KEY),
     ("github-token", GITHUB_TOKEN, GITHUB_TOKEN),
+    ("github-token", GITHUB_PAT, GITHUB_PAT),
     ("slack-token", SLACK_TOKEN, SLACK_TOKEN),
     ("stripe-key", STRIPE_KEY, STRIPE_KEY),
     ("openai-api-key", OPENAI_KEY, OPENAI_KEY),
+    ("anthropic-api-key", ANTHROPIC_KEY, ANTHROPIC_KEY),
+    ("discord-bot-token", DISCORD_TOKEN, DISCORD_TOKEN),
+    ("telegram-bot-token", TELEGRAM_TOKEN, TELEGRAM_TOKEN),
+    ("npm-token", NPM_TOKEN, NPM_TOKEN),
+    ("gitlab-token", GITLAB_TOKEN, GITLAB_TOKEN),
+    ("huggingface-token", HF_TOKEN, HF_TOKEN),
+    ("sendgrid-key", SENDGRID_KEY, SENDGRID_KEY),
+    ("twilio-account-sid", TWILIO_SID, TWILIO_SID),
     ("jwt", JWT, JWT),
     ("pem-private-key", PEM_KEY, PEM_KEY),
     ("connection-string", CONNECTION_STRING, CONNECTION_PASSWORD),
@@ -78,9 +105,18 @@ NEGATIVE_CASES = [
     ("aws-secret-access-key", BARE_BASE64),
     ("google-api-key", GOOGLE_KEY_SHORT),
     ("github-token", GITHUB_TOKEN_SHORT),
+    ("github-token", GITHUB_PAT_SHORT),
     ("slack-token", SLACK_TOKEN_MISS),
     ("stripe-key", STRIPE_KEY_SHORT),
     ("openai-api-key", OPENAI_KEY_SHORT),
+    ("anthropic-api-key", ANTHROPIC_KEY_SHORT),
+    ("discord-bot-token", DISCORD_TOKEN_MISS),
+    ("telegram-bot-token", TELEGRAM_TOKEN_MISS),
+    ("npm-token", NPM_TOKEN_SHORT),
+    ("gitlab-token", GITLAB_TOKEN_SHORT),
+    ("huggingface-token", HF_TOKEN_SHORT),
+    ("sendgrid-key", SENDGRID_KEY_MISS),
+    ("twilio-account-sid", TWILIO_SID_MISS),
     ("jwt", JWT_TWO_PARTS),
     ("pem-private-key", PEM_KEY_MISS),
     ("connection-string", CONNECTION_STRING_MISS),

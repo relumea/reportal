@@ -159,6 +159,18 @@ class TestPackerSignatures:
         result = filetypes.detect(_evidence(sections=[_section("FSG!")]))
         assert "FSG" in _names(result)
 
+    def test_mew_from_section(self) -> None:
+        result = filetypes.detect(_evidence(sections=[_section("MEW")]))
+        assert "MEW" in _names(result)
+
+    def test_upack_from_section(self) -> None:
+        result = filetypes.detect(_evidence(sections=[_section("UPACK0")]))
+        assert "Upack" in _names(result)
+
+    def test_kkrunchy_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("kkrunchy 0.23a")]))
+        assert _match(result, "kkrunchy")["confidence"] == CONFIDENCE_LOW
+
     def test_pklite_string_only_is_low(self) -> None:
         result = filetypes.detect(_evidence(format="mz", strings=[_string("PKLITE Copr. 1990")]))
         assert _match(result, "PKLITE")["confidence"] == CONFIDENCE_LOW
@@ -203,6 +215,26 @@ class TestProtectorSignatures:
     def test_armadillo_string_only_is_low(self) -> None:
         result = filetypes.detect(_evidence(strings=[_string("Armadillo v1.71")]))
         assert _match(result, "Armadillo")["confidence"] == CONFIDENCE_LOW
+
+    def test_asprotect_from_section(self) -> None:
+        result = filetypes.detect(_evidence(sections=[_section(".aspr1")]))
+        assert "ASProtect" in _names(result)
+
+    def test_confuserex_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("ConfuserEx v1.0")]))
+        assert _match(result, "ConfuserEx")["confidence"] == CONFIDENCE_LOW
+
+    def test_dotnet_reactor_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string(".NET Reactor")]))
+        assert _match(result, ".NET Reactor")["confidence"] == CONFIDENCE_LOW
+
+    def test_smartassembly_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("SmartAssembly")]))
+        assert _match(result, "SmartAssembly")["confidence"] == CONFIDENCE_LOW
+
+    def test_ilprotector_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("ILProtector")]))
+        assert _match(result, "ILProtector")["confidence"] == CONFIDENCE_LOW
 
 
 class TestInstallerSignatures:
@@ -259,6 +291,14 @@ class TestInstallerSignatures:
     def test_installshield_string(self) -> None:
         result = filetypes.detect(_evidence(strings=[_string("InstallShield (R)")]))
         assert "InstallShield" in _names(result)
+
+    def test_sevenzip_sfx_string(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("7-Zip")]))
+        assert "7-Zip SFX" in _names(result)
+
+    def test_wix_string(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("Windows Installer XML")]))
+        assert "WiX" in _names(result)
 
 
 class TestRuntimeSignatures:
@@ -320,6 +360,36 @@ class TestRuntimeSignatures:
     def test_swift_string_only_is_low(self) -> None:
         result = filetypes.detect(_evidence(strings=[_string("libswiftCore.dylib")]))
         assert _match(result, "Swift")["confidence"] == CONFIDENCE_LOW
+
+    def test_pyinstaller_string(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("PyInstaller")]))
+        match = _match(result, "PyInstaller")
+        assert match["category"] == CATEGORY_RUNTIME
+        assert match["confidence"] == CONFIDENCE_LOW
+
+    def test_nuitka_string(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("Nuitka")]))
+        assert _match(result, "Nuitka")["category"] == CATEGORY_RUNTIME
+
+    def test_cx_freeze_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("cx_Freeze")]))
+        assert _match(result, "cx_Freeze")["confidence"] == CONFIDENCE_LOW
+
+    def test_autoit_magic_string(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("AU3!EA06")]))
+        assert _match(result, "AutoIt")["category"] == CATEGORY_RUNTIME
+
+    def test_electron_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("ELECTRON_RUN_AS_NODE")]))
+        assert _match(result, "Electron")["confidence"] == CONFIDENCE_LOW
+
+    def test_nim_string(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("NimMain")]))
+        assert _match(result, "Nim")["category"] == CATEGORY_RUNTIME
+
+    def test_zig_string_only_is_low(self) -> None:
+        result = filetypes.detect(_evidence(strings=[_string("zig_probe_stack")]))
+        assert _match(result, "Zig")["confidence"] == CONFIDENCE_LOW
 
 
 class TestToolchainSignatures:

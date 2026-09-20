@@ -38,6 +38,14 @@ interface RequestOptions {
 
 const API_PREFIX = "/api";
 
+/**
+ * The whole binary register projected to `id` and `name`, which is what a
+ * binary picker renders.  The full register row carries the sha256, the path,
+ * the operator notes and both aggregate counts, so a picker that reads the
+ * whole register pays megabytes of JSON for two columns.
+ */
+export const BINARY_OPTIONS_PATH = "/binaries?summary=true";
+
 /** Where the browser keeps the bearer token an authenticated install needs. */
 const TOKEN_STORAGE_KEY = "reportal.token";
 
