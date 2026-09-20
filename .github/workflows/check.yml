@@ -46,10 +46,17 @@ jobs:
       # java runs vnu.jar and shellcheck is a gate step.  The runner image
       # already carries Google Chrome, which backs the `ui` target's headless
       # smoke and audit; the versions are printed so a missing one fails here
-      # rather than halfway through the gate.
+      # rather than halfway through the gate.  apt mirrors flake; retry the
+      # update a few times before giving up.  DEBIAN_FRONTEND keeps apt from
+      # blocking on an interactive prompt the runner cannot answer.
       - name: Install system tools
         run: |
-          sudo apt-get update
+          export DEBIAN_FRONTEND=noninteractive
+          for attempt in 1 2 3; do
+            sudo apt-get update -y && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
           sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless shellcheck
           java -version
           google-chrome-stable --version
@@ -59,9 +66,20 @@ jobs:
       # `vnu-jar` package is what carries the wrapper and the jar.  Install under
       # the runner home (no root npm) at the release the local gate validates
       # against, so the two agree on the findings, and print the version here.
+      # Cache the prefix install so a warm runner skips the npm download.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.local/lib/node_modules/vnu-jar
+            ~/.local/bin/vnu
+            ~/.npm
+          key: vnu-jar-26.8.21-${{ runner.os }}
+
       - name: Install the VNU HTML/CSS validator
         run: |
-          npm install --prefix "$HOME/.local" -g vnu-jar@26.8.21
+          if [ ! -x "$HOME/.local/bin/vnu" ]; then
+            npm install --prefix "$HOME/.local" -g vnu-jar@26.8.21
+          fi
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/vnu" --version
 
@@ -69,8 +87,18 @@ jobs:
       # extra; both are path sources on sibling checkouts
       # (`[tool.uv.sources]`), so the runner clones them beside the repo.
       # Commits are pinned so a clean CI build does not float on each
-      # sibling's default-branch tip.
+      # sibling's default-branch tip.  Cache the shallow trees keyed on those
+      # pins so a warm runner skips the network fetch.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        id: engines-cache
+        with:
+          path: |
+            ${{ github.workspace }}/../rebrew
+            ${{ github.workspace }}/../resembl
+          key: engines-rebrew-269f25aadaf9ed0e7aa5b3c9f6b03b8a8d696c64-resembl-a66d7ec5bb0c6150a00f4d42663c23d9fcba247b-${{ runner.os }}
+
       - name: Check out the sibling engines
+        if: steps.engines-cache.outputs.cache-hit != 'true'
         run: |
           git init ../rebrew
           git -C ../rebrew remote add origin https://github.com/maci0/rebrew

@@ -22,6 +22,8 @@ User=reportal
 Group=reportal
 WorkingDirectory=/srv/reportal
 UMask=0077
+Environment=PYTHONUNBUFFERED=1
+LimitCORE=0
 # %%F is systemd's escape for date(1) %F (YYYY-MM-DD).  -u pins the name to the
 # UTC calendar day so a host TZ cannot rename or overwrite across a local-midnight
 # boundary (matches OnCalendar=... UTC on the timer).
@@ -33,6 +35,7 @@ IOSchedulingPriority=7
 MemoryMax=1G
 TasksMax=64
 TimeoutStartSec=30min
+SyslogIdentifier=reportal-backup
 
 NoNewPrivileges=true
 PrivateTmp=true

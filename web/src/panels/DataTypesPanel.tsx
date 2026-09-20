@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { api, isApiErrorCode } from "../api";
@@ -186,16 +186,19 @@ export function DataTypesPanel({
   const direction = (SORT_DIRECTIONS as readonly string[]).includes(query.direction ?? "")
     ? (query.direction as string)
     : "asc";
+  const filters: Record<string, string> = {
+    kind,
+    namespace,
+    search,
+    source,
+    sort,
+    direction,
+  };
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
   const apply = (patch: Record<string, string>): void => {
-    const next: Record<string, string> = {
-      kind,
-      namespace,
-      search,
-      source,
-      sort,
-      direction,
-      ...patch,
-    };
+    const next = { ...filtersRef.current, ...patch };
+    filtersRef.current = next;
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(next)) {
       if (value !== "") params.set(key, value);

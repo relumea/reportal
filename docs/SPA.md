@@ -686,7 +686,8 @@ carrying the source and candidate function (both linked), the source
 name-source, the candidate's
 owning binary (linked), the similarity, its band, the confidence and the ISA
 pair (`source_arch` / `candidate_arch`, flagged when they differ).  A function
-with no recorded candidate is a `No match` row.  Clicking a
+with no recorded candidate is a `No match` row.  The list ranks by Show
+Similarity, Show Confidence or Show Difference.  Clicking a
 row (not a control) opens the
 diff.  Match settings opens the sheet the next run uses: the
 0-100 similarity floor, the 0-1 confidence floor, the most candidates kept per
@@ -742,7 +743,8 @@ when a filter is on (the count is how many, and it leaves the search
 text), and a
 page-at-a-time list with a Load more control; its six controls live in the
 route hash, so a filtered and ordered model is a link.  The order is the
-route's (`?sort=&direction=`), and a type whose size the model states as
+route's (`?sort=&direction=`; consecutive writes keep both), and a type
+whose size the model states as
 zero, which is how an unknown one reads, sorts last in either direction.  It
 also carries a declaration box with Create from declarations and
 Update from declarations, posting the pasted C to `POST` or `PUT

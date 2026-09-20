@@ -18,6 +18,7 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
   await expect(page.getByText("Found: 2 matches")).toBeVisible();
   await expect(page.getByText("Matched: 1 / 6 (17%)")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show Similarity", exact: true })).toBeVisible();
   await page.getByRole("button", { name: /System/ }).click();
   await expect(page.getByRole("button", { name: /System/ })).toHaveAttribute(
     "data-selected",

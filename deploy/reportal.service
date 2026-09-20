@@ -27,6 +27,11 @@ Type=simple
 User=reportal
 Group=reportal
 WorkingDirectory=/srv/reportal
+# Unbuffered stdio so a crash or Restart= leaves the last lines in the journal
+# instead of a stdio buffer.  LimitCORE refuses a core dump that would capture
+# tokens and LLM keys the process holds in memory.
+Environment=PYTHONUNBUFFERED=1
+LimitCORE=0
 # Readiness before serving: a missing workspace, an unwritable database, a
 # broken schema or a taken port stops the start instead of serving failures.
 ExecStartPre=/srv/reportal/.venv/bin/reportal doctor
@@ -41,6 +46,7 @@ UMask=0077
 # from a compromised process without constraining normal analysis.
 MemoryMax=4G
 TasksMax=512
+SyslogIdentifier=reportal
 
 # The workspace is read-write; the rest of the host is read-only or hidden.  No
 # MemoryDenyWriteExecute: the engine's decompiler backends may need an

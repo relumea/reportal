@@ -772,7 +772,7 @@ export function MatchesView({
                     size="sm"
                     onClick={() => setMetric(value)}
                   >
-                    {MATCH_METRIC_LABELS[value]}
+                    Show {MATCH_METRIC_LABELS[value]}
                   </Button>
                 ))}
                 <span className="muted">

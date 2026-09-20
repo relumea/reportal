@@ -90,6 +90,8 @@ matter:
 | `KeyringMode=private` | the service cannot use the host keyring |
 | `UMask=0077` | files the service creates are owner-only by default |
 | `MemoryMax=4G`, `TasksMax=512` | hard ceilings so a runaway analysis cannot starve the host |
+| `Environment=PYTHONUNBUFFERED=1` | line-buffered journal so a crash dump is not stuck in a stdio buffer |
+| `LimitCORE=0` | refuse core dumps that would capture tokens and keys held in memory |
 | `StartLimitIntervalSec=60` / `StartLimitBurst=5` | a doctor that keeps failing does not thrash `Restart=on-failure` |
 
 Two deliberate omissions, both stated in the unit's own comments: egress is not
