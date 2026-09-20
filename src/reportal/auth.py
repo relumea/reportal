@@ -632,7 +632,26 @@ def update_user(
 
 
 def delete_user(conn: sqlite3.Connection, user_id: int) -> bool:
-    """Delete one user; False when the id is unknown."""
+    """Delete one user; False when the id is unknown.
+
+    Feedback notes and comments attributed to the user lose their display
+    name before the row goes: ``ON DELETE SET NULL`` clears the foreign key
+    but would otherwise leave the login name in those tables.
+    """
+    if get_user(conn, user_id) is None:
+        return False
+    tables = {
+        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    if "feedback" in tables:
+        conn.execute("UPDATE feedback SET actor = '' WHERE user_id = ?", (user_id,))
+    if "comments" in tables:
+        # Match ``comments.DEFAULT_AUTHOR`` without importing that module (auth
+        # is under every surface; comments already imports store → auth).
+        conn.execute(
+            "UPDATE comments SET author = 'analyst' WHERE author_user_id = ?",
+            (user_id,),
+        )
     cursor = conn.execute(f"DELETE FROM {TABLE} WHERE id = ?", (user_id,))
     conn.commit()
     return cursor.rowcount > 0

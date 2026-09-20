@@ -197,6 +197,31 @@ class TestStore:
         assert auth.rotate_token(conn, 4242) is None
         assert auth.delete_user(conn, 4242) is False
 
+    def test_delete_scrubs_the_login_name_from_attributed_notes(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        user, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        note_id = store.add_feedback(conn, body="please keep", actor="ana", user_id=int(user["id"]))
+        comment = store.add_comment(
+            conn,
+            scope_kind="binary",
+            scope_id=1,
+            author="ana",
+            author_user_id=int(user["id"]),
+            body="a note",
+        )
+
+        assert auth.delete_user(conn, int(user["id"])) is True
+
+        note = store.get_feedback(conn, note_id)
+        assert note is not None
+        assert note["actor"] == ""
+        assert note["user_id"] is None
+        stored = store.get_comment(conn, int(comment["id"]))
+        assert stored is not None
+        assert stored["author"] == "analyst"
+        assert stored["author_user_id"] is None
+
     def test_the_role_permission_sets_are_the_documented_ones(self) -> None:
         assert auth.permissions_for(auth.ROLE_VIEWER) == ("read",)
         assert auth.permissions_for(auth.ROLE_ANALYST) == ("read", "write")

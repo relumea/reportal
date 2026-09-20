@@ -504,3 +504,35 @@ class TestMcp:
             assert exc.error == "invalid since"
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("a bad timestamp must be a tool error")
+
+    def test_an_analyst_only_sees_its_own_activity_and_feedback(
+        self, portal_db: Path, conn: sqlite3.Connection
+    ) -> None:
+        from reportal import mcp_tools
+
+        _log(conn, "ana", 1, "created tag 1")
+        _log(conn, "bob", 2, "created tag 2")
+        ana, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        bob, _ = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        store.add_feedback(conn, body="from ana", actor="ana", user_id=int(ana["id"]))
+        store.add_feedback(conn, body="from bob", actor="bob", user_id=int(bob["id"]))
+
+        activity_tool = mcp_tools.get_tool("get_activity")
+        feedback_tool = mcp_tools.get_tool("list_feedback")
+        assert activity_tool is not None and feedback_tool is not None
+
+        with journal.acting_as("ana", user_id=int(ana["id"])):
+            feed = activity_tool.handler({})
+            notes = feedback_tool.handler({})
+            try:
+                activity_tool.handler({"actor": "bob"})
+            except mcp_tools.ToolError as exc:
+                assert exc.error == auth.ERROR_FORBIDDEN
+            else:  # pragma: no cover - the assertion is the point
+                raise AssertionError("an analyst must not read another actor")
+
+        assert feed["count"] == 1
+        assert feed["items"][0]["actor"] == "ana"
+        assert all(row["actor"] == "ana" for row in feed["actors"])
+        assert notes["total"] == 1
+        assert notes["feedback"][0]["body"] == "from ana"

@@ -418,6 +418,25 @@ def _require_self_or_admin(conn: sqlite3.Connection, user_id: int) -> None:
     raise ToolError(auth.ERROR_FORBIDDEN, auth.FORBIDDEN_DETAIL)
 
 
+def _self_service_actor(
+    conn: sqlite3.Connection, actor: str | None, *, detail: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Force a non-admin MCP caller onto its own actor name.
+
+    Mirrors the HTTP self-service rule on activity and journal listings: auth
+    off (local operator) and admins keep an unfiltered workspace feed; an
+    analyst may not name another actor.  Returns ``(caller, actor)`` with
+    *actor* narrowed when the caller is scoped.
+    """
+    caller = _mcp_caller(conn)
+    if caller is None or str(caller.get("role") or "") == auth.ROLE_ADMIN:
+        return caller, actor
+    own_name = str(caller["name"])
+    if actor is not None and actor != own_name:
+        raise ToolError(auth.ERROR_FORBIDDEN, detail)
+    return caller, own_name
+
+
 def _require_team_manager(conn: sqlite3.Connection, team_id: int) -> None:
     """Refuse when the MCP caller may not manage *team_id* (HTTP invite gate)."""
     if auth.may_manage_team(conn, _mcp_caller(conn), team_id):
@@ -5267,7 +5286,7 @@ def _tool_get_stats_series(arguments: dict[str, Any]) -> dict[str, Any]:
     except analytics.SeriesError as exc:
         raise ToolError("invalid days", exc.detail) from exc
     with contextlib.closing(_open()) as conn:
-        return analytics.series(conn, days=days)
+        return analytics.series(conn, days=days, visible_to=_mcp_caller(conn))
 
 
 def _tool_get_activity(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -5285,8 +5304,16 @@ def _tool_get_activity(arguments: dict[str, Any]) -> dict[str, Any]:
             "invalid limit", f"limit must be between 1 and {activity.MAX_ACTIVITY_LIMIT}"
         )
     with contextlib.closing(_open()) as conn:
-        payload = activity.feed(conn, actor=actor, since=since, limit=limit)
-        payload["actors"] = activity.actors(conn)
+        caller, actor = _self_service_actor(
+            conn, actor, detail="an analyst may only read its own activity"
+        )
+        payload = activity.feed(conn, actor=actor, since=since, limit=limit, visible_to=caller)
+        actors = activity.actors(conn)
+        if caller is not None and str(caller.get("role") or "") != auth.ROLE_ADMIN:
+            own_name = str(caller["name"])
+            payload["actors"] = [row for row in actors if row["actor"] == own_name]
+        else:
+            payload["actors"] = actors
     return payload
 
 
@@ -5295,8 +5322,12 @@ def _tool_list_feedback(arguments: dict[str, Any]) -> dict[str, Any]:
     if limit < 1:
         raise ToolError("invalid limit", "limit must be positive")
     with contextlib.closing(_open()) as conn:
-        notes = store.list_feedback(conn, limit=limit)
-        total = store.count_feedback(conn)
+        caller = _mcp_caller(conn)
+        owner_id: int | None = None
+        if caller is not None and str(caller.get("role") or "") != auth.ROLE_ADMIN:
+            owner_id = int(caller["id"])
+        notes = store.list_feedback(conn, limit=limit, user_id=owner_id)
+        total = store.count_feedback(conn, user_id=owner_id)
     return {"feedback": notes, "count": len(notes), "total": total}
 
 
@@ -5306,9 +5337,13 @@ def _tool_add_feedback(arguments: dict[str, Any]) -> dict[str, Any]:
         contextlib.closing(_open()) as conn,
         journal.journaled(conn, journal.new_action()) as log,
     ):
+        caller = _mcp_caller(conn)
         try:
             feedback_id = store.add_feedback(
-                conn, body=message, actor=journal.current_actor() or journal.LOCAL_ACTOR
+                conn,
+                body=message,
+                actor=journal.current_actor() or journal.LOCAL_ACTOR,
+                user_id=None if caller is None else int(caller["id"]),
             )
         except store.InvalidFeedbackError as exc:
             raise ToolError("invalid feedback", str(exc)) from exc
@@ -5479,7 +5514,14 @@ def _tool_search(arguments: dict[str, Any]) -> dict[str, Any]:
     regex = _arg_optional_bool(arguments, "regex", False)
     with contextlib.closing(_open()) as conn:
         try:
-            results = store.search(conn, query, limit=limit, kind=kind, regex=regex)
+            results = store.search(
+                conn,
+                query,
+                limit=limit,
+                kind=kind,
+                regex=regex,
+                visible_to=_mcp_caller(conn),
+            )
         except store.SearchError as exc:
             raise ToolError(exc.code, exc.detail) from None
     return {"query": query, "kind": kind, "regex": regex, **results}
@@ -5594,7 +5636,10 @@ def _tool_list_notifications(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         try:
             payload = notifications.feed(
-                conn, since=notifications.parse_since(since) if since else None, limit=limit
+                conn,
+                since=notifications.parse_since(since) if since else None,
+                limit=limit,
+                visible_to=_mcp_caller(conn),
             )
         except ValueError as exc:
             raise ToolError("invalid notification query", str(exc)) from exc
@@ -5978,8 +6023,13 @@ def _tool_list_journal(arguments: dict[str, Any]) -> dict[str, Any]:
     else:
         actor = None
     with contextlib.closing(_open()) as conn:
+        caller, actor = _self_service_actor(
+            conn, actor, detail="an analyst may only read its own journal entries"
+        )
         entries = journal.list_entries(conn, action=action or None, actor=actor, limit=limit)
         actors = journal.list_actors(conn)
+        if caller is not None and str(caller.get("role") or "") != auth.ROLE_ADMIN:
+            actors = [name for name in actors if name == str(caller["name"])]
     return {
         "entries": entries,
         "count": len(entries),
@@ -5995,6 +6045,22 @@ def _tool_revert_journal_entry(arguments: dict[str, Any]) -> dict[str, Any]:
     if has_action == has_entry:
         raise ToolError("invalid body", "provide exactly one of action or entry_id")
     with contextlib.closing(_open()) as conn:
+        caller = _mcp_caller(conn)
+        caller_id = journal.current_actor_user_id()
+        admin = caller is not None and str(caller.get("role") or "") == auth.ROLE_ADMIN
+        if caller is not None and not admin and caller_id is not None:
+            if has_entry:
+                entry_id = _arg_int(arguments, "entry_id")
+                owner_id = journal.entry_actor_user_id(conn, entry_id)
+                if owner_id is None and not journal.entry_exists(conn, entry_id):
+                    raise ToolError("entry not found", f"no journal entry {entry_id}")
+            else:
+                action = _arg_str(arguments, "action")
+                owner_id = journal.action_actor_user_id(conn, action)
+                if owner_id is None and not journal.action_exists(conn, action):
+                    raise ToolError("action not found", f"no journal action {action!r}")
+            if owner_id is not None and owner_id != caller_id:
+                raise ToolError(auth.ERROR_FORBIDDEN, "an analyst may only revert its own actions")
         try:
             if has_entry:
                 return journal.revert_entry(conn, _arg_int(arguments, "entry_id"))
@@ -8516,7 +8582,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "get_activity",
             "What was done here and by whom: the journaled actions with the actor that made"
-            " each, plus the analysis-log entries.  Derived, never stored.",
+            " each, plus the analysis-log entries.  Derived, never stored.  A non-admin caller"
+            " only sees its own actions.",
             _object(
                 {
                     "actor": _str("Only this actor's actions; an empty value means no request."),
@@ -8529,7 +8596,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "list_feedback",
-            "The local feedback notes about reportal itself, newest first.",
+            "The local feedback notes about reportal itself, newest first.  A non-admin"
+            " caller only sees the notes it wrote.",
             _object({"limit": _int("Maximum notes (default 50).")}),
             _READ,
             _tool_list_feedback,

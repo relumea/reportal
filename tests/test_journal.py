@@ -1024,6 +1024,33 @@ class TestMcp:
         assert [entry["description"] for entry in payload["entries"]] == ["first"]
         assert payload["actors"] == ["ana", "bo"]
 
+    def test_an_analyst_only_lists_its_own_journal(self, conn: sqlite3.Connection) -> None:
+        from reportal import auth
+
+        ana, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        with journal.acting_as("ana", user_id=int(ana["id"])):
+            _log_with(
+                conn,
+                "act-1",
+                (effects.EFFECT_ROW_DELETE, "first", journal.row_delete_descriptor("tags", 1)),
+            )
+        with journal.acting_as("bo"):
+            _log_with(
+                conn,
+                "act-2",
+                (effects.EFFECT_ROW_DELETE, "second", journal.row_delete_descriptor("tags", 2)),
+            )
+
+        with journal.acting_as("ana", user_id=int(ana["id"])):
+            payload, is_error = _call_tool("list_journal", {})
+            refused, refused_error = _call_tool("list_journal", {"actor": "bo"})
+
+        assert not is_error
+        assert [entry["description"] for entry in payload["entries"]] == ["first"]
+        assert payload["actors"] == ["ana"]
+        assert refused_error
+        assert refused["error"] == auth.ERROR_FORBIDDEN
+
     def test_list_journal_empty_actor_filters_cli_writes(self, conn: sqlite3.Connection) -> None:
         with journal.acting_as(""):
             _log_with(
