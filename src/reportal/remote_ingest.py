@@ -50,6 +50,7 @@ address check can.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import socket
 import tomllib
@@ -60,6 +61,8 @@ import httpx2 as httpx
 
 from reportal import __version__, knowledge
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
+
+_log = logging.getLogger(__name__)
 
 # Environment variable that enables remote ingestion; any truthy spelling works.
 ALLOW_REMOTE_ENV = "REPORTAL_ALLOW_REMOTE_INGEST"
@@ -155,7 +158,15 @@ def _workspace_allow_remote() -> bool:
     try:
         with marker.open("rb") as handle:
             document = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Readers fall back to defaults on a bad file (see settings.problems);
+        # without a log that fallback silently disables workspace URL ingest.
+        _log.warning(
+            "cannot read %s for [%s]; knowledge.allow_remote falls back to off: %s",
+            marker,
+            CONFIG_TABLE,
+            exc,
+        )
         return False
     table = document.get(CONFIG_TABLE)
     if not isinstance(table, dict):

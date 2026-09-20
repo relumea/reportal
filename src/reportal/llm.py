@@ -343,7 +343,12 @@ def _workspace_llm_table() -> dict[str, str]:
     try:
         with marker.open("rb") as handle:
             document = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Readers fall back to defaults on a bad file (see settings.problems);
+        # without a log that fallback silently drops the workspace LLM table.
+        _log.warning(
+            "cannot read %s for [llm]; LLM config falls back to env/default: %s", marker, exc
+        )
         return {}
     table = document.get("llm")
     if not isinstance(table, dict):

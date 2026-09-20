@@ -37,6 +37,7 @@ import asyncio
 import importlib
 import inspect
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -49,6 +50,8 @@ from typing import Any, Protocol, cast
 from reportal import graph, plugins, store
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
 from reportal.plugins import RegistryError as RegistryError
+
+_log = logging.getLogger(__name__)
 
 # Entry-point group third-party graph backends register in.
 GRAPH_BACKEND_ENTRY_POINT_GROUP = "reportal.graph_backends"
@@ -201,7 +204,15 @@ def _knowledge_table() -> dict[str, Any]:
     try:
         with marker.open("rb") as handle:
             document = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        # Readers fall back to defaults on a bad file (see settings.problems);
+        # without a log that fallback silently drops the workspace graph settings.
+        _log.warning(
+            "cannot read %s for [%s]; graph backend falls back to default: %s",
+            marker,
+            CONFIG_TABLE,
+            exc,
+        )
         return {}
     table = document.get(CONFIG_TABLE)
     return table if isinstance(table, dict) else {}

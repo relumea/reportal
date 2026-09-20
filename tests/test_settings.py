@@ -227,11 +227,42 @@ class TestDeploymentProfile:
 
     def test_saas_requires_auth_even_when_explicitly_disabled(
         self,
+        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _workspace(tmp_path, monkeypatch)
         monkeypatch.setenv(profiles.PROFILE_ENV, profiles.PROFILE_SAAS)
         monkeypatch.setenv(auth.REQUIRED_ENV, "off")
         assert auth.required() is True
+        row = _row("auth.required")
+        assert row["value"] is True
+        # Origin follows the profile that forces auth, not the AUTH=off that saas ignores.
+        assert row["origin"] == settings.ORIGIN_ENVIRONMENT
+        assert row["display"] == "on"
+        problems = settings.problems()
+        assert any(
+            problem["where"] == auth.REQUIRED_ENV and "saas" in problem["problem"]
+            for problem in problems
+        )
+
+    def test_saas_workspace_auth_off_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(profiles.PROFILE_ENV, raising=False)
+        monkeypatch.delenv(auth.REQUIRED_ENV, raising=False)
+        _workspace(
+            tmp_path,
+            monkeypatch,
+            '[deployment]\nprofile = "saas"\n\n[auth]\nrequired = false\n',
+        )
+        assert auth.required() is True
+        assert _row("auth.required")["origin"] == settings.ORIGIN_WORKSPACE
+        problems = settings.problems()
+        assert any(
+            problem["where"] == f"[{auth.CONFIG_TABLE}] {auth.CONFIG_REQUIRED}"
+            and "saas" in problem["problem"]
+            for problem in problems
+        )
 
 
 class TestAgreement:
@@ -580,6 +611,70 @@ class TestProblems:
             for problem in problems
         )
         assert profiles.current() == profiles.PROFILE_PERSONAL
+
+    def test_a_malformed_llm_endpoint_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(llm.ENDPOINT_ENV, "not-a-url")
+        problems = settings.problems()
+        assert any(
+            problem["where"] == llm.ENDPOINT_ENV and "http(s)" in problem["problem"]
+            for problem in problems
+        )
+
+    def test_a_malformed_public_base_url_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import billing
+
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(billing.PUBLIC_BASE_URL_ENV, "reportal.example.com")
+        problems = settings.problems()
+        assert any(
+            problem["where"] == billing.PUBLIC_BASE_URL_ENV and "http(s)" in problem["problem"]
+            for problem in problems
+        )
+
+    def test_stripe_without_a_secret_key_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import billing
+
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(billing.PROVIDER_ENV, billing.PROVIDER_STRIPE)
+        monkeypatch.delenv(billing.STRIPE_SECRET_ENV, raising=False)
+        problems = settings.problems()
+        assert any(
+            problem["where"] == billing.PROVIDER_ENV and "secret key" in problem["problem"]
+            for problem in problems
+        )
+
+    def test_external_without_a_key_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv(external.ALLOW_REMOTE_ENV, "1")
+        monkeypatch.delenv(external.VIRUSTOTAL_KEY_ENV, raising=False)
+        problems = settings.problems()
+        assert any(
+            problem["where"] == external.ALLOW_REMOTE_ENV and "VirusTotal" in problem["problem"]
+            for problem in problems
+        )
+
+    def test_a_missing_flirt_sigs_dir_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import flirt_sigs
+
+        _workspace(tmp_path, monkeypatch)
+        missing = tmp_path / "no-such-sigs"
+        monkeypatch.setenv(flirt_sigs.SIGS_DIR_ENV, str(missing))
+        problems = settings.problems()
+        assert any(
+            problem["where"] == flirt_sigs.SIGS_DIR_ENV and "does not exist" in problem["problem"]
+            for problem in problems
+        )
 
 
 class TestCli:

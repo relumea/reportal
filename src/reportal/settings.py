@@ -28,6 +28,7 @@ import tomllib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from reportal import (
     _paths,
@@ -447,7 +448,13 @@ def origin_of(setting: Setting, tables: Mapping[str, dict[str, Any]]) -> str:
     spelling falls through to the workspace file (except for the job pool,
     whose any non-empty value *is* the setting), and a secret falls back
     to the workspace secret store before its default.
+
+    The saas profile always forces ``auth.required`` on, so that setting's
+    origin follows the profile (``REPORTAL_PROFILE`` / ``[deployment] profile``)
+    rather than a ``REPORTAL_AUTH=off`` that the profile ignores.
     """
+    if setting.name == "auth.required" and profiles.is_saas():
+        return _profile_origin(tables)
     raw = os.environ.get(setting.env, "").strip() if setting.env else ""
     if raw:
         if setting.kind != KIND_FLAG:
@@ -467,6 +474,18 @@ def origin_of(setting: Setting, tables: Mapping[str, dict[str, Any]]) -> str:
             return ORIGIN_WORKSPACE
         return ORIGIN_DEFAULT
     return ORIGIN_WORKSPACE
+
+
+def _profile_origin(tables: Mapping[str, dict[str, Any]]) -> str:
+    """Where the active deployment profile was set."""
+    if os.environ.get(profiles.PROFILE_ENV, "").strip():
+        return ORIGIN_ENVIRONMENT
+    table = tables.get(profiles.CONFIG_TABLE)
+    if isinstance(table, dict) and isinstance(table.get(profiles.CONFIG_PROFILE), str):
+        value = table[profiles.CONFIG_PROFILE].strip().lower()
+        if value == profiles.PROFILE_SAAS:
+            return ORIGIN_WORKSPACE
+    return ORIGIN_DEFAULT
 
 
 def _display(setting: Setting, value: Any) -> str:
@@ -627,6 +646,11 @@ def _environment_problems(tables: Mapping[str, dict[str, Any]]) -> list[dict[str
     found: list[dict[str, str]] = []
     found.extend(_flag_environment_problems())
     found.extend(_profile_problems(tables))
+    found.extend(_saas_auth_problems(tables))
+    found.extend(_url_problems())
+    found.extend(_path_problems())
+    found.extend(_billing_dependency_problems())
+    found.extend(_external_dependency_problems())
     provider = billing.configured_provider()
     if provider not in billing.PROVIDERS:
         found.append(
@@ -685,6 +709,148 @@ def _environment_problems(tables: Mapping[str, dict[str, Any]]) -> list[dict[str
             }
         )
     return found
+
+
+def _saas_auth_problems(tables: Mapping[str, dict[str, Any]]) -> list[dict[str, str]]:
+    """Warn when an operator tries to turn auth off under the saas profile.
+
+    SaaS always requires token auth.  A ``REPORTAL_AUTH=off`` or
+    ``[auth] required = false`` looks like it took, but ``auth.required`` stays
+    on; naming the conflict stops the silent "I disabled auth" incident.
+    """
+    if not profiles.is_saas():
+        return []
+    found: list[dict[str, str]] = []
+    raw = os.environ.get(auth.REQUIRED_ENV, "").strip()
+    if raw and raw.lower() in FLAG_FALSEY:
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": auth.REQUIRED_ENV,
+                "problem": (
+                    f"is ignored while the saas profile is on ({raw!r}); auth stays required"
+                ),
+                "hint": (
+                    f"remove {auth.REQUIRED_ENV} or switch {profiles.PROFILE_ENV} away from saas"
+                ),
+            }
+        )
+    table = tables.get(auth.CONFIG_TABLE)
+    if (
+        isinstance(table, dict)
+        and auth.CONFIG_REQUIRED in table
+        and table[auth.CONFIG_REQUIRED] is False
+    ):
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": f"[{auth.CONFIG_TABLE}] {auth.CONFIG_REQUIRED}",
+                "problem": "is ignored while the saas profile is on; auth stays required",
+                "hint": (
+                    f"remove the line, or set [{profiles.CONFIG_TABLE}] "
+                    f'{profiles.CONFIG_PROFILE} = "{profiles.PROFILE_PERSONAL}"'
+                ),
+            }
+        )
+    return found
+
+
+def _http_url_ok(url: str) -> bool:
+    """True when *url* is an absolute http(s) URL with a host."""
+    parts = urlsplit(url.strip())
+    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+
+
+def _url_problems() -> list[dict[str, str]]:
+    """Configured URLs that are set but not absolute http(s)."""
+    found: list[dict[str, str]] = []
+    endpoint = _llm_endpoint()
+    if endpoint and not _http_url_ok(endpoint):
+        where = (
+            llm.ENDPOINT_ENV
+            if os.environ.get(llm.ENDPOINT_ENV, "").strip()
+            else f"[{BY_NAME['llm.endpoint'].table}] {BY_NAME['llm.endpoint'].key}"
+        )
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": where,
+                "problem": f"is not an absolute http(s) URL ({endpoint!r})",
+                "hint": "use a full URL such as http://127.0.0.1:11434/v1",
+            }
+        )
+    raw_base = os.environ.get(billing.PUBLIC_BASE_URL_ENV, "").strip()
+    if raw_base and not _http_url_ok(billing.public_base_url()):
+        found.append(
+            {
+                "level": LEVEL_WARN,
+                "where": billing.PUBLIC_BASE_URL_ENV,
+                "problem": f"is not an absolute http(s) URL ({raw_base!r})",
+                "hint": "use a full URL such as https://reportal.example.com",
+            }
+        )
+    return found
+
+
+def _path_problems() -> list[dict[str, str]]:
+    """Configured paths that are set but missing or not a directory."""
+    root = flirt_sigs.sigs_dir()
+    if root is None:
+        return []
+    if root.is_dir():
+        return []
+    return [
+        {
+            "level": LEVEL_WARN,
+            "where": flirt_sigs.SIGS_DIR_ENV,
+            "problem": (
+                f"names a path that is not a directory ({root})"
+                if root.exists()
+                else f"names a path that does not exist ({root})"
+            ),
+            "hint": f"point {flirt_sigs.SIGS_DIR_ENV} at a FLIRT signature checkout, or unset it",
+        }
+    ]
+
+
+def _billing_dependency_problems() -> list[dict[str, str]]:
+    """Stripe selected without the secret key that checkout needs."""
+    if billing.configured_provider() != billing.PROVIDER_STRIPE:
+        return []
+    if billing.billing_configured():
+        return []
+    return [
+        {
+            "level": LEVEL_WARN,
+            "where": billing.PROVIDER_ENV,
+            "problem": "selects stripe but no Stripe secret key resolves",
+            "hint": f"set {billing.STRIPE_SECRET_ENV}, or set {billing.PROVIDER_ENV}=auto",
+        }
+    ]
+
+
+def _external_dependency_problems() -> list[dict[str, str]]:
+    """Remote external sources opted in without a VirusTotal key."""
+    if not external.remote_enabled():
+        return []
+    if external.virustotal_key():
+        return []
+    where = (
+        external.ALLOW_REMOTE_ENV
+        if os.environ.get(external.ALLOW_REMOTE_ENV, "").strip()
+        else f"[{external.CONFIG_TABLE}] {external.CONFIG_ALLOW_REMOTE}"
+    )
+    return [
+        {
+            "level": LEVEL_WARN,
+            "where": where,
+            "problem": "allows remote sources but no VirusTotal key resolves",
+            "hint": (
+                f"set {external.VIRUSTOTAL_KEY_ENV} or"
+                f" `reportal secrets-set {external.VIRUSTOTAL_KEY_SECRET} --stdin`"
+            ),
+        }
+    ]
 
 
 def _profile_problems(tables: Mapping[str, dict[str, Any]]) -> list[dict[str, str]]:
