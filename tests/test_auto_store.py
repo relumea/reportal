@@ -16,7 +16,7 @@ def test_timestamps_follow_the_shared_clock(
     stamp = "2001-02-03T04:05:06+00:00"
     monkeypatch.setattr(store, "now", lambda: stamp)
     binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+    run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
     task_id = auto_store.create_auto_task(
         conn, run_id=run_id, parent_id=None, depth=0, kind=auto_store.AUTO_TASK_ROOT
     )
@@ -60,7 +60,7 @@ def test_lifecycle_timestamps_follow_the_shared_clock(
     binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
     clock = ["2001-01-01T00:00:00+00:00"]
     monkeypatch.setattr(store, "now", lambda: clock[0])
-    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+    run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
     run = auto_store.get_auto_run(conn, run_id)
     assert run is not None
     assert run["created_at"] == clock[0]
@@ -101,7 +101,9 @@ def test_lifecycle_timestamps_follow_the_shared_clock(
 class TestAutoRuns:
     def test_create_and_read_a_run(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={"worker": "offline"})
+        run_id, _created = auto_store.create_auto_run(
+            conn, binary_id=binary_id, config={"worker": "offline"}
+        )
         run = auto_store.get_auto_run(conn, run_id)
         assert run is not None
         assert run["status"] == auto_store.AUTO_RUN_RUNNING
@@ -112,7 +114,7 @@ class TestAutoRuns:
 
     def test_finish_stamps_status_stats_and_time(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
         assert auto_store.finish_auto_run(
             conn, run_id, status=auto_store.AUTO_RUN_DONE, stats={"matched": 2}
         )
@@ -130,8 +132,8 @@ class TestAutoRuns:
 
     def test_latest_auto_run_picks_the_newest(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        first = auto_store.create_auto_run(conn, binary_id=binary_id, config={"n": 1})
-        second = auto_store.create_auto_run(conn, binary_id=binary_id, config={"n": 2})
+        first, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={"n": 1})
+        second, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={"n": 2})
         latest = auto_store.latest_auto_run(conn, binary_id)
         assert latest is not None
         assert latest["id"] == second
@@ -145,22 +147,38 @@ class TestAutoRuns:
         first = store.add_binary(conn, sha256="aa" * 32, name="one.exe")
         second = store.add_binary(conn, sha256="bb" * 32, name="two.exe")
         auto_store.create_auto_run(conn, binary_id=first, config={})
-        other = auto_store.create_auto_run(conn, binary_id=second, config={})
+        other, _created = auto_store.create_auto_run(conn, binary_id=second, config={})
         latest = auto_store.latest_auto_run(conn, second)
         assert latest is not None
         assert latest["id"] == other
 
     def test_list_auto_runs_is_newest_first(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        first = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
-        second = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        first, created_first = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        assert created_first
+        assert auto_store.finish_auto_run(
+            conn, first, status=auto_store.AUTO_RUN_DONE, stats={}
+        )
+        second, created_second = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        assert created_second
         rows = auto_store.list_auto_runs(conn, binary_id=binary_id)
         assert [row["id"] for row in rows] == [second, first]
         assert "tasks" not in rows[0]
 
+    def test_a_second_live_create_reuses_the_running_row(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
+        first, created = auto_store.create_auto_run(conn, binary_id=binary_id, config={"n": 1})
+        assert created
+        second, created_again = auto_store.create_auto_run(
+            conn, binary_id=binary_id, config={"n": 1}
+        )
+        assert not created_again
+        assert second == first
+        assert auto_store.list_auto_runs(conn, binary_id=binary_id)[0]["id"] == first
+
     def test_delete_auto_run_cascades(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
         task_id = auto_store.create_auto_task(
             conn, run_id=run_id, parent_id=None, depth=0, kind=auto_store.AUTO_TASK_ROOT
         )
@@ -179,7 +197,7 @@ class TestAutoRuns:
 class TestAutoTasks:
     def _run(self, conn: sqlite3.Connection) -> int:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        return auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        return auto_store.create_auto_run(conn, binary_id=binary_id, config={})[0]
 
     def test_create_persists_kind_depth_and_parent(self, conn: sqlite3.Connection) -> None:
         run_id = self._run(conn)
@@ -272,7 +290,7 @@ class TestAutoTasks:
 class TestAutoAttempts:
     def _task(self, conn: sqlite3.Connection) -> int:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
         return auto_store.create_auto_task(
             conn, run_id=run_id, parent_id=None, depth=0, kind=auto_store.AUTO_TASK_ROOT
         )
@@ -342,7 +360,7 @@ class TestFunctionStatusWrites:
 class TestTaskRecords:
     def test_written_files_and_status_changes_are_read_back(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
         task_id = auto_store.create_auto_task(
             conn, run_id=run_id, parent_id=None, depth=0, kind=auto_store.AUTO_TASK_ROOT
         )
@@ -362,7 +380,7 @@ class TestTaskRecords:
 
     def test_missing_record_keys_read_as_empty(self, conn: sqlite3.Connection) -> None:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-        run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
         task_id = auto_store.create_auto_task(
             conn, run_id=run_id, parent_id=None, depth=0, kind=auto_store.AUTO_TASK_ROOT
         )

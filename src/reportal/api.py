@@ -6296,7 +6296,9 @@ def start_auto_run(
     worker), ``execute`` (default false), ``concurrency``,
     ``functions_per_task``, ``max_attempts``, ``max_tasks`` and ``goal`` (the
     free-form objective a goal-directed worker works toward, which plans every
-    function rather than only the unmatched ones).  At most
+    function rather than only the unmatched ones).  A second POST with the same
+    body while that run is still live returns the existing run id without
+    charging again or starting another worker.  At most
     :data:`MAX_BACKGROUND_AUTO_RUNS` runs execute at once; past that the route
     answers 503 without creating a run.  Under the SaaS profile a tenant past
     its auto-run allowance is refused 402 before anything is created.
@@ -6305,6 +6307,18 @@ def start_auto_run(
     refused = _refuse_over_quota(request, metering.KIND_AUTO_RUN)
     if refused is not None:
         return refused
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        live = auto_store.find_live_auto_run(conn, binary_id, params.as_config())
+        if live is not None:
+            return json_response(
+                {
+                    "run_id": int(live["id"]),
+                    "binary_id": binary_id,
+                    "status": auto_store.AUTO_RUN_RUNNING,
+                },
+                status=202,
+            )
     if not _auto_run_slots.acquire(blocking=False):
         return json_error(
             503,
@@ -6314,16 +6328,27 @@ def start_auto_run(
                 " wait for one to finish or poll an existing run"
             ),
         )
+    acquired = True
     try:
         with contextlib.closing(_open()) as conn:
             _require_binary(conn, binary_id)
             functions = auto_mode.select_functions(
                 conn, binary_id, include_matched=bool(params.goal)
             )
-            run_id = auto_mode.create_auto_run(
+            run_id, created = auto_mode.create_auto_run(
                 conn, binary_id=binary_id, params=params, functions=functions
             )
+        if not created:
+            return json_response(
+                {
+                    "run_id": run_id,
+                    "binary_id": binary_id,
+                    "status": auto_store.AUTO_RUN_RUNNING,
+                },
+                status=202,
+            )
         _record_auto_run_charge(request)
+        acquired = False
         thread = threading.Thread(
             target=_execute_auto_run,
             args=(run_id, params),
@@ -6332,8 +6357,10 @@ def start_auto_run(
         )
         thread.start()
     except BaseException:
-        _auto_run_slots.release()
         raise
+    finally:
+        if acquired:
+            _auto_run_slots.release()
     return json_response(
         {"run_id": run_id, "binary_id": binary_id, "status": auto_store.AUTO_RUN_RUNNING},
         status=202,

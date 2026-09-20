@@ -256,7 +256,9 @@ def _seed_stale_run(conn: object, binary_id: int) -> dict[str, int]:
     from reportal import auto_store
 
     assert isinstance(conn, sqlite3.Connection)
-    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={"worker": "offline"})
+    run_id, _created = auto_store.create_auto_run(
+        conn, binary_id=binary_id, config={"worker": "offline"}
+    )
     root_id = auto_store.create_auto_task(
         conn,
         run_id=run_id,

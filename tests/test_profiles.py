@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 from conftest import FakeLlmClient, json_body, wsgi_request
 
-from reportal import auth, journal, metering, profiles, store
+from reportal import api, auth, journal, metering, profiles, store
 
 
 def _send(
@@ -498,6 +500,35 @@ class TestAutoRunCharge:
 
         assert status.startswith("202")
         assert metering.period_usage(conn, org_id, metering.KIND_AUTO_RUN) == 1
+
+    def test_a_second_start_of_a_live_run_does_not_charge_again(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, ana, org_id = _tenant(conn, "ana")
+        binary_id = store.add_binary(conn, sha256="ab" * 32, name="b.exe")
+        _saas(monkeypatch)
+        held = threading.Event()
+        release = threading.Event()
+
+        def hang(_conn: sqlite3.Connection, **_kwargs: object) -> None:
+            held.set()
+            release.wait(timeout=10)
+
+        monkeypatch.setattr("reportal.auto_mode.execute_auto_run", hang)
+
+        first, _ = _send("POST", f"/api/binaries/{binary_id}/auto", token=ana, body={})
+        assert first.startswith("202")
+        assert held.wait(timeout=2)
+        again, _ = _send("POST", f"/api/binaries/{binary_id}/auto", token=ana, body={})
+        assert again.startswith("202")
+        assert metering.period_usage(conn, org_id, metering.KIND_AUTO_RUN) == 1
+        release.set()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if api._auto_run_slots.acquire(blocking=False):
+                api._auto_run_slots.release()
+                break
+            time.sleep(0.02)
 
 
 class TestInviteRace:

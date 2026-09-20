@@ -232,7 +232,7 @@ class TestScopeGate:
             conn, scope_kind="binary", scope_id=ids["binary"], title="t"
         )
         run_id = store.create_pipeline_run(conn, function_id=function_id, model="m")
-        auto_run_id = auto_store.create_auto_run(conn, binary_id=ids["binary"], config={})
+        auto_run_id, _created = auto_store.create_auto_run(conn, binary_id=ids["binary"], config={})
         graph.build_graph(conn, binary_id=ids["binary"])
         target = node_id(ids["binary"], "function", function_id)
         paths = {

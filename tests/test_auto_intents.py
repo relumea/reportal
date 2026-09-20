@@ -100,7 +100,7 @@ def _plan_one_batch(
     """Create a run with one batch task for the seeded function."""
     params = auto_mode.build_params(worker=worker, execute=execute, max_attempts=1)
     functions = auto_mode.select_functions(conn, ids["binary"])
-    run_id = auto_mode.create_auto_run(
+    run_id, _created = auto_mode.create_auto_run(
         conn, binary_id=ids["binary"], params=params, functions=functions
     )
     task_id, _planned = auto_mode.planned_batches(conn, run_id)[0]
@@ -111,7 +111,7 @@ def _legacy_stale_run(
     conn: sqlite3.Connection, binary_id: int, result: dict[str, Any]
 ) -> tuple[int, int]:
     """A `running` run whose batch recorded a result but carries no intents."""
-    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+    run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
     root_id = auto_store.create_auto_task(
         conn,
         run_id=run_id,

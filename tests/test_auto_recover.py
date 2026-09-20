@@ -33,7 +33,7 @@ def _stale_run(
     A None status leaves the batch `pending` with no result, which is how a task
     the coordinator planned but a dead process never started looks.
     """
-    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+    run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
     root_id = auto_store.create_auto_task(
         conn,
         run_id=run_id,
@@ -73,7 +73,7 @@ def _run_one_batch(
     auto_workers.register_worker(writer_worker(written), origin="test")
     params = auto_mode.build_params(worker="writer", execute=execute)
     functions = auto_mode.select_functions(conn, ids["binary"])
-    run_id = auto_mode.create_auto_run(
+    run_id, _created = auto_mode.create_auto_run(
         conn, binary_id=ids["binary"], params=params, functions=functions
     )
     task_id, planned = auto_mode.planned_batches(conn, run_id)[0]

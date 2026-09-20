@@ -131,14 +131,48 @@ def _auto_run_row(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def create_auto_run(conn: sqlite3.Connection, *, binary_id: int, config: dict[str, Any]) -> int:
-    """Create a ``running`` auto run for *binary_id*; returns its id."""
-    cur = conn.execute(
-        "INSERT INTO auto_runs (binary_id, status, config_json, created_at) VALUES (?, ?, ?, ?)",
-        (binary_id, AUTO_RUN_RUNNING, json.dumps(config), store.now()),
-    )
-    conn.commit()
-    return int(cur.lastrowid or 0)
+def encode_auto_config(config: dict[str, Any]) -> str:
+    """Stable JSON for a run's config; sort_keys so a rebuilt map still matches."""
+    return json.dumps(config, sort_keys=True)
+
+
+def find_live_auto_run(
+    conn: sqlite3.Connection, binary_id: int, config: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The running auto run for *binary_id* with *config*, or None."""
+    row = conn.execute(
+        "SELECT * FROM auto_runs WHERE binary_id = ? AND status = ? AND config_json = ?"
+        " ORDER BY id LIMIT 1",
+        (binary_id, AUTO_RUN_RUNNING, encode_auto_config(config)),
+    ).fetchone()
+    return _auto_run_row(conn, row) if row else None
+
+
+def create_auto_run(
+    conn: sqlite3.Connection, *, binary_id: int, config: dict[str, Any]
+) -> tuple[int, bool]:
+    """Create a ``running`` auto run for *binary_id*, or reuse a live twin.
+
+    Returns ``(run_id, created)``.  A second call with the same binary and
+    config while the first is still ``running`` returns that row with
+    ``created=False``: the unique live-config index is the lock, so a
+    double-click or a racing POST cannot open a second metered run.
+    """
+    config_json = encode_auto_config(config)
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "INSERT INTO auto_runs (binary_id, status, config_json, created_at)"
+                " VALUES (?, ?, ?, ?)",
+                (binary_id, AUTO_RUN_RUNNING, config_json, store.now()),
+            )
+        return int(cur.lastrowid or 0), True
+    except sqlite3.IntegrityError:
+        existing = find_live_auto_run(conn, binary_id, config)
+        if existing is not None:
+            return int(existing["id"]), False
+        raise
 
 
 def finish_auto_run(

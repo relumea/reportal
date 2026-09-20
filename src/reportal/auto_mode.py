@@ -325,8 +325,12 @@ def create_auto_run(
     binary_id: int,
     params: AutoParams,
     functions: Sequence[dict[str, Any]],
-) -> int:
-    """Create a run row and its task tree without executing it; returns the run id.
+) -> tuple[int, bool]:
+    """Create a run row and its task tree without executing it.
+
+    Returns ``(run_id, created)``.  When a live run with the same config
+    already exists, that id is returned with ``created=False`` and no new
+    tasks are planned, so a retry cannot double-charge or double-execute.
 
     The root task is created first, then one batch task per group of
     ``functions_per_task`` functions, each carrying the function snapshots it
@@ -336,7 +340,11 @@ def create_auto_run(
     """
     if store.get_binary(conn, binary_id) is None:
         raise KeyError(f"no binary with id {binary_id}")
-    run_id = auto_store.create_auto_run(conn, binary_id=binary_id, config=params.as_config())
+    run_id, created = auto_store.create_auto_run(
+        conn, binary_id=binary_id, config=params.as_config()
+    )
+    if not created:
+        return run_id, False
     root_id = auto_store.create_auto_task(
         conn,
         run_id=run_id,
@@ -364,7 +372,7 @@ def create_auto_run(
             task_id,
             result={PLANNED_FUNCTIONS: [_function_snapshot(row) for row in batch]},
         )
-    return run_id
+    return run_id, True
 
 
 def planned_batches(
@@ -1370,7 +1378,11 @@ def run_auto(
     if store.get_binary(conn, binary_id) is None:
         raise KeyError(f"no binary with id {binary_id}")
     functions = select_functions(conn, binary_id, include_matched=bool(params.goal))
-    run_id = create_auto_run(conn, binary_id=binary_id, params=params, functions=functions)
+    run_id, created = create_auto_run(
+        conn, binary_id=binary_id, params=params, functions=functions
+    )
+    if not created:
+        return run_summary(conn, run_id)
     try:
         return execute_auto_run(
             conn, run_id=run_id, params=params, engine=engine, llm_client=llm_client

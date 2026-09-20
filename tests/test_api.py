@@ -148,7 +148,7 @@ class TestHealth:
 
     def test_health_reports_the_last_auto_run(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
-        run_id = auto_store.create_auto_run(conn, binary_id=ids["binary"], config={})
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=ids["binary"], config={})
         _, headers, body = wsgi_request("GET", "/api/health")
         last = json_body(body, headers)["dependencies"]["auto"]["last_run"]
         assert last["run_id"] == run_id

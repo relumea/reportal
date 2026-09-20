@@ -507,6 +507,11 @@ CREATE INDEX IF NOT EXISTS idx_conversations_scope ON conversations(scope_kind, 
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_function ON pipeline_runs(function_id);
 CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run ON pipeline_steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_auto_runs_binary ON auto_runs(binary_id);
+-- At most one live auto run per (binary, config): a double-click or a
+-- transport retry must reuse the running row rather than start a second
+-- metered worker.  Finished runs keep every historical row.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_runs_live_config
+    ON auto_runs(binary_id, config_json) WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_auto_tasks_run ON auto_tasks(run_id);
 CREATE INDEX IF NOT EXISTS idx_auto_tasks_parent ON auto_tasks(parent_id);
 -- Unique ``(task_id, attempt)`` replaces the plain task index and stops a

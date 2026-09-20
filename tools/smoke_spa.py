@@ -1155,7 +1155,7 @@ def _seed_auto_run(conn: sqlite3.Connection, *, binary_id: int, function_id: int
     The Auto-mode route's GET is stored-only, so a completed run gives the
     smoke a real task tree and coverage delta to render; no worker runs.
     """
-    run_id = auto_store.create_auto_run(
+    run_id, _created = auto_store.create_auto_run(
         conn, binary_id=binary_id, config={"worker": AUTO_WORKER, "execute": False}
     )
     root_id = auto_store.create_auto_task(

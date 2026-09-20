@@ -112,7 +112,7 @@ class TestDecomposition:
         ids = seed_rows(conn, rows=SIZED_ROWS)
         params = auto_mode.build_params()
         functions = auto_mode.select_functions(conn, ids["binary"])
-        run_id = auto_mode.create_auto_run(
+        run_id, _created = auto_mode.create_auto_run(
             conn, binary_id=ids["binary"], params=params, functions=functions
         )
         run = auto_store.get_auto_run(conn, run_id)
@@ -133,7 +133,7 @@ class TestDecomposition:
         ids = seed_rows(conn, rows=SIZED_ROWS)
         params = auto_mode.build_params(functions_per_task=3)
         functions = auto_mode.select_functions(conn, ids["binary"])
-        run_id = auto_mode.create_auto_run(
+        run_id, _created = auto_mode.create_auto_run(
             conn, binary_id=ids["binary"], params=params, functions=functions
         )
         batches = [
@@ -149,7 +149,7 @@ class TestDecomposition:
         ids = seed_rows(conn, rows=SIZED_ROWS)
         params = auto_mode.build_params()
         functions = auto_mode.select_functions(conn, ids["binary"])
-        run_id = auto_mode.create_auto_run(
+        run_id, _created = auto_mode.create_auto_run(
             conn, binary_id=ids["binary"], params=params, functions=functions
         )
         batches = auto_mode.planned_batches(conn, run_id)
@@ -161,7 +161,7 @@ class TestDecomposition:
         ids = seed_rows(conn, rows=SIZED_ROWS)
         params = auto_mode.build_params(max_tasks=2)
         functions = auto_mode.select_functions(conn, ids["binary"])
-        run_id = auto_mode.create_auto_run(
+        run_id, _created = auto_mode.create_auto_run(
             conn, binary_id=ids["binary"], params=params, functions=functions
         )
         tasks = auto_store.list_auto_tasks(conn, run_id)
@@ -465,7 +465,7 @@ class TestRunAuto:
         ids = seed_rows(conn, rows=SIZED_ROWS)
         params = auto_mode.build_params()
         functions = auto_mode.select_functions(conn, ids["binary"])
-        run_id = auto_mode.create_auto_run(
+        run_id, _created = auto_mode.create_auto_run(
             conn, binary_id=ids["binary"], params=params, functions=functions
         )
         monkeypatch.setattr(auto_mode, "_database_path", lambda _conn: None)
