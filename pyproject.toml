@@ -120,8 +120,16 @@ reportal = [
 
 # Source maps must never ship even if a local Vite run left them under
 # `assets/dist/`; `scripts/check_wheel.py` also fails the gate when any remain.
+# ``*.br`` is a belt-and-suspenders exclude: setuptools joins patterns to the
+# package dir and fnmatches absolute glob paths against relative SOURCES entries,
+# so nested globs alone are not reliable.  ``make package-wheel`` also runs
+# precompress with ``REPORTAL_BROTLI=0`` to drop host-dependent siblings first.
 [tool.setuptools.exclude-package-data]
-reportal = ["assets/dist/**/*.map", "assets/dist/**/*.map.gz"]
+reportal = [
+    "assets/dist/**/*.map",
+    "assets/dist/**/*.map.gz",
+    "*.br",
+]
 
 [tool.uv]
 package = true

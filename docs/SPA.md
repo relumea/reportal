@@ -40,13 +40,15 @@ no request for them at all.  A file without a hash (the favicon) is answered
 `no-cache` like the shell.  Compressible assets (JS, CSS, HTML, SVG, …) are
 compressed when the client sends `Accept-Encoding`: a sibling `.br` written by
 `scripts/precompress_spa.py` at build time (brotli quality 11, when the `brotli`
-CLI is on PATH; a leftover `.br` is removed when brotli is unavailable so the
-wheel cannot ship a stale sibling) is preferred, then a sibling `.gz` (zlib
-level 9, header mtime from `SOURCE_DATE_EPOCH` or `0`), otherwise
-`ui.py` gzip-compresses at the request-time level and caches the result in
-process.  Responses carry `Vary: Accept-Encoding` so a cache never serves a
-compressed body to a client that cannot decode it.  The Vite build itself runs
-that precompress step (`web/vite.config.ts`), so `bun run build` and `make spa`
+CLI is on PATH; a leftover `.br` is removed when brotli is unavailable) is
+preferred, then a sibling `.gz` (zlib level 9, header mtime from
+`SOURCE_DATE_EPOCH` or `0`), otherwise `ui.py` gzip-compresses at the
+request-time level and caches the result in process.  `make package-wheel`
+forces `REPORTAL_BROTLI=0` so a host with brotli does not ship a different
+wheel than CI; `make spa` still writes local `.br` for serving from the tree.
+Responses carry `Vary: Accept-Encoding` so a cache never serves a compressed
+body to a client that cannot decode it.  The Vite build itself runs that
+precompress step (`web/vite.config.ts`), so `bun run build` and `make spa`
 both leave `.gz`/`.br` siblings next to the hashed bundles.
 
 The entry HTML lists the stylesheet before the module scripts (and marks it

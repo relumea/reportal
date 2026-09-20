@@ -51,7 +51,14 @@ def gzip_mtime() -> int:
 
 
 def brotli_bin() -> str | None:
-    """Path to a ``brotli`` CLI, or None when the build host has none."""
+    """Path to a ``brotli`` CLI, or None when disabled or the host has none.
+
+    ``REPORTAL_BROTLI=0`` (or ``false``/``no``/``off``) forces gzip-only output so
+    ``make package-wheel`` does not ship host-dependent ``*.br`` siblings.
+    """
+    flag = os.environ.get("REPORTAL_BROTLI", "").strip().lower()
+    if flag in {"0", "false", "no", "off", "disabled"}:
+        return None
     return shutil.which("brotli")
 
 

@@ -38,7 +38,9 @@ PYTEST_TMP ?= $(CACHE_HOME)/reportal-pytest
 # Reproducible SPA/wheel timestamps: honour an explicit SOURCE_DATE_EPOCH,
 # else the tree's HEAD commit time, else a fixed zero (gzip/zip mtimes).
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --pretty=%ct 2>/dev/null || printf '0')
-REPRO_ENV = SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) LC_ALL=C TZ=UTC PYTHONHASHSEED=0
+# REPORTAL_PYTHON pins the Vite precompress plugin to the project interpreter
+# instead of ambient `python3` (web/vite.config.ts).
+REPRO_ENV = SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) LC_ALL=C TZ=UTC PYTHONHASHSEED=0 REPORTAL_PYTHON=$(abspath $(PY))
 
 help: ## Show this help
 	@awk 'BEGIN {FS=":.*##"; printf "\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2} END {printf "\n"}' $(MAKEFILE_LIST)
@@ -201,7 +203,8 @@ package-check: spa package-wheel ## Build SPA, wheel, and assert packaged assets
 
 package-wheel: venv-check uv-check ## Wheel + checks; assumes a current SPA dist
 	rm -rf dist build
-	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
+	# REPORTAL_BROTLI=0: drop host-dependent .br so the wheel matches CI.
+	$(REPRO_ENV) REPORTAL_BROTLI=0 $(PY) scripts/precompress_spa.py
 	$(PY) scripts/sync_packaged_docs.py
 	$(PY) scripts/sync_packaged_deploy.py
 	$(REPRO_ENV) $(UV) build --wheel

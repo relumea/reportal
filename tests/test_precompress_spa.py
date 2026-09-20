@@ -134,3 +134,14 @@ def test_precompress_removes_stale_brotli_when_unavailable(
     assert precompress_mod.precompress(root) >= 1  # type: ignore[attr-defined]
     assert (root / "app.js.gz").is_file()
     assert not stale.exists()
+
+
+def test_reportal_brotli_zero_disables_cli(
+    precompress_mod: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``REPORTAL_BROTLI=0`` forces gzip-only even when a brotli binary exists."""
+    monkeypatch.setenv("REPORTAL_BROTLI", "0")
+    monkeypatch.setattr(precompress_mod.shutil, "which", lambda _name: "/usr/bin/brotli")
+    assert precompress_mod.brotli_bin() is None  # type: ignore[attr-defined]
+    monkeypatch.delenv("REPORTAL_BROTLI")
+    assert precompress_mod.brotli_bin() == "/usr/bin/brotli"  # type: ignore[attr-defined]

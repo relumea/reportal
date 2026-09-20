@@ -61,6 +61,11 @@ view renders it from here.
 
 ### Fixed
 
+- Wheels no longer package host-dependent SPA ``*.br`` siblings:
+  `make package-wheel` runs precompress with `REPORTAL_BROTLI=0`, and
+  `scripts/check_wheel.py` refuses packaged `.br` plus non-reproducible zip
+  `date_time` stamps.  Vite precompress is pinned to the project interpreter
+  via `REPORTAL_PYTHON`.
 - `make package-wheel` runs `scripts/check_wheel.py` under the same
   `SOURCE_DATE_EPOCH` as precompress, so a reproducible gzip mtime no longer
   fails the wheel gate when the epoch is the HEAD commit time rather than `0`.

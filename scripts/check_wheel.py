@@ -22,8 +22,10 @@ reuses an existing ``build/lib`` tree without pruning it, so a module deleted
 from the source would otherwise keep being packaged from the stale copy.
 
 Gzip siblings must carry a reproducible header mtime (``SOURCE_DATE_EPOCH`` when
-set, else ``0``), and the wheel must not ship ``*.map`` source maps.  METADATA
-must declare ``python-flirt`` so a clean install still has the FLIRT matcher.
+set, else ``0``), every zip member's DOS ``date_time`` must match that epoch,
+and the wheel must not ship ``*.map`` source maps or host-dependent ``*.br``
+siblings.  METADATA must declare ``python-flirt`` so a clean install still has
+the FLIRT matcher.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ import os
 import struct
 import sys
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 from reportal.docs import CHANGELOG_FILE, PAGE_ORDER
@@ -143,6 +146,34 @@ def source_maps(names: set[str]) -> list[str]:
     )
 
 
+def brotli_siblings(names: set[str]) -> list[str]:
+    """Packaged ``*.br`` paths under the SPA dist (host-dependent contamination)."""
+    return sorted(name for name in names if name.startswith(ASSETS_PREFIX) and name.endswith(".br"))
+
+
+def expected_zip_date_time(epoch: int | None = None) -> tuple[int, int, int, int, int, int]:
+    """Zip DOS ``date_time`` setuptools embeds for ``SOURCE_DATE_EPOCH``.
+
+    Zip cannot express times before 1980-01-01; a zero or pre-1980 epoch clamps
+    to that floor.  Seconds are even (DOS two-second resolution).
+    """
+    value = expected_gzip_mtime() if epoch is None else max(int(epoch), 0)
+    if value == 0:
+        return (1980, 1, 1, 0, 0, 0)
+    instant = datetime.fromtimestamp(value, tz=UTC)
+    if instant.year < 1980:
+        return (1980, 1, 1, 0, 0, 0)
+    second = instant.second - (instant.second % 2)
+    return (instant.year, instant.month, instant.day, instant.hour, instant.minute, second)
+
+
+def nondeterministic_zip_dates(
+    archive: zipfile.ZipFile, *, expected: tuple[int, int, int, int, int, int]
+) -> list[str]:
+    """Member paths whose zip ``date_time`` is not the reproducible epoch."""
+    return sorted(info.filename for info in archive.infolist() if info.date_time != expected)
+
+
 def nondeterministic_gzip(
     archive: zipfile.ZipFile, names: set[str], *, expected_mtime: int
 ) -> list[str]:
@@ -171,9 +202,12 @@ def main() -> int:
     if wheel is None:
         sys.stderr.write(f"no {WHEEL_GLOB} in {DIST_DIR}/; run `uv build --wheel` first\n")
         return 1
+    expected_mtime = expected_gzip_mtime()
+    expected_date = expected_zip_date_time(expected_mtime)
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
-        gzip_bad = nondeterministic_gzip(archive, names, expected_mtime=expected_gzip_mtime())
+        gzip_bad = nondeterministic_gzip(archive, names, expected_mtime=expected_mtime)
+        zip_bad = nondeterministic_zip_dates(archive, expected=expected_date)
         metadata_name = next(
             (name for name in names if name.endswith(".dist-info/METADATA")),
             "",
@@ -192,10 +226,26 @@ def main() -> int:
             f"{wheel.name} packages source maps (release contamination): {', '.join(maps)}\n"
         )
         return 1
+    br = brotli_siblings(names)
+    if br:
+        sys.stderr.write(
+            f"{wheel.name} packages brotli siblings (host-dependent): {', '.join(br)}\n"
+            "rebuild with REPORTAL_BROTLI=0 (make package-wheel)\n"
+        )
+        return 1
     if gzip_bad:
         sys.stderr.write(
             f"{wheel.name} has gzip siblings with non-reproducible mtime: "
             f"{', '.join(gzip_bad)}\n"
+            "rebuild with SOURCE_DATE_EPOCH set (make package-check)\n"
+        )
+        return 1
+    if zip_bad:
+        shown = ", ".join(zip_bad[:8])
+        more = f" (+{len(zip_bad) - 8} more)" if len(zip_bad) > 8 else ""
+        sys.stderr.write(
+            f"{wheel.name} has zip members with non-reproducible date_time "
+            f"(want {expected_date}): {shown}{more}\n"
             "rebuild with SOURCE_DATE_EPOCH set (make package-check)\n"
         )
         return 1

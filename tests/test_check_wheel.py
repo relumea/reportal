@@ -91,6 +91,53 @@ def test_source_maps_lists_dist_maps_only() -> None:
     ]
 
 
+def test_brotli_siblings_lists_dist_br_only() -> None:
+    mod = _load()
+    names = {
+        "reportal/assets/dist/assets/app.js.br",
+        "reportal/assets/dist/index.html",
+        "other/place.js.br",
+    }
+    assert mod.brotli_siblings(names) == [  # type: ignore[attr-defined]
+        "reportal/assets/dist/assets/app.js.br"
+    ]
+
+
+def test_expected_zip_date_time_honours_source_date_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mod = _load()
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "1789921172")
+    assert mod.expected_zip_date_time() == (2026, 9, 20, 16, 19, 32)  # type: ignore[attr-defined]
+    monkeypatch.delenv("SOURCE_DATE_EPOCH")
+    assert mod.expected_zip_date_time() == (1980, 1, 1, 0, 0, 0)  # type: ignore[attr-defined]
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "100")  # pre-1980
+    assert mod.expected_zip_date_time() == (1980, 1, 1, 0, 0, 0)  # type: ignore[attr-defined]
+
+
+def test_nondeterministic_zip_dates_flags_wall_clock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zipfile
+
+    mod = _load()
+    monkeypatch.delenv("SOURCE_DATE_EPOCH", raising=False)
+    expected = mod.expected_zip_date_time()  # type: ignore[attr-defined]
+    wheel = tmp_path / "sample.zip"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        good = zipfile.ZipInfo("reportal/cli.py")
+        good.date_time = expected
+        archive.writestr(good, b"")
+        bad = zipfile.ZipInfo("reportal/other.py")
+        bad.date_time = (2024, 1, 2, 3, 4, 6)
+        archive.writestr(bad, b"")
+    with zipfile.ZipFile(wheel) as archive:
+        flagged = mod.nondeterministic_zip_dates(  # type: ignore[attr-defined]
+            archive, expected=expected
+        )
+    assert flagged == ["reportal/other.py"]
+
+
 def test_missing_deploy_lists_required_unit_paths() -> None:
     mod = _load()
     required = list(mod.DEPLOY_REQUIRED)  # type: ignore[attr-defined]
