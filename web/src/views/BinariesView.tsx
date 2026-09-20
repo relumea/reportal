@@ -510,6 +510,13 @@ export function BinariesView({
 
   const binaries = data === null || data === undefined ? null : [...data.binaries, ...extraRows];
   const matched = data?.matched ?? 0;
+  const filtered =
+    filters.search.trim() !== "" ||
+    filters.tag !== "" ||
+    filters.format !== "" ||
+    filters.language !== "" ||
+    filters.compiler !== "" ||
+    filters.order !== DEFAULT_BINARY_ORDER;
   const teams = teamData.data?.teams ?? [];
   const families = familyData.data?.families ?? null;
   const collections = collectionData.data?.collections ?? [];
@@ -1266,8 +1273,14 @@ export function BinariesView({
             }}
             empty={
               <EmptyState>
-                No binaries yet. Upload one above, or import a rebrew project with{" "}
-                <code>reportal import-rebrew &lt;project-dir&gt;</code>.
+                {filtered
+                  ? "No binaries match this filter. Clear filters to see them all."
+                  : (
+                      <>
+                        No binaries yet. Upload one above, or import a rebrew project with{" "}
+                        <code>reportal import-rebrew &lt;project-dir&gt;</code>.
+                      </>
+                    )}
               </EmptyState>
             }
           />

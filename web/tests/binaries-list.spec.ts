@@ -44,6 +44,13 @@ test("the register filters by name, hash and tag, and orders its rows", async ({
   await expect(panel.getByRole("combobox", { name: "Tag", exact: true })).toHaveValue("");
   await expect(rows.filter({ hasText: "wide.exe" })).toHaveCount(1);
 
+  // A filter that matches nothing says so, rather than claiming the register is empty.
+  await search.fill("no-such-binary-zzzz");
+  await search.press("Enter");
+  await expect(panel.getByText(/No binaries match this filter/)).toBeVisible();
+  await panel.getByRole("button", { name: "Clear filters" }).click();
+  await expect(page).toHaveURL(/#\/binaries$/);
+
   // The hash: a prefix of a stored binary's own digest finds that binary.
   const register = (await (await page.request.get("/api/binaries")).json()) as {
     binaries: Array<{ name: string; sha256: string }>;

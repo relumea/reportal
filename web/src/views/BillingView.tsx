@@ -131,8 +131,12 @@ function PlanCards({
               ))}
             </ul>
             {canBuy ? (
-              <Button onClick={() => onChoose(plan.id)} disabled={busy !== ""}>
-                {busy === plan.id ? "Starting..." : plan.trial_days > 0 ? "Start trial" : "Choose plan"}
+              <Button
+                pending={busy === plan.id}
+                disabled={busy !== ""}
+                onClick={() => onChoose(plan.id)}
+              >
+                {plan.trial_days > 0 ? "Start trial" : "Choose plan"}
               </Button>
             ) : null}
           </article>
@@ -260,8 +264,8 @@ export function BillingView(): ReactNode {
           </select>
         </Field>
         {payload?.subscription && config.enabled ? (
-          <Button onClick={openPortal} disabled={busy !== ""}>
-            {busy === "portal" ? "Opening..." : "Manage subscription"}
+          <Button pending={busy === "portal"} disabled={busy !== ""} onClick={openPortal}>
+            Manage subscription
           </Button>
         ) : null}
       </Toolbar>

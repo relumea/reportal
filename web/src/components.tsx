@@ -273,16 +273,21 @@ export function Button({
 }
 
 function CopyButton({ text }: { text: string }): ReactNode {
-  const [copied, setCopied] = useState(false);
+  const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
+  useEffect(() => {
+    if (status === "idle") return undefined;
+    const handle = window.setTimeout(() => setStatus("idle"), 1500);
+    return () => window.clearTimeout(handle);
+  }, [status]);
   return (
     <Button
       size="sm"
       tone="ghost"
       onClick={() => {
-        void writeClipboard(text).then(setCopied);
+        void writeClipboard(text).then((ok) => setStatus(ok ? "copied" : "failed"));
       }}
     >
-      {copied ? "Copied" : "Copy"}
+      {status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : "Copy"}
     </Button>
   );
 }

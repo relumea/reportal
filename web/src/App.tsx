@@ -14,7 +14,7 @@ import {
 import type { Params, RouteObject } from "react-router";
 
 import { api } from "./api";
-import { ErrorNote, Loading } from "./components";
+import { Button, ErrorNote, Loading } from "./components";
 import {
   clickFocusedRowAction,
   clickFocusedSave,
@@ -332,6 +332,8 @@ export function App(): ReactNode {
   // Set while `stepHistory` navigates, so recording the new location does not
   // push the entry the reader just stepped off.
   const rewinding = useRef(false);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [canGoForward, setCanGoForward] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   const [selectedFunctionId, setSelectedFunctionId] = useState<number | null>(null);
   const [query, setQuery] = useState("");
@@ -363,9 +365,18 @@ export function App(): ReactNode {
   // The in-app history: every view the tab visited, oldest first, with the
   // index the reader is on.  It is kept in sessionStorage so it is per tab, and
   // the router's own back and forward still work beside it.
+  const syncHistoryNav = (): void => {
+    const { stack, index } = history.current;
+    setCanGoBack(index > 0);
+    setCanGoForward(index >= 0 && index < stack.length - 1);
+  };
+
   const remember = (path: string): void => {
     const { stack, index } = history.current;
-    if (stack[index] === path) return;
+    if (stack[index] === path) {
+      syncHistoryNav();
+      return;
+    }
     const trimmed = [...stack.slice(0, index + 1), path].slice(-HISTORY_LIMIT);
     history.current = { stack: trimmed, index: trimmed.length - 1 };
     try {
@@ -373,12 +384,14 @@ export function App(): ReactNode {
     } catch {
       // See storedHistory.
     }
+    syncHistoryNav();
   };
 
   useEffect(() => {
     const path = `${location.pathname}${location.search}`;
     if (rewinding.current) {
       rewinding.current = false;
+      syncHistoryNav();
       return;
     }
     remember(path);
@@ -397,6 +410,7 @@ export function App(): ReactNode {
     } catch {
       // See storedHistory.
     }
+    syncHistoryNav();
     rewinding.current = true;
     void navigate(target);
   };
@@ -805,7 +819,31 @@ export function App(): ReactNode {
       </aside>
       <main className="main">
         <header className="topbar">
-          <h1 id="title">{title}</h1>
+          <div className="topbar-heading">
+            <div className="history-nav" role="group" aria-label="View history">
+              <Button
+                tone="ghost"
+                size="sm"
+                disabled={!canGoBack}
+                aria-label="Go back"
+                title={`Go back (Alt+\u2190)`}
+                onClick={() => stepHistory(-1)}
+              >
+                {"\u2190"}
+              </Button>
+              <Button
+                tone="ghost"
+                size="sm"
+                disabled={!canGoForward}
+                aria-label="Go forward"
+                title={`Go forward (Alt+\u2192)`}
+                onClick={() => stepHistory(1)}
+              >
+                {"\u2192"}
+              </Button>
+            </div>
+            <h1 id="title">{title}</h1>
+          </div>
           <ThemePicker />
           <Suspense fallback={null}>
             <NotificationsBell />

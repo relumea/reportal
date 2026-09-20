@@ -200,7 +200,13 @@ export function JournalView({
           ]}
           rows={entries}
           rowKey={(row) => row.id}
-          empty={<EmptyState>No journaled actions yet. Every mutation records its inverse here.</EmptyState>}
+          empty={
+            <EmptyState>
+              {filters.actor !== "" || filters.limit !== "" || action
+                ? "No journal entries match this filter. Clear filters to see them all."
+                : "No journaled actions yet. Every mutation records its inverse here."}
+            </EmptyState>
+          }
         />
       )}
     </Panel>

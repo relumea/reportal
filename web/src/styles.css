@@ -415,6 +415,19 @@
   color: #ffffff;
 }
 
+:root[data-theme="zine"] .topbar .history-nav .btn {
+  color: #ffffff;
+  border-color: transparent;
+}
+
+:root[data-theme="zine"] .topbar .history-nav .btn:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.15);
+}
+
+:root[data-theme="zine"] .topbar .history-nav .btn:disabled {
+  opacity: 0.45;
+}
+
 :root[data-theme="zine"] .nav-link.active {
   background: var(--sys-title);
   color: #ffffff;
@@ -631,6 +644,20 @@ p.muted[role="status"]:not(:empty) {
   padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--border);
   margin-bottom: var(--space-5);
+}
+
+.topbar-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.history-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: 0 0 auto;
 }
 
 .topbar h1 {

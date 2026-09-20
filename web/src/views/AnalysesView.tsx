@@ -533,7 +533,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
         actions={
           <Toolbar>
             <Button tone="primary" onClick={() => navigate("/binaries")}>
-              Upload File
+              Upload binary
             </Button>
           </Toolbar>
         }

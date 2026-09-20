@@ -302,7 +302,9 @@ export function JobsView({
           rowKey={(job) => job.id}
           empty={
             <EmptyState>
-              Nothing queued. Choose an operation and a binary above; the server's pool runs it.
+              {filtered
+                ? "No jobs match this filter. Clear filters to see the queue."
+                : "Nothing queued. Choose an operation and a binary above; the server's pool runs it."}
             </EmptyState>
           }
         />
