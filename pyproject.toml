@@ -108,12 +108,20 @@ where = ["src"]
 # Vite layout grows past `dist/assets/`.  `manual/**.md` is the in-app docs
 # browser payload (`scripts/sync_packaged_docs.py` mirrors `docs/` +
 # `CHANGELOG.md` into it before `uv build`, keeping the `subsystems/` and
-# `cookbook/` subdirectories the reader serves).
+# `cookbook/` subdirectories the reader serves).  `deploy/*` is the systemd
+# unit templates (`scripts/sync_packaged_deploy.py` mirrors repository
+# `deploy/` so a wheel install without a checkout still has them).
 reportal = [
     "assets/dist/**",
     "manual/*.md",
     "manual/**/*.md",
+    "deploy/*",
 ]
+
+# Source maps must never ship even if a local Vite run left them under
+# `assets/dist/`; `scripts/check_wheel.py` also fails the gate when any remain.
+[tool.setuptools.exclude-package-data]
+reportal = ["assets/dist/**/*.map", "assets/dist/**/*.map.gz"]
 
 [tool.uv]
 package = true

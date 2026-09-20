@@ -154,11 +154,12 @@ package-wheel: venv-check uv-check ## Wheel + checks; assumes a current SPA dist
 	rm -rf dist build
 	$(REPRO_ENV) $(PY) scripts/precompress_spa.py
 	$(PY) scripts/sync_packaged_docs.py
+	$(PY) scripts/sync_packaged_deploy.py
 	$(REPRO_ENV) $(UV) build --wheel
-	$(PY) scripts/check_wheel.py
+	$(REPRO_ENV) $(PY) scripts/check_wheel.py
 
 # ── housekeeping ─────────────────────────────────────────────────────
 clean: ## Remove build artifacts and caches
 	rm -rf dist build .mypy_cache .pytest_cache .ruff_cache
-	rm -rf src/reportal/manual src/reportal/assets/dist
+	rm -rf src/reportal/manual src/reportal/deploy src/reportal/assets/dist
 	find . -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null; true

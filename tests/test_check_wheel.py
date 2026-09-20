@@ -91,6 +91,32 @@ def test_source_maps_lists_dist_maps_only() -> None:
     ]
 
 
+def test_missing_deploy_lists_required_unit_paths() -> None:
+    mod = _load()
+    required = list(mod.DEPLOY_REQUIRED)  # type: ignore[attr-defined]
+    assert len(required) == 3
+    assert any(path.endswith("reportal.service") for path in required)
+    assert any(path.endswith("reportal-backup.timer") for path in required)
+    assert mod.missing_deploy(set()) == required  # type: ignore[attr-defined]
+    assert mod.missing_deploy(set(required)) == []  # type: ignore[attr-defined]
+
+
+def test_missing_requires_dist_flags_absent_runtime_deps() -> None:
+    mod = _load()
+    metadata = (
+        "Requires-Dist: fastapi==0.141.1\n"
+        "Requires-Dist: rebrew\n"
+        'Requires-Dist: pytest==9.1.1; extra == "dev"\n'
+    )
+    assert mod.missing_requires_dist(metadata) == ["python-flirt"]  # type: ignore[attr-defined]
+    assert (
+        mod.missing_requires_dist(  # type: ignore[attr-defined]
+            metadata + "Requires-Dist: python-flirt==0.10.0\n"
+        )
+        == []
+    )
+
+
 def test_expected_gzip_mtime_honours_source_date_epoch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

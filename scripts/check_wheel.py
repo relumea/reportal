@@ -12,12 +12,18 @@ and one-level subdirectory page under ``docs/``.  A wheel that omits any of
 them makes ``GET /api/docs`` thin or 404 ``no-docs`` on every host without a
 checkout.
 
+It also checks that the packaged ``deploy/`` directory carries every systemd
+unit template (``doctor.DEPLOY_UNIT_FILES``).  A wheel without them leaves a
+``pip install`` host with no unit file to copy, even though Deploy docs assume
+one.
+
 It also checks that every packaged module exists in ``src/reportal``: setuptools
 reuses an existing ``build/lib`` tree without pruning it, so a module deleted
 from the source would otherwise keep being packaged from the stale copy.
 
 Gzip siblings must carry a reproducible header mtime (``SOURCE_DATE_EPOCH`` when
-set, else ``0``), and the wheel must not ship ``*.map`` source maps.
+set, else ``0``), and the wheel must not ship ``*.map`` source maps.  METADATA
+must declare ``python-flirt`` so a clean install still has the FLIRT matcher.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ import zipfile
 from pathlib import Path
 
 from reportal.docs import CHANGELOG_FILE, PAGE_ORDER
+from reportal.doctor import DEPLOY_UNIT_FILES
 
 DIST_DIR = Path("dist")
 WHEEL_GLOB = "reportal-*.whl"
@@ -38,10 +45,13 @@ MANUAL_PREFIX = "reportal/manual/"
 MANUAL_REQUIRED = tuple(f"{MANUAL_PREFIX}{stem}.md" for stem in PAGE_ORDER) + (
     f"{MANUAL_PREFIX}{CHANGELOG_FILE}",
 )
+DEPLOY_PREFIX = "reportal/deploy/"
+DEPLOY_REQUIRED = tuple(f"{DEPLOY_PREFIX}{name}" for name in DEPLOY_UNIT_FILES)
 DOCS_DIR = Path("docs")
 LICENSE_SUFFIX = ".dist-info/licenses/LICENSE"
 PACKAGE_PREFIX = "reportal/"
 SOURCE_DIR = Path("src/reportal")
+REQUIRED_DIST_NAMES = ("python-flirt",)
 
 
 def expected_gzip_mtime() -> int:
@@ -103,6 +113,29 @@ def missing_manual(names: set[str], required: tuple[str, ...] = MANUAL_REQUIRED)
     return [path for path in required if path not in names]
 
 
+def missing_deploy(names: set[str], required: tuple[str, ...] = DEPLOY_REQUIRED) -> list[str]:
+    """Required packaged systemd unit paths absent from the wheel."""
+    return [path for path in required if path not in names]
+
+
+def missing_requires_dist(
+    metadata: str, required: tuple[str, ...] = REQUIRED_DIST_NAMES
+) -> list[str]:
+    """Declared runtime dependency names absent from wheel METADATA."""
+    declared: set[str] = set()
+    for line in metadata.splitlines():
+        if not line.startswith("Requires-Dist:"):
+            continue
+        rest = line.split(":", 1)[1].strip()
+        name = rest.split(";", 1)[0].strip()
+        for sep in ("(", "[", " ", "<", ">", "=", "!"):
+            if sep in name:
+                name = name.split(sep, 1)[0].strip()
+        if name:
+            declared.add(name.lower())
+    return [name for name in required if name.lower() not in declared]
+
+
 def source_maps(names: set[str]) -> list[str]:
     """Packaged ``*.map`` paths under the SPA dist (release contamination)."""
     return sorted(
@@ -141,6 +174,11 @@ def main() -> int:
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
         gzip_bad = nondeterministic_gzip(archive, names, expected_mtime=expected_gzip_mtime())
+        metadata_name = next(
+            (name for name in names if name.endswith(".dist-info/METADATA")),
+            "",
+        )
+        metadata = archive.read(metadata_name).decode() if metadata_name else ""
     stale = stale_modules(names)
     if stale:
         sys.stderr.write(
@@ -161,6 +199,10 @@ def main() -> int:
             "rebuild with SOURCE_DATE_EPOCH set (make package-check)\n"
         )
         return 1
+    dep_gaps = missing_requires_dist(metadata)
+    if dep_gaps:
+        sys.stderr.write(f"{wheel.name} METADATA is missing Requires-Dist: {', '.join(dep_gaps)}\n")
+        return 1
     bundles = [name for name in names if name.startswith(f"{ASSETS_PREFIX}assets/")]
     js = [name for name in bundles if name.endswith(".js")]
     css = [name for name in bundles if name.endswith(".css")]
@@ -168,6 +210,7 @@ def main() -> int:
     has_license = any(name.endswith(LICENSE_SUFFIX) for name in names)
     required = tuple(dict.fromkeys(MANUAL_REQUIRED + packaged_pages()))
     manual_gaps = missing_manual(names, required)
+    deploy_gaps = missing_deploy(names)
     missing = [
         label
         for label, present in (
@@ -177,6 +220,7 @@ def main() -> int:
             ("an assets/*.js.gz or *.css.gz sibling", bool(gz)),
             (f"*{LICENSE_SUFFIX}", has_license),
             *((path, path in names) for path in required),
+            *((path, path in names) for path in DEPLOY_REQUIRED),
         )
         if not present
     ]
@@ -184,6 +228,8 @@ def main() -> int:
         hint = ""
         if manual_gaps:
             hint = "; run `scripts/sync_packaged_docs.py` before `uv build`"
+        elif deploy_gaps:
+            hint = "; run `scripts/sync_packaged_deploy.py` before `uv build`"
         sys.stderr.write(f"{wheel.name} is missing: {', '.join(missing)}{hint}\n")
         return 1
     manual_count = sum(
@@ -191,7 +237,8 @@ def main() -> int:
     )
     sys.stdout.write(
         f"{wheel.name}: {ENTRY_ASSET}, {len(js)} JS, {len(css)} CSS, "
-        f"{len(gz)} gzip asset(s), {manual_count} manual page(s) packaged\n"
+        f"{len(gz)} gzip asset(s), {manual_count} manual page(s), "
+        f"{len(DEPLOY_REQUIRED)} deploy unit(s) packaged\n"
     )
     return 0
 

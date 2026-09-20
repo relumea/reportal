@@ -32,8 +32,18 @@ view renders it from here.
   an unverifiable peer; operators who hit this on a real transport need a
   client that exposes the connected peer address.
 
+### Fixed
+
+- `make package-wheel` runs `scripts/check_wheel.py` under the same
+  `SOURCE_DATE_EPOCH` as precompress, so a reproducible gzip mtime no longer
+  fails the wheel gate when the epoch is the HEAD commit time rather than `0`.
+
 ### Added
 
+- Wheel packaging ships the systemd unit templates under `reportal/deploy/`
+  (mirrored from repository `deploy/` at build time).  `reportal deploy-units`
+  prints their paths, or copies them with `--write DIR`, so a host that
+  installed only the wheel still has the service and backup timer templates.
 - Queued jobs store the submit request's `X-Request-Id`; a pool-thread
   `job failed` / `job slow` line still carries it after the HTTP request
   ended.
@@ -85,6 +95,7 @@ view renders it from here.
 - Analyses row Ctrl/⌘-click opens the binary in a new tab.
 - Memory dump splits each 16-byte row into two groups of eight.
 - Data type cards use the same C kind tags as the kind strip.
+- Match / Diff toolbar reads `Found: N matches` for the loaded function.
 - Search binary and collection hits show their stored `created_at`.
 - Function header signature hover shows return, parameters and convention.
   Named types in that hover link the type list.

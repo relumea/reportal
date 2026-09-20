@@ -71,6 +71,11 @@ reportal doctor [--port|-p N] [--json]     # readiness before a start: workspace
                                            #   database, schema, auth, engine, SPA
                                            #   build, optional paths, free port; exits
                                            #   1 on a failure, 0 on a warning
+reportal deploy-units [--write|-w DIR] [--json]
+                                           # print the systemd unit templates this
+                                           #   install ships (repository deploy/ or
+                                           #   the packaged reportal/deploy/ copy),
+                                           #   or copy them into DIR with --write
 reportal backup [--output PATH] [--json]    # write the whole workspace (database,
                                            #   binaries, reports) as one gzipped
                                            #   tar; the database is copied through

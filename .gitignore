@@ -21,10 +21,13 @@ __pycache__/
 # Build artifacts.  `dist/` covers both the wheel and the Vite SPA bundled into
 # src/reportal/assets/dist/.  `src/reportal/manual/` is the mirrored docs tree
 # `scripts/sync_packaged_docs.py` writes for the wheel (source of truth stays
-# `docs/` + `CHANGELOG.md`).
+# `docs/` + `CHANGELOG.md`).  `src/reportal/deploy/` is the mirrored systemd
+# unit templates (`scripts/sync_packaged_deploy.py`; source of truth stays
+# repository `deploy/`).
 build/
 dist/
 src/reportal/manual/
+src/reportal/deploy/
 web/node_modules/
 
 # Tool caches

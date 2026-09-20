@@ -697,7 +697,8 @@ posts them to `POST /api/binaries/<id>/match` and
 renders the run's function, matched and pair counts, the note it carries and the
 journal action the run recorded, then reloads the rows.  The toolbar badge
 reads `Matched: N / M (P%)` from unique source functions over the binary
-total.  Clicking a name-source or quality-legend band filters the table.
+total, and `Found: N matches` for the loaded function's recorded
+candidates.  Clicking a name-source or quality-legend band filters the table.
 Every value that
 differs from its default shows as a chip above the sheet and clearing the chip
 restores the default, and the transfer panel copies names and signatures from

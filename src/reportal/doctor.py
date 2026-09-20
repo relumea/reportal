@@ -77,6 +77,47 @@ SPA_HINT = ui.UI_NOT_BUILT_DETAIL
 # into a reported failure rather than a traceback.
 REQUIRED_TABLES: tuple[str, ...] = ("binaries", "analyses", "functions", "scans")
 
+# systemd unit templates.  The repository's ``deploy/`` directory is the source
+# of truth; ``scripts/sync_packaged_deploy.py`` mirrors them into the packaged
+# ``deploy/`` directory the wheel ships so a host without a checkout still has
+# the templates ``reportal deploy-units`` prints.
+DEPLOY_DIRECTORY = "deploy"
+DEPLOY_UNIT_FILES: tuple[str, ...] = (
+    "reportal.service",
+    "reportal-backup.service",
+    "reportal-backup.timer",
+)
+
+
+def deploy_units_dir() -> Path | None:
+    """Directory that holds the systemd unit templates, or None when absent.
+
+    Prefers the repository ``deploy/`` beside a checkout (editable install or
+    working tree), then the packaged ``reportal/deploy/`` directory the wheel
+    ships.  None means neither resolved, so ``reportal deploy-units`` fails
+    rather than pointing at an empty path.
+    """
+    checkout = Path(__file__).resolve().parent.parent.parent / DEPLOY_DIRECTORY
+    if _complete_deploy_dir(checkout):
+        return checkout
+    packaged = Path(__file__).resolve().parent / DEPLOY_DIRECTORY
+    if _complete_deploy_dir(packaged):
+        return packaged
+    return None
+
+
+def deploy_unit_paths() -> dict[str, Path] | None:
+    """Map each required unit name to its path, or None when the set is incomplete."""
+    directory = deploy_units_dir()
+    if directory is None:
+        return None
+    return {name: directory / name for name in DEPLOY_UNIT_FILES}
+
+
+def _complete_deploy_dir(directory: Path) -> bool:
+    """True when *directory* carries every required unit template as a file."""
+    return directory.is_dir() and all((directory / name).is_file() for name in DEPLOY_UNIT_FILES)
+
 
 def _check(name: str, status: str, detail: str, hint: str = "") -> dict[str, str]:
     """One check row: its name, its status, what it found and what to do."""

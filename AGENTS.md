@@ -66,7 +66,8 @@ same commit that raises coverage.
 
 **Packaging.** `make package-check` builds the wheel and
 `scripts/check_wheel.py` asserts packaged SPA assets under `assets/dist/` (plus
-`.gz` siblings) and mirrored manual pages under `manual/`.
+`.gz` siblings), mirrored manual pages under `manual/`, and systemd unit
+templates under `deploy/`.
 
 ## Commands
 

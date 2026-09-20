@@ -339,6 +339,10 @@ export function MatchesView({
   const matchedCount = useMemo(() => {
     return new Set(recorded.map((row) => row.source_function_id)).size;
   }, [recorded]);
+  const foundCount = useMemo(() => {
+    if (functionId === null) return 0;
+    return recorded.filter((row) => row.source_function_id === functionId).length;
+  }, [recorded, functionId]);
   const functionTotal = functionsResult.data?.total ?? null;
   const matchedPercent =
     functionTotal === null || functionTotal === 0
@@ -611,6 +615,11 @@ export function MatchesView({
           <Button disabled={binaryId === null || recorded.length === 0} onClick={openBulk}>
             Bulk transfer
           </Button>
+          {functionId !== null ? (
+            <Badge hue="match">
+              Found: {foundCount} match{foundCount === 1 ? "" : "es"}
+            </Badge>
+          ) : null}
           {functionTotal !== null ? (
             <Badge hue="match">
               Matched: {matchedCount} / {functionTotal} ({matchedPercent}%)

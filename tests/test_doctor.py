@@ -289,6 +289,26 @@ class TestCli:
         assert payload["port"] == 0
         assert _check(payload, "port")["detail"] == "not checked"
 
+    def test_deploy_units_prints_the_repository_templates(self) -> None:
+        result = runner.invoke(cli.app, ["deploy-units", "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert Path(payload["directory"]) == UNIT.parent
+        assert Path(payload["units"]["reportal.service"]) == UNIT
+        assert "reportal-backup.timer" in payload["units"]
+
+    def test_deploy_units_write_copies_the_templates(self, tmp_path: Path) -> None:
+        out = tmp_path / "units"
+        result = runner.invoke(cli.app, ["deploy-units", "--write", str(out), "--json"])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert Path(payload["directory"]) == out
+        for name in doctor.DEPLOY_UNIT_FILES:
+            copied = out / name
+            assert copied.is_file()
+            assert copied.read_bytes() == (UNIT.parent / name).read_bytes()
+            assert Path(payload["units"][name]) == copied
+
     def test_an_out_of_range_port_is_a_usage_error(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
     ) -> None:
@@ -437,6 +457,16 @@ class TestUnit:
         timer_text = BACKUP_TIMER.read_text(encoding="utf-8")
         assert "OnCalendar=*-*-* 00:00:00 UTC" in timer_text
         assert "date -u +%%F" in BACKUP_UNIT.read_text(encoding="utf-8")
+
+    def test_deploy_units_dir_resolves_the_repository_templates(self) -> None:
+        directory = doctor.deploy_units_dir()
+        assert directory is not None
+        assert directory == UNIT.parent
+        paths = doctor.deploy_unit_paths()
+        assert paths is not None
+        assert paths["reportal.service"] == UNIT
+        assert paths["reportal-backup.service"] == BACKUP_UNIT
+        assert paths["reportal-backup.timer"] == BACKUP_TIMER
 
     def test_the_graph_backend_registry_reports_its_configured_name(self) -> None:
         # The optional check reads this; a name no registry holds would make the

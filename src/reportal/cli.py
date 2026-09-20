@@ -693,6 +693,62 @@ def doctor_command(
         raise typer.Exit(code=EXIT_ERROR)
 
 
+@app.command("deploy-units")
+def deploy_units_command(
+    write: Path | None = typer.Option(
+        None,
+        "--write",
+        "-w",
+        help="Directory to copy the unit templates into (created if missing)",
+        file_okay=False,
+        resolve_path=True,
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output paths as JSON"),
+) -> None:
+    """Print or copy the systemd unit templates this install ships.
+
+    Resolves the repository ``deploy/`` directory when a checkout is present,
+    otherwise the packaged ``reportal/deploy/`` directory the wheel carries.
+    Without ``--write`` the paths are printed; with ``--write DIR`` the three
+    templates are copied into DIR for ``systemctl`` install.
+    """
+    paths = doctor.deploy_unit_paths()
+    if paths is None:
+        _fail(
+            "no systemd unit templates found; rebuild the wheel with"
+            " scripts/sync_packaged_deploy.py or use a source checkout",
+            json_output,
+        )
+    if write is not None:
+        write.mkdir(parents=True, exist_ok=True)
+        written: dict[str, str] = {}
+        for name, source in paths.items():
+            target = write / name
+            target.write_bytes(source.read_bytes())
+            written[name] = str(target)
+        if json_output:
+            typer.echo(json.dumps({"directory": str(write), "units": written}))
+        else:
+            for name, target in written.items():
+                console.print(f"{name}: {target}")
+        return
+    directory = doctor.deploy_units_dir()
+    assert directory is not None
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "directory": str(directory),
+                    "units": {name: str(path) for name, path in paths.items()},
+                }
+            )
+        )
+        return
+    console.print(str(directory))
+    for name, path in paths.items():
+        console.print(f"  {name}: {path}")
+
+
 def _print_doctor(payload: dict[str, Any]) -> None:
     """Print one readiness report: every check, its status and the fix."""
     table = Table(show_header=True, header_style="bold")

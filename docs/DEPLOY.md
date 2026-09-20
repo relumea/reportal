@@ -50,8 +50,11 @@ cd web && bun install && bun run build && cd ..
 # 5. Readiness: every check is a read.
 sudo -u reportal .venv/bin/reportal doctor
 
-# 6. The unit.
+# 6. The unit.  From a checkout: copy deploy/reportal.service.  From a wheel
+#    install with no checkout: `reportal deploy-units --write /tmp/reportal-units`
+#    materialises the same templates the repository carries.
 sudo cp deploy/reportal.service /etc/systemd/system/reportal.service
+# or: sudo cp /tmp/reportal-units/reportal.service /etc/systemd/system/reportal.service
 sudo systemctl edit --full reportal      # set User=, Group=, WorkingDirectory=, ExecStart=
 sudo systemctl daemon-reload
 sudo systemctl enable --now reportal
@@ -64,7 +67,9 @@ table by default and `--json` for a supervisor.
 
 ## The unit file
 
-`deploy/reportal.service` in this repository is a template: copy it and replace
+`deploy/reportal.service` in this repository is a template (and the same bytes
+ship inside a wheel under `reportal/deploy/`, exposed by `reportal deploy-units`):
+copy it and replace
 `/srv/reportal`, `reportal` (the account) and the port.  The directives that
 matter:
 
@@ -126,6 +131,9 @@ Ship the timer so the job is not tribal knowledge:
 
 ```bash
 sudo mkdir -p /srv/backups && sudo chown reportal:reportal /srv/backups
+# Checkout: copy from deploy/.  Wheel-only host:
+#   reportal deploy-units --write /tmp/reportal-units
+#   sudo cp /tmp/reportal-units/reportal-backup.* /etc/systemd/system/
 sudo cp deploy/reportal-backup.service deploy/reportal-backup.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now reportal-backup.timer
