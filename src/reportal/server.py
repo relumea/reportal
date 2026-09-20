@@ -77,6 +77,9 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
             " (fix the file, then 'reportal config')"
         )
 
+    # After uvicorn's logging dictConfig, so INFO completion lines are not
+    # dropped by lastResort when this process was started outside ``server.run``.
+    observability.configure_logging()
     async with AsyncExitStack() as stack:
         application.state.mcp_http = await stack.enter_async_context(mcp_server.http_lifespan())
         try:

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 import logging
+import logging.config
 import sqlite3
 from pathlib import Path
 from unittest import mock
@@ -10,7 +12,7 @@ from unittest import mock
 import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import jobs, observability, store
+from reportal import api, jobs, observability, store
 from reportal.observability import REQUEST_ID_HEADER
 
 
@@ -326,3 +328,66 @@ class TestJobObservability:
             "job worker tick failed" in record.getMessage() and "OSError" in record.getMessage()
             for record in caplog.records
         )
+
+
+class TestConfigureLogging:
+    def test_info_completion_lines_reach_stderr_under_uvicorn_config(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """uvicorn's dictConfig leaves root with no handlers; lastResort is WARNING."""
+        from uvicorn.config import LOGGING_CONFIG
+
+        # Drop any handler a prior test (or an earlier configure_logging) left.
+        reportal_log = logging.getLogger("reportal")
+        for handler in list(reportal_log.handlers):
+            reportal_log.removeHandler(handler)
+            handler.close()
+        reportal_log.propagate = True
+
+        logging.config.dictConfig(LOGGING_CONFIG)
+        stream = io.StringIO()
+        monkeypatch.setattr("sys.stderr", stream)
+        try:
+            observability.configure_logging()
+            logging.getLogger("reportal").info(
+                "request method=GET path=/api/binaries status=200 duration_ms=1"
+                " request_id=cfg-log-test actor=local"
+            )
+            assert "request method=GET" in stream.getvalue()
+            assert "request_id=cfg-log-test" in stream.getvalue()
+        finally:
+            for handler in list(reportal_log.handlers):
+                reportal_log.removeHandler(handler)
+                handler.close()
+            monkeypatch.undo()
+            observability.configure_logging()
+
+    def test_configure_logging_is_idempotent(self) -> None:
+        observability.configure_logging()
+        before = len(logging.getLogger("reportal").handlers)
+        observability.configure_logging()
+        assert len(logging.getLogger("reportal").handlers) == before
+
+
+class TestAutoRunCorrelation:
+    def test_a_background_auto_run_failure_carries_request_id(
+        self, portal_db: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(_conn: sqlite3.Connection, **_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("orchestrator exploded")
+
+        monkeypatch.setattr(api.auto_mode, "execute_auto_run", boom)
+        assert api._auto_run_slots.acquire(blocking=False)
+        with caplog.at_level(logging.ERROR, logger="reportal.api"):
+            api._execute_auto_run(
+                42,
+                api.auto_mode.build_params(),
+                request_id="auto-submit-trace",
+            )
+        assert any(
+            "auto run failed" in record.getMessage()
+            and "run_id=42" in record.getMessage()
+            and "request_id=auto-submit-trace" in record.getMessage()
+            for record in caplog.records
+        )
+        assert observability.current_request_id() == ""

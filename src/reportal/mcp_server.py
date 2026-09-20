@@ -36,7 +36,7 @@ from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.shared.exceptions import MCPError
 from mcp.types import INVALID_PARAMS, JSONRPCMessage
 
-from reportal import __version__, mcp_tools
+from reportal import __version__, mcp_tools, observability
 from reportal.mcp_tools import Tool, ToolError
 
 # Identity reported by ``initialize``.  The hosted portal reports the same
@@ -115,7 +115,12 @@ def call_tool(name: str, arguments: Mapping[str, Any] | None = None) -> tuple[An
     except ToolError as exc:
         return {"error": exc.error, "detail": exc.detail}, True
     except Exception as exc:  # a failing handler is a tool error, not a crashed loop
-        _log.warning("tool %s raised", name, exc_info=exc)
+        _log.warning(
+            "tool %s raised%s",
+            name,
+            observability.request_id_suffix(),
+            exc_info=exc,
+        )
         return {"error": "internal-error", "detail": str(exc)}, True
 
 
@@ -179,6 +184,7 @@ async def serve(
 
 def run_server() -> int:
     """Run the stdio loop until the client closes it."""
+    observability.configure_logging()
     anyio.run(serve)
     return 0
 

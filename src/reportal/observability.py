@@ -6,9 +6,12 @@ structured completion line when the call is interesting, and a cheap counter
 snapshot ``GET /api/health`` exposes.  Background jobs store that request id at
 submit and feed the same health payload with done/failed counts and latency, so
 a queue that is failing is visible without scraping SQLite and a pool-thread
-failure still greps back to the submit request.  No remote collector and no new
-dependency: the signals an incident needs (did it succeed, how long, which
-request, recent error rate, job queue health) stay in one process.
+failure still greps back to the submit request.  ``configure_logging`` attaches
+a stderr handler to the ``reportal`` logger: uvicorn's default config leaves the
+root with no handlers, and without one INFO completion lines die at
+``logging.lastResort``.  No remote collector and no new dependency: the signals
+an incident needs (did it succeed, how long, which request, recent error rate,
+job queue health) stay in one process.
 """
 
 from __future__ import annotations
@@ -162,11 +165,28 @@ def should_log_completion(*, path: str, status: int, duration_ms: int) -> bool:
 
 
 def configure_logging() -> None:
-    """Raise the ``reportal`` logger to INFO so request lines reach journalctl.
+    """Attach a stderr handler so INFO completion lines reach journalctl.
 
-    ``server.run`` keeps uvicorn at ``warning`` with access logging off; without
-    this the structured completion lines would be silent under the root default.
+    ``server.run`` keeps uvicorn at ``warning`` with access logging off.  uvicorn's
+    default dictConfig puts handlers only on the ``uvicorn*`` loggers and leaves
+    the root with none, so a bare ``setLevel(INFO)`` still drops INFO through
+    ``logging.lastResort`` (WARNING).  Own handler + ``propagate=False`` is what
+    makes ``request method=...`` lines visible under systemd.
     """
     import logging
+    import sys
 
-    logging.getLogger("reportal").setLevel(logging.INFO)
+    logger = logging.getLogger("reportal")
+    logger.setLevel(logging.INFO)
+    if not any(isinstance(handler, logging.StreamHandler) for handler in logger.handlers):
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s %(message)s"))
+        logger.addHandler(handler)
+    logger.propagate = False
+
+
+def request_id_suffix() -> str:
+    """Append `` request_id=...`` when a request (or rebound job) is in scope."""
+    request_id = current_request_id()
+    return f" request_id={request_id}" if request_id else ""

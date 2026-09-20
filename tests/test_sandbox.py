@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -396,7 +397,11 @@ class TestReport:
         assert payload["notes"], "why it failed is recorded"
 
     def test_an_execute_exception_closes_the_run_as_failed(
-        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         ids = _seed(conn, tmp_path)
         fake = sandbox.register_runner(_FakeRunner())
@@ -407,7 +412,10 @@ class TestReport:
             raise RuntimeError("runner exploded before a report")
 
         monkeypatch.setattr(sandbox, "execute", _boom)
-        with pytest.raises(RuntimeError, match="runner exploded"):
+        with (
+            caplog.at_level(logging.ERROR, logger="reportal.sandbox"),
+            pytest.raises(RuntimeError, match="runner exploded"),
+        ):
             sandbox.detonate_binary(conn, ids["binary"])
 
         analysis_id = store.latest_analysis_for_binary(conn, ids["binary"])
@@ -417,6 +425,11 @@ class TestReport:
         assert run["status"] == sandbox.STATUS_FAILED
         assert run["finished_at"] is not None
         assert any("detonation aborted" in note for note in run["notes"])
+        assert any(
+            "sandbox detonation aborted" in record.getMessage()
+            and f"binary_id={ids['binary']}" in record.getMessage()
+            for record in caplog.records
+        )
 
     def test_a_runner_that_raises_leaves_no_scratch_behind(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

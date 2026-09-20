@@ -34,6 +34,7 @@ from reportal import (
     llm,
     mcp_server,
     mcp_tools,
+    observability,
     pipeline,
     plugins,
     profiles,
@@ -722,7 +723,9 @@ class TestProtocol:
         (reply,) = protocol([_tools_call(7, "get_binary", {})], responses=1)
         assert reply["error"]["code"] == INVALID_PARAMS
 
-    def test_handler_exception_is_a_tool_error_and_the_session_survives(self) -> None:
+    def test_handler_exception_is_a_tool_error_and_the_session_survives(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         mcp_tools.register_tool(
             Tool(
                 name="boom",
@@ -733,14 +736,24 @@ class TestProtocol:
             ),
             origin="test",
         )
-        replies = protocol(
-            [_tools_call(8, "boom", {}), _request(9, "ping")],
-            responses=2,
-        )
+        token = observability.set_request_id("mcp-tool-trace")
+        try:
+            with caplog.at_level(logging.WARNING, logger="reportal.mcp_server"):
+                replies = protocol(
+                    [_tools_call(8, "boom", {}), _request(9, "ping")],
+                    responses=2,
+                )
+        finally:
+            observability.reset_request_id(token)
         result = replies[0]["result"]
         assert result["isError"] is True
         assert json.loads(result["content"][0]["text"])["error"] == "internal-error"
         assert replies[1]["result"] == {}
+        assert any(
+            "tool boom raised" in record.getMessage()
+            and "request_id=mcp-tool-trace" in record.getMessage()
+            for record in caplog.records
+        )
 
 
 class TestReadTools:

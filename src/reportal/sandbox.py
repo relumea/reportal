@@ -51,7 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from reportal import journal, store
+from reportal import journal, observability, store
 from reportal._paths import MARKER, WorkspaceNotFound, binaries_dir, project_root
 
 _log = logging.getLogger(__name__)
@@ -949,6 +949,14 @@ def detonate_binary(
         try:
             report = execute(stored, caps=caps, runner=runner)
         except Exception as exc:
+            _log.error(
+                "sandbox detonation aborted run_id=%s binary_id=%s error=%s%s",
+                run_id,
+                binary_id,
+                f"{type(exc).__name__}: {exc}"[:200],
+                observability.request_id_suffix(),
+                exc_info=exc,
+            )
             finish_run(
                 conn,
                 run_id,

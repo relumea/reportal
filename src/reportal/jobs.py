@@ -1521,12 +1521,6 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     return stored
 
 
-def _request_id_suffix() -> str:
-    """Append `` request_id=...`` when the caller is an HTTP request thread."""
-    request_id = observability.current_request_id()
-    return f" request_id={request_id}" if request_id else ""
-
-
 def _log_job_failure(
     *,
     job_id: int,
@@ -1544,7 +1538,7 @@ def _log_job_failure(
         binary_id,
         duration_ms,
         error,
-        _request_id_suffix(),
+        observability.request_id_suffix(),
         exc_info=exc,
     )
 
@@ -1563,7 +1557,7 @@ def _log_job_slow(
         kind,
         binary_id,
         duration_ms,
-        _request_id_suffix(),
+        observability.request_id_suffix(),
     )
 
 

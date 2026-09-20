@@ -6093,24 +6093,32 @@ MAX_BACKGROUND_AUTO_RUNS = 4
 _auto_run_slots = threading.BoundedSemaphore(MAX_BACKGROUND_AUTO_RUNS)
 
 
-def _execute_auto_run(run_id: int, params: auto_mode.AutoParams) -> None:
+def _execute_auto_run(
+    run_id: int, params: auto_mode.AutoParams, *, request_id: str = ""
+) -> None:
     """Run a planned auto run on its own connection in a background thread.
 
     A failure must not leave the run `running` forever: it is closed as failed
     so the polling client sees a terminal state instead of an eternal spinner.
     The background slot is released in ``finally`` so a crashed or finished run
-    always frees capacity for the next start.
+    always frees capacity for the next start.  When the submit request carried
+    a ``request_id``, it is rebound here so a failure line still greps back to
+    the POST that queued the run (the thread has no HTTP ContextVar otherwise).
     """
+    request_id_token: Any | None = None
+    if request_id and not observability.current_request_id():
+        request_id_token = observability.set_request_id(request_id)
     try:
         try:
             with contextlib.closing(_open()) as conn:
                 auto_mode.execute_auto_run(conn, run_id=run_id, params=params)
         except Exception as exc:  # a crashed background run is a failed run, not a lost one
             failure = f"{type(exc).__name__}: {exc}"
-            _log.warning(
-                "auto run failed run_id=%s error=%s",
+            _log.error(
+                "auto run failed run_id=%s error=%s%s",
                 run_id,
                 failure[:200],
+                observability.request_id_suffix(),
                 exc_info=exc,
             )
             try:
@@ -6126,12 +6134,15 @@ def _execute_auto_run(run_id: int, params: auto_mode.AutoParams) -> None:
                 # A second failure must not die unobserved on a daemon thread:
                 # the run would stay `running` with no log line to blame.
                 _log.exception(
-                    "could not mark auto run %s failed after %s",
+                    "could not mark auto run %s failed after %s%s",
                     run_id,
                     failure[:200],
+                    observability.request_id_suffix(),
                 )
                 raise
     finally:
+        if request_id_token is not None:
+            observability.reset_request_id(request_id_token)
         _auto_run_slots.release()
 
 
@@ -6352,6 +6363,7 @@ def start_auto_run(
         thread = threading.Thread(
             target=_execute_auto_run,
             args=(run_id, params),
+            kwargs={"request_id": observability.current_request_id()},
             name=f"reportal-auto-{run_id}",
             daemon=True,
         )
