@@ -28,4 +28,4 @@ fi
 
 vnu --format text "$HTML"
 vnu --css --format text "$CSS"
-echo "VNU: HTML + CSS OK"
+echo "VNU: HTML + CSS OK" >&2

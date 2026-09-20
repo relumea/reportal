@@ -152,9 +152,11 @@ reportal revert-renames <function-id> [--json]
 reportal ai-decompile <function-id> [--json]
                                            # ask the configured LLM for a whole rewritten function
                                            #   over the stored decompilation and store the artifact
-                                           #   with its token map and per-line attributions
+                                           #   with its token map and per-line attributions;
+                                           #   human mode writes the rewrite to stdout
 reportal ai-decompilation <function-id> [--json]
-                                           # the stored rewrite rendered with its token overrides
+                                           # the stored rewrite rendered with its token overrides;
+                                           #   human mode writes the rewrite to stdout
 reportal ai-clear <function-id> [--kind KIND] [--json]
                                            # discard one stored AI artifact of a
                                            #   function (the rewrite by default); the
@@ -260,6 +262,7 @@ reportal conversation-cancel <conversation-id> [--run-id N] [--json]
                                            # stop a live run at its next step
 reportal conversation-events <conversation-id> [--run-id N]
                                            # follow the run's state as SSE frames
+                                           #   on stdout (errors on stderr)
 reportal pipeline <function-id> [--json]   # run the component AI decompilation pipeline over one
                                            #   function, storing the run and its artifacts
                                            #   (the whole-binary form is the ai-enrich job

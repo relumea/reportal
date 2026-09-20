@@ -705,6 +705,17 @@ class TestCli:
         assert payload["code"] == REWRITE
         assert payload["journal_action"]
 
+    def test_ai_decompile_human_mode_writes_code_to_stdout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+        _install_rewrite()
+        result = runner.invoke(cli.app, ["ai-decompile", str(function_id)])
+        assert result.exit_code == 0, result.output
+        assert REWRITE in result.stdout
+        assert REWRITE not in result.stderr
+        assert "rewritten" in result.stderr
+
     def test_ai_decompilation_reads_the_stored_artifact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -714,6 +725,18 @@ class TestCli:
         result = runner.invoke(cli.app, ["ai-decompilation", str(function_id), "--json"])
         assert result.exit_code == 0, result.output
         assert json.loads(result.output)["rewritten_code"] == REWRITE
+
+    def test_ai_decompilation_human_mode_writes_code_to_stdout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        function_id = _seed(tmp_path, monkeypatch)
+        _install_rewrite()
+        runner.invoke(cli.app, ["ai-decompile", str(function_id)])
+        result = runner.invoke(cli.app, ["ai-decompilation", str(function_id)])
+        assert result.exit_code == 0, result.output
+        assert REWRITE in result.stdout
+        assert REWRITE not in result.stderr
+        assert f"function {function_id}" in result.stderr
 
     def test_status_tokens_and_lines(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         function_id = _seed(tmp_path, monkeypatch)

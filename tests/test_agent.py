@@ -917,7 +917,8 @@ class TestCli:
 
         events = runner.invoke(cli.app, ["conversation-events", conversation])
         assert events.exit_code == 0, events.output
-        assert "event: run" in events.output
+        assert "event: run" in events.stdout
+        assert "event: run" not in events.stderr
 
     def test_the_commands_fail_without_an_endpoint_or_a_database(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

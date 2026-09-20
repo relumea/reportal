@@ -89,8 +89,9 @@ reference binary, ``family-rm`` deletes one and ``detect`` matches a binary
 against them.
 Human output goes to stderr through Rich; ``--json`` payloads go to stdout so
 they can be piped.  Commands whose product is a text body (``disasm``,
-``decompile``, ``yara``, ``snort``, ``stix``, ``sbom``, ``symbols-export``,
-``decompiler-script``) write that body to stdout in human mode too, with the
+``decompile``, ``ai-decompile``, ``ai-decompilation``, ``yara``, ``snort``,
+``stix``, ``sbom``, ``symbols-export``, ``decompiler-script``,
+``conversation-events``) write that body to stdout in human mode too, with the
 header and notes on stderr.  The console does not auto-highlight: a config
 table name such as ``[knowledge]`` or an id in an error must stay copyable.
 """
@@ -801,7 +802,12 @@ def deploy_units_command(
                 console.print(f"{name}: {path_str}")
         return
     directory = doctor.deploy_units_dir()
-    assert directory is not None
+    if directory is None:
+        _fail(
+            "no systemd unit templates found; rebuild the wheel with"
+            " scripts/sync_packaged_deploy.py or use a source checkout",
+            json_output,
+        )
     if json_output:
         typer.echo(
             json.dumps(
@@ -6631,7 +6637,7 @@ def decompile(
     _print_journal_action(log, json_output)
     console.print(f"\n[bold cyan]function {function_id} @ 0x{va:x}[/bold cyan]")
     console.print(f"backend: {resolved}\n")
-    typer.echo(code)
+    typer.echo(code, nl=False)
 
 
 # ── AI artifacts ───────────────────────────────────────────────────
@@ -7087,7 +7093,7 @@ def ai_decompile(
     console.print(
         f"\n[bold cyan]function {function_id}[/bold cyan] (rewritten, model {served['model']})"
     )
-    console.print(str(served["code"]), markup=False)
+    typer.echo(str(served["code"]), nl=False)
 
 
 @app.command("ai-decompilation")
@@ -7108,7 +7114,7 @@ def ai_decompilation(
         f"\n[bold cyan]function {function_id}[/bold cyan]"
         f" (model {served['model']}, {served['rating'] or 'unrated'})"
     )
-    console.print(str(served["code"]), markup=False)
+    typer.echo(str(served["code"]), nl=False)
 
 
 @app.command("ai-clear")
@@ -8559,7 +8565,7 @@ def conversation_events(
     conversation_id: int = typer.Argument(..., help="Conversation the run belongs to"),
     run_id: int = typer.Option(None, "--run-id", help="Run id; the newest without one"),
 ) -> None:
-    """Follow a run's state as server-sent event frames until it is terminal."""
+    """Follow a run's state as server-sent event frames on stdout until it is terminal."""
     portal_db = _db_path(False)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", False)
@@ -8570,8 +8576,11 @@ def conversation_events(
             run = agent.resolve_run(conn, conversation_id, run_id)
         except agent.UnknownRunError as exc:
             _fail(f"{exc.code}: {exc.detail}", False)
+        # SSE frames are the product body: stdout so a pipe can consume them,
+        # matching disasm/decompile/yara.  Errors stay on stderr via _fail.
         for frame in agent.events(conn, int(run["id"])):
-            console.print(frame, markup=False, end="")
+            typer.echo(frame, nl=False)
+            sys.stdout.flush()
 
 
 # ── knowledge ──────────────────────────────────────────────────────
@@ -11871,7 +11880,8 @@ def yara_command(
         return
     _print_journal_action(log, json_output)
     if output is not None:
-        typer.echo(str(_write_text_atomic(output.expanduser(), str(result["rule"]))))
+        written = _write_text_atomic(output.expanduser(), str(result["rule"]))
+        console.print(f"[green]Wrote[/green] {written}")
         _print_yara_summary(result)
         return
     typer.echo(str(result["rule"]), nl=False)
@@ -11894,7 +11904,8 @@ def snort_command(
     _print_journal_action(log, json_output)
     text = _remediation_text(result, "snort")
     if output is not None:
-        typer.echo(str(_write_text_atomic(output.expanduser(), text)))
+        written = _write_text_atomic(output.expanduser(), text)
+        console.print(f"[green]Wrote[/green] {written}")
     elif text:
         typer.echo(text, nl=False)
     for note in artifact.get("notes") or []:
@@ -11918,7 +11929,8 @@ def stix_command(
     _print_journal_action(log, json_output)
     text = _remediation_text(result, "stix")
     if output is not None:
-        typer.echo(str(_write_text_atomic(output.expanduser(), text)))
+        written = _write_text_atomic(output.expanduser(), text)
+        console.print(f"[green]Wrote[/green] {written}")
     else:
         typer.echo(text, nl=False)
     objects = artifact.get("objects")
