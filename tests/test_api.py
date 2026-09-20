@@ -4147,7 +4147,9 @@ class TestUnstripRoutes:
         )
         assert status.startswith("404")
         assert json_body(body, headers)["error"] == "function not found"
-        assert store.get_function(conn, other_fn)["name"] == "sub_2000"
+        other_row = store.get_function(conn, other_fn)
+        assert other_row is not None
+        assert other_row["name"] == "sub_2000"
 
     def test_apply_400_missing_function_id(
         self, conn: sqlite3.Connection, fake_engine: FakeEngine

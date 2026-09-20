@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from reportal import analysis_log, auth, metering
+from reportal._paths import db_path as workspace_db_path
 
 # Function statuses that count as a byte-equality match.  Mirrors rebrew's
 # MATCHED_STATUSES so `reportal stats` reports the same number recoverage does.
@@ -594,6 +595,17 @@ def connect(db_path: Path) -> sqlite3.Connection:
     with contextlib.suppress(sqlite3.OperationalError):
         conn.execute(f"PRAGMA journal_mode = {JOURNAL_MODE}")
     return conn
+
+
+def open_db() -> sqlite3.Connection:
+    """Open the workspace database, creating or upgrading the schema as needed.
+
+    Shared by the HTTP, CLI and MCP surfaces so none of them reach through the
+    FastAPI module for a connection.
+    """
+    path = workspace_db_path()
+    init_db(path)
+    return connect(path)
 
 
 # Columns a release added to a table after the first one.  ``CREATE TABLE IF

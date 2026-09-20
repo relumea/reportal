@@ -33,10 +33,10 @@ from starlette.staticfiles import NotModifiedResponse
 from reportal import landing
 from reportal._paths import reports_dir
 from reportal.server import (
-    _ACCEPT_ENCODING,
+    ACCEPT_ENCODING,
     GZIP_LEVEL,
-    _accepts_br,
-    _accepts_gzip,
+    accepts_br,
+    accepts_gzip,
     json_error,
 )
 
@@ -159,10 +159,10 @@ def _compressed_response(path: Path, *, cache_control: str) -> Response | None:
     """
     if path.suffix.lower() not in COMPRESSIBLE_SUFFIXES:
         return None
-    accept = _ACCEPT_ENCODING.get()
+    accept = ACCEPT_ENCODING.get()
     headers_base = {"Cache-Control": cache_control, "Vary": "Accept-Encoding"}
     media_type = _media_type(path)
-    if _accepts_br(accept):
+    if accepts_br(accept):
         br_path = _precompressed_sibling(path, ".br")
         if br_path is not None:
             return FileResponse(
@@ -170,7 +170,7 @@ def _compressed_response(path: Path, *, cache_control: str) -> Response | None:
                 media_type=media_type,
                 headers={**headers_base, "Content-Encoding": "br"},
             )
-    if not _accepts_gzip(accept):
+    if not accepts_gzip(accept):
         return None
     gz_path = _precompressed_sibling(path, ".gz")
     if gz_path is not None:
@@ -285,15 +285,15 @@ def pricing(request: Request) -> Response:
     can be answered ``304`` instead of re-sending the markup.
     """
     raw = landing.render().encode("utf-8")
-    accept = _ACCEPT_ENCODING.get()
+    accept = ACCEPT_ENCODING.get()
     etag_plain = hashlib.sha256(raw).hexdigest()
     body = raw
     encoding: str | None = None
     if len(raw) >= MIN_COMPRESS_BYTES:
         gz, br = _pricing_encodings(raw)
-        if br is not None and _accepts_br(accept):
+        if br is not None and accepts_br(accept):
             body, encoding = br, "br"
-        elif _accepts_gzip(accept):
+        elif accepts_gzip(accept):
             body, encoding = gz, "gzip"
     etag = f'"{etag_plain}-{encoding or "identity"}"'
     headers = {

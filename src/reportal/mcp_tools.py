@@ -102,7 +102,6 @@ from reportal import (
 )
 from reportal._paths import WorkspaceNotFound, reports_dir, under_workspace
 from reportal.plugins import RegistryError as RegistryError
-from reportal.server import db
 from reportal.surface import classified as _classified
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
 from reportal.surface import journaled_invite_join as _journal_invite_join
@@ -339,9 +338,9 @@ def _ensure_entry_points() -> None:
 # ── Connection and error helpers ───────────────────────────────────
 
 
-# The workspace connection is the server's opener, so one place creates the
-# schema on first use.
-_open = db
+# The workspace connection is the store opener, so one place creates the
+# schema on first use without pulling the FastAPI module into MCP tools.
+_open = store.open_db
 
 
 def _mcp_caller(conn: sqlite3.Connection) -> dict[str, Any] | None:

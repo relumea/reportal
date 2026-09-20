@@ -23,8 +23,9 @@ reportal/
 │   ├── __init__.py           # __version__
 │   ├── __main__.py           # python -m reportal
 │   ├── cli.py                # Typer CLI (init, import-rebrew, add-binary, serve, ...)
-│   ├── server.py             # shared FastAPI app, JSON helpers, Host guard, db(),
-│   │                         #   the auth middleware (off unless configured)
+│   ├── server.py             # shared FastAPI app, JSON helpers, Host guard,
+│   │                         #   thin db() over store.open_db, the auth middleware
+│   │                         #   (off unless configured)
 │   ├── observability.py      # request ids, structured completion lines, HTTP/job
 │   │                         #   counters on GET /api/health
 │   ├── jobs.py               # queued async operations: status, cancel, and the
@@ -46,8 +47,8 @@ reportal/
 │   ├── api.py                # every /api/* route (the JSON API)
 │   ├── ui.py                 # the built SPA, /static assets, /pricing and /reports site
 │   ├── webapp.py             # composition root: includes the two routers
-│   ├── store.py              # SQLite schema + typed CRUD; typed search and the
-│   │                         #   upload/extract helpers
+│   ├── store.py              # SQLite schema + typed CRUD; open_db for surfaces;
+│   │                         #   typed search and the upload/extract helpers
 │   ├── analysis_log.py       # structured analysis-log rows: severity, message, time
 │   ├── archive.py            # stdlib-only archive extraction: zip/apk, tar/tar.gz/tgz/
 │   │                         #   tar.bz2/tar.xz, single-member gz; per-member safety

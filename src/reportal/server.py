@@ -1,9 +1,9 @@
 """Shared FastAPI application for reportal.
 
 Defines the ``app`` object every route module mounts on, the JSON response and
-error helpers, the loopback Host validation and the database opener.  The route
-modules mount on it through their own routers, which :mod:`reportal.webapp`
-includes.
+error helpers, the loopback Host validation and a thin ``db()`` wrapper over
+:func:`reportal.store.open_db`.  The route modules mount on it through their
+own routers, which :mod:`reportal.webapp` includes.
 
 Every response keeps the contract the Bottle server established: the JSON error
 envelope ``{"error", "detail", "doc_url"}``, the same status codes, the
@@ -44,7 +44,7 @@ from reportal import (
     observability,
     store,
 )
-from reportal._paths import WorkspaceNotFound, db_path
+from reportal._paths import WorkspaceNotFound
 
 # High-resolution clock for request duration_ms.  A test patches
 # ``_perf_counter`` to pin recorded latencies without wall time.
@@ -165,11 +165,12 @@ SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ),
 )
 
-# The current request's ``Accept-Encoding``, so ``json_response`` can decide on
-# gzip without every one of its callers taking a request argument.  The value
-# is set per request by ``_reportal_headers``; outside a request it is empty and
-# nothing is compressed.
-_ACCEPT_ENCODING: ContextVar[str] = ContextVar("reportal_accept_encoding", default="")
+# The current request's ``Accept-Encoding``, so ``json_response`` and the SPA
+# asset routes can decide on gzip/brotli without every caller taking a request
+# argument.  The value is set per request by ``_reportal_headers``; outside a
+# request it is empty and nothing is compressed.  Public so :mod:`reportal.ui`
+# shares the same request-scoped value rather than reaching into a private name.
+ACCEPT_ENCODING: ContextVar[str] = ContextVar("reportal_accept_encoding", default="")
 
 # The caller the current response is being serialized for, so `json_response`
 # can apply `disclosure.redact_payload` without every route passing the request
@@ -201,10 +202,13 @@ def _hostname_of(host_value: str) -> str:
 
 
 def db() -> sqlite3.Connection:
-    """Open the reportal database, creating or upgrading the schema as needed."""
-    path = db_path()
-    store.init_db(path)
-    return store.connect(path)
+    """Open the reportal database, creating or upgrading the schema as needed.
+
+    Thin wrapper over :func:`reportal.store.open_db` so HTTP middleware keeps a
+    short name while MCP and other non-HTTP surfaces import the store opener
+    directly.
+    """
+    return store.open_db()
 
 
 # The object a path names, so the team scope is enforced once for every route
@@ -518,12 +522,12 @@ def _accepts_encoding(accept_encoding: str, encoding: str) -> bool:
     return False
 
 
-def _accepts_gzip(accept_encoding: str) -> bool:
+def accepts_gzip(accept_encoding: str) -> bool:
     """True when the client accepts gzip and has not refused it via q=0."""
     return _accepts_encoding(accept_encoding, "gzip")
 
 
-def _accepts_br(accept_encoding: str) -> bool:
+def accepts_br(accept_encoding: str) -> bool:
     """True when the client accepts brotli and has not refused it via q=0."""
     return _accepts_encoding(accept_encoding, "br")
 
@@ -542,7 +546,7 @@ def json_response(
     data = disclosure.redact_payload(data, caller=_CALLER.get())
     body = json.dumps(data).encode("utf-8")
     response_headers = {"Vary": "Accept-Encoding"}
-    if status < 400 and _accepts_gzip(_ACCEPT_ENCODING.get()):
+    if status < 400 and accepts_gzip(ACCEPT_ENCODING.get()):
         body = gzip.compress(body, GZIP_LEVEL)
         response_headers["Content-Encoding"] = "gzip"
     for key, value in headers.items():
@@ -684,7 +688,7 @@ def _log_api_completion(
 @app.middleware("http")
 async def _reportal_headers(request: Request, call_next: Any) -> Response:
     """Validate the Host header, correlate the request, carry helpers, add headers."""
-    token: Token[str] = _ACCEPT_ENCODING.set(request.headers.get("accept-encoding", ""))
+    token: Token[str] = ACCEPT_ENCODING.set(request.headers.get("accept-encoding", ""))
     caller_token: Token[Mapping[str, Any] | None] = _CALLER.set(None)
     request_id = observability.resolve_request_id(
         request.headers.get(observability.REQUEST_ID_HEADER)
@@ -770,7 +774,7 @@ async def _reportal_headers(request: Request, call_next: Any) -> Response:
         if response is not None:
             for key, value in SECURITY_HEADERS:
                 response.headers[key] = value
-        _ACCEPT_ENCODING.reset(token)
+        ACCEPT_ENCODING.reset(token)
         _CALLER.reset(caller_token)
         observability.reset_request_id(request_id_token)
 

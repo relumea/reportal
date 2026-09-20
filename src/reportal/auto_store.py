@@ -20,7 +20,6 @@ from collections.abc import Sequence
 from typing import Any
 
 from reportal import store
-from reportal.store import _json_list
 
 # Statuses an `auto_runs` row carries.  A run is created `running` and closed
 # `done` when every batch was decided, `failed` when the run itself could not
@@ -78,6 +77,15 @@ def _json_object(raw: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _json_list(raw: Any) -> list[Any]:
+    """Parse a JSON array column, returning [] when it is unusable."""
+    try:
+        parsed = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return []
+    return parsed if isinstance(parsed, list) else []
 
 
 def _auto_attempt_row(row: sqlite3.Row) -> dict[str, Any]:
