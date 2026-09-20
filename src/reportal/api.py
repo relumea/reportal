@@ -7003,18 +7003,26 @@ def add_collection_binary(
 ) -> Response:
     binary_id = _require_int(body, "binary_id")
     with contextlib.closing(_open()) as conn:
-        if store.get_collection(conn, collection_id) is None:
+        collection = store.get_collection(conn, collection_id)
+        if collection is None:
             return json_error(
                 404,
                 error="collection not found",
                 detail=f"no collection with id {collection_id}",
+            )
+        team_ids = _caller_team_ids(conn, request)
+        if not auth.may_write(_caller(request), collection, team_ids=team_ids):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"collection {collection_id} belongs to a team you are not a member of",
             )
         binary = store.get_binary(conn, binary_id)
         if binary is None:
             return json_error(
                 404, error="binary not found", detail=f"no binary with id {binary_id}"
             )
-        if not auth.may_write(_caller(request), binary, team_ids=_caller_team_ids(conn, request)):
+        if not auth.may_write(_caller(request), binary, team_ids=team_ids):
             return json_error(
                 403,
                 error=auth.ERROR_SCOPE_FORBIDDEN,
@@ -7128,17 +7136,23 @@ def replace_collection_binaries(
     if binary_ids is None:
         return json_error(400, error="invalid collection", detail="binary_ids is required")
     with contextlib.closing(_open()) as conn:
-        if store.get_collection(conn, collection_id) is None:
+        collection = store.get_collection(conn, collection_id)
+        if collection is None:
             return _no_collection(collection_id)
+        team_ids = _caller_team_ids(conn, request)
+        if not auth.may_write(_caller(request), collection, team_ids=team_ids):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"collection {collection_id} belongs to a team you are not a member of",
+            )
         for binary_id in binary_ids:
             binary = store.get_binary(conn, binary_id)
             if binary is None:
                 return json_error(
                     404, error="binary not found", detail=f"no binary with id {binary_id}"
                 )
-            if not auth.may_write(
-                _caller(request), binary, team_ids=_caller_team_ids(conn, request)
-            ):
+            if not auth.may_write(_caller(request), binary, team_ids=team_ids):
                 return json_error(
                     403,
                     error=auth.ERROR_SCOPE_FORBIDDEN,
@@ -7172,15 +7186,20 @@ def remove_collection_binaries(
         collection = store.get_collection(conn, collection_id)
         if collection is None:
             return _no_collection(collection_id)
+        team_ids = _caller_team_ids(conn, request)
+        if not auth.may_write(_caller(request), collection, team_ids=team_ids):
+            return json_error(
+                403,
+                error=auth.ERROR_SCOPE_FORBIDDEN,
+                detail=f"collection {collection_id} belongs to a team you are not a member of",
+            )
         for binary_id in binary_ids:
             binary = store.get_binary(conn, binary_id)
             if binary is None:
                 return json_error(
                     404, error="binary not found", detail=f"no binary with id {binary_id}"
                 )
-            if not auth.may_write(
-                _caller(request), binary, team_ids=_caller_team_ids(conn, request)
-            ):
+            if not auth.may_write(_caller(request), binary, team_ids=team_ids):
                 return json_error(
                     403,
                     error=auth.ERROR_SCOPE_FORBIDDEN,
@@ -8517,11 +8536,23 @@ def _upload_batch(
             )
     directory = binaries_dir()
     with contextlib.closing(_open()) as conn:
+        caller = _caller(request)
+        team_ids = _caller_team_ids(conn, request)
         for entry in options:
             for cid in _file_option_int_list(entry, "collection_ids"):
-                if store.get_collection(conn, cid) is None:
+                collection = store.get_collection(conn, cid)
+                if collection is None:
                     return json_error(
                         404, error="collection not found", detail=f"no collection with id {cid}"
+                    )
+                # collection_ids arrive in the body, so the path-based scope gate
+                # never sees them; refuse a team collection the caller may not
+                # write the same way POST /api/collections/{id}/binaries does.
+                if not auth.may_write(caller, collection, team_ids=team_ids):
+                    return json_error(
+                        403,
+                        error=auth.ERROR_SCOPE_FORBIDDEN,
+                        detail=f"collection {cid} belongs to a team you are not a member of",
                     )
         scopes: list[tuple[int | None, str] | None] = []
         try:

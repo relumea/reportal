@@ -226,6 +226,39 @@ class TestScopeFilters:
         )
         assert _names(conn, ids["a1"]) == ["a2"]
 
+    def test_a_team_collection_outside_membership_is_unknown(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = _seed(conn)
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        _member, _token = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        ana = auth.find_user(conn, "ana")
+        assert ana is not None
+        auth.add_member(conn, team_id, int(ana["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        collection = store.create_collection(conn, name="private")
+        store.set_collection_scope(
+            conn, collection, owner_team_id=team_id, visibility=auth.VISIBILITY_TEAM
+        )
+        store.add_collection_binary(conn, collection, ids["a"])
+
+        with pytest.raises(matching.InvalidSettingsError) as raised:
+            matching.resolve_scope(
+                conn,
+                matching.MatchSettings(collection_ids=(collection,)),
+                visible_to=stranger,
+            )
+        assert raised.value.error == "unknown collection"
+
+        allowed = matching.resolve_scope(
+            conn,
+            matching.MatchSettings(collection_ids=(collection,)),
+            visible_to=ana,
+        )
+        assert ids["a"] in allowed
+
 
 class TestRefusals:
     def test_unknown_platform(self) -> None:

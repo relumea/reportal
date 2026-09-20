@@ -483,8 +483,16 @@ def resolve_scope(
             raise InvalidSettingsError("unknown binary", f"no binary with id {binary_id}")
         allowed.add(binary_id)
     if settings.collection_ids:
+        collection_scope = auth.visible_clause(conn, visible_to, prefix="c.")
         for collection_id in settings.collection_ids:
-            if store.get_collection(conn, collection_id) is None:
+            if store.get_collection(conn, collection_id) is None or (
+                collection_scope is not None
+                and conn.execute(
+                    f"SELECT 1 FROM collections c WHERE c.id = ? AND ({collection_scope[0]})",
+                    (collection_id, *collection_scope[1]),
+                ).fetchone()
+                is None
+            ):
                 raise InvalidSettingsError(
                     "unknown collection", f"no collection with id {collection_id}"
                 )
@@ -731,6 +739,15 @@ def match_binary(
     total = len(sources)
     for index, source in enumerate(sources, start=1):
         source_id = int(source["id"])
+        if not candidate_ids:
+            # A scope that admits no candidate still replaces prior rows with
+            # an empty listing; skipping the clear would leave the last run's
+            # matches in place and look like the filter did nothing.
+            store.clear_matches_for(conn, source_id, commit=False)
+            conn.commit()
+            if progress is not None:
+                progress(index, total)
+            continue
         source_text = texts.get(source_id)
         if not source_text:
             # No listing means this source cannot be rescored. Leave its

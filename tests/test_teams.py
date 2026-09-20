@@ -360,6 +360,36 @@ class TestScopeGate:
         assert status.startswith("403")
         assert payload["error"] == auth.ERROR_SCOPE_FORBIDDEN
 
+    def test_adding_to_a_team_collection_is_refused_for_a_non_member(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = self._scoped(conn)
+        collection_id = store.create_collection(conn, name="team-only", description="")
+        store.set_collection_scope(
+            conn, collection_id, owner_team_id=ids["team"], visibility=auth.VISIBILITY_TEAM
+        )
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+
+        status, payload = _send(
+            "POST",
+            f"/api/collections/{collection_id}/binaries",
+            token=ids["bob"],
+            body={"binary_id": ids["public"]},
+        )
+
+        assert status.startswith("403")
+        assert payload["error"] == auth.ERROR_SCOPE_FORBIDDEN
+        assert store.get_collection(conn, collection_id)["binary_count"] == 0  # type: ignore[index]
+
+        member_status, _ = _send(
+            "POST",
+            f"/api/collections/{collection_id}/binaries",
+            token=ids["ana"],
+            body={"binary_id": ids["public"]},
+        )
+        assert member_status.startswith("200")
+        assert store.get_collection(conn, collection_id)["binary_count"] == 1  # type: ignore[index]
+
     def test_replacing_collection_members_with_a_scoped_binary_is_refused(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:

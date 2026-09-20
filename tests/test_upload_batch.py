@@ -265,6 +265,37 @@ class TestBatchTagsAndCollections:
         assert status.startswith("404")
         assert json_body(raw, headers)["error"] == "collection not found"
 
+    def test_a_non_member_cannot_attach_to_a_team_collection(
+        self,
+        portal_db: Path,
+        workspace: Path,
+        conn: sqlite3.Connection,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv(auth.REQUIRED_ENV, "required")
+        team_id = int(auth.create_team(conn, name="Blue")["id"])
+        collection_id = store.create_collection(conn, name="blue-only", scope="binary")
+        store.set_collection_scope(
+            conn, collection_id, owner_team_id=team_id, visibility=auth.VISIBILITY_TEAM
+        )
+        _, ana = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
+        _, bob = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        ana_user = auth.find_user(conn, "ana")
+        assert ana_user is not None
+        auth.add_member(conn, team_id, int(ana_user["id"]))
+        options = json.dumps([{"collection_ids": [collection_id]}])
+
+        refused = _upload_batch([("bob.exe", b"bob")], files_json=options, token=bob)
+
+        assert refused[0].startswith("403")
+        assert json_body(refused[2], refused[1])["error"] == auth.ERROR_SCOPE_FORBIDDEN
+        assert store.get_collection(conn, collection_id)["binary_count"] == 0  # type: ignore[index]
+
+        allowed = _upload_batch([("ana.exe", b"ana")], files_json=options, token=ana)
+        assert allowed[0].startswith("200")
+        assert json_body(allowed[2], allowed[1])["files"][0]["collections"] == [collection_id]
+        assert store.get_collection(conn, collection_id)["binary_count"] == 1  # type: ignore[index]
+
 
 class TestBatchScope:
     """The scope a batch entry can register its binary into."""
