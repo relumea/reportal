@@ -146,7 +146,9 @@ sudo systemctl enable --now reportal-backup.timer
 The oneshot writes `/srv/backups/reportal-$(date -u +%Y%m%dT%H%M%SZ).tar.gz`
 (UTC instant, so a same-day re-run keeps the earlier archive) and fails if that
 file is missing, empty, or refused by `reportal backup-info` (`systemctl
---failed` / `journalctl -u reportal-backup.service`).  After a good write it
+--failed` / `journalctl -u reportal-backup.service`).  The unit takes
+`PrivateNetwork=true` and `RestrictAddressFamilies=AF_UNIX`: backup is file
+I/O only, so it gets no IP stack.  After a good write it
 runs `reportal backup-prune --dir /srv/backups --keep-days 14 --keep-min 1` so
 retention for logical corruption stays bounded without deleting the newest
 archive when the schedule stalls.  Keep that directory on another volume when

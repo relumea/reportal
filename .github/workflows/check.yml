@@ -18,6 +18,11 @@ jobs:
   check:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    # Pinned sibling engine commits for [tool.uv.sources] path deps.  One place
+    # for the cache key and the fetch so a bump cannot leave those out of sync.
+    env:
+      REBREW_SHA: 269f25aadaf9ed0e7aa5b3c9f6b03b8a8d696c64
+      RESEMBL_SHA: a66d7ec5bb0c6150a00f4d42663c23d9fcba247b
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -57,7 +62,11 @@ jobs:
             if [ "$attempt" -eq 3 ]; then exit 1; fi
             sleep $((attempt * 5))
           done
-          sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless shellcheck
+          for attempt in 1 2 3; do
+            sudo apt-get install -y --no-install-recommends openjdk-17-jre-headless shellcheck && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep $((attempt * 5))
+          done
           java -version
           google-chrome-stable --version
 
@@ -85,29 +94,46 @@ jobs:
 
       # `rebrew` is a base dependency and `resembl` backs the similarity
       # extra; both are path sources on sibling checkouts
-      # (`[tool.uv.sources]`), so the runner clones them beside the repo.
-      # Commits are pinned so a clean CI build does not float on each
-      # sibling's default-branch tip.  Cache the shallow trees keyed on those
-      # pins so a warm runner skips the network fetch.
+      # (`[tool.uv.sources]`), so the runner must expose them at ../rebrew and
+      # ../resembl.  Cache the trees under .ci/engines/ (inside the workspace:
+      # actions/cache stores paths relative to GITHUB_WORKSPACE, and a ../
+      # target is brittle across runners and future strict-path checks), then
+      # symlink into the sibling layout uv expects.  Commits are the job env
+      # pins above so a clean CI build does not float on each sibling tip.
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         id: engines-cache
         with:
           path: |
-            ${{ github.workspace }}/../rebrew
-            ${{ github.workspace }}/../resembl
-          key: engines-rebrew-269f25aadaf9ed0e7aa5b3c9f6b03b8a8d696c64-resembl-a66d7ec5bb0c6150a00f4d42663c23d9fcba247b-${{ runner.os }}
+            .ci/engines/rebrew
+            .ci/engines/resembl
+          key: engines-rebrew-${{ env.REBREW_SHA }}-resembl-${{ env.RESEMBL_SHA }}-${{ runner.os }}
 
       - name: Check out the sibling engines
-        if: steps.engines-cache.outputs.cache-hit != 'true'
         run: |
-          git init ../rebrew
-          git -C ../rebrew remote add origin https://github.com/maci0/rebrew
-          git -C ../rebrew fetch --depth 1 origin 269f25aadaf9ed0e7aa5b3c9f6b03b8a8d696c64
-          git -C ../rebrew checkout --detach FETCH_HEAD
-          git init ../resembl
-          git -C ../resembl remote add origin https://github.com/maci0/resembl
-          git -C ../resembl fetch --depth 1 origin a66d7ec5bb0c6150a00f4d42663c23d9fcba247b
-          git -C ../resembl checkout --detach FETCH_HEAD
+          set -euo pipefail
+          mkdir -p .ci/engines
+          need_fetch=1
+          if [ "${{ steps.engines-cache.outputs.cache-hit }}" = "true" ] \
+            && [ "$(git -C .ci/engines/rebrew rev-parse HEAD 2>/dev/null || true)" = "$REBREW_SHA" ] \
+            && [ "$(git -C .ci/engines/resembl rev-parse HEAD 2>/dev/null || true)" = "$RESEMBL_SHA" ]; then
+            need_fetch=0
+          fi
+          if [ "$need_fetch" -eq 1 ]; then
+            rm -rf .ci/engines/rebrew .ci/engines/resembl
+            git init .ci/engines/rebrew
+            git -C .ci/engines/rebrew remote add origin https://github.com/maci0/rebrew
+            git -C .ci/engines/rebrew fetch --depth 1 origin "$REBREW_SHA"
+            git -C .ci/engines/rebrew checkout --detach FETCH_HEAD
+            git init .ci/engines/resembl
+            git -C .ci/engines/resembl remote add origin https://github.com/maci0/resembl
+            git -C .ci/engines/resembl fetch --depth 1 origin "$RESEMBL_SHA"
+            git -C .ci/engines/resembl checkout --detach FETCH_HEAD
+          fi
+          # Replace any prior sibling path (directory or symlink) with links
+          # into the cached trees so uv's ../rebrew and ../resembl resolve.
+          rm -rf ../rebrew ../resembl
+          ln -sfn "$GITHUB_WORKSPACE/.ci/engines/rebrew" ../rebrew
+          ln -sfn "$GITHUB_WORKSPACE/.ci/engines/resembl" ../resembl
 
       - name: Install dependencies
         run: |

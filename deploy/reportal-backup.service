@@ -58,7 +58,11 @@ ProcSubset=pid
 RestrictSUIDSGID=true
 RestrictRealtime=true
 RestrictNamespaces=true
+# Backup is file-only (SQLite + tar under ReadWritePaths); no sockets and no
+# network namespace.  RestrictAddressFamilies alone still leaves a network
+# namespace the unit never needs.
 RestrictAddressFamilies=AF_UNIX
+PrivateNetwork=true
 LockPersonality=true
 SystemCallArchitectures=native
 CapabilityBoundingSet=

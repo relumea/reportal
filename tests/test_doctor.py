@@ -467,6 +467,8 @@ class TestUnit:
         assert "ReadWritePaths=/srv/reportal /srv/backups" in text
         assert "Environment=PYTHONUNBUFFERED=1" in text
         assert "LimitCORE=0" in text
+        assert "PrivateNetwork=true" in text
+        assert "RestrictAddressFamilies=AF_UNIX" in text
         assert BACKUP_TIMER.is_file()
         timer_text = BACKUP_TIMER.read_text(encoding="utf-8")
         assert "OnCalendar=*-*-* 00:00:00 UTC" in timer_text

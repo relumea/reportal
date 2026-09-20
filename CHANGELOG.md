@@ -61,6 +61,14 @@ view renders it from here.
 
 ### Fixed
 
+- CI caches sibling `rebrew` / `resembl` trees under `.ci/engines/` (inside the
+  workspace) and symlinks them to the `../rebrew` / `../resembl` layout
+  `[tool.uv.sources]` expects, so `actions/cache` no longer targets paths
+  outside `GITHUB_WORKSPACE`.  Engine commit pins live in one job `env` block
+  shared by the cache key and the fetch; a warm cache that does not match the
+  pins is refetched.  Apt package install retries like `apt-get update`.
+- `deploy/reportal-backup.service` sets `PrivateNetwork=true` so the oneshot
+  has no IP stack (backup is file I/O only).
 - Wheels no longer package host-dependent SPA ``*.br`` siblings:
   `make package-wheel` runs precompress with `REPORTAL_BROTLI=0`, and
   `scripts/check_wheel.py` refuses packaged `.br` plus non-reproducible zip
