@@ -148,9 +148,6 @@ _BINARY_SIGNATURES_WHERE = (
     " WHERE a.binary_id = ?)"
 )
 
-# Scope of the signature-history rows a binary's seed run appends.
-_BINARY_SIGNATURE_HISTORY_WHERE = _BINARY_SIGNATURES_WHERE
-
 # Error name an MCP client sees per data-type failure of `edit_data_type`,
 # `import_data_types` and `export_data_types`.
 _DATA_TYPE_TOOL_ERRORS: tuple[tuple[type[data_types.DataTypeError], str], ...] = (
@@ -1523,7 +1520,7 @@ def _tool_run_signature_import(arguments: dict[str, Any]) -> dict[str, Any]:
             history_before = journal.snapshot_rows(
                 conn,
                 table="signature_history",
-                where=_BINARY_SIGNATURE_HISTORY_WHERE,
+                where=_BINARY_SIGNATURES_WHERE,
                 params=(binary_id,),
             )
             summary = signatures.seed_signatures(conn, binary_id=binary_id)
@@ -1541,7 +1538,7 @@ def _tool_run_signature_import(arguments: dict[str, Any]) -> dict[str, Any]:
                 conn,
                 log,
                 table="signature_history",
-                where=_BINARY_SIGNATURE_HISTORY_WHERE,
+                where=_BINARY_SIGNATURES_WHERE,
                 params=(binary_id,),
                 before=history_before,
                 key=("id",),

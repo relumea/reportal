@@ -41,7 +41,7 @@ import time
 import tomllib
 import unicodedata
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from reportal import profiles
@@ -328,28 +328,25 @@ def now() -> str:
     return clock.now()
 
 
-def _as_utc(value: str) -> datetime:
-    """Parse an ISO stamp as an aware UTC datetime; delegates to :func:`clock.as_utc`."""
-    from reportal import clock
-
-    return clock.as_utc(value)
-
-
 def invite_expires_at(created_at: str) -> str:
     """The ISO stamp *created_at* plus :data:`INVITE_TTL_SECONDS`, always UTC."""
-    stamp = _as_utc(created_at)
+    from reportal import clock
+
+    stamp = clock.as_utc(created_at)
     return (stamp + timedelta(seconds=INVITE_TTL_SECONDS)).isoformat(timespec="seconds")
 
 
 def invite_is_expired(row: Mapping[str, Any], *, at: str | None = None) -> bool:
     """True when an unused invite's expiry is at or before *at* (default now)."""
+    from reportal import clock
+
     keys = set(row.keys())
     if "used_by" in keys and row["used_by"] is not None:
         return False
     expires = str(row["expires_at"] if "expires_at" in keys and row["expires_at"] else "")
     if not expires:
         expires = invite_expires_at(str(row["created_at"]))
-    return _as_utc(at or now()) >= _as_utc(expires)
+    return clock.as_utc(at or now()) >= clock.as_utc(expires)
 
 
 def _env_flag(name: str) -> bool | None:

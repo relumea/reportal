@@ -201,11 +201,6 @@ def _remove_written_file(conn: sqlite3.Connection, descriptor: dict[str, Any]) -
     return {"path": raw, "status": EFFECT_REMOVED}
 
 
-def _undo_file_write(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
-    """Remove the source file a run wrote, reporting one already gone as missing."""
-    return _remove_written_file(conn, descriptor)
-
-
 def _undo_status_change(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
     """Restore the function status a run promoted."""
     function_id = int(descriptor.get("function_id", 0))
@@ -289,11 +284,6 @@ def _undo_row_delete(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> di
     return {"table": table, "deleted": cursor.rowcount, "status": EFFECT_REVERTED}
 
 
-def _undo_file_delete(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
-    """Remove the file an action wrote, reporting one already gone as missing."""
-    return _remove_written_file(conn, descriptor)
-
-
 def _undo_file_restore(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> dict[str, Any]:
     """Write back the file bytes an action deleted.
 
@@ -348,11 +338,11 @@ def builtin_effect_handlers() -> dict[str, EffectHandler]:
         EFFECT_DISASM: _undo_disasm,
         EFFECT_DECOMPILATION: _undo_decompilation,
         EFFECT_AI_ARTIFACT: _undo_ai_artifact,
-        EFFECT_FILE_WRITE: _undo_file_write,
+        EFFECT_FILE_WRITE: _remove_written_file,
         EFFECT_STATUS_CHANGE: _undo_status_change,
         EFFECT_ROW_RESTORE: _undo_row_restore,
         EFFECT_ROW_DELETE: _undo_row_delete,
-        EFFECT_FILE_DELETE: _undo_file_delete,
+        EFFECT_FILE_DELETE: _remove_written_file,
         EFFECT_FILE_RESTORE: _undo_file_restore,
         EFFECT_CONTEXT_CHANGE: _undo_context_change,
     }

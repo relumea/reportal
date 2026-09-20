@@ -470,11 +470,6 @@ def _run_scan_command(
     return log, result
 
 
-def _write_text_atomic(path: Path, text: str) -> Path:
-    """Write *text* to *path* through a same-directory temp file and rename."""
-    return write_text_atomic(path, text)
-
-
 # ── init ───────────────────────────────────────────────────────────
 
 
@@ -7979,7 +7974,7 @@ def symbols_export(
     text = symbols.render_symbols(row["parsed"], kind=kind)
     if output.strip():
         try:
-            _write_text_atomic(Path(output).expanduser(), text)
+            write_text_atomic(Path(output).expanduser(), text)
         except OSError as exc:
             _fail(f"cannot write {output}: {exc}", json_output)
         if json_output:
@@ -8016,7 +8011,7 @@ def decompiler_script(
     text = str(payload["text"])
     if output.strip():
         try:
-            _write_text_atomic(Path(output).expanduser(), text)
+            write_text_atomic(Path(output).expanduser(), text)
         except OSError as exc:
             _fail(f"cannot write {output}: {exc}", json_output)
         if json_output:
@@ -11868,7 +11863,7 @@ def yara_command(
         return
     _print_journal_action(log, json_output)
     if output is not None:
-        written = _write_text_atomic(output.expanduser(), str(result["rule"]))
+        written = write_text_atomic(output.expanduser(), str(result["rule"]))
         console.print(f"[green]Wrote[/green] {written}")
         _print_yara_summary(result)
         return
@@ -11892,7 +11887,7 @@ def snort_command(
     _print_journal_action(log, json_output)
     text = _remediation_text(result, "snort")
     if output is not None:
-        written = _write_text_atomic(output.expanduser(), text)
+        written = write_text_atomic(output.expanduser(), text)
         console.print(f"[green]Wrote[/green] {written}")
     elif text:
         typer.echo(text, nl=False)
@@ -11917,7 +11912,7 @@ def stix_command(
     _print_journal_action(log, json_output)
     text = _remediation_text(result, "stix")
     if output is not None:
-        written = _write_text_atomic(output.expanduser(), text)
+        written = write_text_atomic(output.expanduser(), text)
         console.print(f"[green]Wrote[/green] {written}")
     else:
         typer.echo(text, nl=False)
@@ -12350,7 +12345,7 @@ def sbom_command(
         text = json.dumps(payload["document"], indent=2)
     if output.strip():
         try:
-            _write_text_atomic(Path(output).expanduser(), text)
+            write_text_atomic(Path(output).expanduser(), text)
         except OSError as exc:
             _fail(f"cannot write {output}: {exc}", json_output)
         if json_output:

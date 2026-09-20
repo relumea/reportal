@@ -231,9 +231,6 @@ _BINARY_SIGNATURES_WHERE = (
     " WHERE a.binary_id = ?)"
 )
 
-# Scope of the signature-history rows a binary's seed run appends.
-_BINARY_SIGNATURE_HISTORY_WHERE = _BINARY_SIGNATURES_WHERE
-
 # Function-list filter vocabularies.  The name-source labels and the
 # capability names come from the modules that classify them, so the route
 # validates against the one definition instead of a copy that could drift.
@@ -1029,11 +1026,6 @@ def _query_optional_address(request: Request, key: str) -> int | None:
         ) from None
 
 
-def _query_referrer_address(request: Request) -> int | None:
-    """Return the `refers_to` query parameter as an address, or None when absent."""
-    return _query_optional_address(request, "refers_to")
-
-
 def _containing_function_ids(
     functions: Sequence[Mapping[str, Any]], addresses: Sequence[int]
 ) -> set[int]:
@@ -1115,7 +1107,7 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     match = _query_text(request, "match")
     if match is not None and match not in store.FUNCTION_MATCH_VALUES:
         return _invalid_query("match", match, store.FUNCTION_MATCH_VALUES)
-    refers_to = _query_referrer_address(request)
+    refers_to = _query_optional_address(request, "refers_to")
     name = _query_text(request, "name")
     va = _query_optional_address(request, "va")
     sort = _query_text(request, "sort") or store.DEFAULT_FUNCTION_SORT
@@ -2476,7 +2468,7 @@ def import_binary_signatures(binary_id: int) -> Response:
                 history_before = journal.snapshot_rows(
                     conn,
                     table="signature_history",
-                    where=_BINARY_SIGNATURE_HISTORY_WHERE,
+                    where=_BINARY_SIGNATURES_WHERE,
                     params=(binary_id,),
                 )
                 summary = signatures.seed_signatures(conn, binary_id=binary_id)
@@ -2496,7 +2488,7 @@ def import_binary_signatures(binary_id: int) -> Response:
                 conn,
                 log,
                 table="signature_history",
-                where=_BINARY_SIGNATURE_HISTORY_WHERE,
+                where=_BINARY_SIGNATURES_WHERE,
                 params=(binary_id,),
                 before=history_before,
                 key=("id",),

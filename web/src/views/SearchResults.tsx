@@ -70,11 +70,6 @@ export function hitHref(hit: SearchHit): string {
   return tagHref(hit.row.id);
 }
 
-/** The kind label a result row shows. */
-function hitKindLabel(hit: SearchHit): string {
-  return hit.kind === "binary" ? "binary" : hit.kind;
-}
-
 function _tags(tags: string[]): ReactNode {
   if (!tags.length) return null;
   return <span className="search-row-tags">{tags.slice(0, 3).join(", ")}</span>;
@@ -85,7 +80,7 @@ function hitMeta(hit: SearchHit): ReactNode {
   if (hit.kind === "binary") {
     return (
       <>
-        <span className="search-row-kind">{hitKindLabel(hit)}</span>
+        <span className="search-row-kind">{hit.kind}</span>
         {compactHash(hit.row.sha256)}
         <span>{hit.row.size.toLocaleString()} B</span>
         <span>{[hit.row.format, hit.row.arch].filter(Boolean).join(" / ") || "n/a"}</span>
@@ -98,7 +93,7 @@ function hitMeta(hit: SearchHit): ReactNode {
   if (hit.kind === "collection") {
     return (
       <>
-        <span className="search-row-kind">{hitKindLabel(hit)}</span>
+        <span className="search-row-kind">{hit.kind}</span>
         <span>{hit.row.binary_count} binaries</span>
         <span className="muted">{hit.row.visibility || "public"}</span>
         {_tags([hit.row.description].filter(Boolean))}
@@ -110,7 +105,7 @@ function hitMeta(hit: SearchHit): ReactNode {
   if (hit.kind === "tag") {
     return (
       <>
-        <span className="search-row-kind">{hitKindLabel(hit)}</span>
+        <span className="search-row-kind">{hit.kind}</span>
         <span>{hit.row.binary_count} binaries</span>
       </>
     );

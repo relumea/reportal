@@ -904,11 +904,6 @@ def strip_fences(text: str) -> str:
     return body.strip()
 
 
-def _strip_fences(text: str) -> str:
-    """The private alias :func:`_parse_json` keeps; use :func:`strip_fences`."""
-    return strip_fences(text)
-
-
 def _strip_reasoning(text: str) -> str:
     """Return *text* without leaked reasoning or tool-call markup.
 
@@ -931,7 +926,7 @@ def _strip_reasoning(text: str) -> str:
 def _parse_json(text: str) -> Any:
     """Parse a JSON object or list from *text*, raising :class:`LlmError` otherwise."""
     try:
-        data = json.loads(_strip_fences(_strip_reasoning(text)))
+        data = json.loads(strip_fences(_strip_reasoning(text)))
     except json.JSONDecodeError as exc:
         raise LlmError("LLM response was not valid JSON") from exc
     if not isinstance(data, (dict, list)):
