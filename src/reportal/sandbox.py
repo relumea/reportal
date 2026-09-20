@@ -86,6 +86,9 @@ DEFAULT_MEMORY_MB = 512
 MAX_MEMORY_MB = 4096
 MAX_CPU_SECONDS = 60
 DEFAULT_FILE_MB = 64
+# ``ulimit -v`` is in KiB; ``ulimit -f`` is in 512-byte blocks (POSIX).
+MEMORY_ULIMIT_KB_PER_MB = 1024
+FILE_ULIMIT_BLOCKS_PER_MB = 2048
 
 # Bytes of stdout and stderr a report keeps, and the files it lists.
 MAX_OUTPUT_BYTES = 64 * 1024
@@ -301,8 +304,10 @@ class BwrapRunner(Runner):
         """
         path = self.path() or self.executable
         limits = (
-            f"ulimit -t {caps.cpu_seconds} -v {caps.memory_mb * 1024}"
-            f' -f {caps.file_mb * 1024} -u 64 -c 0; exec "$0"'
+            f"ulimit -t {caps.cpu_seconds}"
+            f" -v {caps.memory_mb * MEMORY_ULIMIT_KB_PER_MB}"
+            f" -f {caps.file_mb * FILE_ULIMIT_BLOCKS_PER_MB}"
+            f' -u 64 -c 0; exec "$0"'
         )
         return [
             path,

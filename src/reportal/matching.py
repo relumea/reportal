@@ -42,6 +42,7 @@ Jaccard floor proves nothing.
 
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
@@ -739,7 +740,7 @@ def match_binary(
         kept = [
             (score, candidate_id)
             for score, candidate_id in scored
-            if score >= resolved.min_similarity
+            if math.isfinite(score) and score >= resolved.min_similarity
         ][: resolved.top]
         confidences = similarity.confidence_scores([score for score, _ in kept])
         recorded = 0

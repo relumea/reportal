@@ -458,7 +458,10 @@ class TestArgv:
         assert f"--ro-bind {tmp_path / 'sample'} {sandbox.SAMPLE_MOUNT}" in joined
         assert f"--bind {tmp_path / 'work'} {sandbox.WORKDIR_MOUNT}" in joined
         assert f"ulimit -t {caps.cpu_seconds}" in joined
-        assert f"-v {caps.memory_mb * 1024}" in joined
+        assert f"-v {caps.memory_mb * sandbox.MEMORY_ULIMIT_KB_PER_MB}" in joined
+        assert f"-f {caps.file_mb * sandbox.FILE_ULIMIT_BLOCKS_PER_MB}" in joined
+        # 64 MiB must be 131072 blocks of 512 bytes, not 65536 (which is 32 MiB).
+        assert caps.file_mb * sandbox.FILE_ULIMIT_BLOCKS_PER_MB == caps.file_mb * 2048
         assert argv[-1] == sandbox.SAMPLE_MOUNT, "the shell execs the sample mount"
 
     def test_requested_caps_report_the_fixed_guards(self) -> None:

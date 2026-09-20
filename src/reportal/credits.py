@@ -219,10 +219,12 @@ SIZE_BANDS: tuple[tuple[str, int, int], ...] = (
 # Multiplier for an input above the last band's ceiling.
 OVERSIZE_MULTIPLIER = 8
 
-# What a tenant pays for a credit beyond its allowance.  Above the plan rate
-# because unplanned capacity carries a thinner margin, and above the measured
-# cost of a credit, which `tests/test_credits.py` checks.
-OVERAGE_USD_PER_CREDIT = 0.04
+# What a tenant pays for a credit beyond its allowance, in the smallest
+# billable unit.  Above the plan rate because unplanned capacity carries a
+# thinner margin, and above the measured cost of a credit, which
+# `tests/test_credits.py` checks.  Dollars are derived for display and JSON.
+OVERAGE_CENTS_PER_CREDIT = 4
+OVERAGE_USD_PER_CREDIT = OVERAGE_CENTS_PER_CREDIT / 100
 
 
 def credit_cogs_usd() -> float:

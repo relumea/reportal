@@ -7,6 +7,7 @@ absent, so the suite passes with or without it.
 from __future__ import annotations
 
 import importlib.util
+import math
 
 import pytest
 
@@ -40,6 +41,18 @@ class TestConfidenceScores:
     def test_large_scores_do_not_overflow(self) -> None:
         result = similarity.confidence_scores([1000.0, 1000.0])
         assert sum(result) == pytest.approx(1.0)
+
+    def test_non_finite_scores_get_zero_weight_without_poisoning(self) -> None:
+        """A NaN must not make every confidence NaN or change the result length."""
+        result = similarity.confidence_scores([80.0, float("nan"), 90.0])
+        assert len(result) == 3
+        assert result[1] == 0.0
+        assert all(math.isfinite(value) for value in result)
+        assert sum(result) == pytest.approx(1.0)
+
+    def test_all_non_finite_scores_are_zero(self) -> None:
+        result = similarity.confidence_scores([float("nan"), float("inf")])
+        assert result == [0.0, 0.0]
 
 
 class TestAvailable:

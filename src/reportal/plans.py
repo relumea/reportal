@@ -47,7 +47,7 @@ import math
 import os
 import re
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 # A limit that does not apply.  Negative rather than None so a comparison
 # against a count is always a number-to-number check.
@@ -123,7 +123,20 @@ def tokens_for_budget(usd: float, model: str = COST_MODEL) -> int:
 
 def usd_for_tokens(tokens: int, model: str = COST_MODEL) -> float:
     """What *tokens* cost to serve at the blended rate."""
-    return tokens * blended_usd_per_mtok(model) / 1_000_000
+    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+        return 0.0
+    return float(Decimal(tokens) * _blended_rate(model) / Decimal(1_000_000))
+
+
+def micro_usd_for_tokens(tokens: int, model: str = COST_MODEL) -> int:
+    """What *tokens* cost in micro-USD at the blended rate, rounded half-up.
+
+    The usage ledger stores this integer so a bill reconstructs without binary
+    float drift; :func:`usd_for_tokens` is the display form of the same rate.
+    """
+    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
+        return 0
+    return int((Decimal(tokens) * _blended_rate(model)).to_integral_value(rounding=ROUND_HALF_UP))
 
 
 def _overage_usd_per_credit() -> float:

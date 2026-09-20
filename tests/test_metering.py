@@ -66,6 +66,7 @@ class TestLedger:
         expected_micro = round(plans.blended_usd_per_mtok())
         assert int(row["cost_micro_usd"]) == expected_micro
         assert expected_micro == 4
+        assert plans.micro_usd_for_tokens(1) == expected_micro
         assert metering.period_cost_usd(conn, organisation_id) == expected_micro / 1_000_000
 
     def test_usage_accumulates(self, conn: sqlite3.Connection) -> None:
@@ -139,6 +140,9 @@ class TestQuota:
         assert checked["allowed"] is True
         assert checked["overage_units"] == 100
         assert checked["overage_usd"] == pytest.approx(100 * credits_mod.OVERAGE_USD_PER_CREDIT)
+        # Overage is integer cents * units; no binary-float price path.
+        assert checked["overage_usd"] == (100 * credits_mod.OVERAGE_CENTS_PER_CREDIT) / 100
+        assert checked["overage_usd"] == 4.0
 
     def test_the_free_plan_actually_stops(self, conn: sqlite3.Connection) -> None:
         """Free has nothing to invoice an overage against."""

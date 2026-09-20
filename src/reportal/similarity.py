@@ -175,10 +175,18 @@ def confidence_scores(scores: list[float]) -> list[float]:
 
     The shift leaves the result unchanged mathematically but keeps ``exp``
     from overflowing on large scores.  An empty input returns an empty list.
+    Non-finite scores are treated as ``-inf`` so a NaN or Inf from a bad
+    scorer gets zero weight without changing the result length (callers zip
+    the output back onto the input list).
     """
     if not scores:
         return []
-    peak = max(scores)
-    weights = [math.exp(score - peak) for score in scores]
+    finite = [score if math.isfinite(score) else float("-inf") for score in scores]
+    peak = max(finite)
+    if not math.isfinite(peak):
+        return [0.0] * len(scores)
+    weights = [math.exp(score - peak) for score in finite]
     total = sum(weights)
+    if total == 0.0:
+        return [0.0] * len(scores)
     return [weight / total for weight in weights]

@@ -154,7 +154,7 @@ def charge_task(
     """
     if organisation_id == NO_ORG:
         return 0
-    amount = int(_credits_mod().cost_of(task, input_tokens)) * max(0, calls)
+    amount = int(_credits_mod().cost_of(task, input_tokens)) * max(0, int(calls))
     if amount:
         record_usage(
             conn,
@@ -192,7 +192,7 @@ def record_usage(
         # USD/MTok equals micro-USD per token; round into the ledger unit rather
         # than truncating ``usd_for_tokens * 1e6``, which under-counts (1 token
         # at the Sonnet blend stores 3 instead of 4).
-        cost_micro = round(units * plans.blended_usd_per_mtok(model or plans.COST_MODEL))
+        cost_micro = plans.micro_usd_for_tokens(units, model or plans.COST_MODEL)
     conn.execute(
         f"INSERT INTO {USAGE_TABLE} "
         "(organisation_id, kind, units, model, cost_micro_usd, detail, occurred_at) "
@@ -351,7 +351,7 @@ def quota_check(
         "metered": True,
         "overage_units": over if billable else 0,
         "overage_usd": (
-            (over * round(_credits_mod().OVERAGE_USD_PER_CREDIT * 100)) / 100
+            (over * _credits_mod().OVERAGE_CENTS_PER_CREDIT) / 100
             if billable and kind == KIND_CREDITS
             else 0.0
         ),
