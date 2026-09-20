@@ -23,21 +23,11 @@ sample. Runtime network only when the operator opts in: LLM bridge (`llm.py`) or
 guarded URL ingest (`remote_ingest.py`). Without an LLM endpoint every AI route
 is 503 `llm-unavailable`.
 
-## Project structure
+## Layout
 
-```
-reportal/
-├── pyproject.toml           # package, mypy, ruff, coverage
-├── Makefile                 # make check / make run
-├── scripts/                 # vnu-html.sh, check_wheel.py, precompress_spa.py, …
-├── .github/workflows/check.yml
-├── deploy/                   # reportal.service, reportal-backup.service/.timer
-├── docs/                    # see docs/README.md
-├── tests/                   # pytest, tmp_path based (no tests/__init__.py)
-├── tools/                   # smoke_spa.py, audit_ui.py, audit_scope.py, seed_e2e.py, cdp.py
-├── web/                     # SPA (bun); src/views, src/panels
-└── src/reportal/            # package; module map: docs/ARCHITECTURE.md ("Process layout")
-```
+`src/reportal/`, `web/`, `tests/` (no `__init__.py`), `tools/`, `scripts/`,
+`deploy/`, `docs/` ([index](docs/README.md)). Module map:
+`docs/ARCHITECTURE.md` ("Process layout").
 
 ## Gate
 
@@ -51,13 +41,10 @@ browsers are local only (smoke/audit seed `../rebrew-projects/notepad-rebrew`).
 Every target uses `.venv/bin/python`; missing tools fail loud. External:
 `shellcheck`, `vnu` (needs Java 17+).
 
-**mypy.** Config in `[tool.mypy]` (`python_version = "3.13"`, typed-defs flags,
-`warn_return_any`, `disallow_any_generics`, …). Do **not** add a
+**mypy.** Config in `[tool.mypy]` (`python_version = "3.13"`). Do **not** add a
 `[[tool.mypy.overrides]]` that matches `*.*` to relax `tests/`: that pattern also
 matches `src/reportal` and would weaken the package. Plain `mypy` is the gate;
-`--strict` on `src/reportal` alone still reports ten known attribute/return
-errors (`engines.py`, `journal.py`, `backup.py`, `pdf.py`, `api.py`) and is not a
-compliance claim.
+`mypy --strict` on `src/reportal` is not a compliance claim.
 
 **Coverage.** `make test` runs
 `pytest --cov --cov-fail-under=$(COVERAGE_MIN)` with `COVERAGE_MIN ?= 92`, kept
@@ -173,7 +160,7 @@ test when the registry changes, never a prose count here or in docs.
 
 - Python 3.13+, `src/` layout, setuptools, version from `reportal.__version__`.
 - Type every parameter and return; PEP 604 unions; specific generics.
-- Ruff: line length 100; select groups as in `pyproject.toml`; no ignores.
+- Ruff: line length 100; select/ignore as in `pyproject.toml`.
 - Typer: human text on stderr (`Console(stderr=True)`); `--json` on stdout.
 - FastAPI: plain `def` handlers (threadpool); `json_error` envelope for refusals;
   loopback bind by default; Host-header guard.
