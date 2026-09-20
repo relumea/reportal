@@ -12,6 +12,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { displayCombo, isMac, shortcuts } from "../keys";
 import type { Shortcut, ShortcutScope } from "../keys";
+import { useDialogShellGuard } from "../components";
 
 /** Section title and render order per scope. */
 const SCOPE_LABELS: Array<[ShortcutScope, string]> = [
@@ -53,6 +54,9 @@ export function CheatsheetDialog({
     document.addEventListener("focusin", onFocusIn);
     return () => document.removeEventListener("focusin", onFocusIn);
   }, [open]);
+
+  // After focus restore so cleanup drops inert before returning focus to the shell.
+  useDialogShellGuard(open);
 
   if (!open) return null;
 

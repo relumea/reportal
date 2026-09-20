@@ -523,7 +523,7 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
           Send
         </Button>
       </form>
-      <div className="prompt-library" aria-label="Suggested prompts">
+      <div className="prompt-library" role="group" aria-label="Suggested prompts">
         {SCOPE_PROMPTS[data.scope_kind as ConversationScopeKind]?.map((prompt) => (
           <Button key={prompt} size="sm" tone="ghost" onClick={() => setDraft(prompt)}>
             {prompt}

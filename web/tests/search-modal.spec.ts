@@ -8,9 +8,10 @@ import { expect, test } from "./fixtures";
 
 const state = e2eState();
 
-// The dialog is the scope for every result locator: the page behind it is
-// still in the accessibility tree, so a bare `getByRole("option")` would also
-// match the `<option>`s of its selects.
+// The dialog is the scope for every result locator: selects on the page behind
+// it also expose `<option>` nodes, so a bare `getByRole("option")` would match
+// them too. The shell is inert while the modal is open; scoping still keeps
+// the assertions honest if that guard regresses.
 function dialog(page: Page): Locator {
   return page.getByRole("dialog", { name: "Global search" });
 }
@@ -36,7 +37,7 @@ test("Ctrl+K opens the modal and Enter opens the highlighted hit", async ({ page
   await page.keyboard.type("Notepad");
   const row = hit(page, "binary").filter({ hasText: "notepad.exe" }).first();
   await expect(row).toBeVisible();
-  await expect(row.locator(".copy-row")).toBeVisible();
+  await expect(row.locator(".mono").first()).toBeVisible();
   await expect(row.getByText(/T\d{2}:\d{2}/)).toBeVisible();
   await expect(row).toHaveAttribute("aria-selected", "true");
 

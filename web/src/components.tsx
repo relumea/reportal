@@ -202,6 +202,31 @@ export function trapTabKey(
   }
 }
 
+/**
+ * While a modal is open, mark the shell (sidebar + main) inert and hidden from
+ * the accessibility tree so a reader cannot reach controls behind the dialog
+ * (WCAG 2.4.3 / 1.3.1).  Dialogs that render inside `.main` must portal out
+ * first; Search and the cheatsheet already sit beside it.
+ */
+export function useDialogShellGuard(open: boolean): void {
+  useEffect(() => {
+    if (!open) return undefined;
+    const shell = Array.from(
+      document.querySelectorAll<HTMLElement>(".layout > .sidebar, .layout > .main"),
+    );
+    for (const element of shell) {
+      element.setAttribute("inert", "");
+      element.setAttribute("aria-hidden", "true");
+    }
+    return () => {
+      for (const element of shell) {
+        element.removeAttribute("inert");
+        element.removeAttribute("aria-hidden");
+      }
+    };
+  }, [open]);
+}
+
 export function Button({
   children,
   onClick,

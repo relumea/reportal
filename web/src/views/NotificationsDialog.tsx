@@ -6,10 +6,12 @@
 // dismissed ids are kept in localStorage and filtered out of the count and the
 // list, which is where the hosted portal keeps them too.  The dialog takes
 // focus on open, returns it on close, cycles Tab among its controls, and
-// closes on Escape.
+// closes on Escape.  It portals to `document.body` so the shell guard can
+// inert sidebar+main without hiding the dialog itself.
 
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router";
 
 import { api } from "../api";
@@ -21,6 +23,7 @@ import {
   SeverityBadge,
   focusableElements,
   trapTabKey,
+  useDialogShellGuard,
 } from "../components";
 import type { NotificationItem, NotificationsPayload } from "../types";
 import { useAsync } from "../useAsync";
@@ -148,6 +151,9 @@ function NotificationsDialog({
     return () => document.removeEventListener("focusin", onFocusIn);
   }, [open]);
 
+  // After focus restore so cleanup drops inert before returning focus to the shell.
+  useDialogShellGuard(open);
+
   if (!open) return null;
   const shown = items.filter((item) => !dismissed.includes(item.id));
 
@@ -160,7 +166,7 @@ function NotificationsDialog({
     if (dialogRef.current) trapTabKey(event, dialogRef.current);
   };
 
-  return (
+  return createPortal(
     <div
       className="notifications-overlay"
       onMouseDown={(event) => {
@@ -221,6 +227,7 @@ function NotificationsDialog({
           ))}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

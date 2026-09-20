@@ -13,7 +13,7 @@ import { useNavigate } from "react-router";
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 
 import { api } from "../api";
-import { ErrorNote, Loading } from "../components";
+import { ErrorNote, Loading, useDialogShellGuard } from "../components";
 import { SEARCH_DEBOUNCE_MS, SEARCH_KIND_LABELS, SEARCH_KINDS } from "../constants";
 import type { SearchKind, SearchResults } from "../types";
 import { SearchHitRow, hitHref, searchHits } from "./SearchResults";
@@ -103,6 +103,9 @@ export function SearchModal({
     document.addEventListener("focusin", onFocusIn);
     return () => document.removeEventListener("focusin", onFocusIn);
   }, [open]);
+
+  // After focus restore so cleanup drops inert before returning focus to the shell.
+  useDialogShellGuard(open);
 
   if (!open) return null;
 

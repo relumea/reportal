@@ -104,6 +104,7 @@ function TagChips({
           {tag}
           <button
             type="button"
+            className="chip-clear"
             aria-label={`remove tag ${tag}`}
             onClick={() => onChange(values.filter((value) => value !== tag))}
           >

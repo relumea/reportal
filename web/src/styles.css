@@ -3150,9 +3150,15 @@ kbd.key {
      At thumb width every control reaches the size a finger can hit. */
   .btn,
   .btn-sm,
-  .sidebar-toggle {
+  .sidebar-toggle,
+  .chip-clear {
     min-height: 32px;
     min-width: 32px;
+  }
+
+  .chip-clear {
+    width: 32px;
+    height: 32px;
   }
 
   .nav-link {

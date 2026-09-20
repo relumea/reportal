@@ -10,7 +10,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import { CopyValue, hex } from "../components";
+import { hex } from "../components";
 import type {
   SearchBinaryRow,
   SearchCollectionRow,
@@ -18,6 +18,16 @@ import type {
   SearchResults,
   SearchTagRow,
 } from "../types";
+
+/** Compact hash text without a nested Copy control (options must stay inert). */
+function compactHash(value: string): ReactNode {
+  const shown = value.length > 12 ? `${value.slice(0, 12)}…` : value;
+  return (
+    <span className="mono" title={value}>
+      {shown}
+    </span>
+  );
+}
 
 /** One search result, tagged with the group it came from. */
 export type SearchHit =
@@ -76,7 +86,7 @@ function hitMeta(hit: SearchHit): ReactNode {
     return (
       <>
         <span className="search-row-kind">{hitKindLabel(hit)}</span>
-        <CopyValue value={hit.row.sha256} compact />
+        {compactHash(hit.row.sha256)}
         <span>{hit.row.size.toLocaleString()} B</span>
         <span>{[hit.row.format, hit.row.arch].filter(Boolean).join(" / ") || "n/a"}</span>
         {_tags(hit.row.tags)}
