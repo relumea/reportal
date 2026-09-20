@@ -49,10 +49,6 @@ dependencies = [
     "starlette==1.6.0",
     "typer==0.27.2",
     "uvicorn==0.52.4",
-    # Needed in its own right, not just transitively through `rebrew`: this
-    # package imports `rebrew.workspace` directly, and that module decodes the
-    # section_cells_json cache with zstandard.
-    "zstandard==0.25.0",
 ]
 
 [project.urls]
@@ -141,6 +137,11 @@ required-version = ">=0.8.22"
 # so `uv lock` stays solvable until a cognee line accepts rich 15.
 override-dependencies = [
     "rich==14.3.4",
+]
+# rebrew declares zstandard>=0.25.0 and is the only importer; keep the resolved
+# version exact so dropping the unused direct dep cannot float on lock refresh.
+constraint-dependencies = [
+    "zstandard==0.25.0",
 ]
 
 [tool.uv.sources]

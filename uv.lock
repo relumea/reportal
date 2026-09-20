@@ -11,6 +11,7 @@ resolution-markers = [
 ]
 
 [manifest]
+constraints = [{ name = "zstandard", specifier = "==0.25.0" }]
 overrides = [{ name = "rich", specifier = "==14.3.4" }]
 
 [[package]]
@@ -3136,7 +3137,6 @@ dependencies = [
     { name = "starlette" },
     { name = "typer" },
     { name = "uvicorn" },
-    { name = "zstandard" },
 ]
 
 [package.optional-dependencies]
@@ -3176,7 +3176,6 @@ requires-dist = [
     { name = "starlette", specifier = "==1.6.0" },
     { name = "typer", specifier = "==0.27.2" },
     { name = "uvicorn", specifier = "==0.52.4" },
-    { name = "zstandard", specifier = "==0.25.0" },
 ]
 provides-extras = ["dev", "similarity", "cognee"]
 
