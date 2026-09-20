@@ -173,6 +173,37 @@ class TestFeed:
         analysis_log.append_entry(conn, analysis_id, message="c", severity="info")
         assert notifications.latest(conn) == logged_again
 
+    def test_latest_ranks_by_utc_instant_not_lexicographic_offset(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Europe/Warsaw summer (+02:00): 14:00+02 is 12:00Z, earlier than
+        # 13:00Z.  A string max would pick the +02:00 stamp and leave the
+        # later UTC watermark behind.
+        earlier = "2026-07-01T14:00:00+02:00"
+        later = "2026-07-01T13:00:00+00:00"
+        monkeypatch.setattr(store, "now", lambda: earlier)
+        _, analysis_id = _analysis(conn)
+        analysis_log.append_entry(conn, analysis_id, message="warsaw", severity="info")
+        monkeypatch.setattr(store, "now", lambda: later)
+        _action(conn, "utc later")
+        assert notifications.latest(conn) == later
+
+    def test_merge_page_ranks_by_utc_instant_not_lexicographic_offset(self) -> None:
+        earlier = {
+            "id": "log:1",
+            "seq": 1,
+            "at": "2026-07-01T14:00:00+02:00",
+            "message": "earlier",
+        }
+        later = {
+            "id": "action:a",
+            "seq": 2,
+            "at": "2026-07-01T13:00:00+00:00",
+            "message": "later",
+        }
+        page = notifications.merge_page([earlier, later], limit=2)
+        assert [item["message"] for item in page] == ["later", "earlier"]
+
     def test_limit_bounds_the_page_and_says_so(self, conn: sqlite3.Connection) -> None:
         for index in range(4):
             _action(conn, f"write {index}")

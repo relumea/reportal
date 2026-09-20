@@ -57,6 +57,13 @@ class TestSeries:
         monkeypatch.setattr(store, "now", lambda: "2026-01-15T12:00:00+00:00")
         assert analytics.window(3) == ["2026-01-13", "2026-01-14", "2026-01-15"]
 
+    def test_day_buckets_use_the_utc_calendar_not_the_offset_prefix(self) -> None:
+        # 01:00+02:00 is still 2026-06-30 UTC; a raw [:10] prefix would put the
+        # point on July 1 and shift the software-type series by a day.
+        assert analytics._day("2026-07-01T01:00:00+02:00") == "2026-06-30"
+        assert analytics._day("2026-07-01T12:00:00+00:00") == "2026-07-01"
+        assert analytics._day("not-a-stamp") == "not-a-stam"
+
     def test_a_day_outside_the_bounds_is_refused(self) -> None:
         assert analytics.normalize_days(1) == 1
         for days in (0, -1, analytics.MAX_SERIES_DAYS + 1, True):

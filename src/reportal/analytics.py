@@ -52,8 +52,17 @@ def normalize_days(days: int) -> int:
 
 
 def _day(value: str) -> str:
-    """The ``YYYY-MM-DD`` part of a stored timestamp."""
-    return str(value)[:10]
+    """The ``YYYY-MM-DD`` UTC calendar day of a stored timestamp.
+
+    Goes through :func:`reportal.store.as_utc` so a ``+02:00`` Europe/Warsaw
+    stamp near local midnight lands on the UTC day, matching the series window
+    built from :func:`reportal.store.now`.  Unparseable values keep the previous
+    prefix fallback so a corrupt row cannot abort the whole dashboard.
+    """
+    try:
+        return store.as_utc(value).date().isoformat()
+    except ValueError:
+        return str(value)[:10]
 
 
 def window(days: int, *, today: date | None = None) -> list[str]:

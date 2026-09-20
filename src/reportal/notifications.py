@@ -93,12 +93,18 @@ def latest(conn: sqlite3.Connection) -> str | None:
     """The time of the newest item either source holds, or None when empty.
 
     A client that polls passes this back as ``since``, which is one query per
-    source and no page of items to read.
+    source and no page of items to read.  Candidates are ranked by UTC instant
+    (via :func:`reportal.store.as_utc`) and returned in the store's ``+00:00``
+    form so a ``+02:00`` Europe/Warsaw stamp cannot beat a later ``+00:00`` row
+    under lexicographic ``max``, and the watermark stays comparable to stored
+    ``created_at`` text.
     """
     action = journal.list_actions(conn, limit=1)
     logs = analysis_log.list_recent(conn, limit=1)
     times = [str(row["created_at"]) for row in (*action, *logs)]
-    return max(times) if times else None
+    if not times:
+        return None
+    return store.as_utc_iso(max(times, key=store.as_utc))
 
 
 def merge_page(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -107,11 +113,12 @@ def merge_page(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     The notification feed and the activity feed read the same two sources
     (journaled actions, analysis-log entries) and differ in the item shape and
     the totals beside the page, so the sort-and-cut lives here once.  Every
-    item carries ``at`` (an ISO timestamp, compared as text the way the rows
-    are written) and ``seq`` (its source row's id, which breaks a same-second
-    tie and keeps the order stable between reads).
+    item carries ``at`` (an ISO timestamp ranked as a UTC instant so a
+    ``+02:00`` offset cannot sort ahead of a later ``+00:00`` row) and ``seq``
+    (its source row's id, which breaks a same-instant tie and keeps the order
+    stable between reads).
     """
-    items.sort(key=lambda item: (str(item["at"]), int(item["seq"])), reverse=True)
+    items.sort(key=lambda item: (store.as_utc(str(item["at"])), int(item["seq"])), reverse=True)
     return items[:limit]
 
 

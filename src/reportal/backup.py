@@ -484,12 +484,16 @@ def describe(archive: Path) -> dict[str, Any]:
 def suggest_name() -> str:
     """The default archive name for the current workspace.
 
-    Parsed from :func:`reportal.store.now` so the stamp is always the UTC
-    calendar instant, not a host-local wall time, and so a future change to the
-    ISO form (offset sign, fractional seconds) cannot scramble the filename the
+    Parsed through :func:`reportal.store.as_utc` so the stamp is always the UTC
+    calendar instant, not a host-local wall time: a naive ISO value is treated
+    as UTC (the store policy) rather than re-interpreted by
+    :meth:`datetime.datetime.astimezone` through the host zone, which on a
+    spring-forward day in ``America/New_York`` would shift the filename by the
+    local offset.  Going through ``as_utc`` also keeps a future change to the
+    ISO form (offset sign, fractional seconds) from scrambling the filename the
     way a raw ``replace("-", "")`` on the offset would.
     """
-    stamp = datetime.fromisoformat(store.now()).astimezone(UTC).strftime("%Y%m%dT%H%M%S")
+    stamp = store.as_utc(store.now()).strftime("%Y%m%dT%H%M%S")
     return f"reportal-backup-{stamp}.tar.gz"
 
 

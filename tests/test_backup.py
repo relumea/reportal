@@ -176,6 +176,21 @@ class TestCreate:
         monkeypatch.setattr(store, "now", lambda: "2026-03-08T07:30:00+00:00")
         assert backup.suggest_name() == "reportal-backup-20260308T073000.tar.gz"
 
+    def test_suggest_name_treats_a_naive_stamp_as_utc(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # US spring-forward day: datetime(...).astimezone(UTC) on a naive value
+        # would read the host zone (America/New_York) and shift the filename by
+        # four hours.  store.as_utc treats naive as UTC instead.
+        monkeypatch.setenv("TZ", "America/New_York")
+        time.tzset()
+        monkeypatch.setattr(store, "now", lambda: "2026-03-08T07:30:00")
+        try:
+            assert backup.suggest_name() == "reportal-backup-20260308T073000.tar.gz"
+        finally:
+            monkeypatch.delenv("TZ", raising=False)
+            time.tzset()
+
     def test_an_output_inside_the_workspace_is_refused(self, tmp_path: Path) -> None:
         root = _workspace(tmp_path / "one")
         with pytest.raises(backup.BackupError) as failure:
