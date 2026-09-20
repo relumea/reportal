@@ -6000,6 +6000,8 @@ def revert_pipeline_run(run_id: int) -> Response:
             return json_error(
                 404, error="run not found", detail=f"no pipeline run with id {run_id}"
             )
+        except effects.CorruptPlanError as exc:
+            return json_error(409, error="corrupt-undo-plan", detail=str(exc))
     return json_response(result)
 
 
@@ -6430,6 +6432,8 @@ def revert_auto_run(run_id: int) -> Response:
             result = auto_mode.revert_auto_run(conn, run_id)
         except KeyError:
             return json_error(404, error="run not found", detail=f"no auto run with id {run_id}")
+        except effects.CorruptPlanError as exc:
+            return json_error(409, error="corrupt-undo-plan", detail=str(exc))
     return json_response(result)
 
 

@@ -7471,6 +7471,8 @@ def pipeline_revert(
             result = pipeline.revert_run(conn, run_id)
         except KeyError:
             _fail(f"no pipeline run with id {run_id}", json_output)
+        except effects.CorruptPlanError as exc:
+            _fail(str(exc), json_output)
 
     if json_output:
         typer.echo(json.dumps(result))
@@ -7774,6 +7776,8 @@ def auto_revert(
             result = auto_mode.revert_auto_run(conn, run_id)
         except KeyError:
             _fail(f"no auto run with id {run_id}", json_output)
+        except effects.CorruptPlanError as exc:
+            _fail(str(exc), json_output)
 
     if json_output:
         typer.echo(json.dumps(result))

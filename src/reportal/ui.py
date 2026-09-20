@@ -72,6 +72,10 @@ COMPRESSIBLE_SUFFIXES = frozenset(
 # Below this, the gzip framing usually costs more than it saves.
 MIN_COMPRESS_BYTES = 256
 
+# Wall-clock bound for an on-request brotli CLI compress of the pricing page.
+# The CLI is optional quality; a hung binary must not pin a worker forever.
+BROTLI_TIMEOUT_SECONDS = 10
+
 # Cap the in-process gzip cache so a long-lived server does not retain every
 # historical hashed bundle after many deploys without a restart.
 _GZIP_CACHE_SIZE = 64
@@ -269,8 +273,9 @@ def _pricing_encodings(raw: bytes) -> tuple[bytes, bytes | None]:
                 input=raw,
                 capture_output=True,
                 check=True,
+                timeout=BROTLI_TIMEOUT_SECONDS,
             )
-        except (OSError, subprocess.CalledProcessError):
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
             completed = None
         if completed is not None and completed.stdout and len(completed.stdout) < len(raw):
             br = completed.stdout

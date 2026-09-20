@@ -1508,6 +1508,12 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
     if stored_request_id and not observability.current_request_id():
         request_id_token = observability.set_request_id(stored_request_id)
     started = _monotonic()
+    # Terminal fields are bound before work starts so a failure outside the
+    # inner try (or in metrics) still leaves a finished row rather than an
+    # UnboundLocalError that strands the job as ``running``.
+    payload: dict[str, Any] | None = None
+    failure = ""
+    failure_exc: BaseException | None = None
     try:
         with journal.acting_as(submitter, user_id=submitter_id):
             try:
@@ -1532,13 +1538,17 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
                         )
                     payload = log.attach(payload)
                 failure = ""
-                failure_exc: BaseException | None = None
+                failure_exc = None
             except Exception as exc:
                 payload = None
                 failure = f"{type(exc).__name__}: {exc}"
                 failure_exc = exc
-        duration_ms = int((_monotonic() - started) * 1000)
-        status = STATUS_FAILED if failure else STATUS_DONE
+    finally:
+        if request_id_token is not None:
+            observability.reset_request_id(request_id_token)
+    duration_ms = int((_monotonic() - started) * 1000)
+    status = STATUS_FAILED if failure else STATUS_DONE
+    try:
         observability.record_job(failed=bool(failure), duration_ms=duration_ms)
         if failure_exc is not None:
             _log_job_failure(
@@ -1556,9 +1566,15 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
                 binary_id=binary_id,
                 duration_ms=duration_ms,
             )
-    finally:
-        if request_id_token is not None:
-            observability.reset_request_id(request_id_token)
+    except Exception:
+        # Metrics must not flip a finished job back to an unrecorded crash.
+        _log.exception(
+            "job metrics failed job_id=%s kind=%s binary_id=%s%s",
+            job_id,
+            job["kind"],
+            binary_id,
+            observability.request_id_suffix(),
+        )
     conn.execute(
         f"UPDATE {TABLE} SET status = ?, progress = ?, message = ?, result_json = ?,"
         " error = ?, finished_at = ? WHERE id = ?",

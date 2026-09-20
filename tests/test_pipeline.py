@@ -1105,6 +1105,27 @@ class TestRevert:
         with pytest.raises(KeyError):
             pipeline.revert_run(conn, 4242)
 
+    def test_revert_refuses_a_corrupt_undo_plan(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        run = _run(conn, ids, engine=FakeEngine(), llm_client=ScriptedLlmClient())
+        run_id = int(run["id"])
+        conn.execute(
+            "UPDATE pipeline_runs SET effects_json = ? WHERE id = ?",
+            ("{not-json", run_id),
+        )
+        conn.commit()
+        with pytest.raises(effects.CorruptPlanError, match="not valid JSON"):
+            pipeline.revert_run(conn, run_id)
+        stored = store.get_pipeline_run(conn, run_id)
+        assert stored is not None
+        # Soft readers still surface an empty list, but the raw column is kept.
+        raw = conn.execute(
+            "SELECT effects_json FROM pipeline_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        assert raw is not None and str(raw["effects_json"]) == "{not-json"
+
     def test_revert_walks_the_stored_plan_newest_first(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 import re
 import sqlite3
@@ -355,6 +356,42 @@ def builtin_effect_handlers() -> dict[str, EffectHandler]:
         EFFECT_FILE_RESTORE: _undo_file_restore,
         EFFECT_CONTEXT_CHANGE: _undo_context_change,
     }
+
+
+class CorruptPlanError(ValueError):
+    """The stored undo plan cannot be parsed; a revert must not treat it as empty.
+
+    Soft readers that list a run may still surface ``effects: []`` with a
+    warning, but a revert that consumes or deletes the plan must refuse rather
+    than silently leave the run's writes in place and drop the only record of
+    how to take them back.
+    """
+
+
+def parse_undo_plan(raw: Any) -> list[dict[str, Any]]:
+    """Parse a stored ``effects_json`` column into undo descriptors.
+
+    An empty or ``[]`` column is a run that wrote nothing.  Anything else that
+    is not a JSON array of objects raises :class:`CorruptPlanError` so a revert
+    cannot claim success after skipping a plan it could not read.
+    """
+    text = str(raw or "").strip()
+    if not text or text == "[]":
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise CorruptPlanError(f"undo plan is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise CorruptPlanError(f"undo plan must be a JSON array, got {type(parsed).__name__}")
+    descriptors: list[dict[str, Any]] = []
+    for index, entry in enumerate(parsed):
+        if not isinstance(entry, dict):
+            raise CorruptPlanError(
+                f"undo plan entry {index} must be a JSON object, got {type(entry).__name__}"
+            )
+        descriptors.append(dict(entry))
+    return descriptors
 
 
 class UnknownEffectError(LookupError):

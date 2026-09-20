@@ -416,6 +416,23 @@ class TestRunAuto:
         with pytest.raises(KeyError):
             auto_mode.revert_auto_run(conn, 999)
 
+    def test_revert_refuses_a_corrupt_undo_plan(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),))
+        written = tmp_path / "Work.c"
+        auto_workers.register_worker(writer_worker(written), origin="test")
+        run = auto_mode.run_auto(conn, binary_id=ids["binary"], worker="writer", execute=True)
+        conn.execute(
+            "UPDATE auto_runs SET effects_json = ? WHERE id = ?",
+            ("{not-json", run["run_id"]),
+        )
+        conn.commit()
+        with pytest.raises(effects.CorruptPlanError, match="not valid JSON"):
+            auto_mode.revert_auto_run(conn, run["run_id"])
+        assert auto_store.get_auto_run(conn, run["run_id"]) is not None
+        assert written.is_file()
+
     def test_execute_run_persists_its_undo_plan(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:

@@ -1419,12 +1419,16 @@ def revert_auto_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
     same code a pipeline revert uses.  A failed or reverted run removes exactly
     its own writes and nothing else.  Function statuses the run promoted are
     restored to the value it replaced, so a revert puts coverage back where it
-    started.  Raises :class:`KeyError` for an unknown run.
+    started.  Raises :class:`KeyError` for an unknown run, and
+    :class:`effects.CorruptPlanError` when the stored plan cannot be parsed so
+    a revert never deletes the only record of writes it could not undo.
     """
     run = auto_store.get_auto_run(conn, run_id)
     if run is None:
         raise KeyError(f"no auto run with id {run_id}")
-    undone = effects.apply_undo_plan(conn, run["effects"])
+    raw = conn.execute("SELECT effects_json FROM auto_runs WHERE id = ?", (run_id,)).fetchone()
+    plan = effects.parse_undo_plan(None if raw is None else raw["effects_json"])
+    undone = effects.apply_undo_plan(conn, plan)
     removed = [entry for entry in undone if "path" in entry]
     restored = [entry for entry in undone if "function_id" in entry]
     auto_store.delete_auto_run(conn, run_id)

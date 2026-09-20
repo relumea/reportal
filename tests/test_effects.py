@@ -203,6 +203,30 @@ class TestApplyDescriptor:
             effects.apply_descriptor(conn, {"kind": "no-such-kind", "function_id": 1})
 
 
+class TestParseUndoPlan:
+    def test_empty_and_blank_are_no_writes(self) -> None:
+        assert effects.parse_undo_plan(None) == []
+        assert effects.parse_undo_plan("") == []
+        assert effects.parse_undo_plan("[]") == []
+
+    def test_array_of_objects(self) -> None:
+        assert effects.parse_undo_plan('[{"kind": "disasm", "function_id": 1}]') == [
+            {"kind": "disasm", "function_id": 1}
+        ]
+
+    def test_invalid_json_raises(self) -> None:
+        with pytest.raises(effects.CorruptPlanError, match="not valid JSON"):
+            effects.parse_undo_plan("{not-json")
+
+    def test_non_array_raises(self) -> None:
+        with pytest.raises(effects.CorruptPlanError, match="JSON array"):
+            effects.parse_undo_plan('{"kind": "disasm"}')
+
+    def test_non_object_entry_raises(self) -> None:
+        with pytest.raises(effects.CorruptPlanError, match="entry 0"):
+            effects.parse_undo_plan('["disasm"]')
+
+
 class TestApplyUndoPlan:
     def test_replays_newest_first(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

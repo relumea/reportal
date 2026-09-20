@@ -15,11 +15,14 @@ a run is inspectable while it runs and after a crash.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Sequence
 from typing import Any
 
 from reportal import store
+
+_log = logging.getLogger(__name__)
 
 # Statuses an `auto_runs` row carries.  A run is created `running` and closed
 # `done` when every batch was decided, `failed` when the run itself could not
@@ -72,20 +75,34 @@ INTENT_FIELD = "intent"
 
 def _json_object(raw: Any) -> dict[str, Any]:
     """Parse a JSON object column, returning {} when it is unusable."""
+    text = str(raw)
     try:
-        parsed = json.loads(str(raw))
-    except json.JSONDecodeError:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        if text.strip() and text.strip() != "{}":
+            _log.warning("corrupt auto-mode JSON object: %s", exc)
         return {}
-    return parsed if isinstance(parsed, dict) else {}
+    if isinstance(parsed, dict):
+        return parsed
+    if text.strip() and text.strip() != "{}":
+        _log.warning("auto-mode JSON object column is not an object: %s", type(parsed).__name__)
+    return {}
 
 
 def _json_list(raw: Any) -> list[Any]:
     """Parse a JSON array column, returning [] when it is unusable."""
+    text = str(raw)
     try:
-        parsed = json.loads(str(raw))
-    except json.JSONDecodeError:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        if text.strip() and text.strip() != "[]":
+            _log.warning("corrupt auto-mode JSON array: %s", exc)
         return []
-    return parsed if isinstance(parsed, list) else []
+    if isinstance(parsed, list):
+        return parsed
+    if text.strip() and text.strip() != "[]":
+        _log.warning("auto-mode JSON array column is not a list: %s", type(parsed).__name__)
+    return []
 
 
 def _auto_attempt_row(row: sqlite3.Row) -> dict[str, Any]:

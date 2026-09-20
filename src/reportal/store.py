@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -37,6 +38,8 @@ from typing import Any
 from reportal import analysis_log, auth, metering
 from reportal import clock as _clock
 from reportal._paths import db_path as workspace_db_path
+
+_log = logging.getLogger(__name__)
 
 
 def now() -> str:
@@ -3200,11 +3203,18 @@ def list_scans(conn: sqlite3.Connection, analysis_id: int) -> list[dict[str, Any
 
 def _json_list(raw: Any) -> list[Any]:
     """Parse a JSON array column, returning [] when it is unusable."""
+    text = str(raw)
     try:
-        parsed = json.loads(str(raw))
-    except json.JSONDecodeError:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        if text.strip() and text.strip() != "[]":
+            _log.warning("corrupt JSON array column: %s", exc)
         return []
-    return parsed if isinstance(parsed, list) else []
+    if isinstance(parsed, list):
+        return parsed
+    if text.strip() and text.strip() != "[]":
+        _log.warning("JSON array column is not a list: %s", type(parsed).__name__)
+    return []
 
 
 # A row mapper is a field spec: ``(output key, column, converter)``.  Plain

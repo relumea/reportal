@@ -2011,13 +2011,17 @@ def revert_run(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
     each with whether this process applied it.  A binding this process still
     holds is revoked or restored for real; one a later process cannot resolve
     is reported ``applied: false``, never claimed as restored.  Raises
-    :class:`KeyError` for an unknown run.
+    :class:`KeyError` for an unknown run, and :class:`effects.CorruptPlanError`
+    when the stored plan cannot be parsed so a revert never clears the only
+    record of writes it could not undo.
     """
     run = store.get_pipeline_run(conn, run_id)
     if run is None:
         raise KeyError(f"no pipeline run with id {run_id}")
-    durable = [item for item in run["effects"] if item.get("kind") != EFFECT_CONTEXT_CHANGE]
-    changes = [item for item in run["effects"] if item.get("kind") == EFFECT_CONTEXT_CHANGE]
+    raw = conn.execute("SELECT effects_json FROM pipeline_runs WHERE id = ?", (run_id,)).fetchone()
+    plan = effects.parse_undo_plan(None if raw is None else raw["effects_json"])
+    durable = [item for item in plan if item.get("kind") != EFFECT_CONTEXT_CHANGE]
+    changes = [item for item in plan if item.get("kind") == EFFECT_CONTEXT_CHANGE]
     ctx = effects.plan_context(conn, durable)
     undone = ctx.revert()
     with _live_state_lock:

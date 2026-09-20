@@ -4059,6 +4059,8 @@ def _tool_revert_pipeline_run(arguments: dict[str, Any]) -> dict[str, Any]:
             return pipeline.revert_run(conn, run_id)
         except KeyError as exc:
             raise ToolError("run not found", f"no pipeline run with id {run_id}") from exc
+        except effects.CorruptPlanError as exc:
+            raise ToolError("corrupt-undo-plan", str(exc)) from exc
 
 
 def _tool_list_integrations(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -4187,6 +4189,8 @@ def _tool_revert_auto_run(arguments: dict[str, Any]) -> dict[str, Any]:
             return auto_mode.revert_auto_run(conn, run_id)
         except KeyError as exc:
             raise ToolError("run not found", f"no auto run with id {run_id}") from exc
+        except effects.CorruptPlanError as exc:
+            raise ToolError("corrupt-undo-plan", str(exc)) from exc
 
 
 def _tool_recover_auto_run(arguments: dict[str, Any]) -> dict[str, Any]:
