@@ -2819,7 +2819,7 @@ summary:hover {
 
 .cheatsheet-foot {
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 kbd.key {
@@ -2830,7 +2830,7 @@ kbd.key {
   background: var(--surface-2);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
@@ -2860,7 +2860,7 @@ kbd.key {
 
 .notification-when {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   white-space: nowrap;
 }
 
@@ -2873,12 +2873,12 @@ kbd.key {
 .notification-src {
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .search-input {
   width: 100%;
-  font-size: 15px;
+  font-size: var(--text-lg);
 }
 
 .search-kinds {
@@ -2894,7 +2894,7 @@ kbd.key {
   border-radius: var(--radius-pill);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--text-sm);
   padding: 2px var(--space-2);
 }
 
@@ -2939,7 +2939,7 @@ kbd.key {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--text-muted);
 }
 
@@ -2960,7 +2960,7 @@ kbd.key {
 .search-dialog-foot {
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 /* ── Upload list ──────────────────────────────────────────────────── */
@@ -2979,7 +2979,7 @@ kbd.key {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
-  font-size: 12px;
+  font-size: var(--text-sm);
   padding: 0 var(--space-1) 0 var(--space-2);
 }
 
@@ -2988,7 +2988,7 @@ kbd.key {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .upload-results ul {
@@ -3176,7 +3176,7 @@ kbd.key {
   gap: 1px;
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.5;
 }
 
@@ -3250,7 +3250,7 @@ kbd.key {
   border-radius: var(--radius-2);
   background: var(--surface-2);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .memory-scroll-inner {
@@ -3281,7 +3281,7 @@ kbd.key {
 .series-head {
   display: flex;
   justify-content: space-between;
-  font-size: 0.85rem;
+  font-size: var(--text-sm);
 }
 
 .series-bars {
@@ -3340,12 +3340,12 @@ kbd.key {
 
 .doc-card-slug {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: var(--text-sm);
   color: var(--accent);
 }
 
 .doc-card-title {
-  font-size: 0.92rem;
+  font-size: var(--text-base);
 }
 
 .doc-layout {
@@ -3368,14 +3368,14 @@ kbd.key {
 }
 
 .doc-toc-label {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
 }
 
 .doc-toc-link {
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
   color: var(--text-muted);
   text-decoration: none;
   padding: 2px 4px;
@@ -3408,7 +3408,7 @@ kbd.key {
   flex-direction: column;
   gap: 2px;
   max-width: 45%;
-  font-size: 0.88rem;
+  font-size: var(--text-base);
   color: var(--accent-hover);
   text-decoration: none;
 }
@@ -3423,7 +3423,7 @@ kbd.key {
 }
 
 .doc-pager-label {
-  font-size: 0.72rem;
+  font-size: var(--text-xs);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-muted);
@@ -3431,19 +3431,19 @@ kbd.key {
 
 .doc-heading {
   margin: var(--space-4) 0 var(--space-2);
-  font-size: 1.02rem;
+  font-size: var(--text-lg);
   color: var(--text);
 }
 
 .doc-heading[data-level="3"] {
-  font-size: 0.94rem;
+  font-size: var(--text-base);
 }
 
 .doc-paragraph,
 .doc-list p,
 .doc-quote {
   margin: 0 0 var(--space-2);
-  font-size: 0.9rem;
+  font-size: var(--text-base);
   line-height: 1.55;
   color: var(--text);
   overflow-wrap: anywhere;
@@ -3480,7 +3480,7 @@ kbd.key {
   border-radius: var(--radius-2);
   background: var(--surface-2);
   font-family: var(--font-mono);
-  font-size: 0.8rem;
+  font-size: var(--text-sm);
   overflow-x: auto;
 }
 
@@ -3505,7 +3505,7 @@ kbd.key {
 
 .doc-table {
   border-collapse: collapse;
-  font-size: 0.82rem;
+  font-size: var(--text-sm);
 }
 
 .doc-table th,
@@ -3566,7 +3566,7 @@ kbd.key {
   border-radius: var(--radius-1);
   background: var(--warn-soft);
   color: var(--text);
-  font-size: 0.88rem;
+  font-size: var(--text-base);
 }
 
 .upload-banner.upload-error {
@@ -3681,6 +3681,8 @@ kbd.key {
   font-size: var(--text-2xl);
   font-weight: 600;
   line-height: 1.1;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .plan-card-price small {

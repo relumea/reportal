@@ -45,13 +45,16 @@ _STYLE = """
   --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --radius: 6px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 14px;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.55 var(--font-sans);
+  font: var(--text-base)/1.55 var(--font-sans);
 }
 a { color: var(--accent); }
 a:hover, a:focus-visible { color: var(--accent-hover); }
@@ -83,17 +86,18 @@ nav { display: flex; flex-wrap: wrap; gap: 4px 18px; }
 nav a { text-decoration: none; color: var(--muted); font-size: 13px; }
 nav a:hover, nav a:focus-visible { color: var(--text); }
 .hero {
-  padding: 56px 0 40px;
-  display: grid; gap: 28px;
-  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.7fr);
+  padding: 48px 0 36px;
+  display: grid; gap: 24px;
+  grid-template-columns: minmax(0, 1.5fr) minmax(220px, 0.65fr);
   align-items: end;
 }
 .hero h1 {
-  font-size: clamp(1.75rem, 3.6vw, 2.35rem); line-height: 1.15;
-  margin: 0 0 14px; font-weight: 700; letter-spacing: 0.005em; max-width: 18ch;
+  font-size: clamp(1.55rem, 3.2vw, 2.05rem); line-height: 1.2;
+  margin: 0 0 12px; font-weight: 700; letter-spacing: 0.005em; max-width: 28ch;
+  font-family: var(--font-mono);
 }
-.hero p { font-size: 15px; color: var(--muted); max-width: 58ch; margin: 0 0 22px; }
-.hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; }
+.hero p { font-size: var(--text-base); color: var(--muted); max-width: 58ch; margin: 0 0 20px; }
+.hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
 .cta {
   display: inline-block; background: var(--accent); color: var(--accent-ink);
   padding: 10px 16px; border-radius: var(--radius); text-decoration: none;
@@ -120,18 +124,19 @@ section { padding: 40px 0; border-top: 1px solid var(--border); }
 h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; letter-spacing: 0.01em; }
 .lede { color: var(--muted); margin: 0 0 22px; max-width: 70ch; font-size: 14px; }
 .features {
-  display: grid; gap: 0; grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex; flex-direction: column; gap: 0;
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
   overflow: hidden;
 }
 .feature {
-  padding: 16px 18px; border-top: 1px solid var(--border);
+  display: grid; grid-template-columns: minmax(9rem, 13rem) minmax(0, 1fr);
+  gap: 12px 18px; align-items: baseline;
+  padding: 12px 16px; border-top: 1px solid var(--border);
 }
-.feature:nth-child(-n+2) { border-top: 0; }
-.feature:nth-child(odd) { border-right: 1px solid var(--border); }
+.feature:first-child { border-top: 0; }
 .feature h3 {
-  margin: 0 0 6px; font-size: 13px; font-family: var(--font-mono); font-weight: 600;
-  color: var(--text);
+  margin: 0; font-size: var(--text-sm); font-family: var(--font-mono); font-weight: 600;
+  color: var(--text); letter-spacing: 0.02em;
 }
 .feature p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .plans { display: grid; gap: 14px;
@@ -170,9 +175,7 @@ footer {
 }
 @media (max-width: 720px) {
   .hero { grid-template-columns: 1fr; }
-  .features { grid-template-columns: 1fr; }
-  .feature:nth-child(odd) { border-right: 0; }
-  .feature:nth-child(2) { border-top: 1px solid var(--border); }
+  .feature { grid-template-columns: 1fr; gap: 4px; }
 }
 """
 
@@ -430,7 +433,7 @@ def render() -> str:
     <span class="brand-ver">v{escape(__version__)}</span>
   </a>
   <nav>
-    <a href="#features">Capabilities</a>
+    <a href="#features">Surfaces</a>
     <a href="#pricing">Plans</a>
     <a href="#credits">Credits</a>
     <a href="#faq">Questions</a>
@@ -442,8 +445,8 @@ def render() -> str:
 <div class="wrap">
   <div class="hero">
     <div>
-      <h1>reportal</h1>
-      <p>A self-hosted reverse-engineering workbench: decompile a binary, match its
+      <h1>Decompile, match, triage, keep the corpus.</h1>
+      <p>A self-hosted reverse-engineering workbench: read a binary, match its
          functions against everything you have seen before, triage what matters, and
          let an agent drive the sweep. Metered only where inference actually runs.</p>
       <div class="hero-actions">
@@ -461,8 +464,8 @@ def render() -> str:
 </div>
 
 <section id="features"><div class="wrap">
-  <h2>Capabilities</h2>
-  <p class="lede">Workbench surfaces: binaries, matches, triage and agent tools.</p>
+  <h2>Surfaces</h2>
+  <p class="lede">What the workbench already does, not a feature pitch.</p>
   <div class="features">{features}</div>
 </div></section>
 
