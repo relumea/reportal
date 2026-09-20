@@ -12,7 +12,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, journal, store
+from reportal import auth, cli, clock, journal, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -36,7 +36,7 @@ def _send_raw(
 
 class TestStore:
     def test_now_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(store, "now", lambda: "2026-03-01T00:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-03-01T00:00:00+00:00")
         assert auth.now() == "2026-03-01T00:00:00+00:00"
 
     def test_as_utc_iso_normalizes_offsets_and_z(self) -> None:

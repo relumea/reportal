@@ -30,12 +30,34 @@ import sqlite3
 import threading
 import unicodedata
 from collections.abc import Iterator, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from reportal import analysis_log, auth, metering
+from reportal import clock as _clock
 from reportal._paths import db_path as workspace_db_path
+
+
+def now() -> str:
+    """Return the current UTC time as an ISO 8601 string (second resolution).
+
+    Delegates to :func:`reportal.clock.now`.  Patch ``reportal.clock.now`` to
+    pin timestamps; ``store.now``, ``auth.now``, ``journal.now`` and
+    ``analysis_log.now`` all read that one function.
+    """
+    return _clock.now()
+
+
+def as_utc(value: str) -> datetime:
+    """Parse an ISO stamp as an aware UTC datetime; see :func:`reportal.clock.as_utc`."""
+    return _clock.as_utc(value)
+
+
+def as_utc_iso(value: str) -> str:
+    """Normalize *value* to UTC ``+00:00`` form; see :func:`reportal.clock.as_utc_iso`."""
+    return _clock.as_utc_iso(value)
+
 
 # Function statuses that count as a byte-equality match.  Mirrors rebrew's
 # MATCHED_STATUSES so `reportal stats` reports the same number recoverage does.
@@ -546,33 +568,6 @@ CREATE INDEX IF NOT EXISTS idx_functions_status ON functions(status);
 """
     + _DATA_TYPE_HISTORY_DDL
 )
-
-
-def now() -> str:
-    """Return the current UTC time as an ISO 8601 string (second resolution).
-
-    The one process clock writers and readers share.  A test patches this to
-    pin timestamps; ``auth.now``, ``journal.now`` and ``analysis_log.now``
-    delegate here so one patch covers every stored stamp.
-    """
-    return datetime.now(UTC).isoformat(timespec="seconds")
-
-
-def as_utc(value: str) -> datetime:
-    """Parse an ISO stamp as an aware UTC datetime.
-
-    Naive values are treated as UTC.  Callers that compare or store instants
-    (invite expiry, feed ``since``, STIX timestamps) go through here so a ``Z``
-    suffix or a non-UTC offset cannot shift a lexicographic or calendar read.
-    Raises :class:`ValueError` when *value* is not ISO 8601.
-    """
-    parsed = datetime.fromisoformat(value)
-    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-
-
-def as_utc_iso(value: str) -> str:
-    """Normalize *value* to the store's UTC ``+00:00`` form (second resolution)."""
-    return as_utc(value).isoformat(timespec="seconds")
 
 
 # How long a connection waits for a write lock before raising ``sqlite3.OperationalError``.

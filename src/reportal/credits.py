@@ -12,7 +12,7 @@ the cheapest real operation the portal performs (currently function triage over
 a median function).  :data:`REFERENCE_TASK` names it, :func:`credit_cogs_usd`
 prices it at the published Claude rates, and every other task's credit cost is
 its measured cost divided by that, rounded up.  So the table below is derived:
-change the rates in :mod:`reportal.plans` and every credit cost moves with
+change the rates in :mod:`reportal.model_rates` and every credit cost moves with
 them, which is what keeps the catalog honest when a model is repriced.
 
 Where the profiles come from
@@ -106,13 +106,11 @@ class TaskProfile:
         return float(self._cogs_usd())
 
     def _cogs_usd(self) -> Decimal:
-        # Imported lazily: plans reads this module for credit cogs, so a
-        # top-level import would close a cycle.
-        from reportal import plans
+        # Rates live in :mod:`reportal.model_rates` so this module does not
+        # import :mod:`reportal.plans` (which prices tiers from credit COGS).
+        from reportal.model_rates import COST_MODEL, rates_for
 
-        input_rate, output_rate = plans.MODEL_RATES.get(
-            plans.COST_MODEL, max(plans.MODEL_RATES.values(), key=lambda pair: pair[1])
-        )
+        input_rate, output_rate = rates_for(COST_MODEL)
         return (
             self.input_tokens * Decimal(str(input_rate))
             + self.output_tokens * Decimal(str(output_rate))

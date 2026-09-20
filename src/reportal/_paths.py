@@ -43,6 +43,14 @@ BINARIES_DIR = "binaries"
 # the symbol file's own sha256.  ``symbols.py`` re-exports this name.
 SYMBOLS_DIR = "symbols"
 
+# Packaged SPA build directory (Vite output under this package), entry page,
+# and the hint a 503 / doctor warn carries when the build is missing.  Shared by
+# :mod:`reportal.ui` and :mod:`reportal.doctor` so preflight does not import the
+# HTTP route module.
+SPA_DIST_DIRNAME = "assets/dist"
+SPA_INDEX = "index.html"
+SPA_NOT_BUILT_DETAIL = "run 'bun install && bun run build' in web/"
+
 # Every workspace subdirectory reportal owns.  ``reportal init`` creates them, so
 # a fresh workspace has its folders before the first write.  The workspace's own
 # ``docs/`` is deliberately absent: an empty one would shadow the shipped manual
@@ -98,6 +106,11 @@ def write_text_atomic(path: Path, text: str, *, prefix: str = _ATOMIC_PREFIX) ->
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temp_name)
     return path
+
+
+def spa_dist_dir() -> Path:
+    """Directory holding the built SPA (Vite output, generated and gitignored)."""
+    return Path(__file__).resolve().parent / Path(SPA_DIST_DIRNAME)
 
 
 def ensure_workspace_dirs(root: Path) -> list[str]:

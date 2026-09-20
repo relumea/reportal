@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from reportal import analysis_log, store
+from reportal import analysis_log, clock, store
 
 
 def _binary(conn: sqlite3.Connection, name: str = "demo.exe") -> int:
@@ -41,7 +41,7 @@ def _function(
 
 class TestAppendAndRead:
     def test_now_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(store, "now", lambda: "2026-04-01T00:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-04-01T00:00:00+00:00")
         assert analysis_log.now() == "2026-04-01T00:00:00+00:00"
 
     def test_round_trip_preserves_severity(self, conn: sqlite3.Connection) -> None:

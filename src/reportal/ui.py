@@ -31,7 +31,7 @@ from starlette.responses import FileResponse, Response
 from starlette.staticfiles import NotModifiedResponse
 
 from reportal import landing
-from reportal._paths import reports_dir
+from reportal._paths import SPA_INDEX, SPA_NOT_BUILT_DETAIL, reports_dir, spa_dist_dir
 from reportal.server import (
     ACCEPT_ENCODING,
     GZIP_LEVEL,
@@ -47,8 +47,10 @@ router = APIRouter()
 REPORT_INDEX = "index.html"
 
 # Entry page of the built SPA, and the hint a 503 carries when it is missing.
-APP_INDEX = "index.html"
-UI_NOT_BUILT_DETAIL = "run 'bun install && bun run build' in web/"
+# Owned by :mod:`reportal._paths` so doctor preflight can read them without
+# importing this route module.
+APP_INDEX = SPA_INDEX
+UI_NOT_BUILT_DETAIL = SPA_NOT_BUILT_DETAIL
 
 # Where Vite writes the hashed bundles, relative to the dist directory.  A file
 # under it carries its content hash in its name, so a browser may keep it
@@ -77,7 +79,7 @@ _GZIP_CACHE_SIZE = 64
 
 def dist_dir() -> Path:
     """Directory holding the built SPA (Vite output, generated and gitignored)."""
-    return Path(__file__).resolve().parent / "assets" / "dist"
+    return spa_dist_dir()
 
 
 def _report_root(binary_id: int) -> Path:

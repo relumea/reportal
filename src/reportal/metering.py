@@ -127,7 +127,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 def _credits_mod() -> ModuleType:
     """The credit catalog, imported at call time.
 
-    :mod:`reportal.credits` reads :mod:`reportal.plans` for its rates and this
+    :mod:`reportal.credits` reads :mod:`reportal.model_rates` for its rates and this
     module reads both, so the import runs here rather than at module scope.
     """
     from reportal import credits as credits_mod

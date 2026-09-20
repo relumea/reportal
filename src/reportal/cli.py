@@ -5793,12 +5793,11 @@ def add_binary(
     display_name = name or binary.name
     hint = ""
     if compiler:
-        from reportal import api as portal_api
-
         hint = compiler.strip()
-        if hint not in portal_api.UPLOAD_COMPILERS:
+        compilers = filetypes.toolchain_names()
+        if hint not in compilers:
             _fail(
-                f"compiler must be one of {', '.join(portal_api.UPLOAD_COMPILERS)}",
+                f"compiler must be one of {', '.join(compilers)}",
                 json_output,
             )
     portal_db = _db_path(json_output)

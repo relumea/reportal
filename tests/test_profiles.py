@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from conftest import FakeLlmClient, json_body, wsgi_request
 
-from reportal import api, auth, journal, metering, profiles, store
+from reportal import api, auth, clock, journal, metering, profiles, store
 
 
 def _send(
@@ -357,8 +357,8 @@ class TestTeamInvites:
         monkeypatch.setenv(auth.REQUIRED_ENV, "required")
         _, created = _send("POST", "/api/teams", token=ana, body={"name": "ttl"})
         team_id = int(created["id"])
-        clock = {"now": "2026-01-01T00:00:00+00:00"}
-        monkeypatch.setattr(store, "now", lambda: clock["now"])
+        clock_state = {"now": "2026-01-01T00:00:00+00:00"}
+        monkeypatch.setattr(clock, "now", lambda: clock_state["now"])
 
         _, invite = _send("POST", f"/api/teams/{team_id}/invites", token=ana)
         listed, payload = _send("GET", f"/api/teams/{team_id}/invites", token=ana)
@@ -367,7 +367,7 @@ class TestTeamInvites:
         assert row["expired"] is False
         assert row["expires_at"] == "2026-01-08T00:00:00+00:00"
 
-        clock["now"] = "2026-01-08T00:00:00+00:00"
+        clock_state["now"] = "2026-01-08T00:00:00+00:00"
         listed, payload = _send("GET", f"/api/teams/{team_id}/invites", token=ana)
         assert payload["invites"][0]["expired"] is True
         status, body = _send(

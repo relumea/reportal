@@ -5590,12 +5590,11 @@ def _tool_register_binary(arguments: dict[str, Any]) -> dict[str, Any]:
     compiler = _arg_optional_str(arguments, "compiler")
     hint = compiler.strip() if compiler else ""
     if hint:
-        from reportal import api as portal_api
-
-        if hint not in portal_api.UPLOAD_COMPILERS:
+        compilers = filetypes.toolchain_names()
+        if hint not in compilers:
             raise ToolError(
                 "invalid-body",
-                f"compiler must be one of {', '.join(portal_api.UPLOAD_COMPILERS)}",
+                f"compiler must be one of {', '.join(compilers)}",
             )
     if not source.is_file():
         raise ToolError("not-a-file", f"not a file: {source}")

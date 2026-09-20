@@ -59,14 +59,10 @@ class UnknownSeverityError(ValueError):
 
 
 def now() -> str:
-    """Return the current UTC time; delegates to :func:`reportal.store.now`.
+    """Return the current UTC time; delegates to :func:`reportal.clock.now`."""
+    from reportal import clock
 
-    Imported lazily so this module stays free of a load-time cycle with
-    :mod:`reportal.store` (which imports the log helpers).
-    """
-    from reportal import store
-
-    return store.now()
+    return clock.now()
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:

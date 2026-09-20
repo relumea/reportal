@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from reportal import (
     cli,
+    clock,
     effects,
     engines,
     journal,
@@ -32,7 +33,7 @@ BOUNDARY = "----reportal-journal-test"
 
 class TestClockAndActionSeams:
     def test_now_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(store, "now", lambda: "2026-02-01T00:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-02-01T00:00:00+00:00")
         assert journal.now() == "2026-02-01T00:00:00+00:00"
 
     def test_new_action_uses_the_token_hex_seam(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -12,7 +12,7 @@ import pytest
 from conftest import FINGERPRINT, decode, json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, engines, remediation, store
+from reportal import clock, cli, engines, remediation, store
 from reportal.remediation import (
     MIN_SPECIFIC_STRINGS,
     SNORT_ANY_PORT,
@@ -966,7 +966,7 @@ class TestBuildStixBundle:
         return {"date": "2026-09-12"}
 
     def test_a_missing_date_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(store, "now", lambda: "2026-05-20T18:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-05-20T18:00:00+00:00")
         bundle = remediation.build_stix_bundle(name="demo.exe", indicators={}, meta={})
         identities = [obj for obj in bundle["objects"] if obj["type"] == "identity"]
         assert identities[0]["created"] == "2026-05-20T00:00:00Z"
@@ -987,7 +987,7 @@ class TestBuildStixBundle:
     def test_invalid_dates_fall_back_to_today_utc(
         self, date: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(store, "now", lambda: "2026-05-20T18:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-05-20T18:00:00+00:00")
         bundle = remediation.build_stix_bundle(
             name="demo.exe",
             indicators=_iocs(urls=[_ioc("http://evil.example.com/x", "url")]),

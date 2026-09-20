@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from reportal import auto_store, store
+from reportal import clock, auto_store, store
 
 
 @pytest.mark.parametrize("record_outcome", [False, True])
@@ -14,7 +14,7 @@ def test_timestamps_follow_the_shared_clock(
     conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, record_outcome: bool
 ) -> None:
     stamp = "2001-02-03T04:05:06+00:00"
-    monkeypatch.setattr(store, "now", lambda: stamp)
+    monkeypatch.setattr(clock, "now", lambda: stamp)
     binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
     run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
     task_id = auto_store.create_auto_task(
@@ -58,44 +58,44 @@ def test_lifecycle_timestamps_follow_the_shared_clock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
-    clock = ["2001-01-01T00:00:00+00:00"]
-    monkeypatch.setattr(store, "now", lambda: clock[0])
+    stamps = ["2001-01-01T00:00:00+00:00"]
+    monkeypatch.setattr(clock, "now", lambda: stamps[0])
     run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
     run = auto_store.get_auto_run(conn, run_id)
     assert run is not None
-    assert run["created_at"] == clock[0]
+    assert run["created_at"] == stamps[0]
     assert run["finished_at"] is None
 
-    clock[0] = "2001-01-01T00:00:01+00:00"
+    stamps[0] = "2001-01-01T00:00:01+00:00"
     task_id = auto_store.create_auto_task(
         conn, run_id=run_id, parent_id=None, depth=0, kind=auto_store.AUTO_TASK_ROOT
     )
     task = auto_store.list_auto_tasks(conn, run_id)[0]
-    assert task["created_at"] == clock[0]
+    assert task["created_at"] == stamps[0]
     assert task["finished_at"] is None
 
-    clock[0] = "2001-01-01T00:00:02+00:00"
+    stamps[0] = "2001-01-01T00:00:02+00:00"
     auto_store.add_auto_attempt(
         conn, task_id=task_id, worker="offline", status="matched", detail={}
     )
-    assert auto_store.list_auto_attempts(conn, task_id)[0]["created_at"] == clock[0]
+    assert auto_store.list_auto_attempts(conn, task_id)[0]["created_at"] == stamps[0]
 
-    clock[0] = "2001-01-01T00:00:03+00:00"
+    stamps[0] = "2001-01-01T00:00:03+00:00"
     assert auto_store.record_auto_task_outcome(
         conn, task_id, run_id=run_id, status=auto_store.AUTO_TASK_DONE, result={}, effects=[]
     )
-    assert auto_store.list_auto_tasks(conn, run_id)[0]["finished_at"] == clock[0]
+    assert auto_store.list_auto_tasks(conn, run_id)[0]["finished_at"] == stamps[0]
 
-    clock[0] = "2001-01-01T00:00:04+00:00"
+    stamps[0] = "2001-01-01T00:00:04+00:00"
     assert auto_store.update_auto_task(conn, task_id, finish=True)
-    assert auto_store.list_auto_tasks(conn, run_id)[0]["finished_at"] == clock[0]
+    assert auto_store.list_auto_tasks(conn, run_id)[0]["finished_at"] == stamps[0]
 
-    clock[0] = "2001-01-01T00:00:05+00:00"
+    stamps[0] = "2001-01-01T00:00:05+00:00"
     assert auto_store.finish_auto_run(conn, run_id, status=auto_store.AUTO_RUN_DONE, stats={})
     run = auto_store.get_auto_run(conn, run_id)
     assert run is not None
     assert run["created_at"] == "2001-01-01T00:00:00+00:00"
-    assert run["finished_at"] == clock[0]
+    assert run["finished_at"] == stamps[0]
 
 
 class TestAutoRuns:

@@ -43,11 +43,31 @@ token row with, and they are not a customer-facing number.
 
 from __future__ import annotations
 
-import math
 import os
 import re
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+
+from reportal.model_rates import (
+    COST_MODEL as COST_MODEL,
+)
+from reportal.model_rates import (
+    INPUT_SHARE as INPUT_SHARE,
+)
+from reportal.model_rates import (
+    MODEL_RATES as MODEL_RATES,
+)
+from reportal.model_rates import (
+    blended_usd_per_mtok as blended_usd_per_mtok,
+)
+from reportal.model_rates import (
+    micro_usd_for_tokens as micro_usd_for_tokens,
+)
+from reportal.model_rates import (
+    tokens_for_budget as tokens_for_budget,
+)
+from reportal.model_rates import (
+    usd_for_tokens as usd_for_tokens,
+)
 
 # A limit that does not apply.  Negative rather than None so a comparison
 # against a count is always a number-to-number check.
@@ -55,30 +75,10 @@ UNLIMITED = -1
 
 
 # ── The cost model ─────────────────────────────────────────────────
+# MODEL_RATES / COST_MODEL / INPUT_SHARE and the blended helpers live in
+# :mod:`reportal.model_rates` and are re-exported here so existing
+# ``plans.MODEL_RATES`` call sites keep working.
 
-# Anthropic's published list prices, USD per million tokens, as
-# (input, output) pairs.  Source: https://platform.claude.com/docs/en/about-claude/pricing
-# These are list rates for the models reportal's bridge is pointed at in
-# practice; an install that points at something else is priced by whoever runs
-# it, which is what `metered()` covers.
-MODEL_RATES: dict[str, tuple[float, float]] = {
-    "claude-opus-5": (5.0, 25.0),
-    "claude-sonnet-5": (2.0, 10.0),
-    "claude-haiku-4.5": (1.0, 5.0),
-}
-
-# The model the cost model prices against.  Sonnet is the default working model
-# for reportal's AI extras: Haiku is cheaper but weaker at reading decompiler
-# output, and Opus is reserved for the whole-function rewrite.  Pricing against
-# the middle model is the conservative choice, because a tenant that leans on
-# Haiku costs less than its plan assumes and one that leans on Opus is the case
-# the margin has to absorb.
-COST_MODEL = "claude-sonnet-5"
-
-# Share of a metered token that is input rather than output.  Reverse
-# engineering is input-heavy: a prompt carries a decompiled function plus its
-# context and the answer is a summary, a comment block or a rename list.
-INPUT_SHARE = 0.8
 
 # The largest share of a tier's price its inference may cost at full quota use.
 # The remainder covers hosting, storage, support and margin.  A tenant that
@@ -92,62 +92,11 @@ MAX_COGS_SHARE = 0.20
 MAX_FREE_COGS_USD = 1.00
 
 
-def blended_usd_per_mtok(model: str = COST_MODEL) -> float:
-    """Cost of one million metered tokens, USD, at :data:`INPUT_SHARE`.
-
-    A metered token is a token either way, so one number has to stand for a mix
-    of the two rates.  An unknown model prices at the most expensive one in the
-    catalog rather than falling back to something cheap, because an unpriced
-    model must never read as free.
-    """
-    return float(_blended_rate(model))
-
-
-def _blended_rate(model: str) -> Decimal:
-    if model in MODEL_RATES:
-        input_rate, output_rate = MODEL_RATES[model]
-    else:
-        input_rate, output_rate = max(MODEL_RATES.values(), key=lambda pair: pair[1])
-    share = Decimal(str(INPUT_SHARE))
-    return Decimal(str(input_rate)) * share + Decimal(str(output_rate)) * (1 - share)
-
-
-def tokens_for_budget(usd: float, model: str = COST_MODEL) -> int:
-    """How many tokens *usd* buys at the blended rate, rounded down."""
-    if not isinstance(usd, (int, float)) or isinstance(usd, bool):
-        return 0
-    if not math.isfinite(usd) or usd <= 0:
-        return 0
-    return int(Decimal(str(usd)) * 1_000_000 / _blended_rate(model))
-
-
-def micro_usd_for_tokens(tokens: int, model: str = COST_MODEL) -> int:
-    """What *tokens* cost in micro-USD at the blended rate, rounded half-up.
-
-    The usage ledger stores this integer so a bill reconstructs without binary
-    float drift; :func:`usd_for_tokens` is the display form of the same rate.
-    """
-    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
-        return 0
-    return int((Decimal(tokens) * _blended_rate(model)).to_integral_value(rounding=ROUND_HALF_UP))
-
-
-def usd_for_tokens(tokens: int, model: str = COST_MODEL) -> float:
-    """What *tokens* cost to serve at the blended rate.
-
-    Derived from :func:`micro_usd_for_tokens` so a one-token Sonnet estimate
-    (4 micro-USD) matches the ledger row rather than the unrounded 3.6e-6 that
-    ``tokens * rate / 1e6`` would print before half-up.
-    """
-    return micro_usd_for_tokens(tokens, model) / 1_000_000
-
-
 def _overage_usd_per_credit() -> float:
     """The per-credit overage price, read from the credit module.
 
-    A function rather than a constant for the same reason as
-    :meth:`Plan.credit_cogs_usd`: the credit module reads this one's rates, so
-    the import runs in the other direction at call time.
+    A function rather than a constant so :mod:`reportal.credits` stays free to
+    own the overage number without this module importing it at load time.
     """
     from reportal import credits as credits_mod
 
@@ -181,9 +130,8 @@ class Plan:
     def credit_cogs_usd(self) -> float:
         """Inference cost, USD, if the tier burned its whole credit allowance.
 
-        Imported here rather than at module scope because :mod:`reportal.credits`
-        reads this module's rates: the dependency runs catalog to credits, and a
-        module-level import back would close the cycle.
+        Imported at call time so catalog construction does not load the credit
+        module (which would pull the LLM task table before plans are ready).
         """
         from reportal import credits as credits_mod
 

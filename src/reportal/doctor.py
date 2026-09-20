@@ -47,9 +47,15 @@ from reportal import (
     settings,
     similarity,
     store,
-    ui,
 )
-from reportal._paths import WorkspaceNotFound, db_path, project_root
+from reportal._paths import (
+    SPA_INDEX,
+    SPA_NOT_BUILT_DETAIL,
+    WorkspaceNotFound,
+    db_path,
+    project_root,
+    spa_dist_dir,
+)
 
 STATUS_OK = "ok"
 STATUS_WARN = "warn"
@@ -69,7 +75,7 @@ DATABASE_HINT = "check the path and its permissions, or run 'reportal init'"
 SCHEMA_HINT = "the database exists but carries no schema; run 'reportal init'"
 PORT_HINT = "stop the process holding the port, or serve on another one (--port)"
 ENGINE_HINT = engines.ENGINE_UNAVAILABLE_HINT
-SPA_HINT = ui.UI_NOT_BUILT_DETAIL
+SPA_HINT = SPA_NOT_BUILT_DETAIL
 BACKUP_HINT = "enable reportal-backup.timer or run 'reportal backup'; see docs/DR_RUNBOOK.md"
 
 # The tables a usable schema needs before any read.  The journal's table is
@@ -430,7 +436,7 @@ def report(*, port: int = DEFAULT_PORT) -> dict[str, Any]:
             "" if engine.available() else ENGINE_HINT,
         )
     )
-    index = ui.dist_dir() / ui.APP_INDEX
+    index = spa_dist_dir() / SPA_INDEX
     checks.append(
         _check(
             "spa",

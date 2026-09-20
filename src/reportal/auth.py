@@ -322,21 +322,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def now() -> str:
-    """The current UTC time; delegates to :func:`reportal.store.now`.
+    """The current UTC time; delegates to :func:`reportal.clock.now`."""
+    from reportal import clock
 
-    Imported lazily so this module stays free of a load-time cycle with
-    :mod:`reportal.store` (which imports auth for scope helpers).
-    """
-    from reportal import store
-
-    return store.now()
+    return clock.now()
 
 
 def _as_utc(value: str) -> datetime:
-    """Parse an ISO stamp as an aware UTC datetime; delegates to :func:`store.as_utc`."""
-    from reportal import store
+    """Parse an ISO stamp as an aware UTC datetime; delegates to :func:`clock.as_utc`."""
+    from reportal import clock
 
-    return store.as_utc(value)
+    return clock.as_utc(value)
 
 
 def invite_expires_at(created_at: str) -> str:

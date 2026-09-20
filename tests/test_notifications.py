@@ -13,7 +13,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import analysis_log, auth, cli, journal, mcp_tools, notifications, store
+from reportal import analysis_log, auth, cli, clock, journal, mcp_tools, notifications, store
 
 runner = CliRunner()
 
@@ -160,16 +160,16 @@ class TestFeed:
         logged = "2026-01-01T00:00:00+00:00"
         written = "2026-01-01T00:00:01+00:00"
         logged_again = "2026-01-01T00:00:02+00:00"
-        monkeypatch.setattr(store, "now", lambda: logged)
+        monkeypatch.setattr(clock, "now", lambda: logged)
         _, analysis_id = _analysis(conn)
         analysis_log.append_entry(conn, analysis_id, message="a", severity="info")
         assert notifications.latest(conn) == logged
 
-        monkeypatch.setattr(store, "now", lambda: written)
+        monkeypatch.setattr(clock, "now", lambda: written)
         _action(conn, "b")
         assert notifications.latest(conn) == written
 
-        monkeypatch.setattr(store, "now", lambda: logged_again)
+        monkeypatch.setattr(clock, "now", lambda: logged_again)
         analysis_log.append_entry(conn, analysis_id, message="c", severity="info")
         assert notifications.latest(conn) == logged_again
 
@@ -181,10 +181,10 @@ class TestFeed:
         # later UTC watermark behind.
         earlier = "2026-07-01T14:00:00+02:00"
         later = "2026-07-01T13:00:00+00:00"
-        monkeypatch.setattr(store, "now", lambda: earlier)
+        monkeypatch.setattr(clock, "now", lambda: earlier)
         _, analysis_id = _analysis(conn)
         analysis_log.append_entry(conn, analysis_id, message="warsaw", severity="info")
-        monkeypatch.setattr(store, "now", lambda: later)
+        monkeypatch.setattr(clock, "now", lambda: later)
         _action(conn, "utc later")
         assert notifications.latest(conn) == later
 

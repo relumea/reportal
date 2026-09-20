@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import auth, bulk_actions, comments, store
+from reportal import clock, auth, bulk_actions, comments, store
 
 
 def _seed(conn: sqlite3.Connection) -> dict[str, int]:
@@ -211,7 +211,7 @@ class TestCommentRoutes:
                 "2020-01-02T00:00:01+00:00",
             ]
         )
-        monkeypatch.setattr(store, "now", lambda: next(stamps))
+        monkeypatch.setattr(clock, "now", lambda: next(stamps))
         created = store.add_comment(
             conn, scope_kind="binary", scope_id=ids["binary"], author="a", body="before"
         )

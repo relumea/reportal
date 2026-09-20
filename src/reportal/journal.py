@@ -202,8 +202,10 @@ def new_action() -> str:
 
 
 def now() -> str:
-    """The journal's UTC timestamp; delegates to :func:`reportal.store.now`."""
-    return store.now()
+    """The journal's UTC timestamp; delegates to :func:`reportal.clock.now`."""
+    from reportal import clock
+
+    return clock.now()
 
 
 class Journal:

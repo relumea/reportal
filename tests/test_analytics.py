@@ -17,7 +17,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import analytics, auth, cli, mcp_server, store
+from reportal import analytics, auth, cli, clock, mcp_server, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -54,7 +54,7 @@ class TestSeries:
         assert dates == ["2026-09-11", "2026-09-12", "2026-09-13"]
 
     def test_the_default_window_follows_store_now(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(store, "now", lambda: "2026-01-15T12:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-01-15T12:00:00+00:00")
         assert analytics.window(3) == ["2026-01-13", "2026-01-14", "2026-01-15"]
 
     def test_day_buckets_use_the_utc_calendar_not_the_offset_prefix(self) -> None:

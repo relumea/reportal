@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from reportal import backup, cli, journal, store, symbols
+from reportal import backup, cli, clock, journal, store, symbols
 
 runner = CliRunner()
 
@@ -173,7 +173,7 @@ class TestCreate:
     ) -> None:
         # A store stamp already in UTC must not be re-interpreted through the
         # host zone: the filename is the absolute instant, fixed-width.
-        monkeypatch.setattr(store, "now", lambda: "2026-03-08T07:30:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-03-08T07:30:00+00:00")
         assert backup.suggest_name() == "reportal-backup-20260308T073000.tar.gz"
 
     def test_suggest_name_treats_a_naive_stamp_as_utc(
@@ -184,7 +184,7 @@ class TestCreate:
         # four hours.  store.as_utc treats naive as UTC instead.
         monkeypatch.setenv("TZ", "America/New_York")
         time.tzset()
-        monkeypatch.setattr(store, "now", lambda: "2026-03-08T07:30:00")
+        monkeypatch.setattr(clock, "now", lambda: "2026-03-08T07:30:00")
         try:
             assert backup.suggest_name() == "reportal-backup-20260308T073000.tar.gz"
         finally:
@@ -582,7 +582,7 @@ class TestCli:
         # Pin the process clock to 2020-01-20; keep_days=14 makes mtimes before
         # 2020-01-06 the cutoff.  The stale file sits on Jan 1, the fresh one
         # on Jan 10, so only the older archive is pruned.
-        monkeypatch.setattr(store, "now", lambda: "2020-01-20T00:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2020-01-20T00:00:00+00:00")
         os.utime(stale, (1577836800.0, 1577836800.0))  # 2020-01-01
         os.utime(fresh, (1578614400.0, 1578614400.0))  # 2020-01-10
         result = backup.prune(directory=directory, keep_days=14, keep_min=0)

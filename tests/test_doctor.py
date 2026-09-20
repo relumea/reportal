@@ -22,7 +22,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, backup, cli, doctor, graph_backends, sandbox, store
+from reportal import auth, backup, cli, clock, doctor, graph_backends, sandbox, store
 
 runner = CliRunner()
 
@@ -504,7 +504,7 @@ class TestUnit:
         # Archive mtime is 2020-01-01; pin the process clock three days later so
         # the age exceeds FRESH_SECONDS (48h) without waiting on wall time.
         os.utime(archive, (1577836800.0, 1577836800.0))
-        monkeypatch.setattr(store, "now", lambda: "2020-01-04T00:00:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2020-01-04T00:00:00+00:00")
         payload = doctor.report()
         row = _check(payload, "backup")
         assert row["status"] == "warn"

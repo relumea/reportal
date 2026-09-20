@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from reportal import comments, store
+from reportal import clock, comments, store
 
 
 def _seed(conn: sqlite3.Connection) -> dict[str, int]:
@@ -78,7 +78,7 @@ class TestCommentStore:
     ) -> None:
         ids = _seed(conn)
         stamps = iter(["2020-01-01T00:00:00+00:00", "2020-01-02T00:00:00+00:00"])
-        monkeypatch.setattr(store, "now", lambda: next(stamps))
+        monkeypatch.setattr(clock, "now", lambda: next(stamps))
         created = store.add_comment(
             conn, scope_kind="binary", scope_id=ids["binary"], author="a", body="before"
         )

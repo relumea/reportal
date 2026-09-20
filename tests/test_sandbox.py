@@ -16,7 +16,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import cli, journal, sandbox, store
+from reportal import clock, cli, journal, sandbox, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -233,7 +233,7 @@ class TestReport:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         stamp = "2001-02-03T04:05:06+00:00"
-        monkeypatch.setattr(store, "now", lambda: stamp)
+        monkeypatch.setattr(clock, "now", lambda: stamp)
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
         analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
         run_id, created = sandbox.start_run(
@@ -325,7 +325,7 @@ class TestReport:
         binary_id = store.add_binary(conn, sha256="bb" * 32, name="stale.exe")
         analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
         stale = "2000-01-01T00:00:00+00:00"
-        monkeypatch.setattr(store, "now", lambda: stale)
+        monkeypatch.setattr(clock, "now", lambda: stale)
         run_id, created = sandbox.start_run(
             conn,
             analysis_id=analysis_id,
@@ -336,7 +336,7 @@ class TestReport:
             caps=sandbox.requested_caps(),
         )
         assert created is True
-        monkeypatch.setattr(store, "now", lambda: "2000-01-01T00:05:00+00:00")
+        monkeypatch.setattr(clock, "now", lambda: "2000-01-01T00:05:00+00:00")
         closed = sandbox.abandon_stale_live_runs(conn, binary_id)
         assert closed == 1
         abandoned = sandbox.get_run(conn, run_id)
