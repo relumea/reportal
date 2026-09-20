@@ -12335,9 +12335,7 @@ def apply_binary_flirt(
                     conn,
                     log,
                     function_id,
-                    lambda: flirt_sigs.apply_proposal(
-                        conn, function_id=function_id, new_name=name
-                    ),
+                    lambda: flirt_sigs.apply_proposal(conn, function_id=function_id, new_name=name),
                 )
             except KeyError:
                 return json_error(

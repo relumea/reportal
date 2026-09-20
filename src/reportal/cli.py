@@ -12533,9 +12533,7 @@ def flirt_apply(
                     conn,
                     log,
                     function_id,
-                    lambda: flirt_sigs.apply_proposal(
-                        conn, function_id=function_id, new_name=name
-                    ),
+                    lambda: flirt_sigs.apply_proposal(conn, function_id=function_id, new_name=name),
                 )
             except KeyError:
                 _fail(f"no function with id {function_id}", json_output)

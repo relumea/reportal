@@ -123,6 +123,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "no-flirt-scan": "no-flirt-scan",
     "no-graph": "no-graph",
     "no-line-comment": "no-line-comment",
+    "manual-name": "manual-name",
     "no-pdf": "no-pdf",
     "no-proposal": "no-proposal",
     "no-report": "no-report",

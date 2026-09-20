@@ -258,7 +258,7 @@ PLANS: tuple[Plan, ...] = (
     Plan(
         id="team",
         name="Team",
-        tagline="For SOCs and product-security teams at scale.",
+        tagline="Shared seats, collections and scoping for a product-security team.",
         price_cents=14900,
         monthly_credits=7_700,
         monthly_auto_runs=500,

@@ -750,7 +750,19 @@ export function App(): ReactNode {
       </a>
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-dot" aria-hidden="true" />
+          <span className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 64 64" focusable="false">
+              <path
+                d="M20 44V20h12a8 8 0 0 1 0 16h-4l10 8"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <circle className="brand-mark-live" cx="46" cy="24" r="4" />
+            </svg>
+          </span>
           <span>reportal</span>
           <span className="brand-tag">workbench</span>
           <button

@@ -469,6 +469,12 @@ configured no checkout. Set `REPORTAL_FLIRT_SIGS_DIR` to a signature checkout
 and `POST /api/flirt/sigsets/refresh`; that variable is the only path the
 indexer reads.
 
+### manual-name
+
+`400`. A signature proposal refused to overwrite a name a person authored. A
+match is evidence, not authority: apply it to an unnamed or engine-named
+function, or rename the function by hand if the authored name is wrong.
+
 ### no-artifact
 
 `404`. The route serves a stored AI artifact or detection artifact and none is

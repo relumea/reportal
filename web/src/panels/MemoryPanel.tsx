@@ -138,6 +138,11 @@ function cArrayCopy(bytes: number[]): string {
   return bytes.map((byte) => `0x${byte.toString(16).padStart(2, "0")}`).join(", ");
 }
 
+/** Render a byte list as the ASCII gutter (printable, else a dot). */
+function asciiCopy(bytes: number[]): string {
+  return bytes.map(gutterOf).join("");
+}
+
 export function MemoryPanel({
   binaryId,
   focus,
@@ -394,9 +399,10 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
       .map((byte) => byte.value);
   };
 
-  const copy = async (label: "hex" | "c") => {
+  const copy = async (form: "hex" | "c" | "ascii"): Promise<void> => {
     const bytes = selectedBytes();
-    const text = label === "hex" ? hexCopy(bytes) : cArrayCopy(bytes);
+    const text =
+      form === "hex" ? hexCopy(bytes) : form === "c" ? cArrayCopy(bytes) : asciiCopy(bytes);
     setCopied(text);
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text).catch(() => undefined);
@@ -487,6 +493,7 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
                   </Muted>
                   <Button onClick={() => void copy("hex")}>Copy hex</Button>
                   <Button onClick={() => void copy("c")}>Copy C array</Button>
+                  <Button onClick={() => void copy("ascii")}>Copy ASCII</Button>
                   <Button
                     tone="ghost"
                     onClick={() => {
@@ -863,7 +870,7 @@ function ContinuousMode({
         ? hexCopy(found)
         : form === "c"
           ? cArrayCopy(found)
-          : found.map(gutterOf).join("");
+          : asciiCopy(found);
     setCopied(text);
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text).catch(() => undefined);

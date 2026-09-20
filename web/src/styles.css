@@ -145,7 +145,9 @@
   --text-xl: 1.25rem;
   --text-2xl: 1.625rem;
 
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Platform UI fonts only: no Material/Roboto default that every generated
+     app ships. The zine theme overrides this with MS Sans Serif. */
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
   --sidebar-width: 236px;
@@ -525,11 +527,26 @@ p.muted[role="status"]:not(:empty) {
   letter-spacing: 0.01em;
 }
 
-.brand-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
+/* The product mark from favicon.svg: the R stroke plus a live status bead.
+   Replaces the generic accent pill so the chrome is recognizable without the
+   wordmark. */
+.brand-mark {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.brand-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.brand-mark-live {
+  fill: var(--ok);
 }
 
 .brand-tag {
@@ -1867,12 +1884,12 @@ a.covmap-cell:focus-visible {
   gap: var(--space-2);
 }
 
+/* Static bars, not a library-demo shimmer: loading is structure, not a live
+   signal, so it stays still (DESIGN_RULES: glow/motion only for live data). */
 .skeleton-row {
   height: 14px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
-  background-size: 200% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+  background: var(--surface-3);
 }
 
 .skeleton-row:nth-child(2) {
@@ -1910,16 +1927,6 @@ a.covmap-cell:focus-visible {
 .name-source-dot.idle {
   background: var(--text-muted);
   opacity: 0.45;
-}
-
-@keyframes shimmer {
-  from {
-    background-position: 200% 0;
-  }
-
-  to {
-    background-position: -200% 0;
-  }
 }
 
 /* ── Code ─────────────────────────────────────────────────────────── */
@@ -3579,7 +3586,7 @@ kbd.key {
   padding: var(--space-3) var(--space-1);
 }
 
-.sidebar-collapsed .brand span:not(.brand-dot),
+.sidebar-collapsed .brand span:not(.brand-mark),
 .sidebar-collapsed .nav-group-label {
   display: none;
 }
@@ -3689,11 +3696,6 @@ kbd.key {
 
   /* The placeholder keeps its shape and the button keeps saying pending, so
      neither state is lost; only the movement stops. */
-  .skeleton-row {
-    animation: none;
-    background: var(--surface-3);
-  }
-
   .btn-spinner {
     animation-duration: 2.4s;
   }

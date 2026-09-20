@@ -7221,6 +7221,63 @@ def builtin_tools() -> tuple[Tool, ...]:
             _tool_export_sbom,
         ),
         Tool(
+            "get_flirt_sigsets",
+            "The indexed FLIRT signature catalog: one row per compiled .sig file with its"
+            " architecture, family, source, content hash, size and pattern count.  Filtered by"
+            " architecture when one is named.",
+            _object({"arch": _str("Architecture to filter by; empty lists every one.")}, ()),
+            _READ,
+            _tool_get_flirt_sigsets,
+        ),
+        Tool(
+            "refresh_flirt_sigsets",
+            "Index every .sig under the directory REPORTAL_FLIRT_SIGS_DIR names into the"
+            " catalog.  Files are keyed by content, so an unchanged one is left alone and a"
+            " changed one is updated in place.",
+            _object({}, ()),
+            _WRITE,
+            _tool_refresh_flirt_sigsets,
+        ),
+        Tool(
+            "get_flirt",
+            "The stored FLIRT signature reading of a binary: the matched symbols grouped by"
+            " library, the signature-library key they were found under, and whether the reading"
+            " came from the cache.  stored=false is a 404 before the first run.",
+            _object({"binary_id": _BINARY_ID}, ("binary_id",)),
+            _READ,
+            _tool_get_flirt,
+        ),
+        Tool(
+            "run_flirt",
+            "Match a binary against the enabled FLIRT signatures and store the reading.  The"
+            " catalog must be indexed first; the binary is read from disk, so no rebrew project"
+            " context is needed.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "arch": _str("Architecture; empty uses the stored fingerprint's."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_run_flirt,
+        ),
+        Tool(
+            "apply_flirt",
+            "Rename a function to a symbol the signatures matched, recording the change in"
+            " name history.  The name is the caller's: the matcher reports symbols, not"
+            " addresses.  A function a person named by hand is refused.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "name": _str("Matched library symbol to apply."),
+                },
+                ("function_id", "name"),
+            ),
+            _WRITE,
+            _tool_apply_flirt,
+        ),
+        Tool(
             "export_decompiler_script",
             "Render a binary's stored renames as a runnable decompiler script: a Ghidra"
             " Python script, an IDA script or a Binary Ninja rename document.  Stored-only;"

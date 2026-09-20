@@ -42,7 +42,7 @@ _STYLE = """
   --accent: #86b4ff;
   --accent-hover: #9dc5ff;
   --accent-ink: #071122;
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --radius: 6px;
 }
@@ -66,10 +66,12 @@ header .wrap {
   font-weight: 700; font-size: 16px; letter-spacing: 0.01em; color: var(--text);
   text-decoration: none;
 }
-.brand-dot {
-  width: 8px; height: 8px; border-radius: 999px; background: var(--accent);
-  flex: none; align-self: center;
+.brand-mark {
+  display: inline-flex; flex: none; align-self: center;
+  width: 18px; height: 18px; color: var(--accent);
 }
+.brand-mark svg { display: block; width: 100%; height: 100%; }
+.brand-mark-live { fill: #4ade80; }
 .brand-tag {
   font-size: 11px; font-weight: 500; color: var(--faint);
   text-transform: uppercase; letter-spacing: 0.08em;
@@ -415,7 +417,14 @@ def render() -> str:
 <body>
 <header><div class="wrap">
   <a class="brand" href="/">
-    <span class="brand-dot" aria-hidden="true"></span>
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" focusable="false">
+        <path d="M20 44V20h12a8 8 0 0 1 0 16h-4l10 8" fill="none"
+              stroke="currentColor" stroke-width="5"
+              stroke-linecap="round" stroke-linejoin="round"/>
+        <circle class="brand-mark-live" cx="46" cy="24" r="4"/>
+      </svg>
+    </span>
     <span>reportal</span>
     <span class="brand-tag">workbench</span>
     <span class="brand-ver">v{escape(__version__)}</span>
@@ -453,7 +462,7 @@ def render() -> str:
 
 <section id="features"><div class="wrap">
   <h2>Capabilities</h2>
-  <p class="lede">One portal over the whole workflow, from the first byte to the report.</p>
+  <p class="lede">The same surfaces the workbench uses: binaries, matches, triage and the agent tools.</p>
   <div class="features">{features}</div>
 </div></section>
 

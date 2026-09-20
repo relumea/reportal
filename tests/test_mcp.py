@@ -72,6 +72,8 @@ _READ_ONLY_TOOLS = frozenset(
         "list_artifact_ratings",
         "get_library",
         "export_sbom",
+        "get_flirt_sigsets",
+        "get_flirt",
         "export_decompiler_script",
         "get_unpack",
         "get_benchmark",
@@ -196,6 +198,9 @@ _READ_ONLY_TOOLS = frozenset(
 _DESTRUCTIVE_TOOLS = frozenset(
     {
         "rate_artifact",
+        "refresh_flirt_sigsets",
+        "run_flirt",
+        "apply_flirt",
         "rename_tag",
         "delete_tag",
         "import_symbols",
@@ -498,9 +503,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 262
-        assert len(_READ_ONLY_TOOLS) == 122
-        assert len(_DESTRUCTIVE_TOOLS) == 140
+        assert len(names) == 267
+        assert len(_READ_ONLY_TOOLS) == 124
+        assert len(_DESTRUCTIVE_TOOLS) == 143
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():

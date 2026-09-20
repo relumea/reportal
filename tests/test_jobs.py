@@ -70,6 +70,7 @@ class TestRegistry:
             "detect",
             "filetype",
             "firmware",
+            "flirt",
             "function-triage",
             "gobuildinfo",
             "hardening",
@@ -97,6 +98,7 @@ class TestRegistry:
         assert jobs.job_kind_for_scan(store.SCAN_KIND_TRIAGE) == ("triage", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_CRYPTO) == ("crypto", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_LIBRARY) == ("library", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_FLIRT) == ("flirt", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_FIRMWARE) == ("firmware", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_SECURITY) == ("security", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_THREAT) == ("threat", {})

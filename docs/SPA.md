@@ -842,7 +842,8 @@ comes from the engine's own section map, with only the rows on screen rendered
 and the bytes read 256 at a time as the viewport approaches a window.  A region
 no section backs is a stated `gap` row, the same one the paged mode renders, so
 the dump never shows invented zeros.  Zero bytes in the window dump and the
-paged dump are dimmed (`.byte-zero`).  The window dump names Offset and
+paged dump are dimmed (`.byte-zero`).  A selected range copies as hex, a C
+array, or ASCII (printable, else a dot).  The window dump names Offset and
 Virtual per row (a file read fills Offset; a VA read fills Virtual).
 Enter on the window address box reads the window; Esc clears it.
 The `Columns` control switches the virtual

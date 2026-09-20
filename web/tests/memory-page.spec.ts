@@ -32,6 +32,8 @@ test("the full-file view pages and copies a selected range as hex", async ({ pag
   await expect(copied).toBeVisible();
   // Four bytes selected, so the hex readout is four space-separated pairs.
   await expect(copied).toHaveText(/Copied: [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2} [0-9a-f]{2}/);
+  await panel.getByRole("button", { name: "Copy ASCII" }).click();
+  await expect(copied).toHaveText(/Copied: .{4}$/);
   await panel.locator(".memory-grid").press("Escape");
   await expect(panel.getByText(/Selected /)).toHaveCount(0);
 });

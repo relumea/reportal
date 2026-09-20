@@ -532,6 +532,19 @@ reportal unstrip <binary-id> [--min-confidence F] [--json]
 reportal unstrip-apply <function-id> [--name TEXT] [--json]
                                            # apply one stored unstrip proposal, recording
                                            # the rename with source unstrip
+reportal flirt <binary-id> [--arch TEXT] [--json]
+                                           # match a binary against the indexed FLIRT
+                                           # signature catalog and store the reading:
+                                           # the matched symbols grouped by library;
+                                           # nothing is renamed
+reportal flirt-refresh [--json]
+                                           # index every .sig under the checkout
+                                           # REPORTAL_FLIRT_SIGS_DIR names, keyed by
+                                           # content so an unchanged file is left alone
+reportal flirt-apply <function-id> --name TEXT [--json]
+                                           # rename one function to a matched library
+                                           # symbol, recording the change with source
+                                           # flirt; a name a person authored is refused
 reportal revert <function-id> <history-id> [--json]
                                            # restore the name a history row replaced
 reportal tags [--json]                     # list tags with tagged-binary and collection counts

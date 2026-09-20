@@ -67,6 +67,7 @@ view renders it from here.
 - Memory window address box reads on Enter; Esc clears it.
 - Memory dump Enter jumps and clears; Esc dismisses without jumping.
 - Memory dump Esc clears the byte selection.
+- Memory paged dump copies a selection as ASCII.
 - Section file-offset cells open Memory at that offset.
 - Code listings (As C, prototypes, dumps) copy on click.
 - Clicking an Analyses row (not a control) opens that binary, or
