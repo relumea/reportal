@@ -18,6 +18,7 @@ the failure reaches the wire.
 from __future__ import annotations
 
 import contextlib
+import math
 import os
 import sqlite3
 import tempfile
@@ -647,7 +648,10 @@ def _arg_optional_number(arguments: dict[str, Any], key: str, default: float) ->
     value = arguments[key]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ToolError("invalid params", f"{key} must be a number")
-    return float(value)
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ToolError("invalid params", f"{key} must be a finite number")
+    return parsed
 
 
 def _arg_optional_bool(arguments: dict[str, Any], key: str, default: bool) -> bool:

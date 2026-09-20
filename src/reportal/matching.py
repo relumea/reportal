@@ -315,11 +315,16 @@ class TransferPlan:
 
 
 def _request_number(body: Mapping[str, Any], key: str, default: float) -> float:
-    """Return ``body[key]`` as a float, or raise for a non-number."""
+    """Return ``body[key]`` as a finite float, or raise for a non-number."""
     value = body.get(key, default)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise InvalidSettingsError(f"{key} must be a number", f"{key} must be a number")
-    return float(value)
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise InvalidSettingsError(
+            f"{key} must be a finite number", f"{key} must be a finite number"
+        )
+    return parsed
 
 
 def _request_int(body: Mapping[str, Any], key: str, default: int) -> int:

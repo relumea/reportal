@@ -58,7 +58,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from reportal import llm
 
@@ -93,7 +93,13 @@ class TaskProfile:
     @property
     def output_tokens(self) -> int:
         """Total billed output tokens: the visible answer plus the thinking."""
-        return round(self.visible_tokens * self.thinking_ratio)
+        # Decimal keeps measured ratios like 2.7 exact; ``visible * float`` can
+        # land just under a half and round the wrong way for other corpora.
+        return int(
+            (Decimal(self.visible_tokens) * Decimal(str(self.thinking_ratio))).to_integral_value(
+                rounding=ROUND_HALF_UP
+            )
+        )
 
     def cogs_usd(self) -> float:
         """What one call of this task costs in inference, at the current rates."""

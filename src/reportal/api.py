@@ -19,6 +19,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import math
 import os
 import sqlite3
 import tempfile
@@ -360,11 +361,19 @@ def _request_actor(request: Request, body: Mapping[str, Any], default: str = "ap
 
 
 def _optional_number(body: dict[str, Any], key: str, default: float) -> float:
-    """Return ``body[key]`` as a float, defaulting when absent."""
+    """Return ``body[key]`` as a finite float, defaulting when absent.
+
+    Python's ``json`` accepts the non-standard tokens ``NaN`` and ``Infinity``.
+    Those must not reach a threshold comparison: ``score >= nan`` is always
+    false, so a library or unstrip floor of NaN would drop every candidate.
+    """
     value = body.get(key, default)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise json_error(400, error=f"{key} must be a number")
-    return float(value)
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise json_error(400, error=f"{key} must be a finite number")
+    return parsed
 
 
 def _optional_int(body: dict[str, Any], key: str, default: int) -> int:

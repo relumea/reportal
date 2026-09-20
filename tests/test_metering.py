@@ -202,3 +202,13 @@ class TestSummary:
         )
         summary = metering.usage_summary(conn, organisation_id)
         assert summary["cost_usd"] > 0
+
+    def test_the_summary_keeps_micro_usd_costs_visible(self, conn: sqlite3.Connection) -> None:
+        """One Sonnet token is 4 micro-USD; four-decimal rounding used to hide it."""
+        organisation_id = _organisation(conn, "team")
+        metering.record_usage(
+            conn, organisation_id, metering.KIND_TOKENS, 1, model=plans.COST_MODEL
+        )
+        summary = metering.usage_summary(conn, organisation_id)
+        assert summary["cost_usd"] == pytest.approx(4 / 1_000_000)
+        assert summary["cost_usd"] > 0

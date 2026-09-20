@@ -335,6 +335,18 @@ class TestObfuscationEntropy:
         )
         assert "high-overall-entropy" in _categories(result["findings"])
 
+    def test_non_finite_section_entropy_does_not_poison_the_mean(self) -> None:
+        """A NaN section used to make the weighted mean NaN and hide high entropy."""
+        sections = [
+            _section(".text", HIGH_OVERALL_ENTROPY_THRESHOLD),
+            _section(".rdata", float("nan")),
+        ]
+        result = hardening.classify_obfuscation(
+            fingerprint=_fingerprint(sections, 2048), imports=[], strings=[]
+        )
+        assert "high-overall-entropy" in _categories(result["findings"])
+        assert "high-entropy-executable-section" not in _categories(result["findings"])
+
 
 class TestObfuscationSparseAndPacker:
     def test_sparse_imports_fire_at_the_minimum_size(self) -> None:

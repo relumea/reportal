@@ -45,6 +45,12 @@ class TestCostModel:
         """The two directions of the same rate agree."""
         assert plans.usd_for_tokens(plans.tokens_for_budget(10.0)) == pytest.approx(10.0, rel=1e-6)
 
+    def test_usd_for_tokens_matches_the_ledger_unit(self) -> None:
+        """Display dollars are the micro-USD row divided by 1e6, not the unrounded rate."""
+        assert plans.micro_usd_for_tokens(1) == 4
+        assert plans.usd_for_tokens(1) == 4 / 1_000_000
+        assert plans.usd_for_tokens(1) == plans.micro_usd_for_tokens(1) / 1_000_000
+
     @pytest.mark.parametrize(
         ("model", "budget", "expected"),
         [

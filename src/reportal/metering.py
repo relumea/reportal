@@ -372,7 +372,10 @@ def usage_summary(conn: sqlite3.Connection, organisation_id: int) -> dict[str, A
         "organisation_id": organisation_id,
         "plan": plan.describe(),
         "period_started_at": period_started_at(conn, organisation_id),
-        "cost_usd": round(period_cost_usd(conn, organisation_id), 4),
+        # Six decimals match the ledger's micro-USD unit ($0.000001). Four
+        # decimals rounded any period under ~50 micro-USD to 0.0, so a one-token
+        # Sonnet row (4 micro-USD) vanished from the margin read.
+        "cost_usd": round(period_cost_usd(conn, organisation_id), 6),
         "tokens_used": period_usage(conn, organisation_id, KIND_TOKENS),
         "usage": {kind: quota_check(conn, organisation_id, kind) for kind in CUSTOMER_KINDS},
     }

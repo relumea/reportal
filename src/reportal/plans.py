@@ -121,13 +121,6 @@ def tokens_for_budget(usd: float, model: str = COST_MODEL) -> int:
     return int(Decimal(str(usd)) * 1_000_000 / _blended_rate(model))
 
 
-def usd_for_tokens(tokens: int, model: str = COST_MODEL) -> float:
-    """What *tokens* cost to serve at the blended rate."""
-    if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
-        return 0.0
-    return float(Decimal(tokens) * _blended_rate(model) / Decimal(1_000_000))
-
-
 def micro_usd_for_tokens(tokens: int, model: str = COST_MODEL) -> int:
     """What *tokens* cost in micro-USD at the blended rate, rounded half-up.
 
@@ -137,6 +130,16 @@ def micro_usd_for_tokens(tokens: int, model: str = COST_MODEL) -> int:
     if not isinstance(tokens, int) or isinstance(tokens, bool) or tokens <= 0:
         return 0
     return int((Decimal(tokens) * _blended_rate(model)).to_integral_value(rounding=ROUND_HALF_UP))
+
+
+def usd_for_tokens(tokens: int, model: str = COST_MODEL) -> float:
+    """What *tokens* cost to serve at the blended rate.
+
+    Derived from :func:`micro_usd_for_tokens` so a one-token Sonnet estimate
+    (4 micro-USD) matches the ledger row rather than the unrounded 3.6e-6 that
+    ``tokens * rate / 1e6`` would print before half-up.
+    """
+    return micro_usd_for_tokens(tokens, model) / 1_000_000
 
 
 def _overage_usd_per_credit() -> float:

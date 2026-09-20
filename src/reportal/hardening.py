@@ -36,6 +36,7 @@ static evidence, nothing more.
 
 from __future__ import annotations
 
+import math
 import re
 import sqlite3
 from collections.abc import Sequence
@@ -366,7 +367,12 @@ def _section_entropy(entry: dict[str, Any]) -> float | None:
     value = entry.get("entropy")
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    parsed = float(value)
+    # NaN survives into the weighted mean and poisons it (one bad section makes
+    # ``mean >= threshold`` always false), so non-finite values are skipped.
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 def _section_weight(entry: dict[str, Any]) -> int:
