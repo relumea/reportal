@@ -401,22 +401,22 @@ def _composition_tags(
     conn: sqlite3.Connection, composition: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Tags on the matched binaries, counted by how many of those binaries carry each."""
+    binary_ids = [int(entry["binary_id"]) for entry in composition]
+    by_binary = store.tags_for_binaries(conn, binary_ids)
     counts: dict[str, dict[str, Any]] = {}
-    for entry in composition:
-        for tag in store.get_binary_tags(conn, int(entry["binary_id"])):
+    for binary_id in binary_ids:
+        for tag in by_binary.get(binary_id, []):
             name = str(tag["name"])
             bucket = counts.setdefault(name, {"id": int(tag["id"]), "name": name, "count": 0})
             bucket["count"] += 1
     return sorted(counts.values(), key=lambda row: (-int(row["count"]), str(row["name"])))
 
 
-def _binary_sha256(conn: sqlite3.Connection, binary_id: int) -> str | None:
-    """The stored sha256 of one binary, or None when the row has none."""
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        return None
-    value = binary.get("sha256")
-    return str(value) if value else None
+def _attach_composition_sha256(conn: sqlite3.Connection, composition: list[dict[str, Any]]) -> None:
+    """Fill each composition row's ``sha256`` from one binaries lookup."""
+    digests = store.sha256_for_binaries(conn, [int(entry["binary_id"]) for entry in composition])
+    for entry in composition:
+        entry["sha256"] = digests.get(int(entry["binary_id"]))
 
 
 def compute_composition(
@@ -471,8 +471,7 @@ def compute_composition(
         band_counts[str(row["band"])] += 1
 
     composition = _composition_rows(rows, total)
-    for entry in composition:
-        entry["sha256"] = _binary_sha256(conn, int(entry["binary_id"]))
+    _attach_composition_sha256(conn, composition)
     categories = _category_rows(functions, rows, total)
 
     notes = [SCOPE_NOTE]

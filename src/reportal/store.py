@@ -2205,6 +2205,7 @@ def _function_where(
     *,
     analysis_id: int | None,
     binary_id: int | None,
+    binary_ids: Sequence[int],
     min_size: int | None,
     max_size: int | None,
     string: str | None,
@@ -2219,7 +2220,8 @@ def _function_where(
     Returned as the clause text (empty when nothing filters) plus its
     parameters, so :func:`list_functions` and :func:`count_matching_functions`
     cannot drift: a page's match total has to count the same predicate the page
-    was cut from.
+    was cut from.  *binary_ids* keeps functions of any of those binaries; an
+    empty sequence adds no clause.
     """
     clauses: list[str] = []
     params: list[Any] = []
@@ -2229,6 +2231,11 @@ def _function_where(
     if binary_id is not None:
         clauses.append("a.binary_id = ?")
         params.append(binary_id)
+    if binary_ids:
+        ids = [int(value) for value in binary_ids]
+        placeholders = ", ".join("?" for _ in ids)
+        clauses.append(f"a.binary_id IN ({placeholders})")
+        params.extend(ids)
     if min_size is not None:
         clauses.append("f.size >= ?")
         params.append(min_size)
@@ -2267,6 +2274,7 @@ def count_matching_functions(
     *,
     analysis_id: int | None = None,
     binary_id: int | None = None,
+    binary_ids: Sequence[int] = (),
     min_size: int | None = None,
     max_size: int | None = None,
     string: str | None = None,
@@ -2287,6 +2295,7 @@ def count_matching_functions(
         conn,
         analysis_id=analysis_id,
         binary_id=binary_id,
+        binary_ids=binary_ids,
         min_size=min_size,
         max_size=max_size,
         string=string,
@@ -2308,6 +2317,7 @@ def list_functions(
     *,
     analysis_id: int | None = None,
     binary_id: int | None = None,
+    binary_ids: Sequence[int] = (),
     min_size: int | None = None,
     max_size: int | None = None,
     string: str | None = None,
@@ -2331,7 +2341,8 @@ def list_functions(
     needle stays literal), ``va`` is one exact address and ``string``/``strings``
     match the function's stored decompilation text (a literal the reversed source
     carries; a function with none never matches) and ``match`` is one of
-    :data:`FUNCTION_MATCH_VALUES`.
+    :data:`FUNCTION_MATCH_VALUES`.  ``binary_ids`` keeps functions of any of
+    those binaries in one round trip; an empty sequence adds no binary filter.
 
     Several needles are combined as any-of, so a filter listing three strings
     keeps a function that carries any one of them.  ``regex=True`` treats every
@@ -2358,6 +2369,7 @@ def list_functions(
         conn,
         analysis_id=analysis_id,
         binary_id=binary_id,
+        binary_ids=binary_ids,
         min_size=min_size,
         max_size=max_size,
         string=string,
@@ -2558,6 +2570,7 @@ def record_match(
     settings: Mapping[str, Any] | None = None,
     source_arch: str = "",
     candidate_arch: str = "",
+    commit: bool = True,
 ) -> int:
     """Record a similarity edge between two functions; returns its id.
 
@@ -2567,7 +2580,8 @@ def record_match(
     produced it; None records no settings, which is what an edge written
     outside a match run carries.  *source_arch* and *candidate_arch* are the
     ISA tokens of the two binaries at record time, so a later reader can tell
-    a cross-architecture pair from a same-ISA one.
+    a cross-architecture pair from a same-ISA one.  Pass ``commit=False`` when
+    the caller will commit a source function's clear and its edges together.
     """
     conn.execute(
         "INSERT INTO matches (function_id, candidate_function_id, similarity,"
@@ -2589,7 +2603,8 @@ def record_match(
             now(),
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     row = conn.execute(
         "SELECT id FROM matches WHERE function_id = ? AND candidate_function_id = ?",
         (function_id, candidate_function_id),
@@ -2709,15 +2724,17 @@ def has_match(conn: sqlite3.Connection, function_id: int, candidate_function_id:
     return row is not None
 
 
-def clear_matches_for(conn: sqlite3.Connection, function_id: int) -> None:
+def clear_matches_for(conn: sqlite3.Connection, function_id: int, *, commit: bool = True) -> None:
     """Delete every match row whose source is *function_id*.
 
     Matching recomputes a function's edges from scratch, so the previous run's
     rows must go first; otherwise a candidate that fell below the floor would
-    survive with a stale score.
+    survive with a stale score.  Pass ``commit=False`` when the caller will
+    commit the clear with the replacement edges in one transaction.
     """
     conn.execute("DELETE FROM matches WHERE function_id = ?", (function_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # ── Disassembly cache ──────────────────────────────────────────────
@@ -3938,13 +3955,55 @@ def remove_binary_tag(conn: sqlite3.Connection, binary_id: int, tag_id: int) -> 
 
 def get_binary_tags(conn: sqlite3.Connection, binary_id: int) -> list[dict[str, Any]]:
     """Tags applied to *binary_id*, each ``{id, name}``, ordered by name."""
+    return tags_for_binaries(conn, [binary_id]).get(int(binary_id), [])
+
+
+def tags_for_binaries(
+    conn: sqlite3.Connection, binary_ids: Sequence[int]
+) -> dict[int, list[dict[str, Any]]]:
+    """Tags applied to each of *binary_ids*, each ``{id, name}``, name order.
+
+    One round trip for a batch read; an id with no tags is absent from the map.
+    """
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    if not binary_ids:
+        return grouped
+    ids = [int(binary_id) for binary_id in binary_ids]
+    placeholders = ", ".join("?" for _ in ids)
     cur = conn.execute(
-        "SELECT t.id, t.name FROM tags t"
+        "SELECT bt.binary_id AS binary_id, t.id AS id, t.name AS name FROM tags t"
         " JOIN binary_tags bt ON bt.tag_id = t.id"
-        " WHERE bt.binary_id = ? ORDER BY t.name",
-        (binary_id,),
+        f" WHERE bt.binary_id IN ({placeholders}) ORDER BY t.name",
+        ids,
     )
-    return _rows(cur)
+    for row in cur.fetchall():
+        grouped.setdefault(int(row["binary_id"]), []).append(
+            {"id": int(row["id"]), "name": str(row["name"])}
+        )
+    return grouped
+
+
+def sha256_for_binaries(
+    conn: sqlite3.Connection, binary_ids: Sequence[int]
+) -> dict[int, str | None]:
+    """The stored sha256 of each named binary, or None when the row has none.
+
+    One round trip; avoids the function-count subquery :func:`get_binary` pays.
+    An unknown id is absent from the map.
+    """
+    if not binary_ids:
+        return {}
+    ids = [int(binary_id) for binary_id in binary_ids]
+    placeholders = ", ".join("?" for _ in ids)
+    cur = conn.execute(
+        f"SELECT id, sha256 FROM binaries WHERE id IN ({placeholders})",
+        ids,
+    )
+    result: dict[int, str | None] = {}
+    for row in cur.fetchall():
+        value = row["sha256"]
+        result[int(row["id"])] = str(value) if value else None
+    return result
 
 
 # ── Conversations ──────────────────────────────────────────────────
@@ -5501,12 +5560,27 @@ def upsert_signature(
 
 def get_signature(conn: sqlite3.Connection, function_id: int) -> dict[str, Any] | None:
     """One function signature by its function id, or None."""
-    row = conn.execute(
+    return signatures_by_ids(conn, [function_id]).get(int(function_id))
+
+
+def signatures_by_ids(
+    conn: sqlite3.Connection, function_ids: Sequence[int]
+) -> dict[int, dict[str, Any]]:
+    """Signatures keyed by function id for the ids that have one.
+
+    One round trip for a batch read; an unknown or unsigned id is absent.
+    """
+    if not function_ids:
+        return {}
+    ids = [int(function_id) for function_id in function_ids]
+    placeholders = ", ".join("?" for _ in ids)
+    cur = conn.execute(
         "SELECT function_id, name, return_type, calling_convention, parameters_json,"
-        " source, created_at, updated_at FROM function_signatures WHERE function_id = ?",
-        (function_id,),
-    ).fetchone()
-    return _function_signature_row(row) if row else None
+        " source, created_at, updated_at FROM function_signatures"
+        f" WHERE function_id IN ({placeholders})",
+        ids,
+    )
+    return {int(row["function_id"]): _function_signature_row(row) for row in cur.fetchall()}
 
 
 def list_signatures(conn: sqlite3.Connection, *, binary_id: int) -> list[dict[str, Any]]:

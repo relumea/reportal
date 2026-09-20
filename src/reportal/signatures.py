@@ -620,18 +620,21 @@ def signatures_for(
                 f"SELECT b.id AS id FROM binaries b WHERE {clause}", params
             ).fetchall()
         }
+    functions = store.functions_by_ids(conn, function_ids)
+    signatures = store.signatures_by_ids(conn, list(functions))
     rows: list[dict[str, Any]] = []
     for function_id in function_ids:
-        function = store.get_function(conn, function_id)
+        function = functions.get(int(function_id))
         if function is None or (visible is not None and int(function["binary_id"]) not in visible):
             rows.append({"function_id": function_id, "found": False, "signature": None})
             continue
+        stored = signatures.get(int(function_id))
         rows.append(
             {
                 "function_id": function_id,
                 "found": True,
                 "name": str(function["name"]),
-                "signature": get_signature(conn, function_id),
+                "signature": _signature_view(stored) if stored is not None else None,
             }
         )
     return rows

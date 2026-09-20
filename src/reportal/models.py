@@ -419,9 +419,10 @@ def candidate_functions(
     *limit* candidates that have something to re-run.
     """
     if functions is not None:
+        by_id = store.functions_by_ids(conn, functions)
         rows: list[dict[str, Any]] = []
         for function_id in functions:
-            function = store.get_function(conn, function_id)
+            function = by_id.get(int(function_id))
             if function is None or int(function["analysis_id"]) != analysis_id:
                 continue
             if _stored_kinds(conn, function_id):

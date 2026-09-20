@@ -689,7 +689,7 @@ def match_binary(
         if _in_platform_architecture_scope(conn, bid, resolved, scope_cache)
     }
     # Unscoped and unfiltered: one full scan beats one query per binary.
-    # Scoped or platform/arch filtered: load only the binaries that remain.
+    # Scoped or platform/arch filtered: one IN query for the binaries that remain.
     if not scoped and not resolved.platforms and not resolved.architectures:
         functions = store.list_functions(conn)
         candidates = [
@@ -698,12 +698,11 @@ def match_binary(
             if resolved.include_self or int(function["binary_id"]) != binary_id
         ]
     else:
-        candidates = []
-        for bid in candidate_binary_ids:
-            if bid == binary_id:
-                candidates.extend(sources)
-            else:
-                candidates.extend(store.list_functions(conn, binary_id=bid))
+        candidates = (
+            store.list_functions(conn, binary_ids=sorted(candidate_binary_ids))
+            if candidate_binary_ids
+            else []
+        )
     # A scope that admits no candidate leaves nothing to score, so the run only
     # clears the sources' rows; disassembling them would be work with no reader.
     texts: dict[int, str | None] = {}
@@ -720,9 +719,12 @@ def match_binary(
     total = len(sources)
     for index, source in enumerate(sources, start=1):
         source_id = int(source["id"])
-        store.clear_matches_for(conn, source_id)
+        # One transaction per source: clear plus its replacement edges, so a
+        # mid-run crash leaves prior sources durable without a fsync per edge.
+        store.clear_matches_for(conn, source_id, commit=False)
         source_text = texts.get(source_id)
         if not source_text:
+            conn.commit()
             if progress is not None:
                 progress(index, total)
             continue
@@ -744,6 +746,7 @@ def match_binary(
         ][: resolved.top]
         confidences = similarity.confidence_scores([score for score, _ in kept])
         recorded = 0
+        source_arch = _binary_format_arch(conn, function_binary[source_id], scope_cache)[1]
         for (score, candidate_id), confidence in zip(kept, confidences, strict=True):
             if confidence < resolved.min_confidence:
                 continue
@@ -754,12 +757,14 @@ def match_binary(
                 similarity=score,
                 confidence=confidence,
                 settings=payload,
-                source_arch=_binary_format_arch(conn, function_binary[source_id], scope_cache)[1],
+                source_arch=source_arch,
                 candidate_arch=_binary_format_arch(
                     conn, function_binary[candidate_id], scope_cache
                 )[1],
+                commit=False,
             )
             recorded += 1
+        conn.commit()
         if recorded:
             summary["matched"] += 1
         summary["pairs"] += recorded

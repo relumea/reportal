@@ -13,6 +13,7 @@ to the ``_query_*`` helpers, which read through ``request.query_params``.
 
 from __future__ import annotations
 
+import bisect
 import contextlib
 import dataclasses
 import hashlib
@@ -1021,14 +1022,21 @@ def _containing_function_ids(
 
     A function with no size contains nothing, and an address no stored function
     covers is simply not among the referrers: there is nowhere to navigate to.
+    Addresses are sorted once so each function range is a binary search, not a
+    linear scan of every xref.
     """
+    if not addresses:
+        return set()
+    ordered = sorted(addresses)
     covered: set[int] = set()
     for row in functions:
         start = int(row["va"])
         size = int(row["size"] or 0)
         if size <= 0:
             continue
-        if any(start <= address < start + size for address in addresses):
+        end = start + size
+        index = bisect.bisect_left(ordered, start)
+        if index < len(ordered) and ordered[index] < end:
             covered.add(int(row["id"]))
     return covered
 
