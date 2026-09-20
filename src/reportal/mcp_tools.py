@@ -5849,17 +5849,19 @@ def _tool_run_jobs(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_list_journal(arguments: dict[str, Any]) -> dict[str, Any]:
     limit = _arg_optional_int(arguments, "limit", journal.DEFAULT_LIST_LIMIT)
     action = _arg_optional_str(arguments, "action")
-    actor = _arg_optional_str(arguments, "actor")
+    # Distinguish omitted actor (no filter) from actor="" (CLI/MCP writes).
+    if "actor" in arguments and arguments["actor"] is not None:
+        actor: str | None = _check_str("actor", arguments["actor"], nonempty=False)
+    else:
+        actor = None
     with contextlib.closing(_open()) as conn:
-        entries = journal.list_entries(
-            conn, action=action or None, actor=actor or None, limit=limit
-        )
+        entries = journal.list_entries(conn, action=action or None, actor=actor, limit=limit)
         actors = journal.list_actors(conn)
     return {
         "entries": entries,
         "count": len(entries),
         "action": action or None,
-        "actor": actor or None,
+        "actor": actor,
         "actors": actors,
     }
 

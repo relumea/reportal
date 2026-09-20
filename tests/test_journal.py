@@ -586,6 +586,27 @@ class TestApiRoutes:
         _status, headers, body = wsgi_request("GET", "/api/journal?action=act-2&actor=bo")
         assert [entry["description"] for entry in json_body(body, headers)["entries"]] == ["second"]
 
+    def test_list_route_empty_actor_filters_cli_writes(self, conn: sqlite3.Connection) -> None:
+        with journal.acting_as(""):
+            _log_with(
+                conn,
+                "cli-act",
+                (effects.EFFECT_ROW_DELETE, "cli", journal.row_delete_descriptor("tags", 1)),
+            )
+        with journal.acting_as("ana"):
+            _log_with(
+                conn,
+                "web-act",
+                (effects.EFFECT_ROW_DELETE, "web", journal.row_delete_descriptor("tags", 2)),
+            )
+
+        status, headers, body = wsgi_request("GET", "/api/journal?actor=")
+        payload = json_body(body, headers)
+
+        assert status.startswith("200")
+        assert [entry["description"] for entry in payload["entries"]] == ["cli"]
+        assert payload["actor"] == ""
+
     def test_list_route_rejects_a_bad_limit(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request("GET", "/api/journal?limit=0")
         assert status.startswith("400")
@@ -991,6 +1012,26 @@ class TestMcp:
         assert not is_error
         assert [entry["description"] for entry in payload["entries"]] == ["first"]
         assert payload["actors"] == ["ana", "bo"]
+
+    def test_list_journal_empty_actor_filters_cli_writes(self, conn: sqlite3.Connection) -> None:
+        with journal.acting_as(""):
+            _log_with(
+                conn,
+                "cli-act",
+                (effects.EFFECT_ROW_DELETE, "cli", journal.row_delete_descriptor("tags", 1)),
+            )
+        with journal.acting_as("ana"):
+            _log_with(
+                conn,
+                "web-act",
+                (effects.EFFECT_ROW_DELETE, "web", journal.row_delete_descriptor("tags", 2)),
+            )
+
+        payload, is_error = _call_tool("list_journal", {"actor": ""})
+
+        assert not is_error
+        assert [entry["description"] for entry in payload["entries"]] == ["cli"]
+        assert payload["actor"] == ""
 
     def test_revert_journal_entry_reverts_an_action(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)

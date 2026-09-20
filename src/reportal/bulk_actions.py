@@ -198,10 +198,15 @@ def _tag_result(
     action: str,
     tag_id: int,
     binary_id: int,
-) -> None:
-    """Apply one tag link change and journal the link row it inserted or removed."""
+) -> bool:
+    """Apply one tag link change and journal the link row it inserted or removed.
+
+    Returns False when the link was already present (add) or already absent
+    (remove), so callers can count the id as unchanged rather than applied.
+    """
     if action == "add_tag":
-        if store.add_binary_tag(conn, binary_id, tag_id) and log is not None:
+        changed = store.add_binary_tag(conn, binary_id, tag_id)
+        if changed and log is not None:
             log.record(
                 effects.EFFECT_ROW_DELETE,
                 f"tagged binary {binary_id} with tag {tag_id}",
@@ -209,7 +214,7 @@ def _tag_result(
                     "binary_tags", {"binary_id": binary_id, "tag_id": tag_id}
                 ),
             )
-        return
+        return changed
     link = (
         journal.snapshot_rows(
             conn,
@@ -220,13 +225,14 @@ def _tag_result(
         if log is not None
         else []
     )
-    store.remove_binary_tag(conn, binary_id, tag_id)
-    if log is not None and link:
+    changed = store.remove_binary_tag(conn, binary_id, tag_id)
+    if changed and log is not None and link:
         log.record(
             effects.EFFECT_ROW_RESTORE,
             f"untagged binary {binary_id} from tag {tag_id}",
             journal.row_restore_descriptor("binary_tags", link),
         )
+    return changed
 
 
 def _resolve_tag(
@@ -293,8 +299,9 @@ def apply_binary_action(
             _skip(result, binary_id, REASON_NOT_FOUND)
         elif not tag_id:
             _skip(result, binary_id, REASON_NO_TAG)
+        elif not _tag_result(conn, log, action=action, tag_id=tag_id, binary_id=binary_id):
+            _skip(result, binary_id, REASON_UNCHANGED)
         else:
-            _tag_result(conn, log, action=action, tag_id=tag_id, binary_id=binary_id)
             result["applied"] += 1
     return result
 
@@ -343,6 +350,12 @@ def apply_analysis_action(
                 result["applied"] += 1
         return result
     tag_id = _resolve_tag(conn, log, action=action, tag_name=tag_name)
+    # Tag writes land on the owning binary.  Two analyses of the same binary
+    # in one request share that link: the first call mutates it and later ids
+    # of that binary still count as applied because this request achieved the
+    # desired state for them.  A no-op against a binary this request never
+    # touched is unchanged, matching the binary bulk path.
+    touched_binaries: set[int] = set()
     for analysis_id in resolved:
         analysis = store.get_analysis(conn, analysis_id)
         if analysis is None:
@@ -352,14 +365,21 @@ def apply_analysis_action(
         elif not tag_id:
             _skip(result, analysis_id, REASON_NO_TAG)
         else:
-            _tag_result(
+            binary_id = int(analysis["binary_id"])
+            changed = _tag_result(
                 conn,
                 log,
                 action=action,
                 tag_id=tag_id,
-                binary_id=int(analysis["binary_id"]),
+                binary_id=binary_id,
             )
-            result["applied"] += 1
+            if changed:
+                touched_binaries.add(binary_id)
+                result["applied"] += 1
+            elif binary_id in touched_binaries:
+                result["applied"] += 1
+            else:
+                _skip(result, analysis_id, REASON_UNCHANGED)
     return result
 
 

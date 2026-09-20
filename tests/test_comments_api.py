@@ -256,6 +256,37 @@ class TestBulkBinaryRoutes:
         assert json_body(body, headers)["applied"] == 2
         assert store.get_binary_tags(conn, other) == []
 
+    def test_duplicate_tag_link_is_unchanged(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        _post(
+            "/api/binaries/bulk",
+            {"action": "add_tag", "binary_ids": [ids["binary"]], "tag": "reviewed"},
+        )
+
+        status, headers, body = _post(
+            "/api/binaries/bulk",
+            {"action": "add_tag", "binary_ids": [ids["binary"]], "tag": "reviewed"},
+        )
+        result = json_body(body, headers)
+        assert status.startswith("200")
+        assert result["applied"] == 0
+        assert result["skipped"] == [{"id": ids["binary"], "reason": bulk_actions.REASON_UNCHANGED}]
+        assert "journal_action" not in result
+
+        status, headers, body = _post(
+            "/api/binaries/bulk",
+            {"action": "remove_tag", "binary_ids": [ids["binary"]], "tag": "reviewed"},
+        )
+        assert json_body(body, headers)["applied"] == 1
+
+        status, headers, body = _post(
+            "/api/binaries/bulk",
+            {"action": "remove_tag", "binary_ids": [ids["binary"]], "tag": "reviewed"},
+        )
+        result = json_body(body, headers)
+        assert result["applied"] == 0
+        assert result["skipped"] == [{"id": ids["binary"], "reason": bulk_actions.REASON_UNCHANGED}]
+
     def test_remove_unknown_tag_skips_every_id(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
         _, headers, body = _post(

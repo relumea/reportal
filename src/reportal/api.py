@@ -7689,8 +7689,11 @@ def list_journal(request: Request) -> Response:
         return json_error(400, error="limit must be positive", detail="limit is at least 1")
     raw_action = request.query_params.get("action")
     action = raw_action.strip() if isinstance(raw_action, str) and raw_action.strip() else None
+    # An empty ``?actor=`` means CLI/MCP writes (actor stored as ""), matching
+    # ``GET /api/users/activity`` and ``journal.list_entries(..., actor="")``.
+    # Absence of the param means no actor filter.
     raw_actor = request.query_params.get("actor")
-    actor = raw_actor.strip() if isinstance(raw_actor, str) and raw_actor.strip() else None
+    actor = None if raw_actor is None else raw_actor.strip()
     caller = _caller(request)
     if caller is not None and str(caller.get("role")) != auth.ROLE_ADMIN:
         own_name = str(caller["name"])

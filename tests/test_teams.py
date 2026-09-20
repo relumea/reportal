@@ -270,15 +270,22 @@ class TestScopeGate:
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         ids = self._scoped(conn)
+        collection_id = store.create_collection(conn, name="team-samples", description="scoped")
+        store.set_collection_scope(
+            conn, collection_id, owner_team_id=ids["team"], visibility="team"
+        )
         monkeypatch.setenv(auth.REQUIRED_ENV, "required")
 
         member_list = _send("GET", "/api/binaries", token=ids["ana"])
         outsider_list = _send("GET", "/api/binaries", token=ids["bob"])
         outsider_search = _send("GET", "/api/search?q=team", token=ids["bob"])
+        member_search = _send("GET", "/api/search?q=team", token=ids["ana"])
 
         assert {row["name"] for row in member_list[1]["binaries"]} == {"team.exe", "public.exe"}
         assert {row["name"] for row in outsider_list[1]["binaries"]} == {"public.exe"}
         assert outsider_search[1]["binaries"] == []
+        assert outsider_search[1]["collections"] == []
+        assert {row["name"] for row in member_search[1]["collections"]} == {"team-samples"}
 
     def test_an_admin_sees_everything(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
