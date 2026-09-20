@@ -1,6 +1,6 @@
 # Threat model
 
-Last reviewed: 2026-09-20.
+Last reviewed: 2026-09-21.
 
 This is a source-derived model of reportal's exposure, not a live probe.  It
 names the boundary, the control that exists, and the residual risk a reader
@@ -16,10 +16,11 @@ and are not named here.
 | 1 | Opt-in sample detonation shares the host kernel | 7 | Only path that executes attacker-supplied bytes; a kernel escape is host compromise | Off until `sandbox.require_enabled` + installed runner; `BwrapRunner` unshares namespaces and caps wall/CPU/AS (`sandbox.py`) | No seccomp, no VM, runner binary not attested |
 | 2 | Plaintext secrets and binaries at rest | 2, Secrets | Stolen `reportal.db` or `reportal backup` archive yields every stored credential and sample | FS permissions; reads never return secret values (`secret_store`); tokens stored as SHA-256 only (`auth.hash_token`) | No encryption at rest; journal retains prior secret values until pruned |
 | 3 | Auth-off loopback is full operator | 1 | Any local process that can open the bind is the operator | Default `127.0.0.1`; `cli._require_lan_auth` refuses a wider bind until auth is on and a user exists; authenticated HTTP writes are capped at `auth.WRITE_MAX_HITS` per `WRITE_WINDOW_S` | XSS against the SPA origin steals `localStorage` token (`web/src/api.ts` `TOKEN_STORAGE_KEY`); auth-off loopback stays unbounded |
-| 4 | Billing webhook vs bearer gate | 10 | Entitlement change is high impact; Stripe cannot present a portal bearer | HMAC + timestamp in `billing.verify_webhook`; no secret configured refuses every webhook | `server.WEBHOOK_PATH` skips the bearer gate; the signature stays the gate |
-| 5 | Concurrent quota check can overshoot one call | Abuse | Two SaaS HTTP starts may each pass `quota_check` before either charges | `_refuse_over_quota` / `_refuse_over_credits` on auto and credit-priced AI routes | Overshoot bounded by one call; personal profile, CLI and MCP skip the HTTP refuse |
-| 6 | SSRF-shaped URL ingest (opt-in) | 5 | Caller-chosen URL leaves the process | Off by default; `remote_ingest.validate_target` + peer check | Residual TOCTOU; handshake bytes may leave before block |
-| 7 | LLM / agent as untrusted actuator | 6 | Model sees workspace text; destructive tools run after one analyst confirm | Bridge off without endpoint; destructive tools pause for `POST .../confirm` (`agent.py`) | Read-only tools run unbound by analyst intent; results leave to the configured endpoint |
+| 4 | Auto `execute` applies model-proposed byte patches | 6 | `llm_goal` writes a length-preserving patched binary copy from model edits without a second analyst confirm | Dry-run unless `--execute` / `"execute": true`; edits must match current bytes (`auto_goal_worker.validate_edits`); never overwrites an unowned candidate (`auto_llm_worker.owned_files`); patched copy beside the original (`auto_goal_worker.patched_binary_path`) | No per-edit confirm; model chooses offsets; `engine.test_source` runs in-process under the portal user |
+| 5 | Billing webhook vs bearer gate | 10 | Entitlement change is high impact; Stripe cannot present a portal bearer | HMAC + timestamp in `billing.verify_webhook`; no secret configured refuses every webhook | `server.WEBHOOK_PATH` skips the bearer gate; the signature stays the gate |
+| 6 | Concurrent quota check can overshoot one call | Abuse | Two SaaS HTTP starts may each pass `quota_check` before either charges | `_refuse_over_quota` / `_refuse_over_credits` on auto and credit-priced AI routes | Overshoot bounded by one call; personal profile, CLI and MCP skip the HTTP refuse |
+| 7 | SSRF-shaped URL ingest (opt-in) | 5 | Caller-chosen URL leaves the process | Off by default; `remote_ingest.validate_target` + peer check | Residual TOCTOU; handshake bytes may leave before block |
+| 8 | Agent / LLM bridge as untrusted actuator | 6 | Model sees workspace text; destructive MCP tools run after one analyst confirm | Bridge off without endpoint; destructive tools pause for `POST .../confirm` (`agent.py`) | Read-only tools run unbound by analyst intent; results leave to the configured endpoint |
 
 ## Posture
 
@@ -47,12 +48,17 @@ it is written out in full below.
 ## Trust boundaries
 
 1. **Network client to application.**  The SPA and any reachable HTTP client
-   reach every route in `api.py` and the static assets served by `ui.py`.  The
-   server rejects a request whose Host header is not allowlisted
-   (`server._validate_host`, `server.LOOPBACK_HOSTS`) and answers with fixed
-   security headers (`server._security_headers`).  Authentication has two
-   modes, chosen once per install by `auth.required()` (`REPORTAL_AUTH=required`
-   or `[auth] required = true`; the `saas` profile forces it on):
+   reach every route in `api.py` and the static assets served by `ui.py`.  On a
+   loopback bind, `cli.serve` installs `server.ALLOWED_HOSTS =
+   set(LOOPBACK_HOSTS)` and the middleware refuses a Host header outside that
+   set (`server._reportal_headers`); a non-loopback bind calls
+   `server.configure_hosts(None)`, so the Host allowlist is off and only the
+   token gate stands.  Every response carries fixed security headers
+   (`server.SECURITY_HEADERS` via `server._reportal_headers`).  Tenant JSON goes through
+   `disclosure.redact_payload` (`server.json_response`); operators (auth off or
+   admin) see unredacted payloads.  Authentication has two modes, chosen once
+   per install by `auth.required()` (`REPORTAL_AUTH=required` or `[auth]
+   required = true`; the `saas` profile forces it on):
    - **off** (the default).  The caller *is* the operator.  The loopback bind is
      the safeguard, and `cli.serve` refuses a non-loopback bind in this mode
      (`cli._require_lan_auth`), so an exposed control plane cannot be reached by
@@ -119,28 +125,35 @@ it is written out in full below.
    rather than trusting pre-flight DNS alone.  The test-only
    `allow_loopback=True` seam still admits that case and reports
    `PEER_UNVERIFIED` so in-process mocks can exercise the rest of the path.
-6. **Model to stored artifact.**  The optional LLM bridge sends decompiled code
-   and retrieved documents as untrusted data (labelled in the prompt by
-   `llm._messages` and `llm.function_triage_messages`) and validates the answer
-   before storing it.  `llm._strip_reasoning` removes leaked reasoning and
-   tool-call markup, and the artifact parsers require their fields, so a
-   malformed answer raises `LlmError` rather than storing a partial artifact.
-   The model's output is data; nothing in reportal evaluates it.  A rewritten
-   function (`ai_decomp.py`) is the largest such artifact and the rule is the
-   same: it is stored as text and served as text, nothing compiles or runs it,
-   and an analyst override is a whole-token text substitution over that text
-   with the C keywords and the string literals left alone.
-   An **agent run** (`agent.py`) is the one place the model can ask for an
-   action rather than only produce text.  Its answer is a tool call, and the
-   call is not executed on the model's word: a tool whose `Tool.annotations` do
-   not say `readOnlyHint` and do say `destructiveHint` pauses the run, and only
-   an explicit `POST /api/conversations/<id>/confirm` with `approve: true` runs
-   it.  An unknown tool name counts as destructive, arguments are validated
-   against the tool's own input schema by the registry, and every call's
-   arguments and bounded result are recorded on the run.  A tool the model
-   chooses is still a tool the *analyst* approved; that is the whole gate, so an
-   operator who does not want a model to be able to reach a tool should not
-   enable the bridge (the feature is off without an endpoint).
+6. **Model to stored artifact and (opt-in) file writes.**  The optional LLM
+   bridge sends decompiled code and retrieved documents as untrusted data
+   (labelled in the prompt by `llm._messages` and `llm.function_triage_messages`)
+   and validates the answer before storing it.  `llm._strip_reasoning` removes
+   leaked reasoning and tool-call markup, and the artifact parsers require their
+   fields, so a malformed answer raises `LlmError` rather than storing a partial
+   artifact.  Text artifacts (`ai_decomp.py` and peers) are stored and served as
+   text: nothing compiles or runs them, and an analyst override is a whole-token
+   text substitution with C keywords and string literals left alone.
+   Three paths turn model output into action, each with its own gate:
+   - **Agent run** (`agent.py`): a tool call is not run on the model's word.  A
+     tool whose `Tool.annotations` do not say `readOnlyHint` and do say
+     `destructiveHint` pauses; only `POST /api/conversations/<id>/confirm` with
+     `approve: true` runs it.  An unknown tool name counts as destructive;
+     arguments are schema-validated; results are recorded on the run.
+   - **Auto workers** (`auto_llm_worker`, `auto_goal_worker` via
+     `auto_workers.WORKER_LLM_GOAL`): dry-run unless the run carries
+     `execute: true`.  With execute, `llm_c_source` may write a candidate `.c`
+     and call `engines.RebrewEngine.test_source` in-process; `llm_goal` may also
+     apply length-preserving byte edits the model proposed
+     (`auto_goal_worker.validate_edits` / `apply_edits` / `_binary_patch`),
+     writing a sibling patched binary and never overwriting an unowned path.
+     There is no second per-edit analyst confirm: the execute flag is the gate.
+   - **Rename suggestions** (`renames.apply_renames`): applied only on an
+     analyst request; `_refusal` requires valid C identifiers and rejects
+     protected names.
+   The bridge is off without an endpoint.  Enabling it plus auto execute, or
+   approving agent tools, is what moves the model from text producer to
+   actuator.
 7. **Sample bytes to the sandbox (opt-in, bounded).**  `POST
    /api/binaries/<id>/dynamic-execution` executes a stored sample, and it is the
    only path in reportal that does.  Four guards hold before any process starts:
@@ -203,12 +216,16 @@ it is written out in full below.
 | Job queue submit / cancel / run | Network client; kind + binary id | `api.py` `/api/jobs*`, `jobs.submit`, `jobs.ensure_worker` |
 | Background job pool | In-process workers (off via `REPORTAL_JOBS_POOL`) | `jobs.JobWorker`, `jobs.MAX_WORKERS`, `jobs.MAX_QUEUED_JOBS` |
 | Binary upload | Network client; arbitrary bytes and filename | `api.upload_binary`, `api._stream_upload` |
+| Archive / firmware member extract | Stored archive or carved region bytes | `archive.extract` (member/path/bomb caps), `firmware.py`, `api.firmware_extract_binary` |
 | Document upload and paste | Network client; untrusted text | `api.py` knowledge routes, `knowledge.ingest_document` |
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
 | Authenticated API client | Network client; bearer token header | `server._reportal_headers` + `server.authenticate`, `auth.authenticate` |
 | Team-scoped object request | Network client; object id in the path | `server._scoped_object`, `server._enforce_scope`, `auth.visible_clause` |
+| Tenant response redaction | Assembled JSON before serialize | `disclosure.redact_payload`, `server.json_response` |
 | External-source pull (opt-in) | External service (only when enabled and keyed); the binary's hash | `api.py` external routes, `external.virustotal_source`, `external.fetch_virustotal` |
 | External-source plugin | Third-party package on the host | `external.refresh_sources`, `reportal.external_sources` |
+| Graph backend sync / query | Operator-chosen backend; binary graph payload | `graph_backends.sync_graph` / `run_query`; optional Cognee push (`graph_backends.cognee_sync`) leaves the process when the `cognee` extra is installed |
+| FLIRT signature catalog | Operator path via `REPORTAL_FLIRT_SIGS_DIR`; `.sig` files on disk | `flirt_sigs.refresh`, `flirt_sigs.run_flirt`, `flirt_sigs.apply_proposal`; paths refused outside the checkout (`flirt_sigs._blob_paths`) |
 | Secret read and write | Network client; a credential name, scope and value | `api.py` secret routes, `secret_store.normalize_*`, `secret_store.journaled_set` / `journaled_delete` |
 | Sample detonation (opt-in) | Network client; a stored sample and capped bounds | `sandbox.detonate_binary`, `sandbox.BwrapRunner`, `sandbox.execute` |
 | Packer rebuild (`upx -d`) | Stored binary bytes, plus the external `upx` tool on `PATH` | `unpack.unpack_to`, `unpack._run_upx`, `binary_actions.unpack_binary` |
@@ -216,16 +233,17 @@ it is written out in full below.
 | LLM endpoint responses | External service (only when configured) | `llm.LlmClient.complete`, `llm.LlmClient.chat`, `llm._parse_json` |
 | Metered AI / auto usage | Authenticated tenant request; organisation from active team | `server._charge_credits`, `metering.charge_task`, `metering.record_usage` |
 | Agent tool calls | LLM endpoint response, gated by an analyst's confirmation | `agent._drive`, `agent.confirm`, `mcp_server.call_tool` |
+| Auto execute workers | Authorized auto run with `execute: true`; model text and byte edits | `auto_mode`, `auto_llm_worker`, `auto_goal_worker._run_once` / `_binary_patch` |
 | MCP stdio client | Local process on stdin | `cli.mcp`, `mcp_server.py`, `mcp_tools.py` |
 | MCP HTTP session | Network client; same bearer as `/api`, needs write | `server.MCP_PATH` (`GET`/`POST`/`DELETE`), `mcp_server.http_lifespan`; `GET` SSE resumes via `Last-Event-ID` |
 | SaaS HTTP signup | Network client; creates the first token | `api` `POST /api/signup`, `server.SIGNUP_PATH`; capped by `auth.signup_allowed` |
 | Named API key (optional read-only) | Network client; digest auth as the owning user | `auth.authenticate` / `user_api_keys`; `api_key_read_only` refuses writes and `/mcp` |
-| CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV` |
+| CLI arguments and environment | Local operator | `cli.py`, `_paths.DB_ENV`, `flirt_sigs.SIGS_DIR_ENV`, `graph_backends.BACKEND_ENV` |
 | systemd unit template | Host operator; binds loopback, hardens the service | `deploy/reportal.service`, `deploy/reportal-backup.service` |
 | Stripe secret / webhook secret / price ids | Environment (`REPORTAL_STRIPE_*`) | `billing._webhook_secret`, `settings.py` billing.* |
 | Background continuations (pipeline/auto workers, agent loop, conversation
   context) | The authorized request that started them; no second principal |
-  `pipeline.function_knowledge`, `auto_llm_worker`, `agent._execute`,
+  `pipeline.function_knowledge`, `auto_llm_worker`, `auto_goal_worker`, `agent._execute`,
   `conversations.scope_knowledge` |
 | Workspace `reportal.toml` and database files | Local filesystem | `_paths`, `store`, `journal` |
 | Readiness check (`reportal doctor`) | Local operator; the workspace, the port and the optional paths | `doctor.report`, `_port_check`, `_schema_check` |
@@ -342,6 +360,13 @@ path named.  None of these are demonstrated here.
   `register_binary` records a filesystem path the server later reads for engine
   work.  A caller who can name paths the portal user can read enlarges the read
   surface beyond `binaries/` (same residual as out-of-scope above).
+- **Auto execute turns the model into a file writer.**  A write-capable caller
+  who starts an auto run with `execute: true` and worker `llm_goal` (or
+  `llm_c_source`) lets model output write under the project and, for `llm_goal`,
+  a patched binary sibling (`auto_goal_worker._binary_patch`).  Dry-run is the
+  default; there is no second confirm step like the agent path.  Caps are the
+  execute flag, length-preserving edits that must match current bytes, and the
+  unowned-path refuse.
 
 ## Secrets
 
@@ -440,6 +465,18 @@ path named.  None of these are demonstrated here.
   action does not cover a tool's writes: reverting the conversation removes the
   run and its messages, not what a tool changed, which carries its own action.
   Cancel is honoured at a step boundary, so a call in flight completes.
+- **An auto execute run is a model with a pen, behind one flag.**  Unlike the
+  agent confirm gate, `auto_goal_worker` / `auto_llm_worker` apply writes when
+  the run's `execute` is true.  Byte edits are length-preserving and checked
+  against the live function bytes before a sibling patched binary is written;
+  that copy is not detonated here (boundary 7 stays the only sample execution
+  path).  `engine.test_source` still runs in the portal process under the
+  operator OS user (boundary 9).
+- **A LAN bind drops the Host allowlist.**  `cli.serve` with a non-loopback
+  `--host` requires auth (`cli._require_lan_auth`) and sets
+  `server.ALLOWED_HOSTS` to `None`, so DNS-rebinding style Host tricks are not
+  filtered by reportal on that bind; the reverse proxy or network path owns
+  that layer.
 - **A stored credential is only as safe as the database file.**  The secret
   store keeps values in plaintext in the workspace SQLite file and reports the
   last four characters of any value long enough to hint, so a stolen database

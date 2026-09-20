@@ -26,6 +26,9 @@ Verified against the code; the living detail is
 - Default HTTP bind is loopback (`cli.serve`, `server.LOOPBACK_HOSTS`).  A
   non-loopback bind refuses to start until token auth is required and an
   enabled user exists (`cli._require_lan_auth`).
+- On a loopback bind the Host header must be in `LOOPBACK_HOSTS`
+  (`server.configure_hosts`, `server._reportal_headers`).  A non-loopback bind
+  clears that allowlist (`configure_hosts(None)`); auth is the gate there.
 - Token auth is off by default.  When on, `/api` and `/mcp` go through
   `server.authenticate` (digest compare, role permission, object scope),
   with two public exceptions while auth is required: `POST
@@ -36,13 +39,17 @@ Verified against the code; the living detail is
 - Remote URL ingest and remote external sources are off by default
   (`remote_ingest.remote_enabled`, `external.remote_enabled`).
 - The optional LLM bridge makes no network call until an endpoint is
-  configured (`llm.py`).
+  configured (`llm.py`).  Model output becomes a file write only when an
+  auto run carries `execute: true` (`auto_llm_worker`, `auto_goal_worker`) or
+  an analyst confirms a destructive agent tool (`agent.confirm`).
 - Stripe webhooks are refused unless a webhook signing secret is configured
   (`billing.verify_webhook`).  That HMAC (plus timestamp window) is the only
   gate for `WEBHOOK_PATH`; the bearer check is skipped by design
   (`server.authenticate`).
 - Secret-store API responses never return credential values
   (`secret_store`); values are plaintext in the workspace SQLite file.
+- Tenant JSON responses pass `disclosure.redact_payload` before serialize
+  (`server.json_response`); operators (auth off or admin) are exempt.
 - Authenticated HTTP writes are capped at `auth.WRITE_MAX_HITS` per
   `auth.WRITE_WINDOW_S`; SaaS signup is capped per TCP peer
   (`auth.SIGNUP_MAX_HITS`).  Auth-off loopback, CLI and MCP stay
