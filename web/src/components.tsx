@@ -6,7 +6,9 @@
 
 import {
   Fragment,
+  cloneElement,
   createContext,
+  isValidElement,
   useContext,
   useEffect,
   useId,
@@ -14,7 +16,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
+import type { KeyboardEvent, MouseEvent, ReactElement, ReactNode } from "react";
 
 import { errorText, isApiErrorCode } from "./api";
 import {
@@ -210,6 +212,7 @@ export function Button({
   pending = false,
   title,
   "aria-label": ariaLabel,
+  "aria-pressed": ariaPressed,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -221,6 +224,7 @@ export function Button({
   pending?: boolean;
   title?: string;
   "aria-label"?: string;
+  "aria-pressed"?: boolean;
 }): ReactNode {
   const classes = ["btn"];
   if (tone !== "default") classes.push(`btn-${tone}`);
@@ -233,6 +237,7 @@ export function Button({
       disabled={disabled || pending}
       aria-busy={pending || undefined}
       aria-label={ariaLabel}
+      aria-pressed={ariaPressed}
       title={title}
       onClick={onClick}
     >
@@ -275,21 +280,32 @@ export function ConfirmButton({
 }): ReactNode {
   const [confirming, setConfirming] = useState(false);
   const groupRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const wasConfirming = useRef(false);
   useEffect(() => {
-    if (!confirming) return;
-    groupRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    if (confirming) {
+      wasConfirming.current = true;
+      groupRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+      return;
+    }
+    if (wasConfirming.current) {
+      wasConfirming.current = false;
+      triggerRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    }
   }, [confirming]);
   if (!confirming) {
     return (
-      <Button
-        tone="danger"
-        size="sm"
-        disabled={disabled}
-        pending={pending}
-        onClick={() => setConfirming(true)}
-      >
-        {label}
-      </Button>
+      <span ref={triggerRef}>
+        <Button
+          tone="danger"
+          size="sm"
+          disabled={disabled}
+          pending={pending}
+          onClick={() => setConfirming(true)}
+        >
+          {label}
+        </Button>
+      </span>
     );
   }
   return (
@@ -378,6 +394,7 @@ export function NameSourceDot({ label }: { label: string }): ReactNode {
   const hue = nameSourceHue(label);
   return (
     <span
+      role="img"
       className={hue ? "name-source-dot" : "name-source-dot idle"}
       data-hue={hue ?? undefined}
       title={label}
@@ -556,12 +573,56 @@ export function Field({
   hint?: string;
   children: ReactNode;
 }): ReactNode {
+  const controlId = useId();
+  const hintId = useId();
+  const child =
+    isValidElement(children)
+      ? children
+      : Array.isArray(children) && children.length === 1 && isValidElement(children[0])
+        ? children[0]
+        : null;
+  const native =
+    child !== null &&
+    typeof child.type === "string" &&
+    (child.type === "input" || child.type === "select" || child.type === "textarea");
+  const custom =
+    child !== null && typeof child.type === "function";
+  if (native || custom) {
+    const props = child.props as { id?: string; "aria-describedby"?: string };
+    const id = props.id ?? controlId;
+    const describedBy = [props["aria-describedby"], hint ? hintId : undefined]
+      .filter((value): value is string => Boolean(value))
+      .join(" ");
+    const control = cloneElement(child as ReactElement<Record<string, unknown>>, {
+      id,
+      ...(describedBy ? { "aria-describedby": describedBy } : {}),
+    });
+    return (
+      <div className="field">
+        <label className="field-label" htmlFor={id}>
+          {label}
+        </label>
+        {control}
+        {hint ? (
+          <span id={hintId} className="field-hint">
+            {hint}
+          </span>
+        ) : null}
+      </div>
+    );
+  }
   return (
-    <label className="field">
-      <span className="field-label">{label}</span>
-      {children}
-      {hint ? <span className="field-hint">{hint}</span> : null}
-    </label>
+    <div className="field">
+      <label className="field-stack">
+        <span className="field-label">{label}</span>
+        {children}
+      </label>
+      {hint ? (
+        <span id={hintId} className="field-hint">
+          {hint}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -664,23 +725,13 @@ export function EmptyState({
 // ── Code ───────────────────────────────────────────────────────────
 
 export function CodeBlock({ text, title }: { text: string; title?: string }): ReactNode {
-  const [copied, setCopied] = useState(false);
   return (
     <div className="code-block">
       <div className="code-head">
         <span className="code-title">{title ?? "output"}</span>
         <CopyButton text={text} />
       </div>
-      <pre
-        className="code-scroll"
-        title="Click to copy"
-        onClick={() => {
-          void writeClipboard(text).then(setCopied);
-        }}
-      >
-        {text}
-      </pre>
-      {copied ? <span className="muted">Copied</span> : null}
+      <pre className="code-scroll">{text}</pre>
     </div>
   );
 }

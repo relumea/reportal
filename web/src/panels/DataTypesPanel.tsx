@@ -637,6 +637,7 @@ function KindStrip({
           size="sm"
           tone={selected === option ? "primary" : "ghost"}
           title={kindLabel(option)}
+          aria-pressed={selected === option}
           onClick={() => onSelect(selected === option ? "" : option)}
         >
           {DATA_TYPE_KIND_TAGS[option]}: {kinds[option] ?? 0}
@@ -667,6 +668,7 @@ function ProvenanceStrip({
           key={label}
           size="sm"
           tone={selected === label ? "primary" : "ghost"}
+          aria-pressed={selected === label}
           onClick={() => onSelect(selected === label ? "" : label)}
         >
           {label}: {sources[label] ?? 0}

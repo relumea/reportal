@@ -558,6 +558,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 size="sm"
                 tone={filters.status.includes(value) ? "primary" : "ghost"}
                 title={`Show ${value} analyses`}
+                aria-pressed={filters.status.includes(value)}
                 onClick={() => toggleStatus(value)}
               >
                 {value}

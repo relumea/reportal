@@ -154,13 +154,19 @@ function BinaryOptionSelect({
   value,
   options,
   onChange,
+  id,
+  "aria-describedby": ariaDescribedBy,
 }: {
   value: number | null;
   options: BinaryOption[];
   onChange: (id: number | null) => void;
+  id?: string;
+  "aria-describedby"?: string;
 }): ReactNode {
   return (
     <select
+      id={id}
+      aria-describedby={ariaDescribedBy}
       value={value ?? ""}
       onChange={(event) => {
         const next = event.target.value;
@@ -4525,6 +4531,7 @@ function CompositionBreakdown({
               type="button"
               className="meter-link"
               data-selected={selected === entry.label ? "true" : undefined}
+              aria-pressed={selected === entry.label}
               onClick={() => onSelect(entry.label)}
             >
               {meter}

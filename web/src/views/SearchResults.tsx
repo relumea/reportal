@@ -133,19 +133,22 @@ export function SearchHitRow({
   hit,
   active,
   onSelect,
+  id,
 }: {
   hit: SearchHit;
   active: boolean;
   onSelect?: () => void;
+  id?: string;
 }): ReactNode {
   return (
     <li
+      id={id}
       role="option"
       aria-selected={active}
       className={active ? "search-row active" : "search-row"}
       data-hit-kind={hit.kind}
     >
-      <Link to={hitHref(hit)} onClick={onSelect}>
+      <Link to={hitHref(hit)} onClick={onSelect} tabIndex={-1}>
         <span className="search-row-label">{hitTitle(hit)}</span>
         <span className="search-row-meta">{hitMeta(hit)}</span>
       </Link>

@@ -160,8 +160,13 @@ export function SearchModal({
             ref={inputRef}
             className="search-input"
             type="search"
+            role="combobox"
             placeholder="Search binaries, collections, tags and functions"
             aria-label="Search query"
+            aria-autocomplete="list"
+            aria-expanded={hits.length > 0}
+            aria-controls={hits.length ? "search-results" : undefined}
+            aria-activedescendant={hits.length ? `search-hit-${active}` : undefined}
             value={query}
             onChange={(event) => {
               const next = event.target.value;
@@ -176,6 +181,7 @@ export function SearchModal({
                 type="button"
                 role="tab"
                 aria-selected={kind === option}
+                tabIndex={-1}
                 className={kind === option ? "search-kind active" : "search-kind"}
                 onClick={() => {
                   setKind(option);
@@ -191,10 +197,11 @@ export function SearchModal({
           {error ? (
             <ErrorNote error={error} />
           ) : hits.length ? (
-            <ul className="search-list" role="listbox" aria-label="Search results">
+            <ul id="search-results" className="search-list" role="listbox" aria-label="Search results">
               {hits.map((hit, index) => (
                 <SearchHitRow
                   key={`${hit.kind}-${index}`}
+                  id={`search-hit-${index}`}
                   hit={hit}
                   active={index === active}
                   onSelect={onClose}

@@ -143,7 +143,7 @@ function QualityBar({
           );
         })}
       </div>
-      <div className="quality-legend">
+      <div className="quality-legend" role="group" aria-label="Filter by match quality">
         {QUALITY_BANDS.map((band) => {
           const count = counts.get(band) ?? 0;
           return (
@@ -154,6 +154,7 @@ function QualityBar({
               data-hue={qualityHue(band) ?? undefined}
               data-empty={count === 0 ? "true" : undefined}
               data-selected={selected === band ? "true" : undefined}
+              aria-pressed={selected === band}
               onClick={() => onSelect(selected === band ? "" : band)}
             >
               <span className="quality-swatch" aria-hidden="true" />
@@ -180,7 +181,7 @@ function SourceBar({
       <div className="meter-head">
         <span className="meter-label">Function name sources</span>
       </div>
-      <div className="quality-legend">
+      <div className="quality-legend" role="group" aria-label="Filter by name source">
         {FUNCTION_NAME_SOURCES.map((label) => {
           const count = counts.get(label) ?? 0;
           return (
@@ -191,6 +192,7 @@ function SourceBar({
               data-hue={nameSourceHue(label) ?? undefined}
               data-empty={count === 0 ? "true" : undefined}
               data-selected={selected === label ? "true" : undefined}
+              aria-pressed={selected === label}
               onClick={() => onSelect(selected === label ? "" : label)}
             >
               <span className="quality-swatch" aria-hidden="true" />
