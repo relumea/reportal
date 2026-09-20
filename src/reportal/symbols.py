@@ -30,10 +30,13 @@ is kept content-addressed under the workspace's ``symbols/`` directory.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
 import sqlite3
 import struct
+import tempfile
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -962,6 +965,32 @@ def stored_path(sha256: str) -> Path:
     from reportal import _paths
 
     return _paths.project_root() / SYMBOLS_DIR / sha256[:2] / sha256
+
+
+def persist_bytes(data: bytes) -> Path:
+    """Write *data* to its content-addressed path atomically.
+
+    Concurrent imports of the same bytes share one path; writing through a
+    temp file and ``os.replace`` means a crash mid-write never leaves a
+    half-written blob under the digest name.
+    """
+    target = stored_path(digest(data))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".reportal-", suffix=".tmp")
+    owned = True
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            owned = False
+            stream.write(data)
+        os.replace(temp_name, target)
+    except BaseException:
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+        raise
+    return target
 
 
 # ── The read ───────────────────────────────────────────────────────

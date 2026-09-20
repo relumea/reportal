@@ -20,10 +20,13 @@ both in-process bindings and persisted writes.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import logging
+import os
 import re
 import sqlite3
+import tempfile
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from functools import partial
@@ -297,6 +300,8 @@ def _undo_file_restore(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> 
 
     A descriptor that carried no bytes (a file past the journal's size cap)
     reports :data:`EFFECT_PARTIAL` instead of writing a truncated file.
+    The restore goes through a temp file and ``os.replace`` so a crash mid-write
+    never leaves a half-restored path.
     """
     raw = str(descriptor.get("path", ""))
     encoded = descriptor.get("data_b64")
@@ -305,7 +310,20 @@ def _undo_file_restore(conn: sqlite3.Connection, descriptor: dict[str, Any]) -> 
     data = base64.b64decode(encoded)
     path = Path(raw)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(data)
+    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
+    owned = True
+    try:
+        with os.fdopen(handle, "wb") as stream:
+            owned = False
+            stream.write(data)
+        os.replace(temp_name, path)
+    except BaseException:
+        if owned:
+            with contextlib.suppress(OSError):
+                os.close(handle)
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+        raise
     return {"path": raw, "bytes": len(data), "status": EFFECT_RESTORED}
 
 

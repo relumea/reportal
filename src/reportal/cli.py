@@ -7859,11 +7859,8 @@ def symbols_ingest(
         _fail(f"{exc.code}: {exc.detail}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
-        directory = symbols.stored_path(symbols.digest(data)).parent
-        directory.mkdir(parents=True, exist_ok=True)
-        target = directory / symbols.digest(data)
         try:
-            target.write_bytes(data)
+            target = symbols.persist_bytes(data)
         except OSError as exc:
             _fail(f"cannot store the symbol file: {exc}", json_output)
         action = journal.new_action()

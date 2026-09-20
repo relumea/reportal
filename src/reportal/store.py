@@ -2835,27 +2835,39 @@ def set_disasm(
     recorded (test seeding and callers that already hold a consistent
     snapshot).  Returns False when the function is gone or the write was
     refused.
+
+    The identity check and the upsert share ``BEGIN IMMEDIATE``: without the
+    write lock, a clear that lands between the read and the insert would leave
+    a stale listing until a later :func:`get_disasm` dropped it.
     """
-    live = _disasm_identity(conn, function_id)
-    if live is None:
-        return False
-    live_size, live_dir = live
-    if extent_size is not None and extent_size != live_size:
-        return False
-    if project_dir is not None and project_dir != live_dir:
-        return False
-    recorded_size = live_size if extent_size is None else extent_size
-    recorded_dir = live_dir if project_dir is None else project_dir
-    conn.execute(
-        "INSERT INTO disasm_cache"
-        " (function_id, text, extent_size, project_dir, created_at)"
-        " VALUES (?, ?, ?, ?, ?)"
-        " ON CONFLICT(function_id) DO UPDATE SET text = excluded.text,"
-        " extent_size = excluded.extent_size, project_dir = excluded.project_dir,"
-        " created_at = excluded.created_at",
-        (function_id, text, recorded_size, recorded_dir, now()),
-    )
-    conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        live = _disasm_identity(conn, function_id)
+        if live is None:
+            conn.rollback()
+            return False
+        live_size, live_dir = live
+        if extent_size is not None and extent_size != live_size:
+            conn.rollback()
+            return False
+        if project_dir is not None and project_dir != live_dir:
+            conn.rollback()
+            return False
+        recorded_size = live_size if extent_size is None else extent_size
+        recorded_dir = live_dir if project_dir is None else project_dir
+        conn.execute(
+            "INSERT INTO disasm_cache"
+            " (function_id, text, extent_size, project_dir, created_at)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(function_id) DO UPDATE SET text = excluded.text,"
+            " extent_size = excluded.extent_size, project_dir = excluded.project_dir,"
+            " created_at = excluded.created_at",
+            (function_id, text, recorded_size, recorded_dir, now()),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
     return True
 
 

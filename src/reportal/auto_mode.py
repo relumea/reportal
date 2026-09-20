@@ -1072,11 +1072,19 @@ def persist_undo_plan(conn: sqlite3.Connection, run_id: int) -> None:
     Called when a run closes, and again when one crashes; by then each completed
     task already persisted its own descriptors, so the consolidation only fills
     in what a task closed before this call could not (and never duplicates an
-    entry the run already holds).
+    entry the run already holds).  The read-merge-write runs under
+    ``BEGIN IMMEDIATE`` for the same reason :func:`_record_task_outcome` does:
+    a concurrent recovery or late batch commit must not overwrite the plan
+    with a merge built from a stale snapshot.
     """
-    existing = auto_store.auto_run_effects(conn, run_id)
-    descriptors = _undo_descriptors(auto_store.list_auto_tasks(conn, run_id))
-    auto_store.set_auto_run_effects(conn, run_id, _merge_descriptors(existing, descriptors))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = auto_store.auto_run_effects(conn, run_id)
+        descriptors = _undo_descriptors(auto_store.list_auto_tasks(conn, run_id))
+        auto_store.set_auto_run_effects(conn, run_id, _merge_descriptors(existing, descriptors))
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 def _auto_run_status_from_batches(batches: Sequence[dict[str, Any]]) -> str:

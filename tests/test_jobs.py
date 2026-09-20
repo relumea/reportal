@@ -279,6 +279,31 @@ class TestSubmit:
         monkeypatch.setattr(jobs, "ensure_schema", ensure_schema)
         assert jobs.count_jobs(conn) == 1
 
+    def test_concurrent_claims_take_distinct_jobs(
+        self,
+        conn: sqlite3.Connection,
+        portal_db: Path,
+        tmp_path: Path,
+    ) -> None:
+        """Two workers under BEGIN IMMEDIATE each claim a different queued row."""
+        first = jobs.submit(conn, kind="ai-enrich", binary_id=_binary(conn, tmp_path, "a.exe"))
+        second = jobs.submit(conn, kind="ai-enrich", binary_id=_binary(conn, tmp_path, "b.exe"))
+        ready = Barrier(2, timeout=10)
+
+        def claim() -> dict[str, Any] | None:
+            with contextlib.closing(store.connect(portal_db)) as connection:
+                jobs.ensure_schema(connection)
+                ready.wait()
+                return jobs._claim(connection)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = (pool.submit(claim), pool.submit(claim))
+            claimed = [future.result(timeout=15) for future in futures]
+        ids = {job["id"] for job in claimed if job is not None}
+        assert ids == {first["id"], second["id"]}
+        assert jobs.count_jobs(conn, status=jobs.STATUS_QUEUED) == 0
+        assert jobs.count_jobs(conn, status=jobs.STATUS_RUNNING) == 2
+
     def test_a_duplicate_is_reused_even_when_the_queue_is_full(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

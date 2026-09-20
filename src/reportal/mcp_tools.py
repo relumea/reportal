@@ -3707,11 +3707,8 @@ def _tool_import_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
         raise ToolError(exc.code, exc.detail) from exc
     with contextlib.closing(_open()) as conn:
         _binary_or_error(conn, binary_id)
-        directory = symbols.stored_path(symbols.digest(data)).parent
         try:
-            directory.mkdir(parents=True, exist_ok=True)
-            target = directory / symbols.digest(data)
-            target.write_bytes(data)
+            target = symbols.persist_bytes(data)
         except OSError as exc:
             raise ToolError("write-failed", str(exc)) from exc
         with journal.journaled(conn, journal.new_action()) as log:

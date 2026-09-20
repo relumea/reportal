@@ -275,6 +275,7 @@ def virustotal_key() -> str:
 # ── The transport seam ─────────────────────────────────────────────
 
 _http: httpx.Client | None = None
+_http_lock = threading.Lock()
 
 
 def set_http_client(client: httpx.Client | None) -> None:
@@ -282,10 +283,13 @@ def set_http_client(client: httpx.Client | None) -> None:
 
     The seam exists so a test drives :func:`fetch_virustotal` over an
     ``httpx.MockTransport`` instead of the network, the way ``llm.set_client``
-    does for the bridge.
+    does for the bridge.  The lock matches :func:`reportal.llm.set_client` so a
+    test that swaps the client cannot race a request that still holds the
+    previous one.
     """
     global _http
-    _http = client
+    with _http_lock:
+        _http = client
 
 
 def _open_client(timeout: float) -> tuple[httpx.Client, bool]:
@@ -295,8 +299,9 @@ def _open_client(timeout: float) -> tuple[httpx.Client, bool]:
     test drive several calls over one ``MockTransport``; a client built here is
     closed by the caller.
     """
-    if _http is not None:
-        return _http, False
+    with _http_lock:
+        if _http is not None:
+            return _http, False
     return httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False), True
 
 

@@ -1436,22 +1436,29 @@ def cancel(conn: sqlite3.Connection, job_id: int) -> dict[str, Any] | None:
 
 
 def _claim(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    """Take the oldest queued job, marking it running; None when none is queued."""
+    """Take the oldest queued job, marking it running; None when none is queued.
+
+    The select and the status flip share ``BEGIN IMMEDIATE`` so two workers
+    cannot both read the same queued id: the second waits, then either claims
+    the next row or sees an empty queue.  Without the write lock, a lost CAS
+    returned None and the worker slept even while other jobs were waiting.
+    """
     ensure_schema(conn)
-    row = conn.execute(
-        f"SELECT id FROM {TABLE} WHERE status = ? ORDER BY id LIMIT 1", (STATUS_QUEUED,)
-    ).fetchone()
-    if row is None:
-        return None
-    job_id = int(row["id"])
-    cur = conn.execute(
-        f"UPDATE {TABLE} SET status = ?, progress = 0, message = ?, started_at = ?"
-        " WHERE id = ? AND status = ?",
-        (STATUS_RUNNING, "running", store.now(), job_id, STATUS_QUEUED),
-    )
-    conn.commit()
-    if cur.rowcount == 0:  # pragma: no cover - another worker claimed it first
-        return None
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            f"SELECT id FROM {TABLE} WHERE status = ? ORDER BY id LIMIT 1", (STATUS_QUEUED,)
+        ).fetchone()
+        if row is None:
+            return None
+        job_id = int(row["id"])
+        cur = conn.execute(
+            f"UPDATE {TABLE} SET status = ?, progress = 0, message = ?, started_at = ?"
+            " WHERE id = ? AND status = ?",
+            (STATUS_RUNNING, "running", store.now(), job_id, STATUS_QUEUED),
+        )
+        if cur.rowcount == 0:  # pragma: no cover - reserved under the write lock
+            return None
     return get_job(conn, job_id)
 
 
