@@ -11,6 +11,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  FilterChip,
   Loading,
   NA,
   Note,
@@ -207,24 +208,6 @@ function metricText(row: BinaryMatchRow, metric: MatchMetric): string {
   if (metric === "confidence") return row.confidence.toFixed(CONFIDENCE_DECIMALS);
   if (metric === "difference") return `${row.difference.toFixed(1)}%`;
   return `${row.similarity.toFixed(1)}%`;
-}
-
-/** One removable chip naming an active scope setting. */
-function ScopeChip({
-  label,
-  onClear,
-}: {
-  label: string;
-  onClear: () => void;
-}): ReactNode {
-  return (
-    <span className="chip">
-      <span className="chip-label">{label}</span>
-      <button type="button" className="chip-clear" aria-label={`Clear ${label}`} onClick={onClear}>
-        x
-      </button>
-    </span>
-  );
 }
 
 export function MatchesView({
@@ -505,7 +488,7 @@ export function MatchesView({
   const chips: ReactNode[] = [];
   if (minSimilarity !== DEFAULT_MIN_SIMILARITY) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key="min-similarity"
         label={`Similarity >= ${minSimilarity}%`}
         onClear={() => setMinSimilarity(DEFAULT_MIN_SIMILARITY)}
@@ -514,7 +497,7 @@ export function MatchesView({
   }
   if (minConfidence !== DEFAULT_MIN_MATCH_CONFIDENCE) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key="min-confidence"
         label={`Confidence >= ${minConfidence}`}
         onClear={() => setMinConfidence(DEFAULT_MIN_MATCH_CONFIDENCE)}
@@ -523,7 +506,7 @@ export function MatchesView({
   }
   if (!includeSelf) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key="include-self"
         label="No self matches"
         onClear={() => setIncludeSelf(DEFAULT_INCLUDE_SELF)}
@@ -532,7 +515,7 @@ export function MatchesView({
   }
   if (top !== DEFAULT_MATCH_TOP) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key="top"
         label={`Top ${top} per function`}
         onClear={() => setTop(DEFAULT_MATCH_TOP)}
@@ -541,7 +524,7 @@ export function MatchesView({
   }
   for (const platform of platforms) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key={`platform-${platform}`}
         label={MATCH_PLATFORM_LABELS[platform] ?? platform}
         onClear={() => setPlatforms(platforms.filter((item) => item !== platform))}
@@ -550,7 +533,7 @@ export function MatchesView({
   }
   for (const architecture of architectures) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key={`arch-${architecture}`}
         label={MATCH_ARCHITECTURE_LABELS[architecture] ?? architecture}
         onClear={() => setArchitectures(architectures.filter((item) => item !== architecture))}
@@ -559,7 +542,7 @@ export function MatchesView({
   }
   for (const scopeBinary of scopeBinaries) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key={`binary-${scopeBinary}`}
         label={`binary ${scopeBinary}`}
         onClear={() => setScopeBinaries(scopeBinaries.filter((item) => item !== scopeBinary))}
@@ -568,7 +551,7 @@ export function MatchesView({
   }
   for (const scopeCollection of scopeCollections) {
     chips.push(
-      <ScopeChip
+      <FilterChip
         key={`collection-${scopeCollection}`}
         label={`collection ${scopeCollection}`}
         onClear={() =>

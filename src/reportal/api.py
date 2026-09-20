@@ -402,14 +402,6 @@ def _open() -> sqlite3.Connection:
     return db()
 
 
-# ── Action journal helpers ─────────────────────────────────────────
-
-
-# ── Health ─────────────────────────────────────────────────────────
-#
-# ``GET /api/health`` has moved to :mod:`reportal.rest`.
-
-
 # ── Binaries ───────────────────────────────────────────────────────
 
 

@@ -9,6 +9,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  FilterChip,
   NameSourceDot,
   Note,
   Panel,
@@ -69,24 +70,6 @@ const DEFAULT_FILTERS: FunctionFilters = {
 
 function oneOf<T extends string>(value: string | undefined, allowed: readonly string[], fallback: T): T {
   return value !== undefined && allowed.includes(value) ? (value as T) : fallback;
-}
-
-/** One removable chip naming an active list filter. */
-function FilterChip({
-  label,
-  onClear,
-}: {
-  label: string;
-  onClear: () => void;
-}): ReactNode {
-  return (
-    <span className="chip">
-      <span className="chip-label">{label}</span>
-      <button type="button" className="chip-clear" aria-label={`Clear ${label}`} onClick={onClear}>
-        x
-      </button>
-    </span>
-  );
 }
 
 /** Read the filters from the route's hash query, dropping values the API refuses. */

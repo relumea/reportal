@@ -149,6 +149,73 @@ function CountTitle({ label, count }: { label: string; count: ReactNode }): Reac
   );
 }
 
+/** Partner/compare picker shared by benchmark and lineage panels. */
+function BinaryOptionSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: number | null;
+  options: BinaryOption[];
+  onChange: (id: number | null) => void;
+}): ReactNode {
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(event) => {
+        const next = event.target.value;
+        onChange(next === "" ? null : Number(next));
+      }}
+    >
+      <option value="">Select a binary</option>
+      {options.map((binary) => (
+        <option key={binary.id} value={binary.id}>
+          {binary.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+/** Confidence-bucketed findings table shared by crypto and behavior scans. */
+function ConfidenceFindingsBody({
+  result,
+  empty,
+  confidences,
+}: {
+  result: CryptoResult | BehaviorScan;
+  empty: string;
+  confidences?: readonly string[];
+}): ReactNode {
+  const findings = Array.isArray(result.findings) ? result.findings : [];
+  const byConfidence = result.by_confidence ?? {};
+  const summary =
+    confidences === undefined
+      ? `high ${byConfidence.high || 0}, medium ${byConfidence.medium || 0}`
+      : confidences.map((level) => `${level} ${byConfidence[level] ?? 0}`).join(", ");
+  return (
+    <>
+      <Muted>
+        {result.count || findings.length} findings ({summary})
+      </Muted>
+      {findings.length === 0 ? (
+        <Muted>{empty}</Muted>
+      ) : (
+        <DataTable
+          columns={[
+            { label: "Confidence", render: (row) => <ConfidenceBadge level={row.confidence} /> },
+            { label: "Kind", key: "kind" },
+            { label: "Name", key: "name" },
+            { label: "Detail", key: "detail" },
+          ]}
+          rows={findings}
+          rowKey={(_row, index) => index}
+        />
+      )}
+    </>
+  );
+}
+
 // Raw-file digests the hashes card renders, in display order.
 const HASH_FIELDS = [
   "md5",
@@ -1550,20 +1617,11 @@ export function BenchmarkPanel({ binaryId }: { binaryId: number }): ReactNode {
             label="Partner"
             hint="Candidates come from this binary; labels come from the two binaries' shared real names."
           >
-            <select
-              value={partner ?? ""}
-              onChange={(event) => {
-                const value = event.target.value;
-                setPartnerId(value === "" ? null : Number(value));
-              }}
-            >
-              <option value="">Select a binary</option>
-              {candidates.map((binary) => (
-                <option key={binary.id} value={binary.id}>
-                  {binary.name}
-                </option>
-              ))}
-            </select>
+            <BinaryOptionSelect
+              value={partner}
+              options={candidates}
+              onChange={setPartnerId}
+            />
           </Field>
           <Button tone="primary" pending={busy} onClick={run} disabled={partner === null}>
             Run benchmark
@@ -2724,30 +2782,7 @@ export function CryptoPanel({ binaryId }: { binaryId: number }): ReactNode {
 }
 
 function CryptoBody({ result }: { result: CryptoResult }): ReactNode {
-  const findings = Array.isArray(result.findings) ? result.findings : [];
-  const byConfidence = result.by_confidence ?? {};
-  return (
-    <>
-      <Muted>
-        {result.count || findings.length} findings (high {byConfidence.high || 0}, medium{" "}
-        {byConfidence.medium || 0})
-      </Muted>
-      {findings.length === 0 ? (
-        <Muted>No crypto indicators.</Muted>
-      ) : (
-        <DataTable
-          columns={[
-            { label: "Confidence", render: (row) => <ConfidenceBadge level={row.confidence} /> },
-            { label: "Kind", key: "kind" },
-            { label: "Name", key: "name" },
-            { label: "Detail", key: "detail" },
-          ]}
-          rows={findings}
-          rowKey={(_row, index) => index}
-        />
-      )}
-    </>
-  );
+  return <ConfidenceFindingsBody result={result} empty="No crypto indicators." />;
 }
 
 export function SecurityPanel({ binaryId }: { binaryId: number }): ReactNode {
@@ -3007,29 +3042,12 @@ export function BehaviorPanel({ binaryId }: { binaryId: number }): ReactNode {
 }
 
 function BehaviorBody({ result }: { result: BehaviorScan }): ReactNode {
-  const findings = Array.isArray(result.findings) ? result.findings : [];
-  const byConfidence = result.by_confidence ?? {};
-  const summary = BEHAVIOR_CONFIDENCES.map((level) => `${level} ${byConfidence[level] ?? 0}`).join(", ");
   return (
-    <>
-      <Muted>
-        {result.count || findings.length} findings ({summary})
-      </Muted>
-      {findings.length === 0 ? (
-        <Muted>No behavior found.</Muted>
-      ) : (
-        <DataTable
-          columns={[
-            { label: "Confidence", render: (row) => <ConfidenceBadge level={row.confidence} /> },
-            { label: "Kind", key: "kind" },
-            { label: "Name", key: "name" },
-            { label: "Detail", key: "detail" },
-          ]}
-          rows={findings}
-          rowKey={(_row, index) => index}
-        />
-      )}
-    </>
+    <ConfidenceFindingsBody
+      result={result}
+      empty="No behavior found."
+      confidences={BEHAVIOR_CONFIDENCES}
+    />
   );
 }
 
@@ -3818,20 +3836,7 @@ export function LineagePanel({ binaryId }: { binaryId: number }): ReactNode {
       actions={
         <Toolbar>
           <Field label="Compare with">
-            <select
-              value={activeId ?? ""}
-              onChange={(event) => {
-                const value = event.target.value;
-                setOtherId(value === "" ? null : Number(value));
-              }}
-            >
-              <option value="">Select a binary</option>
-              {candidates.map((binary) => (
-                <option key={binary.id} value={binary.id}>
-                  {binary.name}
-                </option>
-              ))}
-            </select>
+            <BinaryOptionSelect value={activeId} options={candidates} onChange={setOtherId} />
           </Field>
           <Button tone="primary" pending={busy} onClick={run} disabled={activeId === null}>
             Run comparison

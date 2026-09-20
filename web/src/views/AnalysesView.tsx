@@ -21,6 +21,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  FilterChip,
   HashIdenticon,
   KeyValue,
   Loading,
@@ -54,24 +55,6 @@ import { useAsync } from "../useAsync";
 import { AnalysisScans } from "../panels/ScansPanel";
 
 const ANALYSES_PATH = "/analyses";
-
-/** One removable chip naming an active list filter. */
-function FilterChip({
-  label,
-  onClear,
-}: {
-  label: string;
-  onClear: () => void;
-}): ReactNode {
-  return (
-    <span className="chip">
-      <span className="chip-label">{label}</span>
-      <button type="button" className="chip-clear" aria-label={`Clear ${label}`} onClick={onClear}>
-        x
-      </button>
-    </span>
-  );
-}
 
 /** The filter values one analyses hash carries; every one is optional. */
 interface AnalysisFilters {

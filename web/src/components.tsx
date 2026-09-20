@@ -1,8 +1,8 @@
 // Shared UI primitives.  Every view builds on these: Panel, Toolbar, Button,
-// Badge, Field, EmptyState, Loading, ErrorNote, Note, CodeBlock, KeyValue,
-// DataTable, SegmentMeter, Readout and the small text helpers.  Styling lives
-// in styles.css under the matching class names, driven by the token layer;
-// the semantic hue names live in design.ts.
+// Badge, Field, FilterChip, EmptyState, Loading, ErrorNote, Note, CodeBlock,
+// KeyValue, DataTable, SegmentMeter, Readout and the small text helpers.
+// Styling lives in styles.css under the matching class names, driven by the
+// token layer; the semantic hue names live in design.ts.
 
 import {
   Fragment,
@@ -41,6 +41,33 @@ export function cellText(value: unknown): ReactNode {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" || typeof value === "number") return value;
   return String(value);
+}
+
+/** One removable chip naming an active list filter or scope setting. */
+export function FilterChip({
+  label,
+  onClear,
+}: {
+  label: string;
+  onClear: () => void;
+}): ReactNode {
+  return (
+    <span className="chip">
+      <span className="chip-label">{label}</span>
+      <button type="button" className="chip-clear" aria-label={`Clear ${label}`} onClick={onClear}>
+        x
+      </button>
+    </span>
+  );
+}
+
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ── Text helpers ───────────────────────────────────────────────────
@@ -217,16 +244,14 @@ export function Button({
 
 function CopyButton({ text }: { text: string }): ReactNode {
   const [copied, setCopied] = useState(false);
-  const copy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
   return (
-    <Button size="sm" tone="ghost" onClick={() => void copy()}>
+    <Button
+      size="sm"
+      tone="ghost"
+      onClick={() => {
+        void writeClipboard(text).then(setCopied);
+      }}
+    >
       {copied ? "Copied" : "Copy"}
     </Button>
   );
@@ -640,14 +665,6 @@ export function EmptyState({
 
 export function CodeBlock({ text, title }: { text: string; title?: string }): ReactNode {
   const [copied, setCopied] = useState(false);
-  const copy = async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      setCopied(false);
-    }
-  };
   return (
     <div className="code-block">
       <div className="code-head">
@@ -657,7 +674,9 @@ export function CodeBlock({ text, title }: { text: string; title?: string }): Re
       <pre
         className="code-scroll"
         title="Click to copy"
-        onClick={() => void copy()}
+        onClick={() => {
+          void writeClipboard(text).then(setCopied);
+        }}
       >
         {text}
       </pre>
