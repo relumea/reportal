@@ -543,6 +543,23 @@ def now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def as_utc(value: str) -> datetime:
+    """Parse an ISO stamp as an aware UTC datetime.
+
+    Naive values are treated as UTC.  Callers that compare or store instants
+    (invite expiry, feed ``since``, STIX timestamps) go through here so a ``Z``
+    suffix or a non-UTC offset cannot shift a lexicographic or calendar read.
+    Raises :class:`ValueError` when *value* is not ISO 8601.
+    """
+    parsed = datetime.fromisoformat(value)
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def as_utc_iso(value: str) -> str:
+    """Normalize *value* to the store's UTC ``+00:00`` form (second resolution)."""
+    return as_utc(value).isoformat(timespec="seconds")
+
+
 # How long a connection waits for a write lock before raising ``sqlite3.OperationalError``.
 # Concurrent writers (API requests, jobs, auto-mode workers) share one file; without
 # a timeout the default is fail-immediate, which surfaces as a 500 under load.

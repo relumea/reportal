@@ -47,7 +47,6 @@ import subprocess
 import tempfile
 import uuid
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -994,10 +993,9 @@ def _stix_timestamp(meta: Mapping[str, Any]) -> str:
     if not raw:
         raw = store.now()[:10]
     try:
-        parsed = datetime.fromisoformat(raw)
+        parsed = store.as_utc(raw)
     except ValueError:
-        parsed = datetime.fromisoformat(store.now()[:10])
-    parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+        parsed = store.as_utc(store.now()[:10])
     return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

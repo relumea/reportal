@@ -905,7 +905,10 @@ function DataTypeCard({
       title={
         <>
           <NameSourceDot label={typeSourceLabel(dataType.source || "manual")} />{" "}
-          <Badge mono>{dataType.name}</Badge> <Badge>{kindLabel(dataType.kind)}</Badge>{" "}
+          <Badge mono>{dataType.name}</Badge>{" "}
+          <Badge mono title={kindLabel(dataType.kind)}>
+            {DATA_TYPE_KIND_TAGS[dataType.kind]}
+          </Badge>{" "}
           {dataType.namespace ? dataType.namespace : "program-defined"} · {dataType.size} bytes ·{" "}
           {dataType.kind === "enum"
             ? `${dataType.values.length} values`

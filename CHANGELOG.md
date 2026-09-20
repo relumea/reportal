@@ -84,6 +84,7 @@ view renders it from here.
 - Analyses active filters are removable chips.
 - Analyses row Ctrl/⌘-click opens the binary in a new tab.
 - Memory dump splits each 16-byte row into two groups of eight.
+- Data type cards use the same C kind tags as the kind strip.
 - Search binary and collection hits show their stored `created_at`.
 - Function header signature hover shows return, parameters and convention.
   Named types in that hover link the type list.

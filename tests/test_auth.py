@@ -39,6 +39,11 @@ class TestStore:
         monkeypatch.setattr(store, "now", lambda: "2026-03-01T00:00:00+00:00")
         assert auth.now() == "2026-03-01T00:00:00+00:00"
 
+    def test_as_utc_iso_normalizes_offsets_and_z(self) -> None:
+        assert store.as_utc_iso("2026-07-01T14:00:00+02:00") == "2026-07-01T12:00:00+00:00"
+        assert store.as_utc_iso("2026-07-01T12:00:00Z") == "2026-07-01T12:00:00+00:00"
+        assert store.as_utc_iso("2026-07-01") == "2026-07-01T00:00:00+00:00"
+
     def test_new_token_uses_the_token_urlsafe_seam(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(auth, "_token_urlsafe", lambda _n: "pinned-token-bytes")
         assert auth.new_token() == f"{auth.TOKEN_PREFIX}pinned-token-bytes"
@@ -241,6 +246,41 @@ class TestStore:
             assert auth.required() is False
 
         assert any("auth.required falls back to off" in record.message for record in caplog.records)
+
+
+class TestInviteExpiry:
+    def test_expires_at_is_utc_even_when_created_carries_another_offset(self) -> None:
+        # Europe/Warsaw summer (+02:00): lexicographic compare against store.now()
+        # (+00:00) would keep the invite live ~2h past the true instant.
+        assert auth.invite_expires_at("2026-07-01T14:00:00+02:00") == "2026-07-08T12:00:00+00:00"
+
+    def test_expiry_compares_instants_not_strings(self) -> None:
+        row = {
+            "created_at": "2026-07-01T14:00:00+02:00",
+            "expires_at": "2026-07-08T14:00:00+02:00",
+            "used_by": None,
+        }
+        # True expiry is 2026-07-08T12:00:00Z; a string compare against +02:00
+        # would still read this moment as unexpired.
+        assert auth.invite_is_expired(row, at="2026-07-08T12:00:00+00:00") is True
+        assert auth.invite_is_expired(row, at="2026-07-08T11:59:59+00:00") is False
+
+    def test_z_suffix_and_offset_forms_agree_at_the_boundary(self) -> None:
+        row = {
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "expires_at": "2026-01-08T00:00:00+00:00",
+            "used_by": None,
+        }
+        assert auth.invite_is_expired(row, at="2026-01-08T00:00:00Z") is True
+        assert auth.invite_is_expired(row, at="2026-01-07T23:59:59Z") is False
+
+    def test_a_used_invite_is_never_expired(self) -> None:
+        row = {
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "expires_at": "2026-01-01T00:00:00+00:00",
+            "used_by": 1,
+        }
+        assert auth.invite_is_expired(row, at="2026-12-31T00:00:00+00:00") is False
 
 
 class TestApiGate:

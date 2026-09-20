@@ -70,6 +70,7 @@ test("the search matches a namespace", async ({ page }) => {
   await expect(types.getByText(NAMESPACED_TYPEDEF, { exact: false }).first()).toBeVisible();
   await expect(types.getByText("Aliases").first()).toBeVisible();
   const handleCard = types.locator(".card").filter({ hasText: NAMESPACED_POINTER }).first();
+  await expect(handleCard.getByTitle("pointer *")).toHaveText("*");
   await expect(handleCard.getByRole("link", { name: NAMESPACED_TYPEDEF }).first()).toBeVisible();
   await expect(handleCard.getByText(/typedef · \d+ bytes/)).toBeVisible();
   await expect(types.getByText(STRUCT_NAME, { exact: false })).toHaveCount(0);

@@ -330,9 +330,16 @@ def now() -> str:
     return store.now()
 
 
+def _as_utc(value: str) -> datetime:
+    """Parse an ISO stamp as an aware UTC datetime; delegates to :func:`store.as_utc`."""
+    from reportal import store
+
+    return store.as_utc(value)
+
+
 def invite_expires_at(created_at: str) -> str:
-    """The ISO stamp *created_at* plus :data:`INVITE_TTL_SECONDS`."""
-    stamp = datetime.fromisoformat(created_at)
+    """The ISO stamp *created_at* plus :data:`INVITE_TTL_SECONDS`, always UTC."""
+    stamp = _as_utc(created_at)
     return (stamp + timedelta(seconds=INVITE_TTL_SECONDS)).isoformat(timespec="seconds")
 
 
@@ -344,7 +351,7 @@ def invite_is_expired(row: Mapping[str, Any], *, at: str | None = None) -> bool:
     expires = str(row["expires_at"] if "expires_at" in keys and row["expires_at"] else "")
     if not expires:
         expires = invite_expires_at(str(row["created_at"]))
-    return (at or now()) >= expires
+    return _as_utc(at or now()) >= _as_utc(expires)
 
 
 def _truthy(value: str) -> bool:

@@ -23,10 +23,9 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Any
 
-from reportal import analysis_log, journal
+from reportal import analysis_log, journal, store
 
 # The two sources an item can come from, in the order :func:`feed` reads them.
 SOURCE_JOURNAL = "action"
@@ -85,11 +84,9 @@ def parse_since(value: str) -> str:
     answers as a 400.
     """
     try:
-        parsed = datetime.fromisoformat(value)
+        return store.as_utc_iso(value)
     except ValueError as exc:
         raise ValueError(f"since must be an ISO timestamp: {value!r}") from exc
-    parsed = parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
-    return parsed.isoformat(timespec="seconds")
 
 
 def latest(conn: sqlite3.Connection) -> str | None:
