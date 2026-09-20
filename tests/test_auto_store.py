@@ -156,9 +156,7 @@ class TestAutoRuns:
         binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
         first, created_first = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
         assert created_first
-        assert auto_store.finish_auto_run(
-            conn, first, status=auto_store.AUTO_RUN_DONE, stats={}
-        )
+        assert auto_store.finish_auto_run(conn, first, status=auto_store.AUTO_RUN_DONE, stats={})
         second, created_second = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
         assert created_second
         rows = auto_store.list_auto_runs(conn, binary_id=binary_id)

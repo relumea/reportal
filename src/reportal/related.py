@@ -360,20 +360,6 @@ def _bundle(
     }
 
 
-def derive_bundle(
-    conn: sqlite3.Connection, *, binary_id: int, engine: RelatedIO | None = None
-) -> dict[str, Any]:
-    """Derive the relationship bundle of a stored binary.
-
-    Raises :class:`KeyError` for an unknown binary.  A row with no file on disk
-    still yields a bundle from whatever the store holds.
-    """
-    binary = store.get_binary(conn, binary_id)
-    if binary is None:
-        raise KeyError(f"no binary with id {binary_id}")
-    return _bundle(conn, binary, io=engine)
-
-
 def _candidate_key(candidate: dict[str, Any]) -> tuple[int, float, str]:
     return (
         CLASSIFICATION_RANK[str(candidate["classification"])],

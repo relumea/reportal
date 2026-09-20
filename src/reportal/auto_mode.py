@@ -127,9 +127,9 @@ _sleep = time.sleep
 
 # SQLite settings for the connections auto mode opens per worker.  Batches run
 # concurrently and all of them write, so a writer waits for the lock rather
-# than failing the batch. WAL comes from every :func:`store.connect`.
+# than failing the batch. WAL comes from every :func:`store.connect`
+# (store.JOURNAL_MODE).
 DB_BUSY_TIMEOUT_MS = store.BUSY_TIMEOUT_MS
-DB_JOURNAL_MODE = store.JOURNAL_MODE
 # WAL's durability knob: a commit does not fsync the WAL on every write, only
 # at a checkpoint.  A crash of this process still loses nothing; only a power
 # loss can drop the last commits, which is the standard WAL tradeoff and what
@@ -1378,9 +1378,7 @@ def run_auto(
     if store.get_binary(conn, binary_id) is None:
         raise KeyError(f"no binary with id {binary_id}")
     functions = select_functions(conn, binary_id, include_matched=bool(params.goal))
-    run_id, created = create_auto_run(
-        conn, binary_id=binary_id, params=params, functions=functions
-    )
+    run_id, created = create_auto_run(conn, binary_id=binary_id, params=params, functions=functions)
     if not created:
         return run_summary(conn, run_id)
     try:

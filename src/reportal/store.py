@@ -879,10 +879,8 @@ BINARY_ORDERS: dict[str, str] = {
 
 DEFAULT_BINARY_ORDER = "id"
 
-# Rows the register answers per page by default, and the largest page it takes.
-# The caller asks for a page; a caller that names none still reads the whole
-# register, which is what the CLI, the MCP tools and `related.py` rely on.
-DEFAULT_BINARY_LIMIT = 200
+# Largest page the register takes. A caller that names no limit still reads the
+# whole register, which is what the CLI, the MCP tools and `related.py` rely on.
 MAX_BINARY_LIMIT = 1000
 
 

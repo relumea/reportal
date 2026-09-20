@@ -121,7 +121,7 @@ above the route's cap. Send a positive integer inside the documented bound.
 ### invalid-password
 
 `400`. The password a zipped download was asked for is empty or longer than
-`api.ZIP_PASSWORD_MAX_CHARS` (128 characters). The password is a shared
+`zipcrypto.MAX_PASSWORD_CHARS` (128 characters). The password is a shared
 convention rather than a secret, so the route echoes it back in
 `X-Reportal-Zip-Password`; send 1 to 128 characters, or omit the parameter to
 get the default.

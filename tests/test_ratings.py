@@ -42,7 +42,6 @@ class TestVocabulary:
         assert "firmware" in ratings.SCAN_KINDS
         assert "gobuildinfo" in ratings.SCAN_KINDS
         assert list(ratings.SCAN_KINDS) == sorted(ratings.SCAN_KINDS)
-        assert ratings.kinds() == ratings.SCAN_KINDS
 
     def test_a_verdict_is_validated(self) -> None:
         assert ratings.normalize_rating("UP") == "up"

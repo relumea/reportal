@@ -97,7 +97,8 @@ class TestCatalogue:
         )
 
     def test_the_documented_anchors_match_the_doc_headings(self) -> None:
-        assert error_docs.documented_anchors() == _documented_anchors()
+        catalogue = {*error_docs.ERROR_DOC_ANCHORS.values(), error_docs.INVALID_PARAMS_ANCHOR}
+        assert catalogue == _documented_anchors()
 
     def test_every_code_gets_a_live_url_or_none(self) -> None:
         assert error_docs.doc_url("no-scan") == f"{error_docs.DOC_BASE_URL}#no-scan"

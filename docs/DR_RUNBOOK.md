@@ -39,7 +39,7 @@ kept.
 | Similarity cache | process memory (`similarity.PREPARED_CACHE_SIZE`) | `similarity` | No | Recomputed on the next request |
 | rebrew `coverage.db` / compile cache | rebrew project | rebrew | No | Re-run analysis in that project |
 
-Auto mode may leave the database in WAL (`auto_mode.DB_JOURNAL_MODE`) with
+Auto mode may leave the database in WAL (`store.JOURNAL_MODE`) with
 `synchronous = NORMAL`.  `reportal backup` checkpoints before copying, so the
 archive does not depend on shipping `-wal` / `-shm` sidecars.  A hand copy of
 the live files still must include those sidecars or stop the server first.

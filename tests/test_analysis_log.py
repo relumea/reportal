@@ -180,15 +180,11 @@ class TestAnalysisLifecycle:
             calls["n"] += 1
             if calls["n"] == 2:
                 raise RuntimeError("log write failed")
-            return real(
-                connection, analysis_id, message=message, severity=severity, commit=commit
-            )
+            return real(connection, analysis_id, message=message, severity=severity, commit=commit)
 
         monkeypatch.setattr(analysis_log, "append_entry", boom)
         with pytest.raises(RuntimeError, match="log write failed"):
-            store.create_analysis(
-                conn, binary_id=binary_id, engine="rebrew-import", log="imported"
-            )
+            store.create_analysis(conn, binary_id=binary_id, engine="rebrew-import", log="imported")
         conn.rollback()
         assert int(conn.execute("SELECT COUNT(*) FROM analyses").fetchone()[0]) == before_analyses
         assert (

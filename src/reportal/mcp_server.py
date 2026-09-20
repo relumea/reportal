@@ -52,9 +52,8 @@ SERVER_INSTRUCTIONS = (
     " disassembly, decompilation, scans, matching and scoped conversations."
 )
 
-# HTTP path the Streamable HTTP transport is mounted at.  Auth is the same
-# bearer as ``/api`` (loopback operator while auth is off).
-HTTP_PATH = "/mcp"
+# SSE replay cap for the in-process MemoryEventStore. The HTTP mount path is
+# server.MCP_PATH ("/mcp"); auth is the same bearer as ``/api``.
 MAX_REPLAY_EVENTS = 1024
 
 _log = logging.getLogger(__name__)

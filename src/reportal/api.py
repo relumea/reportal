@@ -20,11 +20,9 @@ import hashlib
 import json
 import logging
 import os
-import re
 import sqlite3
 import tempfile
 import threading
-import unicodedata
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import UTC, datetime
 from functools import partial
@@ -128,11 +126,13 @@ from reportal import (
 from reportal._paths import binaries_dir, db_path, reports_dir, under_workspace
 from reportal.binary_actions import (
     ExtractError,
+    client_name,
     download_filename,
     extract_archive_binary,
     firmware_carve_binary,
     firmware_extract_binary,
     unpack_binary,
+    upload_suffix,
 )
 from reportal.server import (
     JsonError,
@@ -214,11 +214,6 @@ UPLOAD_COMPILERS: tuple[str, ...] = filetypes.toolchain_names()
 
 # Read size while an upload streams to disk.
 _UPLOAD_CHUNK_BYTES = 1024 * 1024
-
-# Shape of the suffix kept from a client filename.  Anything else is dropped
-# rather than passed through, so no client-supplied text reaches the stored
-# file name.
-_UPLOAD_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
 
 # Accepted spellings of a boolean query parameter (`?named=`).  Anything else
 # is a 400 rather than a silent false.  Truthy spellings match settings.FLAG_TRUTHY
@@ -496,24 +491,6 @@ def list_binaries(request: Request) -> Response:
     )
 
 
-def _upload_suffix(raw_filename: str) -> str:
-    """Return the accepted suffix of a client filename, else ""."""
-    suffix = Path(raw_filename).suffix
-    return suffix if _UPLOAD_SUFFIX.match(suffix) else ""
-
-
-def _client_name(raw_filename: str) -> str:
-    """Return the display name a client filename suggests, else "".
-
-    Only the basename is kept, and a name that survives as a path component
-    (``.`` or ``..``) is dropped so the caller falls back to the content hash.
-    The basename is NFC-normalized so a macOS NFD upload name matches an NFC
-    rename of the same spelling.
-    """
-    candidate = unicodedata.normalize("NFC", Path(raw_filename).name)
-    return "" if candidate in {"", ".", ".."} else candidate
-
-
 class _PartError(Exception):
     """One multipart part reportal refuses; the route renders it as a JSON body."""
 
@@ -738,7 +715,7 @@ def _upload_entry(
     route does it, journaled and refused when the caller may not write it.
     """
     raw_name = str(upload.filename or "")
-    display = _file_option_str(entry, "name") or _client_name(raw_name) or raw_name
+    display = _file_option_str(entry, "name") or client_name(raw_name) or raw_name
     try:
         temp, sha256, size = _stream_upload(upload, directory)
     except _PartError as exc:
@@ -773,7 +750,7 @@ def _upload_entry(
             )
             store.set_binary_scope(conn, binary_id, owner_team_id=scope[0], visibility=scope[1])
     else:
-        suffix = _upload_suffix(raw_name)
+        suffix = upload_suffix(raw_name)
         target = directory / f"{sha256}{suffix}"
         os.replace(temp, target)
         binary_id = store.add_binary(
@@ -7466,12 +7443,11 @@ def remove_binary_tag(request: Request, binary_id: int, tag_id: int) -> Response
     return json_response(log.attach({"binary_id": binary_id, "tag_id": tag_id, "removed": True}))
 
 
-# The password a zipped download uses when the request names none, and the cap
-# on one the request does name.  The value is a convention, not a secret: it
-# defeats a scanner that opens every archive it sees, which is the only reason
-# the hosted portal offers a protected download too.
+# The password a zipped download uses when the request names none.  The value is
+# a convention, not a secret: it defeats a scanner that opens every archive it
+# sees, which is the only reason the hosted portal offers a protected download
+# too. Password length is capped by zipcrypto.MAX_PASSWORD_CHARS.
 ZIP_PASSWORD_DEFAULT = zipcrypto.DEFAULT_PASSWORD
-ZIP_PASSWORD_MAX_CHARS = zipcrypto.MAX_PASSWORD_CHARS
 
 
 @router.get("/api/binaries/{binary_id}/download-zipped")
@@ -8587,10 +8563,11 @@ async def upload_binary(request: Request) -> Response:
     copying a spooled part into ``binaries/`` and hashing it blocks.
 
     The stored file is named by sha256 plus a suffix taken from the client
-    filename only when it matches :data:`_UPLOAD_SUFFIX`, so the client name
-    never becomes a path component.  The upload is streamed to a temporary file
-    in the workspace `binaries/` directory and published with ``os.replace``,
-    so a partial write is never visible as a finished binary.
+    filename only when it matches :func:`reportal.binary_actions.upload_suffix`,
+    so the client name never becomes a path component.  The upload is streamed
+    to a temporary file in the workspace `binaries/` directory and published
+    with ``os.replace``, so a partial write is never visible as a finished
+    binary.
     """
     form = await _request_form(request)
     if isinstance(form, Response):
@@ -8612,7 +8589,7 @@ def _register_uploads(
 
     upload = files[0]
     raw_name = str(upload.filename or "")
-    display = name or _client_name(raw_name)
+    display = name or client_name(raw_name)
     directory = binaries_dir()
     try:
         temp, sha256, size = _stream_upload(upload, directory)
@@ -8626,7 +8603,7 @@ def _register_uploads(
         if existing is not None:
             temp.unlink(missing_ok=True)
             return json_response({**existing, "duplicate": True})
-        suffix = _upload_suffix(raw_name)
+        suffix = upload_suffix(raw_name)
         target = directory / f"{sha256}{suffix}"
         os.replace(temp, target)
         action = journal.new_action()
@@ -8676,7 +8653,7 @@ async def ingest_binary_document(binary_id: int, request: Request) -> Response:
 
 def _ingest_document(binary_id: int, upload: UploadFile, title: str) -> Response:
     """Read one document part and store it (the blocking half of the route)."""
-    filename = _client_name(str(upload.filename or ""))
+    filename = client_name(str(upload.filename or ""))
     if not knowledge.is_supported_name(filename):
         return json_error(
             400,

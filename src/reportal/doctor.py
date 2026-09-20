@@ -71,9 +71,7 @@ SCHEMA_HINT = "the database exists but carries no schema; run 'reportal init'"
 PORT_HINT = "stop the process holding the port, or serve on another one (--port)"
 ENGINE_HINT = engines.ENGINE_UNAVAILABLE_HINT
 SPA_HINT = ui.UI_NOT_BUILT_DETAIL
-BACKUP_HINT = (
-    "enable reportal-backup.timer or run 'reportal backup'; see docs/DR_RUNBOOK.md"
-)
+BACKUP_HINT = "enable reportal-backup.timer or run 'reportal backup'; see docs/DR_RUNBOOK.md"
 
 # The tables a usable schema needs before any read.  The journal's table is
 # created on first use, so it is deliberately not required: a fresh workspace

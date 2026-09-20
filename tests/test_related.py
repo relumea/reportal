@@ -529,20 +529,3 @@ class TestFindRelated:
     ) -> None:
         target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
         assert related.stored_related(conn, target) is None
-
-    def test_derive_bundle_reads_stored_fingerprint_and_capabilities(
-        self, conn: sqlite3.Connection, tmp_path: Path
-    ) -> None:
-        target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
-        _store_fingerprint(conn, target, sha256=SHA, imphash=IMPHASH, fmt="pe", arch="x86_32")
-        _store_capabilities(conn, target, ["networking"])
-        bundle = related.derive_bundle(
-            conn, binary_id=target, engine=engines.RebrewEngine(enabled=False)
-        )
-        assert bundle["sha256"] == SHA
-        assert bundle["imphash"] == IMPHASH
-        assert bundle["capabilities"] == ["networking"]
-
-    def test_derive_bundle_unknown_binary_raises(self, conn: sqlite3.Connection) -> None:
-        with pytest.raises(KeyError, match="no binary with id 7"):
-            related.derive_bundle(conn, binary_id=7)

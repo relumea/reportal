@@ -312,8 +312,3 @@ def describe(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
         "rated": sum(1 for entry in artifacts if entry["rating"]),
         "kinds": list(SCAN_KINDS),
     }
-
-
-def kinds() -> tuple[str, ...]:
-    """The rateable artifact kinds: every scan kind the store declares."""
-    return SCAN_KINDS

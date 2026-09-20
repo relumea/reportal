@@ -243,11 +243,6 @@ def doc_url(code: str) -> str | None:
     return None if anchor is None else f"{DOC_BASE_URL}#{anchor}"
 
 
-def documented_anchors() -> set[str]:
-    """Every section anchor the catalogue names, the shared one included."""
-    return {*ERROR_DOC_ANCHORS.values(), INVALID_PARAMS_ANCHOR}
-
-
 def heading_anchor(heading: str) -> str:
     """The GitHub heading anchor for *heading*, the rule the page is checked with."""
     return re.sub(r"[^a-z0-9 _-]", "", heading.strip().casefold()).replace(" ", "-")

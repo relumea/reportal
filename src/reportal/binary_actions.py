@@ -31,13 +31,13 @@ _UPLOAD_CHUNK_BYTES = 1024 * 1024
 _UPLOAD_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,8}$")
 
 
-def _upload_suffix(raw_filename: str) -> str:
+def upload_suffix(raw_filename: str) -> str:
     """Return the accepted suffix of a member filename, else ""."""
     suffix = Path(raw_filename).suffix
     return suffix if _UPLOAD_SUFFIX.match(suffix) else ""
 
 
-def _client_name(raw_filename: str) -> str:
+def client_name(raw_filename: str) -> str:
     """Return the display name a filename suggests, else "".
 
     Only the basename is kept, and a name that survives as a path component
@@ -132,7 +132,7 @@ def _register_member(
         member.path.unlink(missing_ok=True)
         duplicate = True
     else:
-        suffix = _upload_suffix(display)
+        suffix = upload_suffix(display)
         target = directory / f"{sha256}{suffix}"
         os.replace(member.path, target)
         binary_id = store.add_binary(
@@ -448,7 +448,7 @@ def unpack_binary(
             detail = f"{detail} that is {chosen}-packed"
         raise ExtractError(400, unpack.ERROR_NO_PACKER, detail)
     entry = matched[0]
-    display = _client_name(name) or _unpacked_name(str(binary["name"]))
+    display = client_name(name) or _unpacked_name(str(binary["name"]))
     directory = binaries_dir()
     directory.mkdir(parents=True, exist_ok=True)
     temp_root = Path(tempfile.mkdtemp(dir=directory, prefix=".unpack-"))

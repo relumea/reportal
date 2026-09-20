@@ -225,6 +225,7 @@ def die_info(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
             }
         )
     sources = source_report(conn, binary_id, DIE_SOURCES)
+    sections = _sections(pe_info)
     return {
         "binary_id": binary_id,
         "available": bool(pe_info or filetype),
@@ -237,8 +238,12 @@ def die_info(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
         "toolchain": by_category.get("toolchain", []),
         "by_category": filetype.get("by_category") or {},
         "entropy": _entropy(fingerprint),
-        "sections": _sections(pe_info),
-        "packer_section_hint": additional_details(conn, binary_id)["packer_section_hint"],
+        "sections": sections,
+        "packer_section_hint": [
+            name
+            for name in sections["names"]
+            if any(hint in name.lower() for hint in _PACKER_SECTION_HINTS)
+        ],
         "notes": filetype.get("notes") or [],
         "sources": sources,
     }
