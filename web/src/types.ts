@@ -2468,6 +2468,19 @@ export interface DebugTranscriptEntry {
   note?: string;
 }
 
+/** `GET /api/binaries/<id>/debug-coverage`: observed stored functions. */
+export interface DebugCoverageResult {
+  binary_id: number;
+  analysis_id: number;
+  session_id: number;
+  backend: string;
+  addresses: number;
+  observed: number;
+  total: number;
+  functions: { id: number; name: string; va: number; size: number; hits: number }[];
+  note: string;
+}
+
 /** One stored read-only debug session. */
 export interface DebugSession {
   id: number;

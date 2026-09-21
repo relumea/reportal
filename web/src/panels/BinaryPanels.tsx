@@ -116,6 +116,7 @@ import type {
   PeSecurityItem,
   ProtocolsResult,
   RelatedResult,
+  DebugCoverageResult,
   DebugSession,
   DebugStatus,
   SandboxRun,
@@ -4578,9 +4579,42 @@ export function DebugPanel({ binaryId }: { binaryId: number }): ReactNode {
       {session === null ? (
         <EmptyState>{NO_SCAN_MESSAGES.debug}</EmptyState>
       ) : (
-        <DebugReport session={session} />
+        <>
+          <DebugReport session={session} />
+          <DebugCoverage binaryId={binaryId} />
+        </>
       )}
     </Panel>
+  );
+}
+
+/** Which stored functions the newest debug session observed, joined by address. */
+function DebugCoverage({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "debug-coverage");
+  const path = `/binaries/${binaryId}/debug-coverage`;
+  const entry = usePanel(key, () => api<DebugCoverageResult>(path));
+  if (entry?.state === "error") {
+    return null;
+  }
+  if (entry?.state !== "ready") {
+    return null;
+  }
+  const coverage = entry.data;
+  if (!coverage.functions.length) {
+    return <Muted>{coverage.note}</Muted>;
+  }
+  return (
+    <KeyValue
+      rows={[
+        [
+          `observed ${coverage.observed} of ${coverage.total}`,
+          coverage.functions
+            .slice(0, 12)
+            .map((row) => `${row.name} (${row.hits})`)
+            .join(", ") || NA,
+        ],
+      ]}
+    />
   );
 }
 
