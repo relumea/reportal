@@ -981,6 +981,9 @@ def debug_session_command(
         False, "--report", help="Print the stored session instead of running"
     ),
     status: bool = typer.Option(False, "--status", help="Print whether a session is possible here"),
+    coverage: bool = typer.Option(
+        False, "--coverage", help="Print which stored functions the last session observed"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Run a read-only debug probe over a stored binary and store the transcript.
@@ -988,21 +991,27 @@ def debug_session_command(
     Off by default: the workspace opts in with REPORTAL_DEBUG=enabled or
     `[debug] enabled = true`, a backend must be installed, and the probe only
     reads (launch stopped, breakpoints, register and memory reads, disconnect).
-    `--report` prints the last stored session and `--status` says whether a
-    session is possible here; the two flags are mutually exclusive.
+    `--report` prints the last stored session, `--status` says whether a
+    session is possible here, and `--coverage` prints which stored functions
+    the last session observed; the flags are mutually exclusive.
     """
     from reportal import debug
 
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
-    if status and report:
-        _fail("--report and --status are mutually exclusive", json_output)
+    if sum([status, report, coverage]) > 1:
+        _fail("--report, --status and --coverage are mutually exclusive", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         analysis_id = store.latest_analysis_for_binary(conn, binary_id) or 0
         if status:
             payload = debug.status_payload(conn, analysis_id)
+        elif coverage:
+            covered = debug.observed_coverage(conn, binary_id)
+            if covered is None:
+                _fail(f"binary {binary_id} has no debug session", json_output)
+            payload = covered
         elif report:
             stored = None if not analysis_id else debug.latest_session(conn, analysis_id)
             if stored is None:
@@ -1025,6 +1034,15 @@ def debug_session_command(
         )
         for entry in payload["backends"]:
             console.print(f"  {entry['name']}: {'available' if entry['available'] else 'missing'}")
+        return
+    if coverage:
+        console.print(
+            f"observed {payload['observed']} of {payload['total']} functions"
+            f" in session {payload['session_id']}"
+        )
+        for entry in payload["functions"]:
+            console.print(f"  {entry['name']} @ {entry['va']:#x} ({entry['hits']} hits)")
+        console.print(f"  [yellow]{payload['note']}[/yellow]")
         return
     console.print(
         f"[bold]{payload['status']}[/bold] backend {payload['backend']} session {payload['id']}"

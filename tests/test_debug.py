@@ -187,6 +187,77 @@ class TestRoutes:
         assert status.startswith("200")
         assert payload["enabled"] is False
 
+    def test_coverage_joins_addresses_to_functions(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("lldb-dap", "lldb-dap"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "lldb-dap",
+                "argv": ["lldb-dap"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [
+                    {
+                        "request": "stackTrace",
+                        "success": True,
+                        "frames": [
+                            {"name": "main", "instructionPointerReference": "0x1010"},
+                        ],
+                    },
+                    {
+                        "request": "readMemory",
+                        "success": True,
+                        "address": "0x2050",
+                        "data": "",
+                        "encoding": "hex",
+                    },
+                ],
+                "notes": [],
+            },
+        )
+        db = _db(tmp_path, "cov.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            store.upsert_function(
+                conn, analysis_id=analysis_id, va=0x1000, name="main", size=0x100, status="STUB"
+            )
+            store.upsert_function(
+                conn, analysis_id=analysis_id, va=0x2000, name="far", size=0x100, status="STUB"
+            )
+            session = debug.run_session(conn, binary_id)
+            coverage = debug.observed_coverage(conn, binary_id)
+            assert coverage is not None
+            assert coverage["session_id"] == session["id"]
+            assert coverage["observed"] == 2
+            assert coverage["total"] == 2
+            assert [row["name"] for row in coverage["functions"]] == ["main", "far"]
+
+    def test_coverage_reports_no_session(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "none.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            assert debug.observed_coverage(conn, binary_id) is None
+
+    def test_coverage_route_reports_no_session(
+        self, portal_db: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal._paths import DB_ENV
+
+        monkeypatch.delenv(debug.ENABLED_ENV, raising=False)
+        monkeypatch.setenv(DB_ENV, str(portal_db))
+        with store.connect(portal_db) as conn:
+            binary_id = _seed(conn, portal_db.parent)
+        status, payload = _get(f"/api/binaries/{binary_id}/debug-coverage")
+        assert status.startswith("404")
+        assert payload["error"] == debug.ERROR_NO_SESSION
+
     def test_scan_records_journal_revert(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

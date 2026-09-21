@@ -5533,6 +5533,16 @@ def _tool_get_debug_status(arguments: dict[str, Any]) -> dict[str, Any]:
         return debug.status_payload(conn, analysis_id)
 
 
+def _tool_get_debug_coverage(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        coverage = debug.observed_coverage(conn, binary_id)
+    if coverage is None:
+        raise ToolError(debug.ERROR_NO_SESSION, f"binary {binary_id} has no debug session")
+    return coverage
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -8707,6 +8717,14 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
             _READ,
             _tool_get_debug_session,
+        ),
+        Tool(
+            "get_debug_coverage",
+            "Which stored functions the newest debug session observed, joined by"
+            " address; unobserved is not absent.  Read-only.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _READ,
+            _tool_get_debug_coverage,
         ),
         Tool(
             "run_debug_session",

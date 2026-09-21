@@ -49,12 +49,13 @@ reportal sandbox <binary-id> [--timeout N] [--memory-mb N] [--report|--status] [
                                            #   prints the stored one, --status says whether
                                            #   a run is possible here; the two flags refuse
                                            #   each other
-reportal debug-session <binary-id> [--timeout N] [--breakpoint VA]... [--report|--status] [--json]
+reportal debug-session <binary-id> [--timeout N] [--breakpoint VA]... [--report|--status|--coverage] [--json]
                                            # run a read-only debug probe over a stored
                                            #   binary (off by default: the workspace opts in
                                            #   and a backend must be installed); --report
                                            #   prints the stored one, --status says whether
-                                           #   a session is possible here
+                                           #   a session is possible here, --coverage prints
+                                           #   which stored functions the last session saw
 reportal firmware <binary-id> [--json]       # carve a stored firmware image: its embedded
                                            #   regions, their entropy and confidence;
                                            #   offline byte work, nothing executed

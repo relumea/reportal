@@ -12537,6 +12537,26 @@ def get_binary_debug_status(binary_id: int) -> Response:
     return json_response({"binary_id": binary_id, **payload})
 
 
+@router.get("/api/binaries/{binary_id}/debug-coverage")
+def get_binary_debug_coverage(binary_id: int) -> Response:
+    """Which stored functions the newest debug session observed, by VA join.
+
+    Stored-only: joins the session transcript's addresses to the function
+    table, so it needs no backend and never starts a probe.  404
+    `no-debug-session` before the first session.
+    """
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        coverage = debug.observed_coverage(conn, binary_id)
+    if coverage is None:
+        return json_error(
+            404,
+            error=debug.ERROR_NO_SESSION,
+            detail=f"binary {binary_id} has no debug session",
+        )
+    return json_response(coverage)
+
+
 # ── FLIRT signatures ───────────────────────────────────────────────
 #
 # The catalog is global: a signature set is a fact about a toolchain, not a

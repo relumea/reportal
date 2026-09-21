@@ -2,7 +2,7 @@
 
 # MCP tool catalog
 
-The 270 tools the MCP registry exposes (126 read-only, 144 destructive).
+The 271 tools the MCP registry exposes (127 read-only, 144 destructive).
 `reportal mcp` serves them over stdio JSON-RPC; `POST /mcp` and `GET /mcp`
 serve the same registry over HTTP. A read-only tool runs at once; a
 destructive tool pauses an agent run for confirmation. Names must be unique
@@ -43,6 +43,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `get_crypto_scan` | Return a binary's stored crypto scan; fails when none was stored. |
 | `get_data_type_functions` | The functions that use one data type of an analysis's binary, from the stored reference index. |
 | `get_data_type_history` | List a data type's edit history, newest first, with each entry's per-field diff; a deleted type's history stays listed. |
+| `get_debug_coverage` | Which stored functions the newest debug session observed, joined by address; unobserved is not absent. Read-only. |
 | `get_debug_session` | The newest read-only debug transcript of a binary's newest analysis. Read-only. |
 | `get_debug_status` | Whether this install can run a read-only debug session (the opt-in and the installed backend) and when it last did. Read-only. |
 | `get_decompilation` | Return a function's stored decompilation, else compute one live through rebrew without storing it. |

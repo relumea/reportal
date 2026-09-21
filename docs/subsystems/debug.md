@@ -24,12 +24,17 @@ Nothing is stepped, continued or written.
   `status_payload` reports the opt-in, the backends, the caps, the session count and the last
   session.
 - The transcript is stored as the `debug-session` scan (`SCAN_KIND_DEBUG_SESSION`).
+- `observed_coverage` joins the newest session's addresses to the stored functions by VA
+  containment: an address in `[va, va + size)` marks the function observed, a zero-size
+  function matches its exact VA only, and untouched functions are `unobserved`, never absent.
 
 ## Wiring
 
 - Routes: `POST`/`GET /api/binaries/{binary_id}/debug-session`,
-  `GET /api/binaries/{binary_id}/debug-session/status`.
-- CLI: `debug-session`. MCP: `run_debug_session`, `get_debug_session`, `get_debug_status`.
+  `GET /api/binaries/{binary_id}/debug-session/status`,
+  `GET /api/binaries/{binary_id}/debug-coverage` (stored-only, needs no backend).
+- CLI: `debug-session` (`--coverage` prints the observed functions). MCP:
+  `run_debug_session`, `get_debug_session`, `get_debug_status`, `get_debug_coverage`.
 - Settings: `REPORTAL_DEBUG` or `[debug] enabled`, `REPORTAL_DEBUG_BACKEND` or `[debug] backend`.
   A third party registers through the `reportal.debug_backends` entry-point group.
 - `run_session` is the shared orchestration the route, the CLI and the MCP tool call, so the

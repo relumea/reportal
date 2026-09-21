@@ -418,6 +418,87 @@ def count_sessions(conn: sqlite3.Connection, analysis_id: int) -> int:
     )
 
 
+def _parse_address(raw: Any) -> int | None:
+    """One hex address as an int, or None when it is not an address."""
+    if not raw:
+        return None
+    with contextlib.suppress(TypeError, ValueError):
+        return int(str(raw), 16)
+    return None
+
+
+def _transcript_addresses(session: Mapping[str, Any]) -> list[int]:
+    """Every instruction address a session transcript observed, as ints."""
+    addresses: list[int] = []
+    transcript = session.get("transcript")
+    if not isinstance(transcript, list):
+        return addresses
+    for entry in transcript:
+        if not isinstance(entry, dict):
+            continue
+        for key in ("instructionPointerReference", "address"):
+            parsed = _parse_address(entry.get(key))
+            if parsed is not None:
+                addresses.append(parsed)
+        for frame in entry.get("frames") or []:
+            if not isinstance(frame, dict):
+                continue
+            parsed = _parse_address(frame.get("instructionPointerReference"))
+            if parsed is not None:
+                addresses.append(parsed)
+    return addresses
+
+
+def observed_coverage(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
+    """Join the newest debug session's addresses to the stored functions.
+
+    An address inside a function's `[va, va + size)` range marks it observed;
+    a zero-size function matches its exact VA only.  Functions the session
+    never touched are `unobserved`, which is not the same as absent.  Returns
+    None before the first session.
+    """
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None:
+        return None
+    session = latest_session(conn, analysis_id)
+    if session is None:
+        return None
+    addresses = _transcript_addresses(session)
+    functions = store.list_functions(conn, binary_id=binary_id)
+    total = len(functions)
+    observed: list[dict[str, Any]] = []
+    for function in functions:
+        va = int(function["va"])
+        size = int(function.get("size") or 0)
+        hits = [
+            address
+            for address in addresses
+            if address == va or (size > 0 and va <= address < va + size)
+        ]
+        if hits:
+            observed.append(
+                {
+                    "id": int(function["id"]),
+                    "name": str(function["name"]),
+                    "va": va,
+                    "size": size,
+                    "hits": len(hits),
+                }
+            )
+    observed.sort(key=lambda row: row["va"])
+    return {
+        "binary_id": binary_id,
+        "analysis_id": analysis_id,
+        "session_id": int(session["id"]),
+        "backend": str(session["backend"]),
+        "addresses": len(addresses),
+        "observed": len(observed),
+        "total": total,
+        "functions": observed,
+        "note": ("one session is one path, not a specification: unobserved is not absent"),
+    }
+
+
 def status_payload(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any]:
     """The debug status of one analysis: whether it can run and its last session."""
     backend = available_backend()
