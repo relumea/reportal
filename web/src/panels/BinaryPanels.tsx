@@ -1255,7 +1255,7 @@ export function CodeSignaturePanel({ binaryId }: { binaryId: number }): ReactNod
     <Panel
       title={
         <CountTitle
-          label="Code signature"
+          label="Code Signature"
           count={
             entry?.state === "ready"
               ? (entry.data.authenticode?.signature_count ??

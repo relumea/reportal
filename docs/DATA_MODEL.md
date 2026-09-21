@@ -543,7 +543,9 @@ count, `events_json` (the bounded list of what happened), `messages_json` (the
 message list sent to the model, kept so a run paused for confirmation resumes in
 whichever process takes the confirmation), `pending_json` (the exact call
 awaiting an analyst's decision, empty otherwise), the final `content` or the
-`error`, the `actor` and the times.  The row and the messages a turn wrote are one
+`error`, the `actor` and the times.  A unique partial index on `conversation_id`
+while status is live makes a second start reuse the in-progress row rather than
+opening another metered turn.  The row and the messages a turn wrote are one
 journaled action, so a revert removes both; a tool the run called carries its own
 journal action, which the run's does not cover.
 

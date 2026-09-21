@@ -66,7 +66,7 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     manager is the same kind of effect: it lives for the process and is
     stopped here.
     """
-    from reportal import jobs, mcp_server, settings
+    from reportal import agent, jobs, mcp_server, settings
 
     failing = settings.failing()
     if failing:
@@ -80,6 +80,15 @@ async def _lifespan(application: FastAPI) -> AsyncIterator[None]:
     # After uvicorn's logging dictConfig, so INFO completion lines are not
     # dropped by lastResort when this process was started outside ``server.run``.
     observability.configure_logging()
+    # ``running`` agent rows cannot still be executing after a process exit;
+    # close them so the live-dedupe index does not block a new turn forever.
+    try:
+        with contextlib.closing(db()) as conn:
+            closed = agent.reclaim_orphaned_running_runs(conn)
+            if closed:
+                _log.info("reclaimed %s orphaned agent run(s)", closed)
+    except Exception:
+        _log.exception("could not reclaim orphaned agent runs at startup")
     async with AsyncExitStack() as stack:
         application.state.mcp_http = await stack.enter_async_context(mcp_server.http_lifespan())
         try:

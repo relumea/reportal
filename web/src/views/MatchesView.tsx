@@ -607,7 +607,7 @@ export function MatchesView({
             </Badge>
           ) : null}
           {functionTotal !== null ? (
-            <Badge hue="match">
+            <Badge hue="match" title={`${matchedCount} of this binary's ${functionTotal} functions have a recorded candidate`}>
               Matched: {matchedCount} / {functionTotal} ({matchedPercent}%)
             </Badge>
           ) : null}

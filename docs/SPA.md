@@ -204,6 +204,16 @@ offering an easy out (AutoView's revert and recover, PipelinePanel's
 revert, JournalView's entry and action reverts state the restore they
 perform).  No urgency, scarcity or fake progress is used: a meter with no
 stored reading renders the explicit missing state, never a number.
+Seven further uxpeak videos distilled to what ports to an instrument SPA
+(specific numbers over round ones, easy question over hard pitch, worked
+examples before abstract settings, plain-indexed copy): the plan button
+states the trial length from `plans.py` instead of a bare "Start trial"
+(BillingView), the Search empty state names the three query kinds the
+route accepts (SearchView), and the match badge carries its own
+definition as a tooltip (MatchesView).  Deliberately not ported:
+marketing persuasion aimed at a purchase (halo badges, crossed-out
+anchors, urgency copy), decorative imagery, and mobile thumb-zone or
+touch-slider input patterns with no desktop instrument equivalent.
 
 Below 900px the shell is one column: the sidebar becomes a sticky top bar and
 its nav keeps every group label and divider in a single horizontally scrollable

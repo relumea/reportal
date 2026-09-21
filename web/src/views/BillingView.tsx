@@ -136,7 +136,7 @@ function PlanCards({
                 disabled={busy !== ""}
                 onClick={() => onChoose(plan.id)}
               >
-                {plan.trial_days > 0 ? "Start trial" : "Choose plan"}
+                {plan.trial_days > 0 ? `Start ${plan.trial_days}-day free trial` : "Choose plan"}
               </Button>
             ) : null}
           </article>

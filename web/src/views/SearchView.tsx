@@ -100,7 +100,7 @@ export function SearchView({
       }
     >
       {query === "" ? (
-        <EmptyState>Search binaries, functions and collections. Enter a name, hash or notes above.</EmptyState>
+        <EmptyState>Search binaries, functions and collections. Try a name, a hash prefix, or a tag.</EmptyState>
       ) : resultsResult.error ? (
         <ErrorNote error={resultsResult.error} onRetry={resultsResult.reload} />
       ) : !results ? (

@@ -17,6 +17,12 @@ the store.  The only network call is the optional LLM bridge, exactly as in a
 plain turn, and an unconfigured bridge raises
 :class:`reportal.llm.LlmUnavailable` before any run row is written.
 
+At most one live run exists per conversation: the unique live-dedupe index is
+the lock, so a double-click or a transport retry reuses the in-progress row
+rather than opening a second metered turn.  ``running`` rows left after a
+process exit are reclaimed at server startup; ``waiting_confirmation`` stays
+so confirm can resume in whichever process takes it.
+
 The run's state is one row in :data:`RUN_TABLE`, carrying the events so far,
 the message list sent to the model and the call awaiting confirmation, so a run
 paused for confirmation resumes in whichever process takes the confirmation.
@@ -119,6 +125,16 @@ CREATE INDEX IF NOT EXISTS idx_conversation_runs_conversation
     ON conversation_runs(conversation_id);
 """
 
+# Partial unique index: at most one live run per conversation.  A double-click
+# or a transport retry must reuse that row rather than start a second metered
+# turn.  ``waiting_confirmation`` is included so a paused run still blocks a
+# second start (confirm or cancel first).
+_LIVE_DEDUPE_INDEX = (
+    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_runs_live"
+    f" ON {RUN_TABLE}(conversation_id)"
+    f" WHERE status IN ('{STATUS_RUNNING}', '{STATUS_WAITING}')"
+)
+
 
 class AgentError(Exception):
     """Base class for a rejected agent-run operation."""
@@ -151,12 +167,75 @@ class NotWaitingError(AgentError, ValueError):
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Create the run table when the database predates it."""
+    """Create the run table when the database predates it.
+
+    Before the live-run unique index applies, older duplicate live rows
+    (possible before the index existed) are collapsed so the index can be
+    created on an upgraded database.
+    """
     conn.executescript(_SCHEMA)
-    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(conversation_runs)")}
+    columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({RUN_TABLE})")}
     if "actor_user_id" not in columns:
-        conn.execute("ALTER TABLE conversation_runs ADD COLUMN actor_user_id INTEGER")
+        conn.execute(f"ALTER TABLE {RUN_TABLE} ADD COLUMN actor_user_id INTEGER")
+    # Keep the newest live row per conversation; mark older siblings failed so
+    # the unique live index can apply on a database that predates it.
+    placeholders = ", ".join("?" for _ in LIVE_STATUSES)
+    duplicates = conn.execute(
+        f"SELECT conversation_id, MAX(id) AS keep_id FROM {RUN_TABLE}"
+        f" WHERE status IN ({placeholders}) GROUP BY conversation_id HAVING COUNT(*) > 1",
+        LIVE_STATUSES,
+    ).fetchall()
+    for row in duplicates:
+        conn.execute(
+            f"UPDATE {RUN_TABLE} SET status = ?, error = ?, updated_at = ?"
+            f" WHERE conversation_id = ? AND status IN ({placeholders}) AND id != ?",
+            (
+                STATUS_FAILED,
+                "abandoned: superseded by a newer live agent run",
+                store.now(),
+                int(row["conversation_id"]),
+                *LIVE_STATUSES,
+                int(row["keep_id"]),
+            ),
+        )
+    conn.execute(_LIVE_DEDUPE_INDEX)
     conn.commit()
+
+
+def find_live_run(conn: sqlite3.Connection, conversation_id: int) -> dict[str, Any] | None:
+    """The in-progress agent run for *conversation_id*, or None."""
+    ensure_schema(conn)
+    placeholders = ", ".join("?" for _ in LIVE_STATUSES)
+    row = conn.execute(
+        f"SELECT * FROM {RUN_TABLE} WHERE conversation_id = ? AND status IN ({placeholders})"
+        " ORDER BY id LIMIT 1",
+        (int(conversation_id), *LIVE_STATUSES),
+    ).fetchone()
+    return _row(row) if row is not None else None
+
+
+def reclaim_orphaned_running_runs(conn: sqlite3.Connection) -> int:
+    """Mark ``running`` runs failed after a process exit; return how many closed.
+
+    ``running`` means a request thread was inside :func:`_drive`.  After a
+    restart that thread cannot still be executing, and the live-dedupe index
+    would otherwise block a new turn forever.  ``waiting_confirmation`` stays:
+    confirm resumes from the stored messages in whichever process takes it.
+    Call once when the server starts, not on every schema touch.
+    """
+    ensure_schema(conn)
+    cur = conn.execute(
+        f"UPDATE {RUN_TABLE} SET status = ?, error = ?, pending_json = '', updated_at = ?"
+        " WHERE status = ?",
+        (
+            STATUS_FAILED,
+            "abandoned: worker process exited while the run was in progress",
+            store.now(),
+            STATUS_RUNNING,
+        ),
+    )
+    conn.commit()
+    return int(cur.rowcount)
 
 
 # ── The tool set ───────────────────────────────────────────────────
@@ -336,31 +415,43 @@ def _store_state(
 
 def _create_run(
     conn: sqlite3.Connection, log: journal.Journal, conversation_id: int
-) -> dict[str, Any]:
-    """Insert one running row, journalled so a revert removes it."""
+) -> tuple[dict[str, Any], bool]:
+    """Insert one running row, or reuse a live twin.
+
+    Returns ``(run, created)``.  The unique live-dedupe index is the lock: a
+    double-click or a racing POST that already has a live run gets that row
+    with ``created=False`` rather than a second metered turn.
+    """
     ensure_schema(conn)
     timestamp = store.now()
-    cursor = conn.execute(
-        f"INSERT INTO {RUN_TABLE} (conversation_id, status, actor, actor_user_id,"
-        " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            int(conversation_id),
-            STATUS_RUNNING,
-            journal.current_actor(),
-            journal.current_actor_user_id(),
-            timestamp,
-            timestamp,
-        ),
-    )
-    conn.commit()
-    run_id = int(cursor.lastrowid or 0)
-    journal.journaled_create(
-        log,
-        table=RUN_TABLE,
-        key=run_id,
-        description=f"agent run {run_id} of conversation {conversation_id}",
-    )
-    return get_run(conn, run_id)
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cursor = conn.execute(
+                f"INSERT INTO {RUN_TABLE} (conversation_id, status, actor, actor_user_id,"
+                " created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    int(conversation_id),
+                    STATUS_RUNNING,
+                    journal.current_actor(),
+                    journal.current_actor_user_id(),
+                    timestamp,
+                    timestamp,
+                ),
+            )
+        run_id = int(cursor.lastrowid or 0)
+        journal.journaled_create(
+            log,
+            table=RUN_TABLE,
+            key=run_id,
+            description=f"agent run {run_id} of conversation {conversation_id}",
+        )
+        return get_run(conn, run_id), True
+    except sqlite3.IntegrityError:
+        existing = find_live_run(conn, conversation_id)
+        if existing is not None:
+            return existing, False
+        raise
 
 
 # ── The loop ───────────────────────────────────────────────────────
@@ -460,13 +551,25 @@ def start(
 ) -> dict[str, Any]:
     """Run one agent turn, returning the run's payload.
 
-    The user message is stored first, so a failed run still leaves the question
-    in the history.  Raises ``KeyError`` for an unknown conversation and
-    :class:`reportal.llm.LlmUnavailable` / :class:`reportal.llm.LlmError`
-    unchanged.
+    A second call while a run is still live returns that run's payload without
+    appending another user message or charging again: the unique live-dedupe
+    index is the lock, so a double-click cannot open a second metered turn.
+    When a new run is created, the user message is stored first so a failed
+    run still leaves the question in the history.  Raises ``KeyError`` for an
+    unknown conversation and :class:`reportal.llm.LlmUnavailable` /
+    :class:`reportal.llm.LlmError` unchanged.
     """
     if store.get_conversation(conn, conversation_id) is None:
         raise KeyError(f"no conversation with id {conversation_id}")
+    live = find_live_run(conn, conversation_id)
+    if live is not None:
+        return payload(live)
+    active = client if client is not None else llm.get_client()
+    if not active.available():
+        raise llm.LlmUnavailable(llm.UNAVAILABLE_DETAIL)
+    run, created = _create_run(conn, log, conversation_id)
+    if not created:
+        return payload(run)
     before = store.message_ids(conn, conversation_id)
     store.add_message(
         conn, conversation_id=conversation_id, role=conversations.ROLE_USER, content=content
@@ -477,7 +580,6 @@ def start(
         content=content,
         extra_system=AGENT_SYSTEM_SUFFIX,
     )
-    run = _create_run(conn, log, conversation_id)
     state = _event(run, EVENT_STARTED, {"message": content})
     _store_state(conn, int(run["id"]), events=state["events"], messages=messages)
     return _drive(
@@ -486,7 +588,7 @@ def start(
         conversation_id=conversation_id,
         run_id=int(run["id"]),
         messages=messages,
-        client=client,
+        client=active,
         sources=sources,
         before=before,
     )

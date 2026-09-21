@@ -1140,7 +1140,11 @@ engine.
 
 `agent.py` turns a conversation from one model call into a tool loop over the
 local MCP registry.  A run is one row in `conversation_runs` holding its status,
-its events, the message list sent to the model and the call it paused on.
+its events, the message list sent to the model and the call it paused on.  At
+most one live run exists per conversation (unique partial index on
+`conversation_id` while status is `running` or `waiting_confirmation`): a
+double-click reuses that row without a second credit charge, and `running` rows
+left after a process exit are reclaimed at server startup.
 
 `tool_definitions` offers every registered tool with its own `input_schema`, so
 the model sees exactly the arguments the registry validates and a plugin tool is

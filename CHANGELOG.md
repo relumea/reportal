@@ -117,6 +117,7 @@ view renders it from here.
 - Global search selects the SHA-256 query type when the query is a
   64-character hex string.
 - Search binary hits show a 12-character SHA-256 with a copy control.
+- Binary panel reads Code Signature.
 - Functions and Data types search placeholders state the total count.
   Analyses carries an Upload File action that opens the binaries panel.
 - Binary header, Analyses rows and Binaries rows show a hash identicon

@@ -6632,14 +6632,21 @@ def start_conversation_run(
 
     A read-only tool runs immediately; a tool that changes the workspace pauses
     the run with the exact call it wants to make, and `POST .../confirm` decides
-    it.  The run row is journaled, and the messages the turn wrote with it, so a
-    revert of the returned action removes both; a tool call the run made carries
-    its own journal action, which this one does not cover.
+    it.  A second POST while a run is still live returns that run without
+    charging again or appending another user message.  The run row is journaled,
+    and the messages the turn wrote with it, so a revert of the returned action
+    removes both; a tool call the run made carries its own journal action, which
+    this one does not cover.
     """
     content = _require_str(body, "content")
     with contextlib.closing(_open()) as conn:
         if store.get_conversation(conn, conversation_id) is None:
             return _no_conversation(conversation_id)
+        # A live run is free to re-read: charging the gate again would 402 a
+        # double-click that only needs the existing payload.
+        live = agent.find_live_run(conn, conversation_id)
+        if live is not None:
+            return json_response(agent.payload(live))
         gate_messages, _ = conversations.agent_messages(
             conn,
             conversation_id=conversation_id,

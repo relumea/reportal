@@ -299,6 +299,81 @@ class TestRuns:
         assert finished["status"] == agent.STATUS_COMPLETED
         assert [row["body"] for row in comments] == ["from the agent"]
 
+    def test_a_second_start_while_waiting_reuses_the_live_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A double-click must not open a second metered agent turn."""
+        ids = _seed(tmp_path, monkeypatch)
+        charges: list[str] = []
+
+        def record_charge(task: str, input_tokens: int) -> None:
+            charges.append(task)
+
+        client = ScriptedAgentClient([{"tool_calls": [_tag_call(ids)]}])
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            with llm.charging(record_charge):
+                first = _journaled(
+                    conn,
+                    lambda conn, log: agent.start(
+                        conn,
+                        log,
+                        conversation_id=ids["conversation"],
+                        content="tag it",
+                        client=client,
+                    ),
+                )
+                again = _journaled(
+                    conn,
+                    lambda conn, log: agent.start(
+                        conn,
+                        log,
+                        conversation_id=ids["conversation"],
+                        content="tag it again",
+                        client=client,
+                    ),
+                )
+            messages = store.list_messages(conn, ids["conversation"])
+            runs = agent.list_runs(conn, ids["conversation"])
+        assert first["status"] == agent.STATUS_WAITING
+        assert again["run_id"] == first["run_id"]
+        assert again["status"] == agent.STATUS_WAITING
+        assert [row["status"] for row in runs] == [agent.STATUS_WAITING]
+        assert [row["role"] for row in messages] == ["user"]
+        assert charges == [llm.TASK_AGENT]
+
+    def test_reclaim_orphaned_running_leaves_waiting_intact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            agent.ensure_schema(conn)
+            now = store.now()
+            running_id = int(
+                conn.execute(
+                    f"INSERT INTO {agent.RUN_TABLE} (conversation_id, status, actor,"
+                    " created_at, updated_at) VALUES (?, ?, '', ?, ?)",
+                    (ids["conversation"], agent.STATUS_RUNNING, now, now),
+                ).lastrowid
+                or 0
+            )
+            conn.commit()
+            other = store.create_conversation(
+                conn, scope_kind="function", scope_id=ids["function"], title="other"
+            )
+            waiting_id = int(
+                conn.execute(
+                    f"INSERT INTO {agent.RUN_TABLE} (conversation_id, status, actor,"
+                    " created_at, updated_at) VALUES (?, ?, '', ?, ?)",
+                    (other, agent.STATUS_WAITING, now, now),
+                ).lastrowid
+                or 0
+            )
+            conn.commit()
+            closed = agent.reclaim_orphaned_running_runs(conn)
+            assert closed == 1
+            assert agent.get_run(conn, running_id)["status"] == agent.STATUS_FAILED
+            assert agent.get_run(conn, waiting_id)["status"] == agent.STATUS_WAITING
+
     def test_a_rejected_call_is_fed_back_and_the_run_continues(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
