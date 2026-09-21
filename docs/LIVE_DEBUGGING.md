@@ -195,6 +195,9 @@ The last mile is the part the rest of the portal already has:
 5. Windows guest with a DAP shim in front of `DbgEng`, which is the slice that reaches PE
    malware. Effort M.
 6. QEMU `gdbstub` backend for firmware images `firmware.py` already carves. Effort S.
+   **Shipped**: `--qemu ARCH` runs the gdb probe under `qemu-<arch> -g` through
+   `target remote` (continue instead of run, local sysroot, stub killed on every
+   path), live-verified against `qemu-x86_64`.
    **Shipped in part**: the gdb MI probe drives a native binary; the qemu stub transport
    stays open.
 7. Fusion digest: the `debug-digest` artifact, `observed` versus `inferred` labelling, the
