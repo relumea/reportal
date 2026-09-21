@@ -14,7 +14,8 @@ This module is pure proposal building plus the two orchestrators
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +139,29 @@ def _stored_proposal_name(
     raise NoProposalError(f"no stored unstrip proposal for function {function_id}")
 
 
+def _candidates_fingerprint(candidates: Sequence[Mapping[str, Any] | Any]) -> str:
+    """Stable hash of the candidate set: VA plus name plus confidence, sorted."""
+    import json as _json
+
+    normalized: list[str] = []
+    for candidate in candidates:
+        if isinstance(candidate, Mapping):
+            normalized.append(
+                _json.dumps(
+                    {
+                        "confidence": str(candidate.get("confidence") or ""),
+                        "name": str(candidate.get("name") or ""),
+                        "va": str(candidate.get("va") or ""),
+                    },
+                    sort_keys=True,
+                )
+            )
+        else:
+            normalized.append(_json.dumps(str(candidate), sort_keys=True))
+    normalized.sort()
+    return sha256("\n".join(normalized).encode("utf-8")).hexdigest()
+
+
 def run_unstrip(
     conn: sqlite3.Connection,
     *,
@@ -152,6 +176,8 @@ def run_unstrip(
     *ident* overrides the identification call and defaults to
     :meth:`RebrewEngine.identify_library`.  Proposals at or above
     *min_confidence* are stored as the ``unstrip`` scan; nothing is renamed.
+    A repeat run whose candidates hash to the stored scan's hash is a no-op:
+    the stored payload is returned with ``unchanged: true`` and no write.
     Raises :class:`NoRebrewContextError` without a stored project context and
     propagates an engine failure.
     """
@@ -162,13 +188,31 @@ def run_unstrip(
     result = identify(project_dir)
     raw_candidates = result.get("candidates")
     candidates = raw_candidates if isinstance(raw_candidates, list) else []
+    fingerprint = _candidates_fingerprint(candidates)
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is not None:
+        stored = store.get_scan(conn, analysis_id, store.SCAN_KIND_UNSTRIP)
+        if (
+            stored is not None
+            and stored.get("candidates_fingerprint") == fingerprint
+            and store.get_scan_params(conn, analysis_id, store.SCAN_KIND_UNSTRIP).get(
+                "min_confidence", DEFAULT_MIN_CONFIDENCE
+            )
+            == min_confidence
+        ):
+            return {**stored, "unchanged": True}
     functions = store.list_functions(conn, binary_id=binary_id)
     proposals = [
         proposal
         for proposal in build_proposals(candidates, functions)
         if proposal["confidence"] >= min_confidence
     ]
-    payload = {"candidates": len(candidates), "proposals": proposals, "applied": False}
+    payload = {
+        "candidates": len(candidates),
+        "candidates_fingerprint": fingerprint,
+        "proposals": proposals,
+        "applied": False,
+    }
     analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine=store.SCAN_ENGINE)
     store.set_scan(
         conn,

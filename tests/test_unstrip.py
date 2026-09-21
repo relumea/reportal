@@ -203,7 +203,12 @@ class TestRunUnstrip:
             engine=fake_engine,
             ident=lambda project_dir: {"candidates": []},
         )
-        assert payload == {"candidates": 0, "proposals": [], "applied": False}
+        assert payload == {
+            "candidates": 0,
+            "candidates_fingerprint": unstrip._candidates_fingerprint([]),
+            "proposals": [],
+            "applied": False,
+        }
         assert store.get_scan(conn, ids["analysis"], store.SCAN_KIND_UNSTRIP) == payload
 
     def test_missing_candidates_key_is_empty(
@@ -214,6 +219,30 @@ class TestRunUnstrip:
             conn, binary_id=ids["binary"], engine=fake_engine, ident=lambda project_dir: {}
         )
         assert payload["candidates"] == 0
+
+    def test_repeat_run_with_identical_candidates_is_a_noop(
+        self, conn: sqlite3.Connection, fake_engine: FakeEngine
+    ) -> None:
+        ids = _seed(conn, [(0x1000, "sub_1000", "rebrew")])
+        candidates = {"candidates": [_candidate(0x1000, "ChooseFontW")]}
+        first = unstrip.run_unstrip(
+            conn,
+            binary_id=ids["binary"],
+            engine=fake_engine,
+            ident=lambda project_dir: candidates,
+        )
+        assert first.get("unchanged") is None
+        calls = list(fake_engine.calls)
+        second = unstrip.run_unstrip(
+            conn,
+            binary_id=ids["binary"],
+            engine=fake_engine,
+            ident=lambda project_dir: candidates,
+        )
+        assert second["unchanged"] is True
+        assert second["candidates_fingerprint"] == first["candidates_fingerprint"]
+        assert second["proposals"] == first["proposals"]
+        _ = calls
 
 
 class TestApplyProposal:
