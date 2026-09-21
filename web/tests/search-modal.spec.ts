@@ -72,9 +72,15 @@ test("Escape closes the modal and returns the focus it took", async ({ page }) =
 
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
-  expect(await page.evaluate<string | null>("document.activeElement?.getAttribute('data-view')")).toBe(
-    "binaries",
-  );
+  await expect
+    .poll(
+      () =>
+        page.evaluate<string | null>(
+          "document.activeElement?.getAttribute('data-view')",
+        ),
+      { timeout: 5000 },
+    )
+    .toBe("binaries");
 });
 
 test("the shortcut stays quiet while a text field owns the keyboard", async ({ page }) => {
@@ -113,7 +119,8 @@ test("the arrow keys move the highlight and the tag query narrows the results", 
 
   await page.getByRole("tab", { name: "Tag" }).click();
   await page.keyboard.type(state.tag_name);
-  const binaryRow = hit(page, "binary").first();
+  const binaryRows = hit(page, "binary");
+  const binaryRow = binaryRows.first();
   const tagRow = hit(page, "tag").first();
   await expect(binaryRow).toBeVisible();
   await expect(tagRow).toBeVisible();
@@ -121,10 +128,15 @@ test("the arrow keys move the highlight and the tag query narrows the results", 
   await expect(binaryRow).toHaveAttribute("aria-selected", "true");
   await expect(tagRow).toHaveAttribute("aria-selected", "false");
 
-  await page.keyboard.press("ArrowDown");
+  // Step past every binary hit; the tag group follows the binaries.
+  for (let step = 0, count = await binaryRows.count(); step < count; step += 1) {
+    await page.keyboard.press("ArrowDown");
+  }
   await expect(tagRow).toHaveAttribute("aria-selected", "true");
   await expect(binaryRow).toHaveAttribute("aria-selected", "false");
-  await page.keyboard.press("ArrowUp");
+  for (let step = 0, count = await binaryRows.count(); step < count; step += 1) {
+    await page.keyboard.press("ArrowUp");
+  }
   await expect(binaryRow).toHaveAttribute("aria-selected", "true");
 });
 

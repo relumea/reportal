@@ -778,7 +778,11 @@ export function HistoryPanel({
               { label: "When", key: "created_at", mono: true },
               { label: "Old", key: "old_name", mono: true },
               { label: "New", key: "new_name", mono: true },
-              { label: "Actor", key: "actor" },
+              {
+                label: "Actor",
+                render: (row) =>
+                  `${row.actor_name ?? row.actor ?? "manual"}${row.age ? `, ${row.age}` : ""}`,
+              },
               { label: "Source", key: "source" },
               {
                 label: "Actions",
@@ -1044,6 +1048,9 @@ function AiRenamesPanel({
       });
       setNote(`${result.applied.length} applied, ${result.skipped.length} skipped.`);
       refreshDecompilation(functionId);
+      // Applying with rename_function records name history, so it reloads
+      // with the decompilation instead of going stale until the next mount.
+      refreshPanel(historyKey(functionId), () => loadHistory(functionId));
       onMutated();
     } catch (failure) {
       setActionError(failure);

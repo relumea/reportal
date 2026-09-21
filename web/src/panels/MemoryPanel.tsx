@@ -268,7 +268,11 @@ function WindowMode({ binaryId }: { binaryId: number }): ReactNode {
             onChange={(event) => setAddress(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") runRead();
-              if (event.key === "Escape") {
+              else if (event.key === "Tab") {
+                event.preventDefault();
+                const next = MEMORY_ADDRESS_KINDS.indexOf(kind) + 1;
+                setKind(MEMORY_ADDRESS_KINDS[next % MEMORY_ADDRESS_KINDS.length]);
+              } else if (event.key === "Escape") {
                 event.preventDefault();
                 setAddress("");
               }
@@ -479,6 +483,10 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
             onChange={(event) => setGoto(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && gotoRequested) request(goto, gotoKind);
+              else if (event.key === "Tab") {
+                event.preventDefault();
+                setGotoKind(gotoKind === "file" ? "va" : "file");
+              }
             }}
           />
         </Field>
@@ -846,8 +854,25 @@ function ContinuousMode({
     void kind;
   };
 
+  // A linked address only anchors the dump while the column still reads it:
+  // switching va to file offset (or back) restarts from the first section in
+  // the new address space instead of reading a virtual address as a file
+  // offset, which the engine refuses as unmapped.
+  const prevColumn = useRef(column);
   useEffect(() => {
-    restart(focus !== undefined && /^0x/i.test(focus) ? focus : "", column);
+    const switched = prevColumn.current !== column;
+    prevColumn.current = column;
+    const first = sections.find((section) => section.raw_size > 0);
+    const relocated =
+      switched && first !== undefined ? (column === "file" ? first.offset : first.va) : "";
+    if (switched) {
+      // The viewport belongs to the old address space; without resetting it
+      // the walk races back toward it and 400s on the first gap it meets.
+      const node = container.current;
+      if (node !== null) node.scrollTop = 0;
+      setScrollTop(0);
+    }
+    restart(focus !== undefined && !switched && /^0x/i.test(focus) ? focus : relocated, column);
     // The dump re-anchors on the column and on a linked address.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [binaryId, column, focus]);
@@ -1045,6 +1070,9 @@ function ContinuousMode({
               if (event.key === "Enter") {
                 event.preventDefault();
                 jump();
+              } else if (event.key === "Tab") {
+                event.preventDefault();
+                remember(column === "file" ? "va" : "file");
               } else if (event.key === "Escape") {
                 event.preventDefault();
                 setGoto("");

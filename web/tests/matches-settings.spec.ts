@@ -12,7 +12,17 @@ const state = e2eState();
 test("a platform scope narrows the recorded match rows to none", async ({ page }) => {
   await page.goto("/#/matches");
   await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
-  await page.getByRole("button", { name: "Load", exact: true }).click();
+  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
+  const modes = page.getByRole("group", { name: "Match scope" });
+  await expect(
+    modes.getByRole("button", { name: "Selected Function", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await modes.getByRole("button", { name: "All Functions", exact: true }).click();
+  await expect(
+    modes.getByRole("button", { name: "All Functions", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
+  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
 
   // The seeded workspace recorded both edges of the pair.
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
@@ -43,13 +53,18 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
   await page.getByRole("button", { name: /No Match/ }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
   await expect(page.getByText("No match").first()).toBeVisible();
+  // Hosted filter header reads N / M with a Clear all that resets the panel.
+  await expect(page.getByText("5 / 7 functions match the filters")).toBeVisible();
+  await page.getByRole("button", { name: "Clear all", exact: true }).click();
+  await expect(page.getByText("7 / 7 functions match the filters")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Clear all", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /No Match/ }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
 
-  await page.getByRole("button", { name: "Match settings" }).click();
+  await page.getByRole("button", { name: "Settings" }).click();
   // The sheet is nested inside the match view's own panel, so the innermost
   // panel carrying that heading is the sheet itself.
-  const sheet = panelByTitle(page, "Match settings").last();
+  const sheet = panelByTitle(page, "Settings").last();
   await sheet.getByLabel("Android", { exact: true }).check();
   const runResponse = page.waitForResponse(
     (response) =>
@@ -57,12 +72,23 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
       response.request().method() === "POST" &&
       response.ok(),
   );
-  await sheet.getByRole("button", { name: "Run match" }).click();
+  await sheet.getByRole("button", { name: "Match" }).click();
   const run = (await (await runResponse).json()) as { journal_action?: string };
 
   await expect(page.getByText("Match run recorded:", { exact: false })).toBeVisible();
   await expect(page.getByText("0 candidates recorded", { exact: false })).toBeVisible();
+  // Hosted Matching filters need match data: with no recorded candidates the
+  // quality bars stay hidden.
+  await expect(page.getByRole("group", { name: "Filter by name source" })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Filter by match quality" })).toHaveCount(0);
   await expect(page.getByText("No match").first()).toBeVisible();
+  // The run unmatched every function, so the previously matched one now reads
+  // No match: the unmatched list reloaded with the run instead of keeping the
+  // previous split.
+  const unmatched = page.locator("table.data-table tbody tr").filter({
+    has: page.getByRole("link", { name: state.function_name }),
+  });
+  await expect(unmatched.getByText("No match", { exact: true })).toBeVisible();
 
   // The active scope shows as a chip the reader can clear.
   await expect(page.locator(".chip").getByText("Android", { exact: true })).toBeVisible();
@@ -84,11 +110,11 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
 test("the top setting reaches the run and is recorded with it", async ({ page }) => {
   await page.goto("/#/matches");
   await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
-  await page.getByRole("button", { name: "Load", exact: true }).click();
+  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
   await expect(page.getByText(/candidates? recorded/)).toBeVisible();
 
-  await page.getByRole("button", { name: "Match settings" }).click();
-  const sheet = panelByTitle(page, "Match settings").last();
+  await page.getByRole("button", { name: "Settings" }).click();
+  const sheet = panelByTitle(page, "Settings").last();
   // The sheet offered no cap before, so every run it started used the server's
   // default of 10 however many candidates a function had.
   await sheet.getByLabel("Top candidates").fill("1");
@@ -100,7 +126,7 @@ test("the top setting reaches the run and is recorded with it", async ({ page })
       response.request().method() === "POST" &&
       response.ok(),
   );
-  await sheet.getByRole("button", { name: "Run match" }).click();
+  await sheet.getByRole("button", { name: "Match" }).click();
   expect((await request).postDataJSON()).toMatchObject({ top: 1 });
   const run = (await (await runResponse).json()) as {
     journal_action?: string;
@@ -114,6 +140,18 @@ test("the top setting reaches the run and is recorded with it", async ({ page })
   await expect(page.locator(".chip").getByText(chip, { exact: true })).toBeVisible();
   await page.locator(".chip").getByLabel(`Clear ${chip}`).click();
   expect(await sheet.getByLabel("Top candidates").inputValue()).toBe("10");
+
+  // The similarity floor shows as a ≥ chip the reader can clear.
+  await sheet.getByLabel("Min similarity").fill("50");
+  await expect(page.locator(".chip").getByText("≥ 50%", { exact: true })).toBeVisible();
+  await page.locator(".chip").getByLabel("Clear ≥ 50%").click();
+  expect(await sheet.getByLabel("Min similarity").inputValue()).toBe("80");
+
+  // The Debug Data scope shows as a chip the reader can clear.
+  await sheet.getByLabel("System", { exact: true }).check();
+  await expect(page.locator(".chip").getByText("System", { exact: true })).toBeVisible();
+  await page.locator(".chip").getByLabel("Clear System").click();
+  await expect(sheet.getByLabel("System", { exact: true })).not.toBeChecked();
 
   // The suite shares one seeded workspace, so undo the run through its own
   // journal entry and leave the seeded rows behind for later specs.

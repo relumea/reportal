@@ -148,6 +148,11 @@ ERROR_NO_HASH = "no-content-hash"
 ERROR_FETCH_FAILED = "external-fetch-failed"
 ERROR_TOO_LARGE = "external-too-large"
 ERROR_BAD_RESPONSE = "external-bad-response"
+ERROR_RATE_LIMITED = "rate-limited"
+
+# A remote re-pull inside this window answers the stored report's age instead
+# of spending quota: the hosted portal rate-limits its refresh the same way.
+REMOTE_REFRESH_SECONDS = 3600
 
 DISABLED_DETAIL = (
     f"external sources are off: set {ALLOW_REMOTE_ENV}=1 or [external]"
@@ -200,6 +205,13 @@ class ExternalFetchError(ExternalError, RuntimeError):
 
     def __init__(self, detail: str, code: str = ERROR_FETCH_FAILED) -> None:
         super().__init__(code, detail)
+
+
+class RateLimitedExternalError(ExternalError, RuntimeError):
+    """A remote re-pull inside the refresh window; the API answers 429."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(ERROR_RATE_LIMITED, detail)
 
 
 # ── Configuration ──────────────────────────────────────────────────
@@ -733,12 +745,35 @@ def stored(
     return store.get_scan(conn, analysis_id, scan_kind(source.name))
 
 
+def _refuse_fresh_repull(conn: sqlite3.Connection, *, analysis_id: int, source: Source) -> None:
+    """Refuse a remote re-pull fetched inside the refresh window.
+
+    The stored answer stays readable; only a fresh remote call is refused, so
+    quota is spent at most once an hour per analysis and source.
+    """
+    from reportal import clock
+
+    previous = store.get_scan(conn, analysis_id, scan_kind(source.name))
+    fetched = (previous or {}).get("fetched_at")
+    if not isinstance(fetched, str) or not fetched:
+        return
+    try:
+        age = (clock.now_utc() - clock.as_utc(fetched)).total_seconds()
+    except ValueError:
+        return
+    if age < REMOTE_REFRESH_SECONDS:
+        raise RateLimitedExternalError(
+            f"the {source.name} report was fetched {int(age)}s ago;"
+            f" re-pull after {REMOTE_REFRESH_SECONDS // 60}m"
+        )
+
+
 def run(conn: sqlite3.Connection, *, analysis_id: int, source_name: str) -> dict[str, Any]:
     """Run one source and return the payload to store; writes nothing.
 
     The caller stores it, so a failure leaves no scan behind and the write is
     journaled where the caller wants it.  Raises :class:`ExternalError` for a
-    disabled, unavailable or failing source.
+    disabled, unavailable, rate-limited or failing source.
     """
     source = get_source(source_name)
     context = binary_context(conn, analysis_id)
@@ -746,6 +781,8 @@ def run(conn: sqlite3.Connection, *, analysis_id: int, source_name: str) -> dict
         if source.kind == KIND_REMOTE and not remote_enabled():
             raise DisabledExternalError
         raise UnavailableExternalError(source.unavailable_reason())
+    if source.kind == KIND_REMOTE:
+        _refuse_fresh_repull(conn, analysis_id=analysis_id, source=source)
     payload = source.retrieve(context)
     return {
         "analysis_id": analysis_id,

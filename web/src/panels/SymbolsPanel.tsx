@@ -67,7 +67,7 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
 
   return (
     <Panel
-      title="Debug symbols"
+      title="Debug Symbols"
       subtitle="A PDB or an ELF/DWARF file: its names are applied to matching functions and its types are added to the type model."
       collapsible
       actions={

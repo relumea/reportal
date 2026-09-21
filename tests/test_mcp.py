@@ -787,6 +787,20 @@ class TestReadTools:
         assert is_error is False
         assert payload["notes"] == ""
 
+        payload, is_error = _call(
+            "rename_binary",
+            {"binary_id": ids["binary"], "format_override": "elf", "arch_override": "x86_64"},
+        )
+        assert is_error is False
+        assert payload["format_override"] == "elf"
+        assert payload["arch_override"] == "x86_64"
+
+        payload, is_error = _call(
+            "rename_binary", {"binary_id": ids["binary"], "format_override": "macho"}
+        )
+        assert is_error is True
+        assert payload["error"] == "invalid binary"
+
     def test_list_binaries_filters_and_orders(self, conn: Any, tmp_path: Path) -> None:
         ids = _seed_binary(conn, tmp_path)
         store.add_binary(conn, sha256="cd" * 32, name="other.exe", size=99, fmt="ELF")

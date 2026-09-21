@@ -351,7 +351,7 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
   return (
     <>
       <Panel
-        title="Indirect call sites"
+        title="Indirect Call Sites"
         subtitle="Calls and jumps through a register or a memory operand, from the cached listing."
         actions={
           <Button

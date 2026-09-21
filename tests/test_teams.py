@@ -45,7 +45,15 @@ class TestTeamStore:
         assert team["description"] == "Windows work"
         assert [row["name"] for row in auth.list_teams(conn)] == ["Blue"]
         assert auth.list_teams(conn)[0]["member_count"] == 0
+        assert auth.list_teams(conn)[0]["member_ids"] == []
         assert auth.find_team(conn, "blue") is not None
+
+    def test_list_names_member_ids(self, conn: sqlite3.Connection) -> None:
+        team = auth.create_team(conn, name="Blue")
+        user, _token = auth.add_user(conn, name="ana")
+        auth.add_member(conn, int(team["id"]), int(user["id"]))
+
+        assert auth.list_teams(conn)[0]["member_ids"] == [int(user["id"])]
 
     def test_a_duplicate_or_blank_name_is_refused(self, conn: sqlite3.Connection) -> None:
         auth.create_team(conn, name="Blue")
@@ -665,6 +673,23 @@ class TestCli:
         assert stored is not None
         assert stored["name"] == "renamed.exe"
         assert stored["notes"] == "vendor sample"
+
+    def test_binary_rename_asserts_format_and_arch(self, tmp_path: Path, monkeypatch: Any) -> None:
+        db = self._portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(db)) as conn:
+            binary_id = store.add_binary(conn, sha256="9" * 64, name="demo.exe")
+
+        asserted = runner.invoke(
+            cli.app,
+            ["binary-rename", str(binary_id), "--format", "elf", "--arch", "x86_64", "--json"],
+        )
+        assert asserted.exit_code == 0, asserted.output
+        payload = json.loads(asserted.stdout)
+        assert payload["format_override"] == "elf"
+        assert payload["arch_override"] == "x86_64"
+
+        refused = runner.invoke(cli.app, ["binary-rename", str(binary_id), "--format", "macho"])
+        assert refused.exit_code == 1
 
     def test_an_unknown_object_or_team_exits_non_zero(
         self, tmp_path: Path, monkeypatch: Any

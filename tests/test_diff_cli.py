@@ -129,7 +129,7 @@ class TestDiffCommand:
         engines.set_engine(engines.RebrewEngine(enabled=False))
         result = runner.invoke(cli.app, ["diff", str(ids["left"]), str(ids["right"]), "--json"])
         assert result.exit_code == 1
-        assert "rebrew is required" in result.stdout
+        assert "analysis engine unavailable" in result.stdout
 
     def test_similarity_null_without_a_recorded_match_or_the_extra(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine

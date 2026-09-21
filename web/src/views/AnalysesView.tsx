@@ -688,7 +688,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
           <EmptyState>
             {filtered
               ? `No analyses match this filter (${result.data?.total ?? 0} stored). Clear it to see them all.`
-              : "No analyses yet. Import a rebrew project or create one for a binary."}
+              : "No analyses yet. Upload a binary to create one."}
           </EmptyState>
         ) : (
           <>
@@ -735,8 +735,18 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                   label: "Platform",
                   render: (row) => (
                     <span className="toolbar">
-                      <Badge mono>{row.binary_format || "n/a"}</Badge>
-                      <Badge mono>{row.binary_arch || "n/a"}</Badge>
+                      <Badge
+                        mono
+                        title={row.binary_format_override ? "Format asserted by hand" : undefined}
+                      >
+                        {row.binary_format || "n/a"}
+                      </Badge>
+                      <Badge
+                        mono
+                        title={row.binary_arch_override ? "ISA asserted by hand" : undefined}
+                      >
+                        {row.binary_arch || "n/a"}
+                      </Badge>
                     </span>
                   ),
                 },

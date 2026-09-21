@@ -717,7 +717,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Create from declarations",),
             ("Update from declarations",),
             # Debug symbol ingestion: the file control and its apply toggle.
-            ("Debug symbols",),
+            ("Debug Symbols",),
             ("Ingest symbols",),
             # The stored renames as runnable scripts, beside the C/JSON export.
             ("Ghidra",),
@@ -841,7 +841,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # The per-function extras: the call-site scan, the per-function
             # capability classification, the analyst strings and edges and the
             # canonical-name action.
-            ("Indirect call sites",),
+            ("Indirect Call Sites",),
             ("Capabilities",),
             ("Declare callee",),
             ("Apply canonical name",),

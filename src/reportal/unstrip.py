@@ -45,7 +45,7 @@ IdentifyFn = Callable[[str | Path], dict[str, Any]]
 
 
 class NoRebrewContextError(Exception):
-    """The binary has no rebrew project context to identify library functions in."""
+    """The binary has no analysis context yet to identify library functions in."""
 
 
 class NoProposalError(Exception):
@@ -157,7 +157,7 @@ def run_unstrip(
     """
     project_dir = store.get_rebrew_context(conn, binary_id)
     if project_dir is None:
-        raise NoRebrewContextError(f"binary {binary_id} has no rebrew project context")
+        raise NoRebrewContextError(f"binary {binary_id} has no analysis context yet")
     identify = ident or engine.identify_library
     result = identify(project_dir)
     raw_candidates = result.get("candidates")

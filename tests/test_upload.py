@@ -23,6 +23,9 @@ RESPONSE_KEYS = {
     "size",
     "format",
     "arch",
+    # A hand-set override, empty when detection stands.
+    "format_override",
+    "arch_override",
     "language",
     "compiler",
     "notes",

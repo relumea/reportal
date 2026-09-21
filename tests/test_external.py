@@ -494,6 +494,23 @@ class TestRun:
         assert result["fetched_at"]
         assert result["payload"]["attributes"]["reputation"] == 12
 
+    def test_a_remote_repill_inside_the_hour_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        _enable(monkeypatch)
+        external.set_http_client(_transport())
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            with journal.journaled(conn, journal.new_action()) as log:
+                external.journaled_run(
+                    conn, log, analysis_id=ids["analysis"], source_name=external.VIRUSTOTAL_SOURCE
+                )
+            with pytest.raises(external.RateLimitedExternalError) as excinfo:
+                external.run(
+                    conn, analysis_id=ids["analysis"], source_name=external.VIRUSTOTAL_SOURCE
+                )
+        assert excinfo.value.code == external.ERROR_RATE_LIMITED
+
     def test_a_binary_without_a_hash_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

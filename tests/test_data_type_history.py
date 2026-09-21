@@ -471,6 +471,18 @@ class TestCli:
         assert payload["count"] == 2
         assert payload["history"][0]["changes"][0]["field"] == "name"
 
+    def test_history_command_names_the_actor_with_its_age(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = self._seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            data_types.rename_type(conn, ids["type"], name="Player")
+
+        result = runner.invoke(cli.app, ["types-history", str(ids["type"])])
+
+        assert result.exit_code == 0
+        assert "just now" in result.output
+
     def test_history_command_without_history(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -45,6 +45,15 @@ export function SignaturePanel({
     api<FunctionSignatureDetail>(`/functions/${functionId}/signature`);
   const entry = usePanel(key, loader);
   const [showHistory, setShowHistory] = useState(false);
+  // A save writes a history version too, so the history section reloads with
+  // the model instead of going stale until the next mount.
+  const historyKey = panelKey("fn", functionId, "signature-history");
+  const reloadAll = (): void => {
+    refreshPanel(key, loader);
+    refreshPanel(historyKey, () =>
+      api<SignatureHistory>(`/functions/${functionId}/signature/history`),
+    );
+  };
 
   let body: ReactNode;
   if (!entry || entry.state === "loading") body = <Loading label="Loading the signature" />;
@@ -60,7 +69,7 @@ export function SignaturePanel({
         functionId={functionId}
         binaryId={binaryId}
         signature={entry.data}
-        onChange={() => refreshPanel(key, loader)}
+        onChange={() => reloadAll()}
       />
     );
   }
@@ -79,13 +88,13 @@ export function SignaturePanel({
       {showHistory ? (
         <SignatureHistorySection
           functionId={functionId}
-          onChange={() => refreshPanel(key, loader)}
+          onChange={() => reloadAll()}
         />
       ) : null}
       <SignatureCopy
         functionId={functionId}
         analysisId={analysisId}
-        onCopied={() => refreshPanel(key, loader)}
+        onCopied={() => reloadAll()}
       />
     </Panel>
   );
@@ -141,7 +150,8 @@ function SignatureHistorySection({
               <div className="toolbar">
                 <Badge mono>#{version.id}</Badge>
                 <Muted>
-                  {version.source || "manual"} ({version.actor || "manual"}) {version.created_at}
+                  {version.source || "manual"} ({version.actor_name ?? version.actor ?? "manual"}
+                  ){version.age ? `, ${version.age}` : ""} · {version.created_at}
                 </Muted>
                 <ConfirmButton
                   label="Revert"

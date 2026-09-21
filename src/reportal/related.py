@@ -124,7 +124,7 @@ SCOPE_NOTE = (
     f" capability overlap threshold {CAPABILITY_OVERLAP_THRESHOLD};"
     f" size tolerance {SIZE_TOLERANCE_PERCENT}%"
 )
-NO_ENGINE_NOTE = "no rebrew engine; ranking from stored fingerprints and scans only"
+NO_ENGINE_NOTE = "no analysis engine; ranking from stored fingerprints and scans only"
 
 
 class RelatedIO(Protocol):

@@ -182,8 +182,7 @@ export function KnowledgeView(): ReactNode {
         ) : null}
         {binaries.length === 0 ? (
           <EmptyState>
-            No binaries yet. Import a rebrew project with{" "}
-            <code>reportal import-rebrew &lt;project-dir&gt;</code> to scope knowledge to one.
+            No binaries yet. Upload one to scope knowledge to it.
           </EmptyState>
         ) : null}
       </Panel>

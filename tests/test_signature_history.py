@@ -131,6 +131,24 @@ class TestHistoryRecording:
         # The seeding row replaced no state, so it has nothing to render.
         assert history[1]["prototype"] is None
 
+    def test_a_history_row_names_its_user_and_age(self, conn: sqlite3.Connection) -> None:
+        from reportal import auth
+
+        _, function_id = _seeded(conn)
+        user, _token = auth.add_user(conn, name="ana")
+        store.add_signature_history(
+            conn,
+            function_id=function_id,
+            previous=None,
+            source="manual",
+            actor="ana",
+            actor_user_id=int(user["id"]),
+        )
+        entry = signatures.list_history(conn, function_id)[0]
+        assert entry["actor"] == "ana"
+        assert entry["actor_name"] == "ana"
+        assert entry["age"] == "just now"
+
 
 class TestRevert:
     def test_revert_restores_the_stored_row_exactly(self, conn: sqlite3.Connection) -> None:

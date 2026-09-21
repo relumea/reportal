@@ -227,4 +227,4 @@ class TestCli:
             )
         result = runner.invoke(cli.app, ["references", str(function_id)])
         assert result.exit_code != 0
-        assert "no rebrew project context" in result.output
+        assert "no analysis context yet" in result.output

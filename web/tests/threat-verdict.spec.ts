@@ -17,7 +17,7 @@ test("the threat report renders the software type, the score and the MITRE link"
   page,
 }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const threat = panelByTitle(page, "Threat report");
+  const threat = panelByTitle(page, "Threat Report");
 
   const verdict = threat.locator(".verdict");
   await expect(verdict.locator(".badge", { hasText: SEEDED_TYPE })).toBeVisible();
@@ -42,6 +42,33 @@ test("the threat report renders the software type, the score and the MITRE link"
   const technique = threat.locator('a[href^="https://attack.mitre.org/techniques/"]').first();
   await expect(technique).toBeVisible();
   await expect(technique).toHaveText(/^T\d{4}$/);
+
+  // Hosted Threat Report carries its YARA rule, read from the remediation scan.
+  await expect(threat.getByText(/Yara Rule \(notepad_demo\)/)).toBeVisible();
+
+  // Hosted IOC rows carry a copy control on the value.
+  await threat.getByText(/Urls \(1\)/).click();
+  const ioc = threat.getByText("https://c2.example.com/beacon", { exact: true });
+  await expect(ioc).toBeVisible();
+  await expect(ioc.locator("xpath=ancestor::li").locator(".copy-row")).toBeVisible();
+
+  // Hosted agent cards rate the result in the header: Up toggles on, Up again
+  // clears it, and the suite reverts the journal entry it wrote.
+  const panel = page.locator(".panel").filter({
+    has: page.getByRole("heading", { name: "Threat Report", exact: true }),
+  });
+  const up = panel.getByRole("button", { name: "Up", exact: true });
+  await expect(up).toHaveAttribute("aria-pressed", "false");
+  await up.click();
+  await expect(panel.getByRole("button", { name: "Up", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await panel.getByRole("button", { name: "Up", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "Up", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
 });
 
 // The Triage panel renders the same `ThreatVerdict` from its own payload; the

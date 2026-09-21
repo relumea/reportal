@@ -161,7 +161,7 @@ def _distribution_version(package: str) -> str:
 
 
 def engine_model() -> Model:
-    """The ``rebrew`` engine: what produces a fingerprint, disassembly or scan."""
+    """The analysis engine: what produces a fingerprint, disassembly or scan."""
     engine = engines.get_engine()
 
     def reason() -> str:
@@ -171,7 +171,9 @@ def engine_model() -> Model:
         name=ENGINE_PACKAGE,
         kind=KIND_ENGINE,
         version=_distribution_version(ENGINE_PACKAGE),
-        description="the in-process rebrew engine: fingerprints, disassembly, scans, decompilation",
+        description=(
+            "the in-process analysis engine: fingerprints, disassembly, scans, decompilation"
+        ),
         available=engine.available,
         unavailable_reason=reason,
     )
@@ -189,7 +191,7 @@ def decompiler_models() -> tuple[Model, ...]:
             name=backend,
             kind=KIND_DECOMPILER,
             version=_distribution_version(ENGINE_PACKAGE),
-            description=f"the {backend} decompiler backend, reached through rebrew",
+            description=f"the {backend} decompiler backend, reached through the engine",
             available=engine.available,
             unavailable_reason=reason,
         )

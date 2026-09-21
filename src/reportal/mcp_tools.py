@@ -785,17 +785,33 @@ def _tool_get_binary(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _tool_rename_binary(arguments: dict[str, Any]) -> dict[str, Any]:
+    from reportal import api as api_mod
+
     binary_id = _arg_int(arguments, "binary_id")
     has_name = "name" in arguments and arguments["name"] is not None
     has_notes = "notes" in arguments and arguments["notes"] is not None
-    if not has_name and not has_notes:
-        raise ToolError("invalid binary", "name or notes is required")
+    has_format = "format_override" in arguments and arguments["format_override"] is not None
+    has_arch = "arch_override" in arguments and arguments["arch_override"] is not None
+    if not has_name and not has_notes and not has_format and not has_arch:
+        raise ToolError("invalid binary", "name, notes or an override is required")
     name = _arg_str(arguments, "name") if has_name else ""
     notes = _arg_optional_str(arguments, "notes") if has_notes else None
     if notes is not None and len(notes.strip()) > store.MAX_BINARY_NOTES:
         raise ToolError(
             "invalid binary",
             f"binary notes must be at most {store.MAX_BINARY_NOTES} characters",
+        )
+    format_override = _arg_optional_str(arguments, "format_override").strip() if has_format else ""
+    arch_override = _arg_optional_str(arguments, "arch_override").strip() if has_arch else ""
+    if format_override and format_override not in api_mod.UPLOAD_FORMATS:
+        raise ToolError(
+            "invalid binary",
+            f"format_override must be one of {', '.join(api_mod.UPLOAD_FORMATS)}",
+        )
+    if arch_override and arch_override not in api_mod.UPLOAD_ARCHITECTURES:
+        raise ToolError(
+            "invalid binary",
+            f"arch_override must be one of {', '.join(api_mod.UPLOAD_ARCHITECTURES)}",
         )
     with contextlib.closing(_open()) as conn:
         _require_binary(conn, binary_id)
@@ -814,6 +830,18 @@ def _tool_rename_binary(arguments: dict[str, Any]) -> dict[str, Any]:
                     binary = store.rename_binary(conn, binary_id, name)
                 if notes is not None:
                     binary = store.set_binary_notes(conn, binary_id, notes)
+                if has_format or has_arch:
+                    current = store.get_binary(conn, binary_id) or {}
+                    binary = store.set_binary_format_override(
+                        conn,
+                        binary_id,
+                        format_override=format_override
+                        if has_format
+                        else str(current.get("format_override") or ""),
+                        arch_override=arch_override
+                        if has_arch
+                        else str(current.get("arch_override") or ""),
+                    )
             except ValueError as exc:
                 raise ToolError("invalid binary", str(exc)) from exc
             return log.attach(binary or {})
@@ -2384,6 +2412,7 @@ def _tool_run_match(arguments: dict[str, Any]) -> dict[str, Any]:
                 "architectures": _arg_str_list(arguments, "architectures"),
                 "binary_ids": _arg_optional_int_list(arguments, "binary_ids") or [],
                 "collection_ids": _arg_optional_int_list(arguments, "collection_ids") or [],
+                "name_sources": _arg_str_list(arguments, "name_sources"),
             }
         )
     except matching.InvalidSettingsError as exc:
@@ -6335,13 +6364,15 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "rename_binary",
-            "Set a binary's display name and/or operator notes; journaled."
-            " Empty notes clears the note. Dedupe stays on sha256.",
+            "Set a binary's display name, operator notes and/or format/ISA override;"
+            " journaled. Empty notes or override clears it. Dedupe stays on sha256.",
             _object(
                 {
                     "binary_id": _BINARY_ID,
                     "name": _str("New display name."),
                     "notes": _str("Operator note; empty clears it."),
+                    "format_override": _str("Asserted format; empty clears it."),
+                    "arch_override": _str("Asserted ISA; empty clears it."),
                 },
                 ("binary_id",),
             ),
@@ -7036,6 +7067,10 @@ def builtin_tools() -> tuple[Tool, ...]:
                     "collection_ids": _array(
                         "Restrict candidates to the binaries of these collections.",
                         _int("A collection id."),
+                    ),
+                    "name_sources": _array(
+                        "Restrict candidates to these name-source labels.",
+                        _str("A name-source label."),
                     ),
                 },
                 ("binary_id",),

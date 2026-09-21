@@ -335,10 +335,10 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
 
-  const act = (key: string, work: () => Promise<unknown>): void => {
+  const act = (key: string, work: () => Promise<unknown>): Promise<void> => {
     setError(null);
     setBusy(key);
-    void work()
+    return work()
       .then(() => {
         teams.reload();
         onChanged();
@@ -473,11 +473,20 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
                   }}
                 >
                   <option value="">pick a user</option>
-                  {users.map((user) => (
-                    <option key={user.id} value={user.id}>
-                      {user.name}
-                    </option>
-                  ))}
+                  {users.map((user) => {
+                    const already = (row.member_ids ?? []).includes(user.id);
+                    return (
+                      <option
+                        key={user.id}
+                        value={user.id}
+                        disabled={already}
+                        title={already ? "Already a member" : undefined}
+                      >
+                        {user.name}
+                        {already ? " (member)" : ""}
+                      </option>
+                    );
+                  })}
                 </select>
               ),
             },
@@ -562,11 +571,17 @@ function TeamMembers({
 }: {
   team: TeamRow;
   busy: string;
-  onRole: (userId: number, role: string) => void;
-  onRemove: (userId: number) => void;
+  onRole: (userId: number, role: string) => Promise<void>;
+  onRemove: (userId: number) => Promise<void>;
 }): ReactNode {
   const detail = useAsync(() => api<TeamRow>(`/teams/${team.id}`), [team.id]);
   const members = detail.data?.members ?? [];
+  // The list reloads through the parent; the detail reloads here so a role
+  // change or removal shows without closing and reopening the members.
+  const after = (work: Promise<void>): void => {
+    void work.then(() => detail.reload());
+  };
+
   return (
     <>
       <h3>{team.name} members</h3>
@@ -578,7 +593,19 @@ function TeamMembers({
       <DataTable
         columns={[
           { label: "ID", key: "id", numeric: true },
-          { label: "User", key: "name" },
+          {
+            label: "User",
+            render: (row) => (
+              <span className="toolbar">
+                {row.name}
+                {row.team_role === "owner" ? (
+                  <Badge mono title="team owner">
+                    shield
+                  </Badge>
+                ) : null}
+              </span>
+            ),
+          },
           { label: "Portal role", key: "portal_role" },
           {
             label: "Team role",
@@ -587,7 +614,7 @@ function TeamMembers({
                 aria-label={`role of ${row.name} in ${team.name}`}
                 value={row.team_role}
                 disabled={busy.startsWith("role-")}
-                onChange={(event) => onRole(row.id, event.target.value)}
+                onChange={(event) => after(onRole(row.id, event.target.value))}
               >
                 <option value="owner">owner</option>
                 <option value="member">member</option>
@@ -601,7 +628,7 @@ function TeamMembers({
                 label="Remove"
                 message={`Remove ${row.name} from ${team.name}?`}
                 pending={busy === `remove-${team.id}-${row.id}`}
-                onConfirm={() => onRemove(row.id)}
+                onConfirm={() => after(onRemove(row.id))}
               />
             ),
           },

@@ -102,4 +102,14 @@ test("the continuous view scrolls the whole binary and links from a section", as
   await panel.getByLabel("Go to address").press("Escape");
   await expect(panel.getByLabel("Go to address")).toHaveValue("");
   await expect(panel.locator(".memory-scroll")).toBeFocused();
+
+  // Tab inside the address box toggles the column without leaving the input.
+  await panel.locator(".memory-scroll").press("g");
+  await expect(panel.getByLabel("Go to address")).toBeFocused();
+  await expect(panel.getByLabel("Columns")).toHaveValue("va");
+  await panel.getByLabel("Go to address").press("Tab");
+  await expect(panel.getByLabel("Columns")).toHaveValue("file");
+  await expect(panel.getByLabel("Go to address")).toBeFocused();
+  await panel.getByLabel("Go to address").press("Tab");
+  await expect(panel.getByLabel("Columns")).toHaveValue("va");
 });

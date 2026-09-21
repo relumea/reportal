@@ -1,10 +1,11 @@
 """What a tenant is allowed to see about how an answer was produced.
 
-reportal sells the answer, not the machinery.  Which model produced a
-decompilation, how long it deliberated and which tools it called are operating
-details: they are a commercial position (the backend is a supplier choice that
-changes without notice) and they are a security surface (a caller who knows the
-exact model and prompt shape can probe them).  A customer gets the artifact and
+reportal sells the answer, not the machinery.  Which engine produced a
+decompilation, which model produced an AI artifact, how long it deliberated
+and which tools it called are operating details: they are a commercial
+position (the backend is a supplier choice that changes without notice) and
+they are a security surface (a caller who knows the exact model and prompt
+shape can probe them).  A customer gets the artifact and
 the price; an operator gets everything.
 
 This module is the one place that decides.  Two rules, applied at the edge:
@@ -40,14 +41,20 @@ from typing import Any
 
 from reportal import auth
 
-# Keys a tenant never receives from an AI-produced payload.  `model` names the
+# Keys a tenant never receives from any payload.  `model` names the
 # supplier, the token counts expose the deliberation the credit price already
 # accounts for, and the reasoning fields are the machinery itself.
+# `rebrew_project` is a server-local working directory, and `origin` a
+# server-local install path: neither means anything to a platform caller.
+# The model registry (`/api/models`) keeps its internal names; tenants never
+# call it because the customer CLI exposes no model command.
 INTERNAL_KEYS: frozenset[str] = frozenset(
     {
         "model",
         "models",
         "backend_model",
+        "rebrew_project",
+        "origin",
         "prompt_tokens",
         "completion_tokens",
         "reasoning_tokens",

@@ -14,6 +14,7 @@ import {
   Field,
   FilterChip,
   Loading,
+  Muted,
   NA,
   Note,
   Panel,
@@ -224,8 +225,12 @@ export function MatchesView({
   const [params] = useSearchParams();
   const [draft, setDraft] = useState(functionId === null ? "" : String(functionId));
 
+  // Syncs an externally chosen function (a `?function=` link) into the box.
+  // Clearing on the way out happens in the All Functions handler below, not
+  // here: an effect clearing after the click races a refill typed into the
+  // same box and silently drops it.
   useEffect(() => {
-    setDraft(functionId === null ? "" : String(functionId));
+    if (functionId !== null) setDraft(String(functionId));
   }, [functionId]);
 
   const functionResult = useAsync<FunctionRow>(
@@ -262,6 +267,7 @@ export function MatchesView({
   const [top, setTop] = useState(DEFAULT_MATCH_TOP);
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [architectures, setArchitectures] = useState<string[]>([]);
+  const [nameSources, setNameSources] = useState<string[]>([]);
   const [scopeBinaries, setScopeBinaries] = useState<number[]>(() =>
     (params.get("binary_ids") ?? "")
       .split(",")
@@ -362,6 +368,7 @@ export function MatchesView({
     setArchitectures(settings.architectures);
     setScopeBinaries(settings.binary_ids);
     setScopeCollections(settings.collection_ids);
+    setNameSources(settings.name_sources ?? []);
   };
 
   const clearSettings = (): void => {
@@ -374,6 +381,7 @@ export function MatchesView({
       architectures: [],
       binary_ids: [],
       collection_ids: [],
+      name_sources: [],
     });
   };
 
@@ -393,11 +401,15 @@ export function MatchesView({
           architectures,
           binary_ids: scopeBinaries,
           collection_ids: scopeCollections,
+          name_sources: nameSources,
         },
       });
       setRunResult(payload);
       applySettings(payload.settings);
+      // A run changes which functions are matched, so the unmatched list
+      // reloads with the matches instead of keeping the previous split.
       matchesResult.reload();
+      unmatchedResult.reload();
     } catch (failure) {
       setRunError(failure);
     } finally {
@@ -487,13 +499,15 @@ export function MatchesView({
   };
 
   const activeCount = bulkRequests().length;
+  const activeNames = recorded.filter((row) => bulkNames[rowKey(row)] ?? false).length;
+  const activeSignatures = recorded.filter((row) => bulkSignatures[rowKey(row)] ?? false).length;
 
   const chips: ReactNode[] = [];
   if (minSimilarity !== DEFAULT_MIN_SIMILARITY) {
     chips.push(
       <FilterChip
         key="min-similarity"
-        label={`Similarity >= ${minSimilarity}%`}
+        label={`\u2265 ${minSimilarity}%`}
         onClear={() => setMinSimilarity(DEFAULT_MIN_SIMILARITY)}
       />,
     );
@@ -543,6 +557,15 @@ export function MatchesView({
       />,
     );
   }
+  for (const nameSource of nameSources) {
+    chips.push(
+      <FilterChip
+        key={`name-source-${nameSource}`}
+        label={nameSource}
+        onClear={() => setNameSources(nameSources.filter((item) => item !== nameSource))}
+      />,
+    );
+  }
   for (const scopeBinary of scopeBinaries) {
     chips.push(
       <FilterChip
@@ -582,24 +605,41 @@ export function MatchesView({
               }}
             />
           </Field>
-          <Button tone="primary" onClick={() => onSelectFunction(Number(draft) || null)}>
-            Load
-          </Button>
+          <div className="toolbar" role="group" aria-label="Match scope">
+            <Button
+              tone={functionId === null ? "primary" : "ghost"}
+              aria-pressed={functionId === null}
+              onClick={() => {
+                onSelectFunction(null);
+                setDraft("");
+                navigate("/matches");
+              }}
+            >
+              All Functions
+            </Button>
+            <Button
+              tone={functionId === null ? "ghost" : "primary"}
+              aria-pressed={functionId !== null}
+              onClick={() => onSelectFunction(Number(draft) || null)}
+            >
+              Selected Function
+            </Button>
+          </div>
           <Button
             disabled={binaryId === null}
             onClick={() => setSettingsOpen((open) => !open)}
           >
-            Match settings
+            Settings
           </Button>
           <Button
             disabled={binaryId === null || functionResult.data === undefined}
             pending={running}
             onClick={() => void runMatch()}
           >
-            Run match
+            Match
           </Button>
           <Button disabled={binaryId === null || recorded.length === 0} onClick={openBulk}>
-            Bulk transfer
+            Bulk Transfer
           </Button>
           {functionId !== null ? (
             <Badge hue="match">
@@ -644,7 +684,7 @@ export function MatchesView({
           {chips.length ? <div className="chips">{chips}</div> : null}
           {settingsOpen ? (
             <Panel
-              title="Match settings"
+              title="Settings"
               subtitle="The scope the next match run uses. Every setting defaults to the unscoped run."
             >
               <Toolbar>
@@ -706,6 +746,17 @@ export function MatchesView({
                     />
                   ))}
                 </fieldset>
+                <fieldset className="settings-group">
+                  <legend>Debug Data</legend>
+                  {FUNCTION_NAME_SOURCES.map((value) => (
+                    <CheckboxField
+                      key={value}
+                      label={value}
+                      checked={nameSources.includes(value)}
+                      onChange={(on) => toggleValue(nameSources, value, setNameSources, on)}
+                    />
+                  ))}
+                </fieldset>
                 <fieldset className="settings-group settings-scroll">
                   <legend>Binaries</legend>
                   {(binariesResult.data?.binaries ?? []).map((binary) => (
@@ -738,7 +789,7 @@ export function MatchesView({
               </Note>
               <div className="actions-cell">
                 <Button tone="primary" pending={running} onClick={() => void runMatch()}>
-                  Run match
+                  Match
                 </Button>
                 <Button onClick={clearSettings}>Clear settings</Button>
               </div>
@@ -767,20 +818,41 @@ export function MatchesView({
                   {recorded.length} candidate{recorded.length === 1 ? "" : "s"} recorded
                 </span>
               </Toolbar>
-              <SourceBar
-                counts={sourceCounts}
-                selected={sourceFilter}
-                onSelect={setSourceFilter}
-              />
-              <QualityBar
-                counts={bandCounts}
-                total={rows.length}
-                selected={bandFilter}
-                onSelect={setBandFilter}
-              />
+              {recorded.length > 0 ? (
+                <>
+                  <Toolbar>
+                    <Muted>
+                      {ranked.length} / {rows.length} functions match the filters
+                    </Muted>
+                    {bandFilter !== "" || sourceFilter !== "" ? (
+                      <Button
+                        tone="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setBandFilter("");
+                          setSourceFilter("");
+                        }}
+                      >
+                        Clear all
+                      </Button>
+                    ) : null}
+                  </Toolbar>
+                  <SourceBar
+                    counts={sourceCounts}
+                    selected={sourceFilter}
+                    onSelect={setSourceFilter}
+                  />
+                  <QualityBar
+                    counts={bandCounts}
+                    total={rows.length}
+                    selected={bandFilter}
+                    onSelect={setBandFilter}
+                  />
+                </>
+              ) : null}
               {bulkOpen ? (
                 <Panel
-                  title="Bulk transfer"
+                  title="Bulk Transfer"
                   subtitle="Copy names and signatures from the chosen candidates in one journaled action."
                 >
                   {bulkError ? <ErrorNote error={bulkError} /> : null}
@@ -812,7 +884,8 @@ export function MatchesView({
                       disabled={activeCount === 0}
                       onClick={() => void transferBulk(false)}
                     >
-                      Transfer
+                      Transfer ({activeNames} name{activeNames === 1 ? "" : "s"},{" "}
+                      {activeSignatures} signature{activeSignatures === 1 ? "" : "s"})
                     </Button>
                     <span className="muted">
                       {activeCount} row{activeCount === 1 ? "" : "s"} selected
@@ -866,12 +939,24 @@ export function MatchesView({
                         numeric: true,
                         render: (row) => `${row.similarity.toFixed(1)}%`,
                       },
-                      { label: "Source binary", render: (row) => `#${row.candidate_function_id}` },
+                      {
+                        label: "Source binary",
+                        render: (row) => (
+                          <a href={`#/binaries/${row.candidate_binary_id}`}>
+                            {row.candidate_binary_name}
+                          </a>
+                        ),
+                      },
                     ]}
                     rows={rows}
                     rowKey={(row) => rowKey(row)}
                     empty={<EmptyState>No candidates to transfer.</EmptyState>}
                   />
+                  {Object.values(bulkSignatures).some(Boolean) ? (
+                    <Note tone="warn">
+                      Copied signatures replace same-named types in place.
+                    </Note>
+                  ) : null}
                   {bulkReport ? (
                     <Note tone={bulkReport.failed ? "warn" : "info"}>
                       {bulkReport.dry_run ? "Preview: " : ""}

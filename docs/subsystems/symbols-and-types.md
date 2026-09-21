@@ -18,11 +18,15 @@ records the state it replaced.
   `types` is always empty and an unmapped segment answers `va: None`.
 - `signatures`: `function_signatures` and `signature_history`. A parameter carries `index`, `type`,
   `name` plus optional `at`, `kind` (`PARAMETER_KINDS`) and `bits`. `default_at` is the convention
-  table's answer. `SOURCE_DECOMPILATION`, `SOURCE_MANUAL`, `SOURCE_REVERT`.
+  table's answer. `SOURCE_DECOMPILATION`, `SOURCE_MANUAL`, `SOURCE_REVERT`. Either history view
+  carries `actor_name` and a relative `age` (`store.history_actor_names`, `clock.relative_age`).
 - `data_types`: `data_types` and `data_type_history`. `KINDS` is `struct`, `union`, `enum`,
   `typedef`, `pointer`, `array`, `function`; a bitfield is a member property (`bits`), not a kind.
   `POINTER_SIZE` and `ENUM_SIZE` are 4, a gap member is `GAP_PREFIX`, and each source maps to a
-  label through `SOURCE_MAP`.
+  label through `SOURCE_MAP`. A history view carries `actor_name` (the display name of
+  `actor_user_id`, null when that user row is gone) and a relative `age` beside the stored
+  `actor` login name and `created_at`, so attribution survives a user delete the way the login
+  name does.
 
 ## Wiring
 

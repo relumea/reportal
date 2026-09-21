@@ -339,6 +339,13 @@ export function FunctionsView({
       );
       setChecked(new Set());
       functionsResult.reload();
+      // An open history for a renamed function would keep the pre-bulk list.
+      if (historyFor !== null && ids.includes(historyFor)) {
+        const result = await api<{ history: HistoryRow[] }>(
+          `/functions/${historyFor}/history`,
+        );
+        setHistory(result.history);
+      }
     } catch (failure) {
       setBulkError(failure);
     } finally {
@@ -367,6 +374,12 @@ export function FunctionsView({
     try {
       await api(`/functions/${row.id}/rename`, { method: "POST", json: { name, actor: "spa" } });
       functionsResult.reload();
+      // The history panel loads on demand, but an open one for this row would
+      // keep the pre-rename list.
+      if (historyFor === row.id) {
+        const result = await api<{ history: HistoryRow[] }>(`/functions/${row.id}/history`);
+        setHistory(result.history);
+      }
     } catch (failure) {
       setActionError(failure);
     } finally {
@@ -378,8 +391,7 @@ export function FunctionsView({
     return (
       <Panel title="Functions">
         <EmptyState>
-          No binaries yet. Import a rebrew project with{" "}
-          <code>reportal import-rebrew &lt;project-dir&gt;</code>.
+          No binaries yet. Upload one to start analysis.
         </EmptyState>
       </Panel>
     );
@@ -413,7 +425,7 @@ export function FunctionsView({
               value={filters.nameSource}
               onChange={(event) => apply({ nameSource: event.target.value })}
             >
-              <option value="">any source</option>
+              <option value="">Any Source</option>
               {FUNCTION_NAME_SOURCES.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -426,7 +438,7 @@ export function FunctionsView({
               value={filters.capability}
               onChange={(event) => apply({ capability: event.target.value })}
             >
-              <option value="">any capability</option>
+              <option value="">Any Capability</option>
               {FUNCTION_CAPABILITIES.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -439,7 +451,7 @@ export function FunctionsView({
               value={filters.match}
               onChange={(event) => apply({ match: event.target.value })}
             >
-              <option value="">any match state</option>
+              <option value="">Any Match State</option>
               {FUNCTION_MATCH_VALUES.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -586,7 +598,7 @@ export function FunctionsView({
               ? `No function references ${filters.refersTo}. Clear the filter to see them all.`
               : filtered
                 ? `No functions match this filter (${total} in this binary). Clear it to see them all.`
-                : "This binary has no functions. Import its rebrew project or pick another binary above."}
+                : "This binary has no functions yet. Analysis is still running or found none."}
           </EmptyState>
         ) : (
           <>
@@ -761,7 +773,11 @@ export function FunctionsView({
               { label: "When", key: "created_at", mono: true },
               { label: "Old", key: "old_name", mono: true },
               { label: "New", key: "new_name", mono: true },
-              { label: "Actor", key: "actor" },
+              {
+                label: "Actor",
+                render: (row) =>
+                  `${row.actor_name ?? row.actor ?? "manual"}${row.age ? `, ${row.age}` : ""}`,
+              },
               { label: "Source", key: "source" },
             ]}
             rows={history}

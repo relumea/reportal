@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+## 3.0.0
+
+Hosted parity for the analysis workflow: match scoping by name source,
+hand-asserted binary identity with provenance, hourly remote refresh limits,
+per-version history attribution, and the hardening queued since 2.1.0.
+
 ### Breaking changes
 
 - **`GET /api/health` `status` is `ok` or `degraded`.**  Through 2.1.0 the field
@@ -122,13 +128,83 @@ view renders it from here.
 - Binary panel reads Packer Detection.
 - Binary panel reads Unpacked Files.
 - Binary panel reads Binary Details.
-- Binary panel reads Composition Analysis with Open Matching View.
+- Binary panel reads Composition Analysis with Open Matching View, Function Name Sources and Match Quality.
+- Match / Diff toolbar reads All Functions, Selected Function, Settings, Match and Bulk Transfer.
+- Match / Diff similarity chip reads ≥ N%.
 - Binary panel reads Agent Feedback.
+- Binary panel reads Threat Report and Function Triage.
+- Threat Report IOC values carry a copy control.
+- Threat Report carries its Yara Rule from the remediation scan.
+- Threat Report IOC groups read Urls, File Paths, not raw keys.
+- Team members carry a shield badge on the owner.
+- Match / Diff settings sheet reads Settings.
+- Bulk Transfer Source binary links the candidate binary.
+- Bulk Transfer warns that signatures replace same-named types in place.
+- Bulk Transfer counts names and signatures on its button.
+- Diff transfer reads Transfer Symbol.
+- Diff Suggested names is a collapsible group with its count.
+- Diff table names its kind for assistive tech.
+- Diff Kind reads AI Decompilation and Disassembly.
+- Type history badges the newest Current and the oldest Original.
+- Type history attributes each version to the named user with a relative age.
+- Signature history attributes each version the same way, sharing the helper.
+- History CLI listings name the user with a relative age.
+- Rename history attributes each row to the named user with a relative age.
+- Function rename refreshes its history panel without a reload.
+- AI rename apply reloads the rename history with the decompilation.
+- List rename reloads an open history and names its actor with age.
+- Bulk rename reloads an open history for a renamed function.
+- Binary header asserts format and ISA with detected/hand-set provenance.
+- `binary-rename` asserts format and ISA through `--format`/`--arch`.
+- `rename_binary` asserts format and ISA; match scope prefers the override.
+- MCP tool catalog regenerated for the rename description.
+- Register `?format=` and match scope read the asserted format first.
+- Register format options list the asserted format first.
+- CLI register lists the asserted format first.
+- Register Format column shows the asserted format first.
+- Search binary rows answer the asserted format first.
+- Analyses rows read and filter the asserted format first.
+- Upload shapes and the match payload pin the new override and scope keys.
+- Full backend suite green; the one exclusion is another worker's settings case.
+- Binary header context spec tracks the analysis-context rename.
+- Remote external re-pulls inside the hour answer 429 `rate-limited`.
+- External Pull stays disabled for a freshly fetched remote source.
+- Signature and type saves refresh their history caches with the model.
+- Match runs reload the unmatched list with the new matched split.
+- Match quality bars hide until a run records a candidate.
+- Match table header reads N / M with a Clear all for its filters.
+- Team Add member greys out users already on the team.
+- Team members list reloads itself on role change and removal.
+- Team role change shows the owner shield without reopening members.
+- Match scope switch no longer drops a refill typed into the function box.
+- Enum remove confirm names the value it removes.
+- History spec locates cards by title and settles after revert.
+- Match / Diff mode actions sit together at the front of the toolbar.
+- Match / Diff scope is a toggle group with pressed states.
+- Data Types source filter reads All Sources.
+- Data Types namespace tree reads All Namespaces.
+- Data Types provenance reset reads Clear Source.
+- Type members reorder with row arrows through a journaled move.
+- Capabilities header carries its count, green when found, red at zero.
+- Search modal empty hint names functions.
+- Dialogs return focus after dropping inert, fixing Escape focus restore.
+- Triage, Threat Report and Capabilities headers rate Up/Down in place.
+- Function Triage header rates Up/Down in place.
+- Match Settings gains Debug Data: candidates narrow by name-source label.
+- Match run notes name the Debug Data labels it ran under.
+- Focus-return assertions poll instead of racing the commit.
+- Memory page neighbours come back in the requested address kind.
+- Memory column switch restarts from the first section; Tab toggles it in the address box.
+- Notifications dialog covered: open, Escape, focus back to the bell.
+- Search modal arrow test steps past every binary hit.
+- Binary panel reads Detail Coverage.
 - Code blocks copy when clicked, including Data Types As C.
 - Function panels read AI Decompilation, AI Comments and Type Suggestions.
 - Pipeline panel reads AI Decompilation.
-- Function panels read Analysis Strings and Canonical Name.
+- Function panels read Analysis Strings, Canonical Name and Indirect Call Sites.
+- Function filters read Any Source, Any Capability and Any Match State.
 - Binary panel reads Data Types.
+- Binary panel reads Debug Symbols.
 - Strings sort reads String Length with ASC/DESC direction.
 - Functions and Data types search placeholders state the total count.
   Analyses carries an Upload File action that opens the binaries panel.

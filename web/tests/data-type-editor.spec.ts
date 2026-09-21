@@ -57,6 +57,24 @@ test("a member's bit width is set and cleared", async ({ page }) => {
   await expect(card.getByText("flags : 5", { exact: false })).toHaveCount(0);
 });
 
+test("a member moves earlier with the row arrow", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const card = cardFor(page, STRUCT_NAME);
+
+  // flags sits second; moving it up puts it first and recomputes the offsets.
+  const row = memberRow(card, "flags");
+  await row.getByRole("button", { name: "Move member flags up", exact: true }).click();
+  await expect(card.getByText("unsigned int flags;", { exact: false })).toBeVisible();
+  const firstRow = card.locator("table.data-table tbody tr").first();
+  await expect(firstRow.getByLabel("Name of member flags", { exact: true })).toBeVisible();
+
+  // Moving it back down restores the seeded order for later specs.
+  const moved = memberRow(card, "flags");
+  await moved.getByRole("button", { name: "Move member flags down", exact: true }).click();
+  const restored = card.locator("table.data-table tbody tr").first();
+  await expect(restored.getByLabel("Name of member magic", { exact: true })).toBeVisible();
+});
+
 test("a member is inserted after another from the row action", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
   const card = cardFor(page, STRUCT_NAME);
@@ -106,7 +124,7 @@ test("an enum value is added, revalued and removed", async ({ page }) => {
 
   const removal = valueRow(card, "NP_FLAG_C");
   await removal.getByRole("button", { name: "Remove", exact: true }).click();
-  const confirm = removal.getByRole("group", { name: "Remove?" });
+  const confirm = removal.getByRole("group", { name: "Remove enum value NP_FLAG_C?" });
   await expect(confirm).toBeVisible();
   await confirm.getByRole("button", { name: "Remove", exact: true }).click();
   await expect(card.getByLabel("Name of enum value NP_FLAG_C", { exact: true })).toHaveCount(0);

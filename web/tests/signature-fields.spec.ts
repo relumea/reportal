@@ -44,6 +44,8 @@ test("the signature history lists a recorded version and reverts it", async ({ p
   const newest = panel.locator(".type-history li").first();
   // The newest row is the write just made, carrying the prototype it replaced.
   await expect(newest.locator("code")).toHaveText(before);
+  // Each version names its user and how long ago, like the data-type history.
+  await expect(newest).toContainText(/manual.*just now/);
 
   // The confirm control of a ConfirmButton carries the same label.
   await newest.getByRole("button", { name: "Revert", exact: true }).click();
@@ -52,4 +54,26 @@ test("the signature history lists a recorded version and reverts it", async ({ p
   // The revert restored the head and refreshed the panel, and recorded itself.
   await expect(shown).not.toContainText("__stdcall");
   await expect(panel.locator(".type-history li").first()).toContainText("revert");
+});
+
+test("a save refreshes the open history without a reload", async ({ page }) => {
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const panel = panelByTitle(page, "Signature");
+  await panel.getByRole("button", { name: "History", exact: true }).click();
+  const rows = panel.locator(".type-history li");
+  await expect(rows.first()).toBeVisible();
+  const before = await rows.count();
+
+  await panel.getByRole("combobox", { name: "Convention", exact: true }).selectOption("stdcall");
+  await panel.getByRole("button", { name: "Save head" }).click();
+  // The save writes a version and the open section reloads past the count the
+  // mount rendered, whatever earlier specs recorded.
+  const count = (): Promise<number> => rows.count();
+  await expect.poll(count).toBeGreaterThan(before);
+
+  // Restore the seeded head through the newest version's revert.
+  const newest = panel.locator(".type-history li").first();
+  await newest.getByRole("button", { name: "Revert", exact: true }).click();
+  await newest.getByRole("button", { name: "Revert", exact: true }).click();
+  await expect(panel.locator(".code-block pre").first()).not.toContainText("__stdcall");
 });

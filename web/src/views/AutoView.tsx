@@ -390,7 +390,7 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
       ) : (
         <Muted>
           A dry run touches no source file and no function status. Execute writes candidate C files
-          into the rebrew project and compiles them; the llm_goal worker also writes a
+          into the analysis workspace and compiles them; the llm_goal worker also writes a
           &lt;binary&gt;.patched copy holding only the byte edits the binary confirmed.
         </Muted>
       )}
@@ -426,8 +426,7 @@ function BinaryPicker(): ReactNode {
         onRowClick={(row) => navigate(`/auto/${row.id}`)}
         empty={
           <EmptyState>
-            No binaries yet. Import a rebrew project with{" "}
-            <code>reportal import-rebrew &lt;project-dir&gt;</code>.
+            No binaries yet. Upload one to start.
           </EmptyState>
         }
       />

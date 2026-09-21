@@ -143,6 +143,28 @@ class TestMemberShapeRoutes:
         assert (member["type"], member["bits"]) == ("short", 3)
 
 
+class TestMoveRoutes:
+    def test_move_reorders_the_members(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _seed_type(conn, binary_id)
+        status, headers, body = _post(
+            f"/api/data-types/{data_type_id}/members/field_C/move", {"to_index": 0}
+        )
+        assert status.startswith("200")
+        members = json_body(body, headers)["members"]
+        assert [member["name"] for member in members] == ["field_C", "name"]
+        assert [member["offset"] for member in members] == [0, 4]
+
+    def test_move_needs_an_integer_target(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _seed_type(conn, binary_id)
+        status, headers, body = _post(
+            f"/api/data-types/{data_type_id}/members/name/move", {"to_index": "0"}
+        )
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid index"
+
+
 class TestGapRoutes:
     def test_convert_a_member_to_a_gap_and_back(self, conn: sqlite3.Connection) -> None:
         binary_id = _seed_binary(conn)

@@ -653,6 +653,22 @@ class TestAnalysisFilters:
         assert payload["platforms"] == ["elf", "pe"]
         assert payload["architectures"] == ["aarch64", "x86_64"]
 
+    def test_an_override_answers_the_platform_filter_first(self, conn: sqlite3.Connection) -> None:
+        self._analyse(conn, index=1, fmt="pe", arch="x86_64")
+        binary_id = int(
+            conn.execute("SELECT id FROM binaries WHERE sha256 = ?", ("01" * 32,)).fetchone()["id"]
+        )
+        store.set_binary_format_override(conn, binary_id, format_override="elf")
+
+        _status, headers, body = wsgi_request("GET", "/api/analyses?platform=elf")
+        payload = json_body(body, headers)
+        assert payload["count"] == 1
+        row = payload["analyses"][0]
+        assert row["binary_format"] == "elf"
+        assert row["binary_format_override"] == "elf"
+        # The filter controls offer the effective value the rows answer with.
+        assert "elf" in payload["platforms"]
+
     def test_the_named_orders_sort_by_name_and_size(self, conn: sqlite3.Connection) -> None:
         self._analyse(conn, index=1)
         self._analyse(conn, index=2)

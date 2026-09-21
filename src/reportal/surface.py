@@ -56,13 +56,13 @@ def binary_file(conn: sqlite3.Connection, binary_id: int, *, fail: Fail) -> Path
 
 
 def project_context(conn: sqlite3.Connection, binary_id: int, *, fail: Fail) -> str:
-    """Return the rebrew project directory an engine call needs, or raise a 400."""
+    """Return the analysis project directory an engine call needs, or raise a 400."""
     project_dir = store.get_rebrew_context(conn, binary_id)
     if project_dir is None:
         raise fail(
             400,
             "no-engine-context",
-            f"binary {binary_id} has no rebrew project context",
+            f"binary {binary_id} has no analysis context yet",
         )
     return project_dir
 

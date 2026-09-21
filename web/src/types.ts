@@ -6,6 +6,10 @@ export interface Binary {
   size: number;
   format: string;
   arch: string;
+  /** Hand-set format; empty means detection stands. */
+  format_override: string;
+  /** Hand-set ISA; empty means detection stands. */
+  arch_override: string;
   /** Recovered source language (Go, Rust, ...); empty when unknown. */
   language: string;
   /** Recovered toolchain (MSVC, MinGW, ...); empty when unknown. */
@@ -20,7 +24,7 @@ export interface Binary {
   /** The team that owns it while `visibility` is `team`. */
   owner_team_id: number | null;
   /**
-   * The rebrew project its engine-backed reads load, from the single-binary
+   * Whether detailed reads are ready, from the single-binary
    * read only; a list row leaves it out rather than claiming there is none.
    */
   rebrew_project?: string | null;
@@ -51,6 +55,10 @@ export interface AnalysisRow {
   binary_size: number;
   binary_format: string;
   binary_arch: string;
+  /** Hand-set format; empty means detection stands. */
+  binary_format_override: string;
+  /** Hand-set ISA; empty means detection stands. */
+  binary_arch_override: string;
   binary_sha256: string | null;
   /** Tag names of the owning binary, name order. */
   tags: string[];
@@ -114,6 +122,7 @@ export interface MatchRunSettings {
   architectures: string[];
   binary_ids: number[];
   collection_ids: number[];
+  name_sources: string[];
 }
 
 export interface MatchRow {
@@ -245,6 +254,10 @@ export interface HistoryRow {
   old_name: string;
   new_name: string;
   actor: string;
+  /** The editing user's display name; null when the user row is gone. */
+  actor_name: string | null;
+  /** Relative reading of `created_at`; blank when it does not parse. */
+  age: string;
   source: string;
   created_at: string;
 }
@@ -656,6 +669,10 @@ export interface DataTypeHistoryEntry {
   current: DataTypeState | null;
   source: string;
   actor: string;
+  /** The editing user's display name; null when the user row is gone. */
+  actor_name: string | null;
+  /** Relative reading of `created_at`; blank when it does not parse. */
+  age: string;
   created_at: string;
   changes: DataTypeChange[];
 }
@@ -745,6 +762,10 @@ export interface SignatureHistoryEntry {
   prototype: string | null;
   source: string;
   actor: string;
+  /** The editing user's display name; null when the user row is gone. */
+  actor_name: string | null;
+  /** Relative reading of `created_at`; blank when it does not parse. */
+  age: string;
   created_at: string;
 }
 
@@ -2291,6 +2312,8 @@ export interface TeamRow {
   description: string;
   created_at: string;
   member_count: number;
+  /** Present on `GET /api/teams`: the user ids already on the team. */
+  member_ids?: number[];
   organisation_id: number | null;
   organisation_name: string | null;
   /** Present on `GET /api/teams/<id>` only. */

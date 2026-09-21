@@ -636,7 +636,7 @@ class TestProtocolsCommand:
         engines.set_engine(engines.RebrewEngine(enabled=False))
         result = runner.invoke(cli.app, ["protocols", "1", "--json"])
         assert result.exit_code == 1
-        assert "rebrew engine unavailable" in result.output
+        assert "analysis engine unavailable" in result.output
 
 
 def _mcp_call(name: str, arguments: dict[str, Any]) -> tuple[Any, bool]:

@@ -21,7 +21,8 @@ only module here that may contact a third party, and only when the workspace opt
 - `threat.Technique`, `TECHNIQUES`, `IOC_CATEGORIES`, `SOFTWARE_TYPE_RULES` and `score_band`.
   `classify_binary` returns the software type and the 0-100 score.
 - `external.Source(name, kind, description, retrieve, available, unavailable_reason)`.
-  `ExternalError` subclasses carry the wire codes, including `external-disabled`.
+  `ExternalError` subclasses carry the wire codes, including `external-disabled` and a 429
+  `rate-limited` for a remote re-pull inside `REMOTE_REFRESH_SECONDS` (one hour).
 
 ## Wiring
 

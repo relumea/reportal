@@ -694,6 +694,11 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     # Operator note on a binary. A row that predates the column has none,
     # so the empty default reads as no note rather than invented text.
     ("binaries", "notes", "TEXT NOT NULL DEFAULT ''"),
+    # An operator's hand-set format and ISA for a binary. A row that predates
+    # the columns was never corrected, so the empty default reads as
+    # "detection stands" and the stored format/arch answer every read.
+    ("binaries", "format_override", "TEXT NOT NULL DEFAULT ''"),
+    ("binaries", "arch_override", "TEXT NOT NULL DEFAULT ''"),
     # Invite TTL. A row that predates the column has none recorded, so the
     # empty default derives from created_at + INVITE_TTL_SECONDS at redeem.
     ("team_invites", "expires_at", "TEXT NOT NULL DEFAULT ''"),
@@ -1062,7 +1067,15 @@ def _binary_where(
         )
         params.append(tag)
     if fmt:
-        clauses.append("b.format = ?")
+        # A hand-set override answers reads first, so the filter matches what
+        # the binary header shows rather than the detection it replaced.  An
+        # old database without the column still filters on detection.
+        columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(binaries)")}
+        clauses.append(
+            "COALESCE(NULLIF(b.format_override, ''), b.format) = ?"
+            if "format_override" in columns
+            else "b.format = ?"
+        )
         params.append(fmt)
     if language:
         clauses.append("b.language = ?")
@@ -1101,18 +1114,22 @@ def binary_filter_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
     """The formats, languages and compilers the register actually holds.
 
     Distinct column reads the way the analyses facets are, so the control
-    offers only values that can match something.
+    offers only values that can match something.  The format facet reads the
+    effective value (a hand-set override first), like the `?format=` filter.
     """
 
-    def distinct(column: str) -> list[str]:
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(binaries)")}
+
+    def distinct(column: str, effective: str = "") -> list[str]:
+        read = effective if effective and f"{column}_override" in columns else f"b.{column}"
         rows = conn.execute(
-            f"SELECT DISTINCT {column} AS value FROM binaries"
-            f" WHERE {column} IS NOT NULL AND {column} != '' ORDER BY {column}"
+            f"SELECT DISTINCT {read} AS value FROM binaries b"
+            f" WHERE {read} IS NOT NULL AND {read} != '' ORDER BY {read}"
         )
         return [str(row["value"]) for row in rows]
 
     return {
-        "formats": distinct("format"),
+        "formats": distinct("format", "COALESCE(NULLIF(b.format_override, ''), b.format)"),
         "languages": distinct("language"),
         "compilers": distinct("compiler"),
     }
@@ -1203,6 +1220,35 @@ def set_binary_notes(conn: sqlite3.Connection, binary_id: int, notes: str) -> di
     conn.execute("UPDATE binaries SET notes = ? WHERE id = ?", (cleaned, binary_id))
     conn.commit()
     return get_binary(conn, binary_id)
+
+
+def set_binary_format_override(
+    conn: sqlite3.Connection, binary_id: int, *, format_override: str = "", arch_override: str = ""
+) -> dict[str, Any] | None:
+    """Set the operator's hand-set format and ISA on *binary_id*; None when unknown.
+
+    Each value is stripped and empty clears that override, so detection stands
+    again.  Vocabulary is the caller's job (the upload options); the store
+    keeps whatever spelling it is given.
+    """
+    if get_binary(conn, binary_id) is None:
+        return None
+    conn.execute(
+        "UPDATE binaries SET format_override = ?, arch_override = ? WHERE id = ?",
+        (format_override.strip(), arch_override.strip(), binary_id),
+    )
+    conn.commit()
+    return get_binary(conn, binary_id)
+
+
+def effective_format(row: Mapping[str, Any]) -> str:
+    """The format a binary row answers with: the override, else detection."""
+    return str(row.get("format_override") or row.get("format") or "")
+
+
+def effective_arch(row: Mapping[str, Any]) -> str:
+    """The ISA a binary row answers with: the override, else detection."""
+    return str(row.get("arch_override") or row.get("arch") or "")
 
 
 def get_binary(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
@@ -1722,16 +1768,24 @@ def requeue_analysis(conn: sqlite3.Connection, analysis_id: int) -> dict[str, An
 def analysis_filter_values(conn: sqlite3.Connection) -> dict[str, list[str]]:
     """The values the analysis filters can actually match, for the SPA controls.
 
-    The platform and architecture filters read the stored binary's `format` and
-    `arch` columns, which are whatever the crawler derived, so the control is
-    built from the register rather than from a vocabulary written down twice.
-    A blank or NULL column is left out.
+    The platform and architecture filters read the effective binary `format`
+    and `arch` (a hand-set override first), which are whatever the crawler
+    derived unless the operator corrected them, so the control is built from
+    the register rather than from a vocabulary written down twice.  A blank
+    or NULL column is left out.
     """
 
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(binaries)")}
+
     def distinct(column: str) -> list[str]:
+        effective = (
+            f"COALESCE(NULLIF(b.{column}_override, ''), b.{column})"
+            if column in ("format", "arch") and f"{column}_override" in columns
+            else f"b.{column}"
+        )
         cur = conn.execute(
-            f"SELECT DISTINCT {column} AS value FROM binaries"
-            f" WHERE {column} IS NOT NULL AND {column} != '' ORDER BY {column}"
+            f"SELECT DISTINCT {effective} AS value FROM binaries b"
+            f" WHERE {effective} IS NOT NULL AND {effective} != '' ORDER BY {effective}"
         )
         return [str(row["value"]) for row in cur.fetchall()]
 
@@ -1827,9 +1881,22 @@ def list_analyses(
     bound = DEFAULT_ANALYSIS_LIMIT if limit is None else limit
     if bound < 1 or bound > MAX_ANALYSIS_LIMIT:
         raise ValueError(f"limit must be between 1 and {MAX_ANALYSIS_LIMIT}")
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(binaries)")}
+    if {"format_override", "arch_override"} <= columns:
+        format_select = (
+            "COALESCE(NULLIF(b.format_override, ''), b.format) AS binary_format,"
+            " COALESCE(NULLIF(b.arch_override, ''), b.arch) AS binary_arch,"
+            " b.format_override AS binary_format_override,"
+            " b.arch_override AS binary_arch_override,"
+        )
+    else:
+        format_select = (
+            "b.format AS binary_format, b.arch AS binary_arch,"
+            " '' AS binary_format_override, '' AS binary_arch_override,"
+        )
     sql = (
         "SELECT a.*, b.name AS binary_name, b.size AS binary_size,"
-        " b.format AS binary_format, b.arch AS binary_arch, b.sha256 AS binary_sha256,"
+        f" {format_select} b.sha256 AS binary_sha256,"
         " b.visibility AS visibility, b.owner_team_id AS owner_team_id,"
         " t.name AS owner_team_name FROM analyses a JOIN binaries b ON a.binary_id = b.id"
         " LEFT JOIN teams t ON t.id = b.owner_team_id"
@@ -1848,11 +1915,18 @@ def list_analyses(
         placeholders = ", ".join("?" for _ in chosen)
         clauses.append(f"a.status IN ({placeholders})")
         params.extend(chosen)
+    overridden = {"format_override", "arch_override"} <= columns
     if platform is not None:
-        clauses.append("b.format = ?")
+        clauses.append(
+            "COALESCE(NULLIF(b.format_override, ''), b.format) = ?"
+            if overridden
+            else "b.format = ?"
+        )
         params.append(platform)
     if arch is not None:
-        clauses.append("b.arch = ?")
+        clauses.append(
+            "COALESCE(NULLIF(b.arch_override, ''), b.arch) = ?" if overridden else "b.arch = ?"
+        )
         params.append(arch)
     if search:
         pattern = _escape_like(search)
@@ -4924,10 +4998,26 @@ def _binary_rows(
     for row in rows:
         row["tags"] = tags.get(int(row["id"]), [])
         row["match"] = match or _binary_match(row, needle)
+        # A hand-set override answers reads first, like every other surface.
+        if "format_override" in row:
+            row["format"] = effective_format(row)
+        if "arch_override" in row:
+            row["arch"] = effective_arch(row)
     return rows, total
 
 
-_BINARY_COLUMNS = "id, name, sha256, size, format, arch, created_at, path, notes"
+def _binary_columns(conn: sqlite3.Connection) -> str:
+    """The binary columns a search row carries, plus overrides when migrated.
+
+    An old database opened without the upgrade lacks the override columns;
+    naming them unconditionally would break its reads, so they join the list
+    only when the table has them (the same guard the history readers use).
+    """
+    columns = "id, name, sha256, size, format, arch, created_at, path, notes"
+    existing = {str(row["name"]) for row in conn.execute("PRAGMA table_info(binaries)")}
+    if "format_override" in existing:
+        columns += ", format_override, arch_override"
+    return columns
 
 
 def _search_binaries(
@@ -4939,7 +5029,7 @@ def _search_binaries(
     hash_sql, hash_param = match.clause("sha256")
     notes_sql, notes_param = match.clause("notes")
     sql = (
-        f"SELECT {_BINARY_COLUMNS} FROM binaries"
+        f"SELECT {_binary_columns(conn)} FROM binaries"
         f" WHERE {name_sql} OR {path_sql} OR {hash_sql} OR {notes_sql} ORDER BY id"
     )
     return _binary_rows(conn, sql, (name_param, path_param, hash_param, notes_param), limit, match)
@@ -4964,7 +5054,9 @@ def _search_sha256(
             "short-hash",
             f"a SHA-256 prefix must be at least {MIN_SHA256_PREFIX} hex characters",
         )
-    sql = f"SELECT {_BINARY_COLUMNS} FROM binaries WHERE sha256 LIKE ? ESCAPE '\\' ORDER BY id"
+    sql = (
+        f"SELECT {_binary_columns(conn)} FROM binaries WHERE sha256 LIKE ? ESCAPE '\\' ORDER BY id"
+    )
     pattern = f"{value}%"
     total = _count(conn, sql, (pattern,))
     if total > 1 and len(value) < SHA256_HEX_LENGTH:
@@ -4981,7 +5073,7 @@ def _search_binary_names(
 ) -> tuple[list[dict[str, Any]], int]:
     """Binaries whose name carries the needle."""
     name_sql, name_param = match.clause("name")
-    sql = f"SELECT {_BINARY_COLUMNS} FROM binaries WHERE {name_sql} ORDER BY id"
+    sql = f"SELECT {_binary_columns(conn)} FROM binaries WHERE {name_sql} ORDER BY id"
     return _binary_rows(conn, sql, (name_param,), limit, match)
 
 
@@ -4991,7 +5083,7 @@ def _search_binaries_by_tag(
     """Binaries carrying a tag whose name carries the needle."""
     tag_sql, tag_param = match.clause("t.name")
     sql = (
-        f"SELECT {_BINARY_COLUMNS} FROM binaries WHERE id IN ("
+        f"SELECT {_binary_columns(conn)} FROM binaries WHERE id IN ("
         " SELECT bt.binary_id FROM binary_tags bt JOIN tags t ON t.id = bt.tag_id"
         f" WHERE {tag_sql}) ORDER BY id"
     )
@@ -5624,6 +5716,26 @@ def ensure_data_type_history(conn: sqlite3.Connection) -> None:
     """
     conn.executescript(_DATA_TYPE_HISTORY_DDL)
     conn.commit()
+
+
+def history_actor_names(
+    conn: sqlite3.Connection, entries: Sequence[Mapping[str, Any]]
+) -> dict[int, str]:
+    """Display names for the user ids history entries point at, keyed by id.
+
+    A missing user row maps to no name, and the entry keeps its stored
+    ``actor`` login name.  Deleted users clear ``actor_user_id`` here, so in
+    practice this answers the users that still exist.
+    """
+    ids = {
+        int(entry["actor_user_id"]) for entry in entries if entry.get("actor_user_id") is not None
+    }
+    names: dict[int, str] = {}
+    for user_id in ids:
+        user = auth.get_user(conn, user_id)
+        if user is not None:
+            names[user_id] = str(user["name"])
+    return names
 
 
 def _data_type_history_row(row: sqlite3.Row) -> dict[str, Any]:

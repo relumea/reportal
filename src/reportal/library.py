@@ -67,7 +67,7 @@ SPDX_LICENSE = "NOASSERTION"
 IdentifyFn = Callable[[str | Path], dict[str, Any]]
 
 # Detail a run with no stored project context reports.
-NO_CONTEXT_DETAIL = "binary {} has no rebrew project context; run 'reportal import-rebrew' first"
+NO_CONTEXT_DETAIL = "binary {} has no analysis context yet"
 
 
 class LibraryError(Exception):

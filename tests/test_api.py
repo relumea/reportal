@@ -308,6 +308,10 @@ class TestBinaries:
         assert payload["total"] == 3
         _status, headers, body = wsgi_request("GET", "/api/binaries?format=ELF")
         assert [row["name"] for row in json_body(body, headers)["binaries"]] == ["alpha.exe"]
+        # A hand-set override answers the filter first, like every other read.
+        store.set_binary_format_override(conn, ids["binary"], format_override="elf")
+        _status, headers, body = wsgi_request("GET", "/api/binaries?format=elf")
+        assert [row["name"] for row in json_body(body, headers)["binaries"]] == ["demo.exe"]
         store.set_binary_language(conn, ids["binary"], "Go")
         _status, headers, body = wsgi_request("GET", "/api/binaries?language=Go")
         payload = json_body(body, headers)
@@ -400,6 +404,39 @@ class TestBinaries:
         payload = json_body(body, headers)
         assert status.startswith("200")
         assert payload["notes"] == ""
+
+    def test_format_override_sets_clears_and_refuses(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/binaries/{ids['binary']}",
+            body=json.dumps({"format_override": "elf", "arch_override": "x86_64"}).encode(),
+        )
+        payload = json_body(body, headers)
+        assert status.startswith("200")
+        assert payload["format_override"] == "elf"
+        assert payload["arch_override"] == "x86_64"
+        stored = store.get_binary(conn, ids["binary"])
+        assert stored is not None
+        assert store.effective_format(stored) == "elf"
+        assert store.effective_arch(stored) == "x86_64"
+        assert "elf" in store.binary_filter_values(conn)["formats"]
+
+        status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/binaries/{ids['binary']}",
+            body=json.dumps({"format_override": ""}).encode(),
+        )
+        assert status.startswith("200")
+        assert json_body(body, headers)["format_override"] == ""
+
+        status, headers, body = wsgi_request(
+            "PATCH",
+            f"/api/binaries/{ids['binary']}",
+            body=json.dumps({"format_override": "macho"}).encode(),
+        )
+        assert status.startswith("400")
+        assert json_body(body, headers)["error"] == "invalid binary"
 
     def test_rename_unknown_is_404(self, portal_db: Path) -> None:
         status, headers, body = wsgi_request(
@@ -667,6 +704,8 @@ class TestFunctions:
         history = json_body(body, headers)["history"]
         assert len(history) == 1
         assert history[0]["actor"] == "api-test"
+        assert history[0]["actor_name"] is None
+        assert history[0]["age"] == "just now"
 
     def test_rename_bad_body_400(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
@@ -1192,6 +1231,7 @@ class TestMatchRoute:
                 "architectures": [],
                 "binary_ids": [],
                 "collection_ids": [],
+                "name_sources": [],
             },
             "notes": [],
         }

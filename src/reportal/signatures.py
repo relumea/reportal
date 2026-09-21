@@ -37,7 +37,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from reportal import store
+from reportal import clock, store
 from reportal._paths import write_bytes_atomic
 
 # Calling conventions the parser recognizes and the model accepts, spelled the
@@ -225,13 +225,16 @@ def _signature_view(row: Mapping[str, Any]) -> dict[str, Any]:
     return {**row, "parameters": _parameters_view(row.get("parameters") or [])}
 
 
-def _history_view(entry: Mapping[str, Any]) -> dict[str, Any]:
+def _history_view(entry: Mapping[str, Any], actor_name: str | None = None) -> dict[str, Any]:
     """A history row whose recorded state has its parameters normalized.
 
     The recorded state also carries its rendered ``prototype``, through the same
     renderer the CLI, the header export and the function's own signature read
     use, so a reader (the SPA history panel) never re-implements the rendering.
     A row with no previous state created the signature, so its prototype is null.
+    ``actor_name`` is the display name resolved for the row's
+    ``actor_user_id``; it stays None when the id is missing or its user row is
+    gone, and the stored ``actor`` login name still answers those reads.
     """
     previous = entry.get("previous")
     prototype: str | None = None
@@ -241,7 +244,19 @@ def _history_view(entry: Mapping[str, Any]) -> dict[str, Any]:
             "parameters": _parameters_view(previous.get("parameters") or []),
         }
         prototype = render_prototype(previous)
-    return {**entry, "previous": previous, "prototype": prototype}
+    return {
+        **entry,
+        "previous": previous,
+        "prototype": prototype,
+        "actor_name": actor_name,
+        "age": clock.relative_age(entry.get("created_at")),
+    }
+
+
+def _entry_actor_name(entry: Mapping[str, Any], names: Mapping[int, str]) -> str | None:
+    """The display name for one history entry's ``actor_user_id``, if any."""
+    user_id = entry.get("actor_user_id")
+    return names.get(int(user_id)) if user_id is not None else None
 
 
 def describe_parameters(row: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -875,14 +890,22 @@ def delete_signature(conn: sqlite3.Connection, function_id: int) -> bool:
 
 
 def list_history(conn: sqlite3.Connection, function_id: int) -> list[dict[str, Any]]:
-    """One function's signature history, newest first."""
-    return [_history_view(entry) for entry in store.list_signature_history(conn, function_id)]
+    """One function's signature history, newest first.
+
+    Each entry carries ``actor_name`` (the display name of its
+    ``actor_user_id``, None when that user row is gone) and a relative ``age``.
+    """
+    entries = store.list_signature_history(conn, function_id)
+    names = store.history_actor_names(conn, entries)
+    return [_history_view(entry, _entry_actor_name(entry, names)) for entry in entries]
 
 
 def get_history(conn: sqlite3.Connection, history_id: int) -> dict[str, Any] | None:
     """One signature-history row by id, or None."""
     entry = store.get_signature_history(conn, history_id)
-    return _history_view(entry) if entry is not None else None
+    if entry is None:
+        return None
+    return _history_view(entry, _entry_actor_name(entry, store.history_actor_names(conn, [entry])))
 
 
 def revert_history(

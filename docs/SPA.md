@@ -366,8 +366,10 @@ finished times, status badge and the importer's log line, the scoped
 `count of total` line, an `All analyses` link to the workspace-wide view and a
 nothing-stored state for a binary no analysis exists for); binary header name
 is click-to-rename (Enter saves, Escape discards) and the header shows
-the stored `format`, `arch`, recovered `language` and `compiler`, and
-`created_at`, Download serves
+the effective `format`/`arch` (the hand-set override first, badged as asserted
+by hand, else detection), recovered `language` and `compiler`, and
+`created_at`, Format/ISA override selects with Save writing
+`PATCH /api/binaries/<id>`, Download serves
 `GET /api/binaries/<id>/download`, PDF serves
 `GET /api/binaries/<id>/report/pdf`, Symbols serves
 `GET /api/binaries/<id>/symbols/export`, Logs and Tags jump to those panels,
@@ -505,7 +507,7 @@ of member count, size and padding), inline
 rename/retype/save/remove controls per member, an
 add-member row, a Rename type control and a Delete type control, a History
 control that loads `GET /api/data-types/<id>/history` into a version list (each
-version naming its source, actor and time, its per-field diff and a Revert
+version naming its source, the named user and how long ago beside the timestamp, its per-field diff and a Revert
 behind the shared inline confirm, which posts the revert route and refreshes
 the model), plus an Import signatures button and an Export prototypes path
 input with the same Force overwrite confirmation); auto-unstrip
@@ -535,13 +537,14 @@ and the render groups the network entries, the local input handlers and the
 crypto usage, each row with its source scan and the true count stated);
 threat (auto-loads the stored report and never runs
 the engine on render; a `no-scan` response shows the nothing-stored message with
-a Run threat report control and a narrative checkbox, rendering the software-type
+a Run threat report control, a narrative checkbox and Up/Down rate buttons, rendering the software-type
 badge with its signal list beside the `Threat score` meter and the named
 `packing`/`capabilities`/`indicators`/`techniques` contributions, then the
 summary when one is stored, each IOC category in a collapsible group with its
-count, the techniques table with each row's id (linked to
+count and a copy control on each value, the techniques table with each row's id (linked to
 `attack.mitre.org`, the stored row keeping the plain id), name, confidence and
-expandable evidence, and the report's notes); remediation (auto-loads the stored payload and never runs
+expandable evidence, the report's notes, and a Yara Rule group reading the
+stored remediation scan; remediation (auto-loads the stored payload and never runs
 the engine on render; a `no-scan` response shows the nothing-stored message with
 a Generate control, rendering the rule name, string count and validation status
 plus a collapsible section per artifact, YARA, Snort and STIX, each with its
@@ -564,7 +567,7 @@ parameters in a table with inline type/name/`at`/`kind`/`bits`
 edit, per-row reorder controls that recompute the arrival locations the
 convention implies, Save, Remove and an add-parameter row, and a `History`
 toggle revealing the function's signature-edit history: one row per recorded
-version with its id, source, actor and timestamp, the prototype that version
+version with its id, source, the named user and how long ago beside the timestamp, the prototype that version
 replaced, `created this signature` for the row whose previous state was nothing,
 and a Revert that restores it and refreshes the signature panel); the code panel
 (auto-loaded, a Disassembly / Control Flow toggle; Disassembly renders the
@@ -735,15 +738,18 @@ row (not a control) opens the diff; Ctrl/⌘-click opens it in a new
 tab.  Match settings opens the sheet the next run uses: the
 0-100 similarity floor, the 0-1 confidence floor, the most candidates kept per
 function (the API's `top`, 1 or more, default 10), whether the binary's own
-functions may be candidates, and the platform, architecture, binary and
-collection scopes (`?binary_ids=` prefills the binary scope); Run match
+functions may be candidates, and the platform, architecture, binary,
+collection and Debug Data scopes (`?binary_ids=` prefills the binary scope);
+Run match
 posts them to `POST /api/binaries/<id>/match` and
 renders the run's function, matched and pair counts, the note it carries and the
 journal action the run recorded, then reloads the rows.  The toolbar badge
 reads `Matched: N / M (P%)` from unique source functions over the binary
 total, and `Found: N matches` for the loaded function's recorded
-candidates.  Clicking a name-source or quality-legend band filters the table.
-Every value that
+candidates.  Clicking a name-source or quality-legend band filters the table; both
+bars stay hidden until a run records a candidate, since they need match data.
+A header reads how many rows match the filters out of the row total, with a
+Clear all that resets the two filters.  Every value that
 differs from its default shows as a chip above the sheet and clearing the chip
 restores the default, and the transfer panel copies names and signatures from
 the chosen rows through `POST /api/binaries/<id>/matches/transfer` (a dry run is
@@ -782,10 +788,9 @@ namespace tree (`Search namespaces...`, Collapse) whose descendants grey
 out when a branch is ticked, empty namespace reads Binary, a
 References control whose Referenced-by names link the type list, a
 pointer/typedef/array target that walks each hop's kind and size, a
-function type's Returns row and parameter table, Insert member after
-and Convert to gap on a member row, Clear all filters
-when a filter is on (it leaves the search text), and a
-page-at-a-time list with a Load more control; its six controls live in the
+function type's Returns row and parameter table, Insert member after and reorder arrows on a member
+row, and Convert to gap on a member row, Clear all filters when a filter is on (it leaves the search
+text), and a page-at-a-time list with a Load more control; its six controls live in the
 route hash, so a filtered and ordered model is a link.  The order is the
 route's (`?sort=&direction=`; consecutive writes keep both), and a type
 whose size the model states as
@@ -803,7 +808,7 @@ kind and the fetch time.  Naming an analysis also reads `GET
 /api/analyses/<id>/external/<source>/status` and renders its answer above the
 result: whether that source can run for that analysis (with the reason when it
 cannot) and whether an answer is stored for it, naming the fetch time when one
-is.  A pull refreshes that line, so the state a pull left behind is the state
+is.  Pull stays disabled for a remote source fetched inside the hour.  A pull refreshes that line, so the state a pull left behind is the state
 the view reports.  The
 Renames panel lists each stored suggestion with a checkbox, its reason and
 confidence, an Apply selected / Apply all pair (with a rename-function toggle
@@ -1021,8 +1026,10 @@ in place that an organisation groups teams and decides nothing about access.
 
 The Users view also carries the Teams panel: `GET /api/teams` as a table (id,
 name, member count, description) with a create form, a per-row "add member"
-select over the known users and a Delete behind the confirm pattern, so team
-membership is managed in the browser the same way the CLI manages it.  Beside
+select over the known users (users already on the team show disabled with a
+member suffix, so nobody is added twice) and a Delete behind the confirm
+pattern, so team membership is managed in the browser the same way the CLI
+manages it.  Beside
 it, the Invites panel picks a team from `GET /api/teams`, mints one
 single-use code (`POST /api/teams/<id>/invites`, shown once, expires after
 seven days), redeems a code to join (`POST /api/teams/join`) and revokes an
@@ -1150,7 +1157,8 @@ The Analyses view (`views/AnalysesView.tsx`, `#/analyses`) carries an
 `Upload File` action that opens `#/binaries`, then lists each analysis's
 id, binary (linked to its detail page, with a hash identicon and a lock
 badge when the binary is team-scoped), a compact SHA-256 with a copy
-control, platform badges, binary size, engine,
+control, platform badges (a hand-set override first, badged as asserted by
+hand), binary size, engine,
 created time, status badge (the design language's status hues: `done` is the
 match green, `failed` the fail red, `processing` the live hue) and the owning
 binary's tags as an editor: each tag is a chip with its own remove control and

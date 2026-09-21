@@ -156,7 +156,7 @@ class TestRunUnstrip:
         self, conn: sqlite3.Connection, fake_engine: FakeEngine
     ) -> None:
         ids = _seed(conn, [(0x1000, "sub_1000", "rebrew")], context=False)
-        with pytest.raises(unstrip.NoRebrewContextError, match="no rebrew project context"):
+        with pytest.raises(unstrip.NoRebrewContextError, match="no analysis context yet"):
             unstrip.run_unstrip(conn, binary_id=ids["binary"], engine=fake_engine)
         assert fake_engine.calls == []
 

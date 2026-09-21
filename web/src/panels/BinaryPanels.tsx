@@ -68,6 +68,8 @@ import {
   STRING_SORTS,
   THREAT_BAND_LEVELS,
   THREAT_IOC_CATEGORIES,
+  UPLOAD_ARCHITECTURES,
+  UPLOAD_FORMATS,
   type BehaviorDomain,
   type FunctionOrder,
   type HardeningDomain,
@@ -308,6 +310,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
   const [name, setName] = useState(binary.name);
   const [notes, setNotes] = useState(binary.notes ?? "");
+  const [formatOverride, setFormatOverride] = useState(binary.format_override ?? "");
+  const [archOverride, setArchOverride] = useState(binary.arch_override ?? "");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -337,14 +341,18 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
   useEffect(() => {
     setName(binary.name);
     setNotes(binary.notes ?? "");
-  }, [binary.name, binary.notes]);
+    setFormatOverride(binary.format_override ?? "");
+    setArchOverride(binary.arch_override ?? "");
+  }, [binary.name, binary.notes, binary.format_override, binary.arch_override]);
 
   const save = async (): Promise<void> => {
     const trimmed = name.trim();
     const nextNotes = notes.trim();
     const nameChanged = Boolean(trimmed) && trimmed !== binary.name;
     const notesChanged = nextNotes !== (binary.notes ?? "");
-    if (!nameChanged && !notesChanged) {
+    const formatChanged = formatOverride !== (binary.format_override ?? "");
+    const archChanged = archOverride !== (binary.arch_override ?? "");
+    if (!nameChanged && !notesChanged && !formatChanged && !archChanged) {
       setEditing(false);
       setName(binary.name);
       return;
@@ -352,9 +360,11 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
     setActionError(null);
     setBusy(true);
     try {
-      const body: { name?: string; notes?: string } = {};
+      const body: { name?: string; notes?: string; format_override?: string; arch_override?: string } = {};
       if (nameChanged) body.name = trimmed;
       if (notesChanged) body.notes = nextNotes;
+      if (formatChanged) body.format_override = formatOverride;
+      if (archChanged) body.arch_override = archOverride;
       await api(`/binaries/${binary.id}`, { method: "PATCH", json: body });
       setEditing(false);
       refreshPanel(key, () => api<Binary>(`/binaries/${binary.id}`));
@@ -418,10 +428,12 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
           Binary #{binary.id} · {binary.path || NA}
         </p>
         <div className="detail-facts">
-          <Badge tone="accent" mono>
-            {binary.format || NA}
+          <Badge tone="accent" mono title={binary.format_override ? "Format asserted by hand" : "Detected format"}>
+            {binary.format_override || binary.format || NA}
           </Badge>
-          <Badge mono>{binary.arch || NA}</Badge>
+          <Badge mono title={binary.arch_override ? "ISA asserted by hand" : "Detected ISA"}>
+            {binary.arch_override || binary.arch || NA}
+          </Badge>
           <Badge mono>{binary.language || NA}</Badge>
           <Badge mono>{binary.compiler || NA}</Badge>
           <Badge mono>{binary.size.toLocaleString()} bytes</Badge>
@@ -435,11 +447,11 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
           <CopyValue value={binary.sha256} compact />
         </div>
         {binary.rebrew_project === undefined ? null : binary.rebrew_project ? (
-          <Muted>rebrew project: {binary.rebrew_project}</Muted>
+          <Muted>analysis context ready</Muted>
         ) : (
           <Muted>
-            No rebrew project context, so this binary&apos;s engine-backed reads answer
-            no-engine-context. Set one with <code>reportal import-rebrew &lt;project-dir&gt;</code>.
+            Analysis is still preparing this binary, so detailed reads answer
+            no-engine-context for now.
           </Muted>
         )}
       </div>
@@ -453,11 +465,41 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
             }}
           />
         </Field>
+        <Field label="Format override">
+          <select
+            aria-label="Assert the binary format"
+            value={formatOverride}
+            onChange={(event) => setFormatOverride(event.target.value)}
+          >
+            <option value="">Detected</option>
+            {UPLOAD_FORMATS.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="ISA override">
+          <select
+            aria-label="Assert the binary ISA"
+            value={archOverride}
+            onChange={(event) => setArchOverride(event.target.value)}
+          >
+            <option value="">Detected</option>
+            {UPLOAD_ARCHITECTURES.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </Field>
         <Button
           pending={busy}
           disabled={
             (!name.trim() || name.trim() === binary.name) &&
-            notes.trim() === (binary.notes ?? "")
+            notes.trim() === (binary.notes ?? "") &&
+            formatOverride === (binary.format_override ?? "") &&
+            archOverride === (binary.arch_override ?? "")
           }
           onClick={() => void save()}
         >
@@ -1191,8 +1233,7 @@ function CoverageMapBody({
     <>
       {zeroFunctions ? (
         <Note tone="warn">
-          This binary has no stored functions, so every cell reads as no function. Run
-          import-rebrew on its project.
+          This binary has no stored functions yet, so every cell reads as no function.
         </Note>
       ) : null}
       <div className="covmap-legend">
@@ -1504,7 +1545,7 @@ export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNo
   const die = usePanel(dieKey, () => api<DieInfo>(`/binaries/${binaryId}/die-info`));
   return (
     <Panel
-      title="Detail coverage"
+      title="Detail Coverage"
       subtitle="Which stored scans back the detail reads, the overlay past the last section and the Rich header."
     >
       <PanelBody entry={status} hint="Loading the detail coverage">
@@ -2377,6 +2418,66 @@ function StringsBody({ data, binaryId }: { data: StringTable; binaryId: number }
   );
 }
 
+/**
+ * The hosted portal's per-agent thumbs up/down, inlined in the scan panel's
+ * own header.  Reads the stored verdict and writes through the same endpoint
+ * the Agent Feedback panel uses; an artifact that was never produced (a 404
+ * on the rating read) renders nothing rather than a control that errors.
+ */
+function ArtifactRateButtons({
+  binaryId,
+  kind,
+}: {
+  binaryId: number;
+  kind: string;
+}): ReactNode {
+  const key = panelKey("binary", binaryId, `rating-${kind}`);
+  const loader = (): Promise<{ rating: { rating: string } | null }> =>
+    api(`/binaries/${binaryId}/ratings/${kind}`);
+  const entry = usePanel(key, loader);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  if (!entry || entry.state === "loading") return null;
+  if (entry.state === "error") return null;
+  const verdict = entry.data.rating?.rating ?? null;
+  const rate = (rating: string): void => {
+    setBusy(true);
+    setError(null);
+    api(`/binaries/${binaryId}/ratings/${kind}`, {
+      method: "PUT",
+      json: { rating: verdict === rating ? null : rating },
+    })
+      .then(() => refreshPanel(key, loader))
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <span className="toolbar">
+      <Button
+        size="sm"
+        tone={verdict === "up" ? "primary" : "ghost"}
+        aria-pressed={verdict === "up"}
+        title={`Rate this ${kind} result useful`}
+        pending={busy}
+        onClick={() => rate("up")}
+      >
+        Up
+      </Button>
+      <Button
+        size="sm"
+        tone={verdict === "down" ? "primary" : "ghost"}
+        aria-pressed={verdict === "down"}
+        title={`Rate this ${kind} result not useful`}
+        pending={busy}
+        onClick={() => rate("down")}
+      >
+        Down
+      </Button>
+      {error ? <ErrorNote error={error} /> : null}
+    </span>
+  );
+}
+
 export function TriagePanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "triage");
   const [entry, run] = useLazyPanel<TriageDossier>(key);
@@ -2407,6 +2508,7 @@ export function TriagePanel({ binaryId }: { binaryId: number }): ReactNode {
           >
             Run triage
           </Button>
+          <ArtifactRateButtons binaryId={binaryId} kind="triage" />
         </>
       }
     >
@@ -2540,7 +2642,7 @@ export function FunctionTriagePanel({ binaryId }: { binaryId: number }): ReactNo
 
   return (
     <Panel
-      title="Function triage"
+      title="Function Triage"
       subtitle="Scores and summarizes the binary's functions, most interesting first."
       actions={
         <Toolbar>
@@ -2555,6 +2657,7 @@ export function FunctionTriagePanel({ binaryId }: { binaryId: number }): ReactNo
           <Button tone="primary" pending={busy} onClick={run}>
             Run function triage
           </Button>
+          <ArtifactRateButtons binaryId={binaryId} kind="function-triage" />
         </Toolbar>
       }
     >
@@ -2929,23 +3032,41 @@ export function CapabilitiesPanel({ binaryId }: { binaryId: number }): ReactNode
   const path = `/binaries/${binaryId}/capabilities`;
   const entry = usePanel(key, () => api<CapabilitiesResult>(path));
   const [busy, setBusy] = useState(false);
+  const count =
+    entry?.state === "ready"
+      ? (entry.data.count ?? entry.data.capabilities?.length ?? 0)
+      : NA;
   return (
     <Panel
-      title="Capabilities"
+      title={
+        <CountTitle
+          label="Capabilities"
+          count={
+            typeof count === "number" ? (
+              <Badge tone={count > 0 ? "ok" : "danger"}>{count}</Badge>
+            ) : (
+              count
+            )
+          }
+        />
+      }
       subtitle="What the imports and strings let the binary do."
       actions={
-        <Button
-          tone="primary"
-          pending={busy}
-          onClick={() => {
-            setBusy(true);
-            refreshPanel(key, () =>
-              api<CapabilitiesResult>(path, { method: "POST" }).finally(() => setBusy(false)),
-            );
-          }}
-        >
-          Run capability scan
-        </Button>
+        <>
+          <Button
+            tone="primary"
+            pending={busy}
+            onClick={() => {
+              setBusy(true);
+              refreshPanel(key, () =>
+                api<CapabilitiesResult>(path, { method: "POST" }).finally(() => setBusy(false)),
+              );
+            }}
+          >
+            Run capability scan
+          </Button>
+          <ArtifactRateButtons binaryId={binaryId} kind="capabilities" />
+        </>
       }
     >
       <PanelBody
@@ -3335,7 +3456,7 @@ export function ThreatPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [busy, setBusy] = useState(false);
   return (
     <Panel
-      title="Threat report"
+      title="Threat Report"
       subtitle="Indicators of compromise extracted from strings, imports and references."
       actions={
         <Toolbar>
@@ -3358,6 +3479,7 @@ export function ThreatPanel({ binaryId }: { binaryId: number }): ReactNode {
           >
             Run threat report
           </Button>
+          <ArtifactRateButtons binaryId={binaryId} kind="threat" />
         </Toolbar>
       }
     >
@@ -3366,7 +3488,7 @@ export function ThreatPanel({ binaryId }: { binaryId: number }): ReactNode {
         hint="Loading the threat report"
         noScanHint={NO_SCAN_MESSAGES.threat}
       >
-        {(data) => <ThreatBody result={data} />}
+        {(data) => <ThreatBody result={data} binaryId={binaryId} />}
       </PanelBody>
     </Panel>
   );
@@ -3456,7 +3578,23 @@ function AttackSurfaceBody({ result }: { result: AttackSurface }): ReactNode {
   );
 }
 
-function ThreatBody({ result }: { result: ThreatReport }): ReactNode {
+function ThreatYara({ binaryId }: { binaryId: number }): ReactNode {
+  // The hosted Threat Report carries its YARA rule; locally the rule lives in
+  // the remediation scan, so this section reads that stored scan through the
+  // same panel key the Remediation panel uses and links out for the rest.
+  const key = panelKey("binary", binaryId, "remediation");
+  const entry = usePanel(key, () => api<RemediationResult>(`/binaries/${binaryId}/remediation`));
+  if (!entry || entry.state === "loading" || entry.state === "error") return null;
+  if (!entry.data.rule) return null;
+  return (
+    <details>
+      <summary>Yara Rule ({entry.data.rule_name})</summary>
+      <CodeBlock text={entry.data.rule} title="yara" />
+    </details>
+  );
+}
+
+function ThreatBody({ result, binaryId }: { result: ThreatReport; binaryId: number }): ReactNode {
   const iocs = result.iocs ?? {};
   const counts = result.ioc_counts ?? {};
   const techniques = Array.isArray(result.techniques) ? result.techniques : [];
@@ -3479,7 +3617,8 @@ function ThreatBody({ result }: { result: ThreatReport }): ReactNode {
         return (
           <details key={category}>
             <summary>
-              {category} ({counts[category] ?? findings.length})
+              {category.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase())} (
+              {counts[category] ?? findings.length})
             </summary>
             {findings.length === 0 ? (
               <Muted>None.</Muted>
@@ -3487,7 +3626,7 @@ function ThreatBody({ result }: { result: ThreatReport }): ReactNode {
               <ul>
                 {findings.map((finding, index) => (
                   <li key={`${finding.value}-${index}`} className="mono">
-                    {finding.value} <span className="muted">({finding.kind})</span>
+                    <CopyValue value={finding.value} /> <span className="muted">({finding.kind})</span>
                   </li>
                 ))}
               </ul>
@@ -3537,6 +3676,7 @@ function ThreatBody({ result }: { result: ThreatReport }): ReactNode {
         />
       )}
       {result.notes?.length ? <Muted>{result.notes.join("; ")}</Muted> : null}
+      <ThreatYara binaryId={binaryId} />
       <RawJson value={result} />
     </>
   );
@@ -4598,14 +4738,14 @@ function CompositionBody({ result }: { result: CompositionResult }): ReactNode {
         ]}
       />
       <CompositionBreakdown
-        title="Function name sources"
+        title="Function Name Sources"
         entries={result.name_sources}
         hrefFor={(label) =>
           `#/binaries/${result.binary_id}/functions?name_source=${encodeURIComponent(label)}`
         }
       />
       <CompositionBreakdown
-        title="Match quality"
+        title="Match Quality"
         entries={result.match_quality}
         hueFor={qualityHue}
         onSelect={(label) => setBand(band === label ? "" : label)}

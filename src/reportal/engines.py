@@ -36,11 +36,11 @@ from typing import Any, Concatenate
 
 import typer
 
-# Message every unavailable-engine surface reports.  `rebrew` is a base
-# dependency of reportal, so an engine that is not importable means the
+# Message every unavailable-engine surface reports.  The analysis engine is a
+# base dependency of reportal, so an engine that is not importable means the
 # installed distribution is broken or the package was removed, not an
 # unrequested extra.
-ENGINE_UNAVAILABLE_HINT = "rebrew is required but failed to import; reinstall reportal (uv sync)"
+ENGINE_UNAVAILABLE_HINT = "analysis engine unavailable; reinstall reportal (uv sync)"
 
 # Engine message kept in an error.  A rebrew failure can embed a whole
 # diagnostic; the API and CLI surface the message, so it is bounded.
@@ -774,6 +774,25 @@ class RebrewEngine:
                 span_start, span_end = earlier[-1]
                 prev_va = max(span_start, span_end - length)
 
+        def _in_kind(va: int | None) -> str | None:
+            """Render a neighbouring page start in the requested address kind.
+
+            The walk hands ``next``/``prev`` straight back as its next ``va``,
+            so a file-offset walk that receives a virtual address steps into
+            unmapped space and fails; converting here keeps every step inside
+            the address space the caller asked for.
+            """
+            if va is None:
+                return None
+            if kind == "rva":
+                return hex(va - image_base)
+            if kind != "file":
+                return hex(va)
+            for (span_start, span_end), section in spans:
+                if span_start <= va < span_end:
+                    return hex(int(section.get("raw_offset") or 0) + (va - span_start))
+            return hex(va)
+
         rows: list[dict[str, Any]] = []
         mapped = 0
         gaps = 0
@@ -809,8 +828,8 @@ class RebrewEngine:
             "address": hex(address) if address is not None else None,
             "start": hex(start),
             "length": length,
-            "next": hex(next_va) if next_va is not None else None,
-            "prev": hex(prev_va) if prev_va is not None else None,
+            "next": _in_kind(next_va),
+            "prev": _in_kind(prev_va),
             "sections": [
                 {
                     "name": str(section.get("name") or ""),

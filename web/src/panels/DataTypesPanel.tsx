@@ -512,7 +512,7 @@ export function DataTypesPanel({
       <Toolbar>
         <Field label="Source filter">
           <select value={source} onChange={(event) => setSource(event.target.value)}>
-            <option value="">All sources</option>
+            <option value="">All Sources</option>
             {DATA_TYPE_SOURCES.map((option) => (
               <option key={option} value={option}>
                 {option}
@@ -676,7 +676,7 @@ function ProvenanceStrip({
       ))}
       {selected ? (
         <Button size="sm" tone="ghost" onClick={() => onSelect("")}>
-          Clear source
+          Clear Source
         </Button>
       ) : null}
     </Toolbar>
@@ -727,7 +727,7 @@ function NamespaceTree({
         </Button>
         {selected ? (
           <Button size="sm" tone="ghost" onClick={() => onSelect("")}>
-            All namespaces
+            All Namespaces
           </Button>
         ) : null}
       </Toolbar>
@@ -867,8 +867,16 @@ function DataTypeCard({
   const [showReferences, setShowReferences] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // A save writes a history version too, so the history section reloads with
+  // the model instead of going stale until the next mount.
+  const historyKey = panelKey("data-type", dataType.id, "history");
+  const changed = (): void => {
+    onChange();
+    refreshPanel(historyKey, () => api<DataTypeHistory>(`/data-types/${dataType.id}/history`));
+  };
+
   const mutate = (label: string, action: () => Promise<unknown>): void => {
-    runMutation(setError, setBusy, label, action, onChange);
+    runMutation(setError, setBusy, label, action, changed);
   };
 
   const rename = (): void => {
@@ -998,7 +1006,7 @@ function DataTypeCard({
       {dataType.size_check.match ? null : <Note tone="warn">{dataType.size_check.warning}</Note>}
       <CodeBlock text={dataType.as_c} title="As C" />
       {dataType.kind === "enum" ? (
-        <EnumValues dataType={dataType} onChange={onChange} onNote={onNote} />
+        <EnumValues dataType={dataType} onChange={changed} onNote={onNote} />
       ) : dataType.kind === "struct" || dataType.kind === "union" || dataType.kind === "function" ? (
         <>
           {dataType.kind === "function" ? (
@@ -1023,7 +1031,7 @@ function DataTypeCard({
             binaryId={binaryId}
             dataType={dataType}
             knownTypes={knownTypes}
-            onChange={onChange}
+            onChange={changed}
             addName={memberName}
             addType={memberType}
           />
@@ -1105,7 +1113,7 @@ function DataTypeCard({
         </Toolbar>
       ) : null}
       {error ? <ErrorNote error={error} /> : null}
-      {showHistory ? <DataTypeHistorySection dataTypeId={dataType.id} onChange={onChange} /> : null}
+      {showHistory ? <DataTypeHistorySection dataTypeId={dataType.id} onChange={changed} /> : null}
       {showReferences ? (
         <TypeReferences dataTypeId={dataType.id} binaryId={binaryId} />
       ) : null}
@@ -1174,12 +1182,17 @@ function DataTypeHistorySection({
         <EmptyState>No edits recorded for this type yet.</EmptyState>
       ) : (
         <ul className="type-history">
-          {data.history.map((version) => (
+          {data.history.map((version, index) => (
             <li key={version.id}>
               <div className="toolbar">
                 <Badge mono>#{version.id}</Badge>
+                {index === 0 ? <Badge tone="ok">Current</Badge> : null}
+                {index === data.history.length - 1 && data.history.length > 1 ? (
+                  <Badge tone="info">Original</Badge>
+                ) : null}
                 <Muted>
-                  {version.source || "manual"} ({version.actor || "manual"}) {version.created_at}
+                  {version.source || "manual"} ({version.actor_name ?? version.actor ?? "manual"}
+                  ){version.age ? `, ${version.age}` : ""} · {version.created_at}
                 </Muted>
                 <ConfirmButton
                   label="Revert"
@@ -1259,6 +1272,8 @@ function MemberTable({
                   binaryId={binaryId}
                   dataTypeId={dataType.id}
                   member={member}
+                  index={index}
+                  count={dataType.members.length}
                   knownTypes={knownTypes}
                   onChange={onChange}
                   addName={addName}
@@ -1561,6 +1576,8 @@ function MemberRow({
   binaryId,
   dataTypeId,
   member,
+  index,
+  count,
   knownTypes,
   onChange,
   addName,
@@ -1570,6 +1587,8 @@ function MemberRow({
   binaryId: number;
   dataTypeId: number;
   member: DataTypeMember;
+  index: number;
+  count: number;
   knownTypes: Set<string>;
   onChange: () => void;
   addName: string;
@@ -1620,6 +1639,15 @@ function MemberRow({
       api(`/data-types/${dataTypeId}/members`, {
         method: "POST",
         json: { name: addName, type: addType, after: member.name },
+      }),
+    );
+  };
+
+  const move = (toIndex: number): void => {
+    mutate("move", () =>
+      api(`/data-types/${dataTypeId}/members/${encodeURIComponent(member.name)}/move`, {
+        method: "POST",
+        json: { to_index: toIndex },
       }),
     );
   };
@@ -1704,6 +1732,28 @@ function MemberRow({
         <div className="actions-cell">
           <Button size="sm" pending={busy === "save"} onClick={save}>
             Save
+          </Button>
+          <Button
+            size="sm"
+            tone="ghost"
+            pending={busy === "move"}
+            disabled={index === 0}
+            title="Move earlier in the layout"
+            aria-label={`Move member ${member.name} up`}
+            onClick={() => move(index - 1)}
+          >
+            ↑
+          </Button>
+          <Button
+            size="sm"
+            tone="ghost"
+            pending={busy === "move"}
+            disabled={index === count - 1}
+            title="Move later in the layout"
+            aria-label={`Move member ${member.name} down`}
+            onClick={() => move(index + 1)}
+          >
+            ↓
           </Button>
           <Button
             size="sm"

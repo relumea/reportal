@@ -101,6 +101,21 @@ class TestEngineSurface:
         with pytest.raises(engines.UnmappedAddressError):
             fake_engine.read_memory_page(_section_file(tmp_path), address=0x407800, length=16)
 
+    def test_neighbouring_starts_come_back_in_the_requested_kind(
+        self, tmp_path: Path, fake_engine: FakeEngine
+    ) -> None:
+        # A file-offset walk hands `next` straight back as its next `va`, so a
+        # virtual address there steps into unmapped space and fails.
+        page = fake_engine.read_memory_page(
+            _section_file(tmp_path), address=TEXT_OFFSET, length=16, kind="file"
+        )
+        assert page["next"] == hex(TEXT_OFFSET + 16)
+        assert page["prev"] is None
+        rva = fake_engine.read_memory_page(
+            _section_file(tmp_path), address=TEXT_VA - 0x400000, length=16, kind="rva"
+        )
+        assert rva["next"] == hex(TEXT_VA + 16 - 0x400000)
+
     def test_a_file_offset_without_a_section_is_refused(
         self, tmp_path: Path, fake_engine: FakeEngine
     ) -> None:

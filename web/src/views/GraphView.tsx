@@ -395,8 +395,7 @@ export function GraphView(): ReactNode {
         ) : null}
         {binaries.length === 0 ? (
           <EmptyState>
-            No binaries yet. Import a rebrew project with{" "}
-            <code>reportal import-rebrew &lt;project-dir&gt;</code> to build a graph.
+            No binaries yet. Upload one to build a graph.
           </EmptyState>
         ) : null}
       </Panel>

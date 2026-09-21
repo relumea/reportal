@@ -11,6 +11,22 @@ import { expect, test } from "./fixtures";
 
 const state = e2eState();
 
+test("an asserted format highlights its row", async ({ page, request }) => {
+  const asserted = await request.patch(`/api/binaries/${state.ids.binary_id}`, {
+    data: { format_override: "elf" },
+  });
+  expect(asserted.ok()).toBeTruthy();
+
+  await page.goto("/#/analyses");
+  const panel = panelByTitle(page, "Analyses");
+  await expect(panel.getByTitle("Format asserted by hand").first()).toHaveText("elf");
+
+  const cleared = await request.patch(`/api/binaries/${state.ids.binary_id}`, {
+    data: { format_override: "" },
+  });
+  expect(cleared.ok()).toBeTruthy();
+});
+
 test("the list filters to the seeded analysis and its log opens on demand", async ({ page }) => {
   await page.goto("/#/analyses");
   const panel = panelByTitle(page, "Analyses");

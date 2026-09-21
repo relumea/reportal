@@ -66,7 +66,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from reportal import store
+from reportal import clock, store
 from reportal._paths import write_bytes_atomic
 
 # Declaration kinds the model carries.  These are reportal's own lower-case
@@ -1009,9 +1009,22 @@ def _changes(
     ]
 
 
-def _history_view(entry: Mapping[str, Any]) -> dict[str, Any]:
-    """A history row plus the per-field diff its two recorded states carry."""
-    return {**entry, "changes": _changes(entry.get("previous"), entry.get("current"))}
+def _history_view(entry: Mapping[str, Any], actor_name: str | None = None) -> dict[str, Any]:
+    """A history row plus the per-field diff its two recorded states carry.
+
+    ``actor_name`` is the display name resolved for the row's
+    ``actor_user_id``; it stays None when the id is missing or its user row is
+    gone, and the stored ``actor`` login name still answers those reads.
+    """
+    view = {**entry, "actor_name": actor_name, "age": clock.relative_age(entry.get("created_at"))}
+    view["changes"] = _changes(entry.get("previous"), entry.get("current"))
+    return view
+
+
+def _entry_actor_name(entry: Mapping[str, Any], names: Mapping[int, str]) -> str | None:
+    """The display name for one history entry's ``actor_user_id``, if any."""
+    user_id = entry.get("actor_user_id")
+    return names.get(int(user_id)) if user_id is not None else None
 
 
 def _record(
@@ -1343,6 +1356,31 @@ def remove_member(
     return _save(conn, row, members=members)
 
 
+def move_member(
+    conn: sqlite3.Connection,
+    data_type_id: int,
+    *,
+    name: str | None = None,
+    index: int | None = None,
+    to_index: int,
+) -> dict[str, Any]:
+    """Move one member to another position; offsets recompute like any reorder.
+
+    The move is one write, so the history records a single reorder rather than
+    a remove plus an add.  Moving past the end clamps to the last position.
+    """
+    if isinstance(to_index, bool):
+        raise InvalidMemberError("to_index must be an integer")
+    row = _load(conn, data_type_id)
+    _require_member_kind(row)
+    members = list(row["members"])
+    position = _member_index(row, name=name, index=index)
+    target = max(0, min(int(to_index), len(members) - 1))
+    member = members.pop(position)
+    members.insert(target, member)
+    return _save(conn, row, members=members)
+
+
 def convert_to_gap(
     conn: sqlite3.Connection,
     data_type_id: int,
@@ -1546,15 +1584,20 @@ def list_history(conn: sqlite3.Connection, data_type_id: int) -> list[dict[str, 
     The rows are keyed by the type id and do not cascade with ``data_types``, so
     a deleted type's history is still listed here; a type with no history yet
     (a row written straight through ``store.add_data_type``) answers an empty
-    list rather than an error.
+    list rather than an error.  Each entry carries ``actor_name``, the display
+    name of its ``actor_user_id`` or None when that user row is gone.
     """
-    return [_history_view(entry) for entry in store.list_data_type_history(conn, data_type_id)]
+    entries = store.list_data_type_history(conn, data_type_id)
+    names = store.history_actor_names(conn, entries)
+    return [_history_view(entry, _entry_actor_name(entry, names)) for entry in entries]
 
 
 def get_history(conn: sqlite3.Connection, history_id: int) -> dict[str, Any] | None:
     """One data-type-history row by id, or None."""
     entry = store.get_data_type_history(conn, history_id)
-    return _history_view(entry) if entry is not None else None
+    if entry is None:
+        return None
+    return _history_view(entry, _entry_actor_name(entry, store.history_actor_names(conn, [entry])))
 
 
 def revert_history(

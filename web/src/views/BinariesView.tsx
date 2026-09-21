@@ -1211,8 +1211,12 @@ export function BinariesView({
                 label: "Format",
                 render: (row) => (
                   <span className="toolbar">
-                    <Badge mono>{row.format || "n/a"}</Badge>
-                    <Badge mono>{row.arch || "n/a"}</Badge>
+                    <Badge mono title={row.format_override ? "Format asserted by hand" : undefined}>
+                      {row.format_override || row.format || "n/a"}
+                    </Badge>
+                    <Badge mono title={row.arch_override ? "ISA asserted by hand" : undefined}>
+                      {row.arch_override || row.arch || "n/a"}
+                    </Badge>
                     <Badge mono>{row.language || "n/a"}</Badge>
                     <Badge mono>{row.compiler || "n/a"}</Badge>
                   </span>
@@ -1277,8 +1281,7 @@ export function BinariesView({
                   ? "No binaries match this filter. Clear filters to see them all."
                   : (
                       <>
-                        No binaries yet. Upload one above, or import a rebrew project with{" "}
-                        <code>reportal import-rebrew &lt;project-dir&gt;</code>.
+                        No binaries yet. Upload one above to start analysis.
                       </>
                     )}
               </EmptyState>

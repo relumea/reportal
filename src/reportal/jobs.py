@@ -339,7 +339,7 @@ def _engine_report(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any]:
     """
     project_dir = store.get_rebrew_context(conn, binary_id)
     if project_dir is None:
-        raise ValueError(f"binary {binary_id} has no rebrew project context")
+        raise ValueError(f"binary {binary_id} has no analysis context yet")
     return engines.get_engine().report(project_dir, _paths.reports_dir(binary_id))
 
 
@@ -430,7 +430,7 @@ def _perform_security(
     """Run the engine's security scan and store it, journaled like its route."""
     project_dir = store.get_rebrew_context(conn, binary_id)
     if project_dir is None:
-        raise ValueError(f"binary {binary_id} has no rebrew project context")
+        raise ValueError(f"binary {binary_id} has no analysis context yet")
     min_severity = str(params.get("min_severity") or engines.DEFAULT_SECURITY_MIN_SEVERITY)
     result = engines.get_engine().security_scan(project_dir, min_severity)
     action = journal.new_action()
@@ -464,7 +464,7 @@ def _perform_structs(
     """Recover structs through the engine and store them, journaled like the route."""
     project_dir = store.get_rebrew_context(conn, binary_id)
     if project_dir is None:
-        raise ValueError(f"binary {binary_id} has no rebrew project context")
+        raise ValueError(f"binary {binary_id} has no analysis context yet")
     decompiler = str(params.get("decompiler") or engines.DEFAULT_DECOMPILER_BACKEND)
     raw_limit = params.get("limit")
     limit = DEFAULT_STRUCT_LIMIT if raw_limit is None else int(raw_limit)

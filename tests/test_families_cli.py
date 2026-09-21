@@ -117,7 +117,7 @@ class TestFamilyAddCommand:
         engines.set_engine(engines.RebrewEngine(enabled=False))
         result = runner.invoke(cli.app, ["family-add", str(binary_id), NAME, "--json"])
         assert result.exit_code == 1
-        assert "rebrew is required" in result.stdout
+        assert "analysis engine unavailable" in result.stdout
 
 
 class TestFamilyRmCommand:
@@ -185,7 +185,7 @@ class TestDetectCommand:
         engines.set_engine(engines.RebrewEngine(enabled=False))
         result = runner.invoke(cli.app, ["detect", str(binary_id), "--json"])
         assert result.exit_code == 1
-        assert "rebrew is required" in result.stdout
+        assert "analysis engine unavailable" in result.stdout
 
     def test_no_match_is_a_success(
         self,

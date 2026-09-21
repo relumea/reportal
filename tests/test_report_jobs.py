@@ -124,7 +124,7 @@ class TestPdfJob:
         finished = jobs.run_pending(conn, limit=1)[0]
 
         assert finished["status"] == jobs.STATUS_FAILED
-        assert "rebrew project context" in finished["error"]
+        assert "analysis context yet" in finished["error"]
 
 
 class TestRoute:

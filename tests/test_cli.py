@@ -754,7 +754,7 @@ class TestDisasmCommand:
         result = runner.invoke(cli.app, ["disasm", str(ids["first"])])
 
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.output
+        assert "no analysis context yet" in result.output
 
 
 class TestImportsCommand:
@@ -813,6 +813,18 @@ class TestBinariesCommand:
         assert payload["binaries"][0]["id"] == ids["binary"]
         assert payload["binaries"][0]["function_count"] == 2
 
+    def test_lists_the_effective_format(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_portal(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
+            store.set_binary_format_override(conn, ids["binary"], format_override="elf")
+
+        result = runner.invoke(cli.app, ["binaries"])
+
+        assert result.exit_code == 0, result.output
+        assert "elf" in result.output
+
     def test_filters_by_search_tag_and_format(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -864,8 +876,7 @@ class TestBinaryCommand:
 
         bare = runner.invoke(cli.app, ["binary", str(binary_id)])
         assert bare.exit_code == 0, bare.output
-        assert "no rebrew project context" in bare.output
-        assert "import-rebrew" in bare.output
+        assert "no analysis context" in bare.output
 
         with contextlib.closing(store.connect(tmp_path / "portal.db")) as conn:
             store.set_rebrew_context(conn, binary_id, "/projects/demo-rebrew")
@@ -1137,7 +1148,7 @@ class TestMatch:
         binary_id = self._seed(tmp_path, monkeypatch, context=False)
         result = runner.invoke(cli.app, ["match", str(binary_id), "--json"])
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.stdout
+        assert "no analysis context yet" in result.stdout
 
     def test_match_unknown_binary_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
@@ -1170,6 +1181,18 @@ class TestMatch:
         result = runner.invoke(cli.app, ["match", str(binary_id), "--platform", "beos", "--json"])
         assert result.exit_code == 1
         assert "beos" in result.stdout
+
+    def test_match_name_source_scope_reaches_the_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
+    ) -> None:
+        binary_id = self._seed(tmp_path, monkeypatch)
+        monkeypatch.setattr(similarity, "available", lambda: True)
+        monkeypatch.setattr(similarity, "similarity", lambda left, right: 90.0)
+        result = runner.invoke(
+            cli.app, ["match", str(binary_id), "--name-source", "User", "--json"]
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["settings"]["name_sources"] == ["User"]
 
 
 class TestDecompile:
@@ -1260,7 +1283,7 @@ class TestDecompile:
         function_id = self._seed(tmp_path, monkeypatch, context=False)
         result = runner.invoke(cli.app, ["decompile", str(function_id), "--json"])
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.stdout
+        assert "no analysis context yet" in result.stdout
 
     def test_decompile_unknown_function_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
@@ -1408,7 +1431,7 @@ class TestReportCommand:
         binary_id = self._seed(tmp_path, monkeypatch, context=False)
         result = runner.invoke(cli.app, ["report", str(binary_id), "--json"])
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.stdout
+        assert "no analysis context yet" in result.stdout
         assert fake_engine.calls == []
 
     def test_report_unknown_binary_fails(
@@ -1735,7 +1758,7 @@ class TestXrefsCommand:
         ids = _seed_portal(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["xrefs", str(ids["first"]), "--json"])
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.stdout
+        assert "no analysis context yet" in result.stdout
         assert fake_engine.calls == []
 
     def test_without_engine_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1821,7 +1844,7 @@ class TestStructsCommand:
         ids = _seed_portal(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["structs", str(ids["binary"]), "--json"])
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.stdout
+        assert "no analysis context yet" in result.stdout
         assert fake_engine.calls == []
 
     def test_without_engine_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2790,7 +2813,7 @@ class TestSecurityScanCommand:
         ids = _seed_portal(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["security-scan", str(ids["binary"]), "--json"])
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.stdout
+        assert "no analysis context yet" in result.stdout
         assert fake_engine.calls == []
 
     def test_without_engine_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2997,7 +3020,7 @@ class TestUnstripCommand:
         ids = _seed_portal(tmp_path, monkeypatch)
         result = runner.invoke(cli.app, ["unstrip", str(ids["binary"]), "--json"])
         assert result.exit_code == 1
-        assert "no rebrew project context" in result.stdout
+        assert "no analysis context yet" in result.stdout
         assert fake_engine.calls == []
 
     def test_without_engine_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -23,15 +23,19 @@ reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--
 reportal binaries [--search TEXT] [--tag NAME] [--format FMT] [--language LANG] [--compiler NAME] [--order ORDER] [--json]
                                            # list the register with function and comment
                                            #   counts; --search matches the name, the
-                                           #   SHA-256 or the notes, --order is id (default), newest,
+                                           #   SHA-256 or the notes, --format matches the
+                                           #   effective format (override first), --order
+                                           #   is id (default), newest,
                                            #   name, name-desc, size or size-desc
 reportal binary <binary-id> [--json]
                                            # one binary: identity, scope and the rebrew
                                            #   project its engine-backed reads use, or the
                                            #   command that sets one when it has none
-reportal binary-rename <binary-id> [--name TEXT] [--notes TEXT] [--json]
-                                           # set a binary's display name and/or operator
-                                           #   notes; empty --notes clears; journaled;
+reportal binary-rename <binary-id> [--name TEXT] [--notes TEXT] [--format F]
+             [--arch A] [--json]
+                                           # set a binary's display name, operator
+                                           #   notes and/or format/ISA override; empty
+                                           #   --notes or override clears; journaled;
                                            #   sha256 dedupe is unchanged
 reportal functions <binary-id> [--name TEXT] [--va ADDRESS] [--sort SORT] [--order ORDER] [--json]
                                            # list one binary's stored functions, filtered
@@ -345,7 +349,8 @@ reportal types-export <binary-id> <path> [--force] [--json]
                                            # render the model as one C header at an explicit path
 reportal types-history <type-id> [--json]  # list a type's edits, newest first, with each
                                            #   version's per-field diff (a deleted type's
-                                           #   history is still listed)
+                                           #   history is still listed), each version
+                                           #   naming its user with a relative age
 reportal types-revert <type-id> <history-id> [--json]
                                            # restore the state one history row recorded; the
                                            #   revert is journaled and a repeat is a no-op
@@ -370,7 +375,9 @@ reportal signatures-export <binary-id> <path> [--force] [--json]
                                            # render one prototype header at an explicit path
 reportal signature-history <function-id> [--json]
                                            # list a function's signature-edit history, newest
-                                           #   first, with the state each edit replaced
+                                           #   first, with the state each edit replaced,
+                                           #   each version naming its user with a
+                                           #   relative age
 reportal signature-revert <function-id> <history-id> [--json]
                                            # restore the state one signature-history row
                                            #   recorded; the revert is journaled and a repeat is
@@ -402,7 +409,8 @@ reportal section-coverage <binary-id> [--json]
                                            #   reportal's own metric, not a portal feature
 reportal match <binary-id> [--min-similarity 80] [--min-confidence 0]
              [--top 10] [--no-self] [--platform P]... [--arch A]...
-             [--binary ID]... [--collection ID]... [--json]
+             [--binary ID]... [--collection ID]... [--name-source S]...
+             [--json]
                                            # rank each function against the local
                                            #   corpus under the match settings:
                                            #   the two floors, the candidates kept
@@ -410,9 +418,9 @@ reportal match <binary-id> [--min-similarity 80] [--min-confidence 0]
                                            #   whether the binary's own functions
                                            #   may be candidates (--self/--no-self),
                                            #   and the platform, architecture,
-                                           #   binary and collection scopes, each
-                                           #   repeatable; an unknown scope id or
-                                           #   an out-of-range value exits 1
+                                           #   binary, collection and name-source
+                                           #   scopes, each repeatable; an unknown
+                                           #   scope id or an out-of-range value exits 1
 reportal triage <binary-id> [--json]       # store the rebrew one-shot dossier
 reportal function-triage <binary-id> [--limit N] [--function ID]... [--json]
                                            # score and summarize the binary's selected

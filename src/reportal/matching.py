@@ -240,6 +240,7 @@ class MatchSettings:
     architectures: tuple[str, ...] = ()
     binary_ids: tuple[int, ...] = ()
     collection_ids: tuple[int, ...] = ()
+    name_sources: tuple[str, ...] = ()
 
     def payload(self) -> dict[str, Any]:
         """The settings as the JSON object stored on every recorded row."""
@@ -252,6 +253,7 @@ class MatchSettings:
             "architectures": list(self.architectures),
             "binary_ids": list(self.binary_ids),
             "collection_ids": list(self.collection_ids),
+            "name_sources": list(self.name_sources),
         }
 
     @classmethod
@@ -277,6 +279,7 @@ class MatchSettings:
             architectures=_request_choices(body, "architectures", "architecture", ARCHITECTURES),
             binary_ids=_request_ids(body, "binary_ids"),
             collection_ids=_request_ids(body, "collection_ids"),
+            name_sources=_request_name_sources(body),
         )
 
 
@@ -370,6 +373,36 @@ def _request_choices(
     return tuple(chosen)
 
 
+def _request_name_sources(body: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return a validated, de-duplicated name-source selection.
+
+    The vocabulary is the portal's display labels, matched case-insensitively
+    and stored canonical; an omitted key leaves the candidate corpus whole.
+    The labels live in :mod:`reportal.composition`, imported here rather than
+    at module level because that module already imports this one.
+    """
+    from reportal import composition
+
+    value = body.get("name_sources", ())
+    if not isinstance(value, (list, tuple)):
+        raise InvalidSettingsError(
+            "name_sources must be a list of strings", "name_sources must be a list"
+        )
+    folded = {label.lower(): label for label in composition.NAME_SOURCE_LABELS}
+    chosen: list[str] = []
+    for item in value:
+        token = item.strip().lower() if isinstance(item, str) else ""
+        if token not in folded:
+            raise InvalidSettingsError(
+                "invalid name source",
+                f"unknown name source: {item}; expected one of "
+                f"{', '.join(composition.NAME_SOURCE_LABELS)}",
+            )
+        if folded[token] not in chosen:
+            chosen.append(folded[token])
+    return tuple(chosen)
+
+
 def _request_ids(body: Mapping[str, Any], key: str) -> tuple[int, ...]:
     """Return a validated, de-duplicated list of ids from ``body[key]``."""
     value = body.get(key, ())
@@ -432,11 +465,13 @@ def _entry_int(entry: Mapping[str, Any], key: str, index: int) -> int:
 
 def scope_notes(settings: MatchSettings) -> list[str]:
     """The caveats a run with these settings carries, for its response."""
-    if not settings.platforms and not settings.architectures:
+    if not settings.platforms and not settings.architectures and not settings.name_sources:
         return []
-    notes = [PLATFORM_SCOPE_NOTE]
+    notes = [PLATFORM_SCOPE_NOTE] if settings.platforms or settings.architectures else []
     if PLATFORM_ANDROID in settings.platforms:
         notes.append(ANDROID_SCOPE_NOTE)
+    if settings.name_sources:
+        notes.append("candidates limited to functions labelled " + ", ".join(settings.name_sources))
     return notes
 
 
@@ -523,17 +558,26 @@ def _binary_format_arch(
 ) -> tuple[str, str]:
     """The ``(format, arch)`` tokens a binary's scope filter compares.
 
-    The stored fingerprint's header-derived values win over the suffix-derived
-    ``format``/``arch`` columns, so a run filters on the better evidence when
-    the engine has written one.
+    A hand-set override wins over everything (the operator corrected the
+    record); else the stored fingerprint's header-derived values win over the
+    suffix-derived ``format``/``arch`` columns, so a run filters on the better
+    evidence when the engine has written one.
     """
     cached = cache.get(binary_id)
     if cached is not None:
         return cached
     fingerprint = store.get_fingerprint(conn, binary_id)
-    binary = store.get_binary(conn, binary_id)
-    fmt = _token(fingerprint, "format") or _token(binary, "format")
-    arch = _token(fingerprint, "arch") or _token(binary, "arch")
+    binary = store.get_binary(conn, binary_id) or {}
+    fmt = (
+        store.effective_format(binary)
+        if str(binary.get("format_override") or "")
+        else (_token(fingerprint, "format") or _token(binary, "format"))
+    )
+    arch = (
+        store.effective_arch(binary)
+        if str(binary.get("arch_override") or "")
+        else (_token(fingerprint, "arch") or _token(binary, "arch"))
+    )
     resolved = (fmt, arch)
     cache[binary_id] = resolved
     return resolved
@@ -672,7 +716,7 @@ def match_binary(
     rows when a listing is available.  A source with no listing is left alone
     so a missing project or engine failure cannot wipe earlier matches.  The
     candidate corpus is the whole register unless the settings name
-    binaries, collections, platforms or architectures; the binary's own
+    binaries, collections, platforms, architectures or name sources; the binary's own
     functions are candidates only while ``settings.include_self``, and the
     source function is never its own candidate.  Every recorded row carries the
     settings that produced it and the ISA pair of the two binaries.
@@ -733,6 +777,13 @@ def match_binary(
             if candidate_binary_ids
             else []
         )
+    if resolved.name_sources:
+        from reportal import composition
+
+        wanted = set(resolved.name_sources)
+        candidates = [
+            function for function in candidates if composition.name_source_label(function) in wanted
+        ]
     # A scope that admits no candidate leaves nothing to score, so the run only
     # clears the sources' rows; disassembling them would be work with no reader.
     texts: dict[int, str | None] = {}

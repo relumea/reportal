@@ -20,6 +20,7 @@ import {
   DEFAULT_DIFF_KIND,
   DEFAULT_DIFF_NORMALIZE,
   DEFAULT_TRANSFER_MODE,
+  DIFF_KIND_LABELS,
   DIFF_KINDS,
   TRANSFER_MODE_LABELS,
   TRANSFER_MODES,
@@ -130,7 +131,10 @@ export function DiffView({
           <Badge tone="delete">delete {diff.summary.delete}</Badge>
         </div>
         <div className="table-scroll">
-          <table className="diff-table" aria-label="Disassembly diff">
+          <table
+            className="diff-table"
+            aria-label={kind === "decomp" ? "AI decompilation diff" : "Disassembly diff"}
+          >
             <thead>
               <tr>
                 <th>
@@ -172,7 +176,7 @@ export function DiffView({
             <select value={kind} onChange={(event) => setKind(event.target.value)}>
               {DIFF_KINDS.map((option) => (
                 <option key={option} value={option}>
-                  {option}
+                  {DIFF_KIND_LABELS[option]}
                 </option>
               ))}
             </select>
@@ -199,7 +203,7 @@ export function DiffView({
             </select>
           </Field>
           <Button pending={busy} onClick={() => void transfer()}>
-            Transfer symbol
+            Transfer Symbol
           </Button>
           <Button onClick={result.reload}>Reload</Button>
         </Toolbar>
@@ -213,8 +217,8 @@ export function DiffView({
         </Note>
       ) : null}
       {matchesResult.data?.matches.length ? (
-        <>
-          <h3>Suggested names</h3>
+        <details open>
+          <summary>Suggested names ({matchesResult.data.matches.length})</summary>
           <Toolbar>
             {matchesResult.data.matches.map((row) => (
               <Button
@@ -227,7 +231,7 @@ export function DiffView({
               </Button>
             ))}
           </Toolbar>
-        </>
+        </details>
       ) : null}
       {body}
     </Panel>

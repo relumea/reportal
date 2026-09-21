@@ -21,13 +21,15 @@ import {
   HistoryPanel,
   MatchesPanel,
   ReferencesSection,
+  historyKey,
+  loadHistory,
 } from "../panels/FunctionPanels";
 import { CommentsPanel } from "../panels/CommentsPanel";
 import { FunctionExtrasPanel } from "../panels/FunctionExtrasPanel";
 import { FunctionKnowledgePanel } from "../panels/KnowledgePanel";
 import { PipelinePanel } from "../panels/PipelinePanel";
 import { SignaturePanel } from "../panels/SignaturePanel";
-import { panelKey, usePanel } from "../panelCache";
+import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import type { DataTypeList, FunctionRow, FunctionSignatureDetail } from "../types";
 import { useAsync } from "../useAsync";
 import { ChatAboutButton } from "./ConversationsView";
@@ -68,6 +70,10 @@ function FunctionHeader({ fn, onRenamed }: { fn: FunctionRow; onRenamed: () => v
     try {
       await api(`/functions/${fn.id}/rename`, { method: "POST", json: { name, actor: "spa" } });
       setEditing(false);
+      // Match rows join the live function name elsewhere, but this page's
+      // panels read the candidate side and the signature keeps its own stored
+      // name, so only the history needs a refresh here.
+      refreshPanel(historyKey(fn.id), () => loadHistory(fn.id));
       onRenamed();
     } catch (failure) {
       setRenameError(failure);

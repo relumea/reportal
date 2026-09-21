@@ -994,6 +994,16 @@ def list_teams(
         team["member_count"] = int(row["member_count"])
         team["organisation_name"] = row["organisation_name"]
         teams.append(team)
+    if teams:
+        by_team: dict[int, list[int]] = {int(team["id"]): [] for team in teams}
+        placeholders = ",".join("?" for _ in by_team)
+        for member in conn.execute(
+            f"SELECT team_id, user_id FROM {MEMBER_TABLE} WHERE team_id IN ({placeholders})",
+            tuple(by_team),
+        ).fetchall():
+            by_team[int(member["team_id"])].append(int(member["user_id"]))
+        for team in teams:
+            team["member_ids"] = by_team[int(team["id"])]
     return teams
 
 

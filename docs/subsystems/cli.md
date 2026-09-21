@@ -1,12 +1,13 @@
 # CLI
 
-Sources: src/reportal/cli.py
+Sources: src/reportal/cli.py, src/reportal/customer_cli.py
 
 The `reportal` Typer surface: every command and what it reads or writes. Human chrome goes to
 stderr through `Console(stderr=True)`; `--json` writes one JSON object to stdout. Pipeable text
 bodies (`disasm`, `decompile`, `ai-decompile`, `ai-decompilation`, `yara`, `snort`, `stix`,
 `sbom`, `symbols-export`, `decompiler-script`, `conversation-events`) also go to stdout in
-human mode. A refusal prints the error and exits non-zero.
+human mode. A refusal prints the error and exits non-zero. `reportal-customer` is the thin
+platform client: `upload`, `binaries`, `functions`, reads and notes over HTTP only.
 
 ## Vocabulary
 

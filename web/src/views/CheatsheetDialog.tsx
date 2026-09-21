@@ -34,6 +34,10 @@ export function CheatsheetDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
 
+  // Declared first so its cleanup drops `inert` before the reset effect
+  // below returns focus to the shell; restoring into an inert tree fails.
+  useDialogShellGuard(open);
+
   useEffect(() => {
     if (!open) return undefined;
     restoreRef.current =
@@ -54,9 +58,6 @@ export function CheatsheetDialog({
     document.addEventListener("focusin", onFocusIn);
     return () => document.removeEventListener("focusin", onFocusIn);
   }, [open]);
-
-  // After focus restore so cleanup drops inert before returning focus to the shell.
-  useDialogShellGuard(open);
 
   if (!open) return null;
 

@@ -26,20 +26,31 @@ async function pickChangingRow(dialog: Locator): Promise<{ row: Locator; candida
 test("a bulk name transfer previews without writing and then renames", async ({ page }) => {
   await page.goto("/#/matches");
   await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
-  await page.getByRole("button", { name: "Load", exact: true }).click();
+  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
 
-  await page.getByRole("button", { name: "Bulk transfer" }).click();
+  await page.getByRole("button", { name: "Bulk Transfer" }).click();
   // The dialog is nested inside the match view's own panel, so the innermost
   // panel carrying that heading is the dialog itself.
-  const dialog = panelByTitle(page, "Bulk transfer").last();
+  const dialog = panelByTitle(page, "Bulk Transfer").last();
   const { row, candidate } = await pickChangingRow(dialog);
   const sourceName = (await row.locator(".mono").innerText()).split("<-")[0]?.trim() ?? "";
   expect(sourceName).not.toEqual(candidate);
 
+  // The Source binary cell links the candidate's binary, not the function id.
+  const binaryLink = row.locator("a[href^='#/binaries/']").first();
+  await expect(binaryLink).toBeVisible();
+  await expect(binaryLink).not.toHaveText(/^#\d+$/);
+
   // Names start ticked where the match differs; keep only the chosen row.
   await dialog.getByLabel("All names").uncheck();
   await row.getByLabel("Names").check();
+
+  // Ticking a signature box surfaces the in-place replacement reminder.
+  await expect(dialog.getByText("replace same-named types", { exact: false })).toHaveCount(0);
+  await row.getByLabel("Signature").check();
+  await expect(dialog.getByText("replace same-named types", { exact: false })).toBeVisible();
+  await row.getByLabel("Signature").uncheck();
 
   await dialog.getByRole("button", { name: "Preview" }).click();
   await expect(
@@ -54,11 +65,17 @@ test("a bulk name transfer previews without writing and then renames", async ({ 
       response.request().method() === "POST" &&
       response.ok(),
   );
-  await dialog.getByRole("button", { name: "Transfer" }).click();
+  await expect(
+    dialog.getByRole("button", { name: /^Transfer \(1 name, 0 signatures\)$/ }),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: /^Transfer \(/ }).click();
   const report = (await (await transferred).json()) as { journal_action?: string };
   await expect(dialog.getByText("1 applied, 0 skipped, 0 failed of 1.", { exact: false })).toBeVisible();
   // The transfer renamed the source function to the candidate's name.
   await expect(dialog.getByText(`${candidate} <- ${candidate}`, { exact: false })).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
 
   // The suite shares one seeded workspace, so undo the rename through the
   // action's own journal entry before later specs run.

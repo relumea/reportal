@@ -85,9 +85,12 @@ test("? opens the cheatsheet, Escape closes it and returns the focus", async ({ 
   await expect(dialog(page)).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog(page)).toHaveCount(0);
-  expect(await page.evaluate<boolean>(`document.activeElement?.dataset.view === "binaries"`)).toBe(
-    true,
-  );
+  await expect
+    .poll(
+      () => page.evaluate<boolean>(`document.activeElement?.dataset.view === "binaries"`),
+      { timeout: 5000 },
+    )
+    .toBe(true);
 });
 
 test("the cheatsheet lists the registered set", async ({ page }) => {
@@ -249,15 +252,17 @@ test("f jumps from a binary page to its functions", async ({ page }) => {
 test("Space on a diff toggles Disassembly and AI decompilation", async ({ page }) => {
   const { function_id, candidate_function_id } = e2eState().ids;
   await page.goto(`/#/diff/${function_id}/${candidate_function_id}`);
-  await expect(page.getByRole("button", { name: "Transfer symbol" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Transfer Symbol" })).toBeVisible();
   await expect(page.locator(".diff-table thead .copy-row").first()).toBeVisible();
   await expect(page.getByRole("link", { name: /binary #/ }).first()).toHaveAttribute(
     "href",
     /#\/binaries\/\d+/,
   );
-  await expect(page.getByRole("heading", { name: "Suggested names" })).toBeVisible();
+  await expect(page.getByText(/Suggested names \(\d+\)/)).toBeVisible();
   const kind = page.getByLabel("Kind");
   await expect(kind).toHaveValue("decomp");
+  await expect(kind.locator("option[value='decomp']")).toHaveText("AI Decompilation");
+  await expect(kind.locator("option[value='disasm']")).toHaveText("Disassembly");
   await page.locator("#content").click();
   await page.keyboard.press("Space");
   await expect(kind).toHaveValue("disasm");

@@ -148,6 +148,10 @@ export const SIGNATURE_NOT_FOUND = "signature-not-found";
 export const DIFF_KINDS = ["decomp", "disasm"] as const;
 type DiffKind = (typeof DIFF_KINDS)[number];
 export const DEFAULT_DIFF_KIND: DiffKind = DIFF_KINDS[0];
+export const DIFF_KIND_LABELS: Record<DiffKind, string> = {
+  decomp: "AI Decompilation",
+  disasm: "Disassembly",
+};
 
 // Whether the diff strips addresses, bytes and comments by default; mirrors
 // diffview.DEFAULT_NORMALIZE.

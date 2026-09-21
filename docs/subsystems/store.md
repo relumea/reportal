@@ -28,6 +28,9 @@ through it.
   beside the page) and `list_recent`.
 - `store.InvalidFeedbackError`, `store.SearchError` and `store.compile_regex`: the refusals a
   listing raises for an unusable filter.
+- `store.history_actor_names` resolves the display names history rows point at; history views
+  pair it with `clock.relative_age`, so attribution survives a user delete the way the stored
+  login name does.
 
 ## Wiring
 

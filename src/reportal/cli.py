@@ -1581,10 +1581,10 @@ def binary_command(
     binary_id: int = typer.Argument(..., help="Binary id to read"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """One binary: its identity, its scope and the rebrew project it reads through.
+    """One binary: its identity, its scope and the analysis context it reads through.
 
-    The rebrew project is what every engine-backed read of the binary uses; a
-    binary imported without one reports the command that sets it rather than
+    The analysis context is what every engine-backed read of the binary uses; a
+    binary imported without one reports that state rather than
     failing one read at a time.
     """
     portal_db = _db_path(json_output)
@@ -1614,12 +1614,11 @@ def binary_command(
     )
     console.print(f"  functions: {binary.get('function_count') or 0}")
     if project:
-        console.print(f"  rebrew project: {project}")
+        console.print(f"  analysis context: {project}")
     else:
         console.print(
-            "[yellow]no rebrew project context[/yellow]; engine-backed reads of this"
-            " binary answer no-engine-context. Set one with"
-            " 'reportal import-rebrew <project-dir>'."
+            "[yellow]no analysis context[/yellow]; engine-backed reads of this"
+            " binary answer no-engine-context."
         )
 
 
@@ -1628,15 +1627,21 @@ def binary_rename(
     binary_id: int = typer.Argument(..., help="Binary id"),
     name: str | None = typer.Option(None, "--name", help="New display name"),
     notes: str | None = typer.Option(None, "--notes", help="Operator note; empty clears it"),
+    format_override: str | None = typer.Option(
+        None, "--format", help="Assert the format (pe, elf, blob); empty clears it"
+    ),
+    arch_override: str | None = typer.Option(
+        None, "--arch", help="Assert the ISA (x86_32, x86_64, arm64); empty clears it"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Set a binary's display name and/or operator notes; journaled."""
+    """Set a binary's display name, operator notes and/or format/ISA override; journaled."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     cleaned = None if name is None else name.strip()
-    if name is None and notes is None:
-        _fail("provide --name and/or --notes", json_output)
+    if name is None and notes is None and format_override is None and arch_override is None:
+        _fail("provide --name, --notes, --format and/or --arch", json_output)
     if name is not None and not cleaned:
         _fail("binary name must not be empty", json_output)
     if notes is not None and len(notes.strip()) > store.MAX_BINARY_NOTES:
@@ -1644,6 +1649,14 @@ def binary_rename(
             f"binary notes must be at most {store.MAX_BINARY_NOTES} characters",
             json_output,
         )
+    from reportal import api as api_mod
+
+    cleaned_format = (format_override or "").strip()
+    cleaned_arch = (arch_override or "").strip()
+    if cleaned_format and cleaned_format not in api_mod.UPLOAD_FORMATS:
+        _fail(f"format must be one of {', '.join(api_mod.UPLOAD_FORMATS)}", json_output)
+    if cleaned_arch and cleaned_arch not in api_mod.UPLOAD_ARCHITECTURES:
+        _fail(f"arch must be one of {', '.join(api_mod.UPLOAD_ARCHITECTURES)}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         if store.get_binary(conn, binary_id) is None:
             _fail(f"no binary with id {binary_id}", json_output)
@@ -1663,6 +1676,18 @@ def binary_rename(
                     binary = store.rename_binary(conn, binary_id, cleaned)
                 if notes is not None:
                     binary = store.set_binary_notes(conn, binary_id, notes)
+                if format_override is not None or arch_override is not None:
+                    current = store.get_binary(conn, binary_id) or {}
+                    binary = store.set_binary_format_override(
+                        conn,
+                        binary_id,
+                        format_override=cleaned_format
+                        if format_override is not None
+                        else str(current.get("format_override") or ""),
+                        arch_override=cleaned_arch
+                        if arch_override is not None
+                        else str(current.get("arch_override") or ""),
+                    )
         except ValueError as exc:
             _fail(str(exc), json_output)
     payload = log.attach(binary or {})
@@ -5665,8 +5690,8 @@ def binaries(
             " ".join(
                 part
                 for part in (
-                    row["format"] or "n/a",
-                    row.get("arch") or "",
+                    store.effective_format(row) or "n/a",
+                    store.effective_arch(row) or "",
                     row.get("language") or "",
                     row.get("compiler") or "",
                 )
@@ -6167,7 +6192,7 @@ def enrich(
     engine = engines.get_engine()
     if not engine.available():
         _fail(
-            f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
+            f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
             json_output,
         )
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -6250,6 +6275,9 @@ def match(
     collection: list[int] | None = typer.Option(
         None, "--collection", help="Restrict candidates to a collection id (repeatable)"
     ),
+    name_source: list[str] | None = typer.Option(
+        None, "--name-source", help="Restrict candidates to a name source label (repeatable)"
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Rank each function of a binary against the local corpus under Match Settings.
@@ -6272,19 +6300,19 @@ def match(
                 "architectures": list(architecture or []),
                 "binary_ids": list(binary or []),
                 "collection_ids": list(collection or []),
+                "name_sources": list(name_source or []),
             }
         )
     except matching.InvalidSettingsError as exc:
         _fail(exc.detail, json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         if store.get_rebrew_context(conn, binary_id) is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         try:
@@ -6375,7 +6403,7 @@ def benchmark_command(
         _fail(exc.detail, json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
             result = benchmark.run(
@@ -6572,7 +6600,7 @@ def decompile(
         _fail(f"unknown decompiler backend: {backend}", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         function = store.get_function(conn, function_id)
         if function is None:
@@ -6581,8 +6609,7 @@ def decompile(
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         va = int(function["va"])
@@ -9036,7 +9063,7 @@ def xrefs(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     kinds = [name for name in (kind or []) if name.strip()]
     with contextlib.closing(store.connect(portal_db)) as conn:
         function = store.get_function(conn, function_id)
@@ -9046,8 +9073,7 @@ def xrefs(
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         va = int(function["va"])
@@ -9093,7 +9119,7 @@ def references(
     engine = engines.get_engine()
     if not engine.available():
         _fail(
-            f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
+            f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
             json_output,
         )
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -9104,8 +9130,7 @@ def references(
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         try:
@@ -9170,7 +9195,7 @@ def strings(
     engine = engines.get_engine()
     if not engine.available():
         _fail(
-            f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
+            f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
             json_output,
         )
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -9218,7 +9243,7 @@ def fingerprint(
     if stored is None:
         engine = engines.get_engine()
         if not engine.available():
-            _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+            _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
         with contextlib.closing(store.connect(portal_db)) as conn:
             binary = store.get_binary(conn, binary_id)
             assert binary is not None, "the row was just read"
@@ -9267,7 +9292,7 @@ def disasm(
         _fail(f"--format must be one of {', '.join(engines.DISASM_FORMATS)}", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         function = store.get_function(conn, function_id)
         if function is None:
@@ -9275,7 +9300,7 @@ def disasm(
         binary_id = int(function["binary_id"])
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
-            _fail(f"binary {binary_id} has no rebrew project context", json_output)
+            _fail(f"binary {binary_id} has no analysis context yet", json_output)
         va = int(function["va"])
         size = int(function["size"])
         cached = (
@@ -9324,7 +9349,7 @@ def imports(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -9392,14 +9417,13 @@ def structs(
         _fail(f"unknown decompiler backend: {decompiler}", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         try:
@@ -10023,9 +10047,11 @@ def types_export(
 
 def _print_history_entry(entry: dict[str, Any]) -> None:
     """One line for a history entry's header, then one line per field change."""
+    actor = entry.get("actor_name") or entry.get("actor") or "manual"
+    age = f", {entry['age']}" if entry.get("age") else ""
     console.print(
         f"[bold]#{entry['id']}[/bold] [dim]{entry['source'] or 'manual'}"
-        f" ({entry['actor'] or 'manual'}) {entry['created_at']}[/dim]"
+        f" ({actor}{age}) {entry['created_at']}[/dim]"
     )
     if entry["previous"] is None:
         console.print("  created")
@@ -10507,9 +10533,11 @@ def signature_history(
     for entry in history:
         previous = entry["previous"]
         rendered = signatures.render_prototype(previous) if previous else "no signature"
+        actor = entry.get("actor_name") or entry.get("actor") or "manual"
+        age = f", {entry['age']}" if entry.get("age") else ""
         console.print(
             f"[bold]#{entry['id']}[/bold] [dim]{entry['source'] or 'manual'}"
-            f" ({entry['actor'] or 'manual'}) {entry['created_at']}[/dim] {rendered}"
+            f" ({actor}{age}) {entry['created_at']}[/dim] {rendered}"
         )
 
 
@@ -10589,7 +10617,7 @@ def memory(
     engine = engines.get_engine()
     if not engine.available():
         _fail(
-            f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
+            f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
             json_output,
         )
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -10653,7 +10681,7 @@ def memory_page(
     engine = engines.get_engine()
     if not engine.available():
         _fail(
-            f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
+            f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}",
             json_output,
         )
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -10749,7 +10777,7 @@ def crypto_scan(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -10918,7 +10946,7 @@ def pe_info(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -11032,7 +11060,7 @@ def filetype(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -11152,7 +11180,7 @@ def capabilities_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -11209,7 +11237,7 @@ def secrets_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -11325,7 +11353,7 @@ def protocols_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -11415,7 +11443,7 @@ def behavior_command(
         _fail(f"unknown behavior domain: {domain}", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     domains = behavior.BEHAVIOR_DOMAINS if all_domains else (str(domain),)
     results: dict[str, dict[str, Any]] = {}
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -11513,7 +11541,7 @@ def hardening_command(
         _fail(f"unknown hardening domain: {domain}", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     domains = hardening.HARDENING_DOMAINS if all_domains else (str(domain),)
     results: dict[str, dict[str, Any]] = {}
     with contextlib.closing(store.connect(portal_db)) as conn:
@@ -11575,14 +11603,13 @@ def security_scan(
         _fail(f"unknown severity: {min_severity}", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         try:
@@ -11755,7 +11782,7 @@ def threat_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -11805,7 +11832,7 @@ def _build_remediation(binary_id: int, json_output: bool) -> tuple[journal.Journ
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -11968,7 +11995,7 @@ def triage(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         binary = store.get_binary(conn, binary_id)
         if binary is None:
@@ -12091,7 +12118,7 @@ def function_triage_command(
         except ValueError as exc:
             _fail(str(exc), json_output)
         except engines.EngineUnavailable as exc:
-            _fail(f"rebrew engine unavailable: {exc}", json_output)
+            _fail(f"analysis engine unavailable: {exc}", json_output)
         except engines.EngineError as exc:
             _fail(str(exc), json_output)
 
@@ -12131,14 +12158,13 @@ def report(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         try:
@@ -12257,7 +12283,7 @@ def library_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         try:
@@ -12471,13 +12497,12 @@ def unstrip_command(
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
     engine = engines.get_engine()
     if not engine.available():
-        _fail(f"rebrew engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
+        _fail(f"analysis engine unavailable: {engines.ENGINE_UNAVAILABLE_HINT}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         _cli_require_binary(conn, binary_id, json_output)
         if store.get_rebrew_context(conn, binary_id) is None:
             _fail(
-                f"binary {binary_id} has no rebrew project context"
-                " (run 'reportal import-rebrew <project-dir>')",
+                f"binary {binary_id} has no analysis context yet",
                 json_output,
             )
         try:

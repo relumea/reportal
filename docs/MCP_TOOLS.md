@@ -213,7 +213,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `reload_components` | Reload one component's declaration from its module, or every reloadable one, swapping the live registry entry; an in-process registration is not reloadable. |
 | `remove_team_member` | Remove a user from a team; journaled and revertible. |
 | `rename_api_key` | Rename one named extra key; the token is unchanged. Journaled and revertible. |
-| `rename_binary` | Set a binary's display name and/or operator notes; journaled. Empty notes clears the note. Dedupe stays on sha256. |
+| `rename_binary` | Set a binary's display name, operator notes and/or format/ISA override; journaled. Empty notes or override clears it. Dedupe stays on sha256. |
 | `rename_function` | Rename a function and record it in the rename history. |
 | `rename_tag` | Rename one tag by id, keeping every binary and collection link to it. |
 | `replace_analysis_strings` | Replace an analysis's whole analyst string list in one journaled action, so one revert puts the previous list back. |

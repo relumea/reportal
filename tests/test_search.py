@@ -167,6 +167,12 @@ class TestSearchMetadata:
         assert row["created_at"]
         assert row["tags"] == ["alpha-tag"]
 
+    def test_binary_rows_answer_the_asserted_format_first(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        store.set_binary_format_override(conn, ids["alpha"], format_override="elf")
+        row = store.search(conn, "alpha.dll")["binaries"][0]
+        assert row["format"] == "elf"
+
     def test_collection_rows_carry_the_member_count(self, conn: sqlite3.Connection) -> None:
         _seed(conn)
         row = store.search(conn, "alpha", kind=store.SEARCH_KIND_COLLECTION)["collections"][0]

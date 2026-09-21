@@ -44,6 +44,7 @@ the reading order across these modules; the
 | `composition.py` | [binary-detail](subsystems/binary-detail.md) | Composition analysis of one stored binary against its stored matches. |
 | `conversations.py` | [conversation](subsystems/conversation.md) | Conversations over stored local data and the optional LLM bridge. |
 | `credits.py` | [tenancy-billing](subsystems/tenancy-billing.md) | What each AI task costs a tenant, in credits. |
+| `customer_cli.py` | [cli](subsystems/cli.md) | Customer CLI: the platform surface of reportal, over HTTP only. |
 | `data_types.py` | [symbols-and-types](subsystems/symbols-and-types.md) | Editable data types: the local type model, its C rendering and its indices. |
 | `decompiler_scripts.py` | [ai-artifacts](subsystems/ai-artifacts.md) | Decompiler round-trip scripts: stored renames as runnable tool scripts. |
 | `details.py` | [binary-detail](subsystems/binary-detail.md) | The binary-detail reads the hosted portal derives from a scan. |

@@ -82,6 +82,13 @@ similarity = [
 cognee = [
     "cognee==1.5.4",
 ]
+# Customer install: the platform surface only.  `reportal-customer` is a thin
+# HTTP client with no database, engine or server modules, so a customer host
+# never carries server logic.  The operator CLI stays on the base install.
+customer = [
+    "rich==14.3.4",
+    "typer==0.27.2",
+]
 
 # Third-party graph backends register through the `reportal.graph_backends`
 # entry-point group, whose value is `module:attr` naming a GraphBackend or a
@@ -90,6 +97,7 @@ cognee = [
 
 [project.scripts]
 reportal = "reportal.cli:main"
+reportal-customer = "reportal.customer_cli:main"
 
 [tool.setuptools.dynamic]
 version = {attr = "reportal.__version__"}

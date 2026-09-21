@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from reportal import data_types, store
+from reportal import clock, data_types, store
 
 DEFINITION = "typedef struct PlayerInfo_s {\n\tchar name[8];\n\tint field_C;\n} PlayerInfo;\n"
 ENUM_DEFINITION = "typedef enum NPFlags_s {\n\tNP_FLAG_A = 0,\n\tNP_FLAG_B = 1\n} NPFlags;\n"
@@ -155,6 +155,33 @@ class TestMemberPosition:
             data_types.add_member(
                 conn, data_type_id, name="flags", type_text="int", index=0, after="name"
             )
+
+
+class TestMemberMove:
+    def test_move_reorders_and_recomputes_offsets(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id)
+        row = data_types.move_member(conn, data_type_id, name="field_C", to_index=0)
+        assert [member["name"] for member in row["members"]] == ["field_C", "name"]
+        assert [member["offset"] for member in row["members"]] == [0, 4]
+
+    def test_move_past_the_end_clamps_to_last(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id)
+        row = data_types.move_member(conn, data_type_id, name="name", to_index=99)
+        assert [member["name"] for member in row["members"]][-1] == "name"
+
+    def test_move_an_unknown_member_is_rejected(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id)
+        with pytest.raises(data_types.UnknownMemberError):
+            data_types.move_member(conn, data_type_id, name="nope", to_index=0)
+
+    def test_move_with_a_non_integer_is_rejected(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id)
+        with pytest.raises(data_types.InvalidMemberError):
+            data_types.move_member(conn, data_type_id, name="name", to_index=True)
 
 
 class TestExplicitGaps:
@@ -484,6 +511,58 @@ class TestTypeFields:
         kind_change = next(c for c in entry["changes"] if c["field"] == "kind")
         assert kind_change["before"] == "struct"
         assert kind_change["after"] == "union"
+
+    def test_history_names_the_editing_user_when_one_exists(self, conn: sqlite3.Connection) -> None:
+        from reportal import auth
+
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id)
+        user, _token = auth.add_user(conn, name="ana")
+        store.add_data_type_history(
+            conn,
+            data_type_id=data_type_id,
+            binary_id=binary_id,
+            previous=None,
+            current=None,
+            source="manual",
+            actor="ana",
+            actor_user_id=int(user["id"]),
+        )
+        entry = data_types.list_history(conn, data_type_id)[0]
+        assert entry["actor"] == "ana"
+        assert entry["actor_name"] == "ana"
+
+    def test_history_carries_a_relative_age(self, conn: sqlite3.Connection) -> None:
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id)
+        data_types.update_type(conn, data_type_id, namespace="winnt")
+        entry = data_types.list_history(conn, data_type_id)[0]
+        assert entry["age"] == "just now"
+        assert clock.relative_age("not-a-stamp") == ""
+        assert clock.relative_age(None) == ""
+
+    def test_history_clears_attribution_when_the_user_is_deleted(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        from reportal import auth
+
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id)
+        user, _token = auth.add_user(conn, name="ana")
+        store.add_data_type_history(
+            conn,
+            data_type_id=data_type_id,
+            binary_id=binary_id,
+            previous=None,
+            current=None,
+            source="manual",
+            actor="ana",
+            actor_user_id=int(user["id"]),
+        )
+        assert auth.delete_user(conn, int(user["id"])) is True
+        entry = data_types.list_history(conn, data_type_id)[0]
+        assert entry["actor"] == ""
+        assert entry["actor_name"] is None
 
     def test_update_type_applies_every_named_field_in_one_entry(
         self, conn: sqlite3.Connection

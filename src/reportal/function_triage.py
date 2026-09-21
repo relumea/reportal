@@ -318,7 +318,7 @@ def summarize_functions(
     needs_engine = [row for row in selected if not row["has_decompilation"] and row["size"] > 0]
     if using_llm and needs_engine and not source.available():
         raise engines.EngineUnavailable(
-            "the LLM path needs a disassembly and no rebrew engine is available"
+            "the LLM path needs a disassembly and no analysis engine is available"
         )
     project_dir = store.get_rebrew_context(conn, binary_id)
 

@@ -133,11 +133,30 @@ class TestScopeFilters:
         _run(conn, ids["a"], matching.MatchSettings(platforms=("linux",), min_similarity=0.0))
         assert _names(conn, ids["a1"]) == ["b1", "b2"]
 
+    def test_platform_scope_prefers_a_hand_set_override(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        # Binary c's fingerprint says PE; the operator asserts ELF instead, so
+        # the windows scope drops it and the linux scope admits it.
+        store.set_binary_format_override(conn, ids["c"], format_override="elf")
+        _run(conn, ids["a"], matching.MatchSettings(platforms=("windows",), min_similarity=0.0))
+        assert _names(conn, ids["a1"]) == ["a2"]
+        _run(conn, ids["a"], matching.MatchSettings(platforms=("linux",), min_similarity=0.0))
+        assert _names(conn, ids["a1"]) == ["b1", "b2", "c1"]
+
     def test_architecture_scope_filters_candidates(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)
         _run(conn, ids["a"], matching.MatchSettings(architectures=("x86_64",), min_similarity=0.0))
         assert _names(conn, ids["a1"]) == ["b1", "b2"]
         _run(conn, ids["a"], matching.MatchSettings(architectures=("arm64",), min_similarity=0.0))
+        assert _names(conn, ids["a1"]) == []
+
+    def test_name_source_scope_filters_candidates(self, conn: sqlite3.Connection) -> None:
+        ids = _seed(conn)
+        # The seeded corpus carries real names with no stored source, so every
+        # candidate reads as User.
+        _run(conn, ids["a"], matching.MatchSettings(name_sources=("User",), min_similarity=0.0))
+        assert _names(conn, ids["a1"]) == ["a2", "b1", "b2", "c1"]
+        _run(conn, ids["a"], matching.MatchSettings(name_sources=("System",), min_similarity=0.0))
         assert _names(conn, ids["a1"]) == []
 
     def test_binary_scope_restricts_the_corpus(self, conn: sqlite3.Connection) -> None:
@@ -267,6 +286,18 @@ class TestRefusals:
         assert raised.value.error == "invalid platform"
         assert "beos" in raised.value.detail
 
+    def test_unknown_name_source(self) -> None:
+        with pytest.raises(matching.InvalidSettingsError) as raised:
+            matching.MatchSettings.from_request({"name_sources": ["beos"]})
+        assert raised.value.error == "invalid name source"
+
+    def test_name_sources_match_case_insensitively_and_store_canonical(
+        self,
+    ) -> None:
+        settings = matching.MatchSettings.from_request({"name_sources": ["system", "USER"]})
+        assert settings.name_sources == ("System", "User")
+        assert settings.payload()["name_sources"] == ["System", "User"]
+
     def test_unknown_architecture(self) -> None:
         with pytest.raises(matching.InvalidSettingsError) as raised:
             matching.MatchSettings.from_request({"architectures": ["mips"]})
@@ -330,3 +361,7 @@ class TestScopeNotes:
     def test_android_scope_names_the_linux_overlap(self) -> None:
         notes = matching.scope_notes(matching.MatchSettings(platforms=("android",)))
         assert matching.ANDROID_SCOPE_NOTE in notes
+
+    def test_name_source_scope_names_the_labels(self) -> None:
+        notes = matching.scope_notes(matching.MatchSettings(name_sources=("System",)))
+        assert notes == ["candidates limited to functions labelled System"]

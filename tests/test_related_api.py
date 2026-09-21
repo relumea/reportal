@@ -144,7 +144,7 @@ class TestRelatedRoutes:
         assert status.startswith("200")
         payload = json_body(body, headers)
         assert payload["count"] == 1
-        assert any("no rebrew engine" in note for note in payload["notes"])
+        assert any("no analysis engine" in note for note in payload["notes"])
 
     def test_post_include_unrelated_lists_it(
         self, conn: sqlite3.Connection, tmp_path: Path

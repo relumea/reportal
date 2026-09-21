@@ -1158,7 +1158,7 @@ def build_remediation(
 
     source = engine if engine is not None else engines.get_engine()
     if source is None or not source.available():
-        raise engines.EngineUnavailable("no rebrew engine is available for strings")
+        raise engines.EngineUnavailable("no analysis engine is available for strings")
 
     notes: list[str] = []
     raw = source.strings(path).get("strings")

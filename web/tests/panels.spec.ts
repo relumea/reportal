@@ -94,6 +94,23 @@ test("the binary header name is click-to-rename", async ({ page }) => {
   await expect(page.getByRole("button", { name: "notepad.exe", exact: true })).toBeVisible();
 });
 
+test("the binary header asserts format and ISA with provenance", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const facts = page.locator(".detail-facts").first();
+  await expect(facts).toContainText(/PE/);
+
+  // Hosted headers tell detection apart from a human assertion: asserting the
+  // format marks the badge as hand-set, clearing it restores detection.
+  const head = page.locator(".detail-head");
+  await head.getByLabel("Assert the binary format").selectOption("elf");
+  await head.getByRole("button", { name: "Save", exact: true }).click();
+  const format = facts.getByTitle("Format asserted by hand");
+  await expect(format).toHaveText("elf");
+  await head.getByLabel("Assert the binary format").selectOption("");
+  await head.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(facts.getByTitle("Detected format")).toHaveText(/PE/);
+});
+
 test("the function header name is click-to-rename", async ({ page }) => {
   await page.goto(`/#/functions/${state.ids.function_id}`);
   const nameButton = page.getByRole("button", { name: state.function_name, exact: true });
@@ -183,6 +200,8 @@ test("composition analysis opens the matching view", async ({ page }) => {
   await expect(link).toHaveAttribute("href", /#\/matches\?function=\d+/);
   const topBinary = composition.locator("table.data-table a[href^='#/binaries/']").first();
   await expect(topBinary).toBeVisible();
+  await expect(composition.getByRole("heading", { name: "Function Name Sources" })).toBeVisible();
+  await expect(composition.getByRole("heading", { name: "Match Quality" })).toBeVisible();
   await expect(composition.getByRole("heading", { name: "Categories" })).toBeVisible();
   const scopeMatch = composition.getByRole("link", { name: "Scope matching" });
   await expect(scopeMatch.first()).toHaveAttribute(
@@ -214,6 +233,29 @@ test("the binary details entry point links to a function", async ({ page }) => {
   await expect(link).toHaveAttribute("href", /#\/(functions\/\d+|binaries\/\d+\/functions\?va=)/);
   await expect(page.getByRole("heading", { name: /^Sections \d+$/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^Security \d+\/\d+$/ })).toBeVisible();
+  const capabilities = page.locator(".panel").filter({
+    has: page.getByRole("heading", { name: /^Capabilities/ }),
+  });
+  await capabilities.scrollIntoViewIfNeeded();
+  const runResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/capabilities") &&
+      response.request().method() === "POST" &&
+      response.ok(),
+  );
+  await capabilities.getByRole("button", { name: "Run capability scan" }).click();
+  const run = (await (await runResponse).json()) as { journal_action?: string };
+  await expect(capabilities.getByRole("heading", { name: /^Capabilities \d+$/ })).toBeVisible({
+    timeout: 60_000,
+  });
+
+  // The suite shares one seeded workspace, so undo the run through its own
+  // journal entry and leave no stored scan behind for later specs.
+  expect(run.journal_action).toBeTruthy();
+  const revert = await page.request.post("/api/journal/revert", {
+    data: { action: run.journal_action },
+  });
+  expect(revert.ok()).toBeTruthy();
   await expect(page.getByRole("heading", { name: /^Relocations \d+$/ })).toBeVisible();
   const imports = page
     .locator(".panel")
@@ -318,14 +360,17 @@ test("the external view names the analysis's own status before a pull", async ({
 
   await pull.getByRole("button", { name: "Pull", exact: true }).click();
   await expect(pull.getByText(/stored, fetched/)).toBeVisible();
+  // The hourly cooldown gates remote re-pulls only: the offline pull stays
+  // enabled right after fetching.
+  await expect(pull.getByRole("button", { name: "Pull", exact: true })).toBeEnabled();
 });
 
-test("the binary header names the rebrew project its engine reads use", async ({ page }) => {
+test("the binary header names the analysis context its engine reads use", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
 
   // The seeder imports a project, and every engine-backed panel on this page
   // (disassembly, cross-references, structs) reads through it.
-  await expect(page.getByText(/rebrew project: .*notepad-rebrew/)).toBeVisible();
+  await expect(page.getByText("analysis context ready", { exact: true })).toBeVisible();
 });
 
 test("the AI summary panel discards the artifact it shows", async ({ page }) => {

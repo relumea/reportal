@@ -66,7 +66,7 @@ def _project_context(conn: sqlite3.Connection, function: dict[str, Any]) -> str:
         raise DiffError(
             400,
             "no-engine-context",
-            f"binary {binary_id} has no rebrew project context",
+            f"binary {binary_id} has no analysis context yet",
         )
     return project_dir
 

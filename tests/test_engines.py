@@ -140,7 +140,7 @@ class TestUnavailable:
         # would produce, not a second venv.
         monkeypatch.setattr(engines, "_rebrew_spec", lambda: None)
         engine = engines.RebrewEngine()
-        with pytest.raises(engines.EngineUnavailable, match="rebrew is required"):
+        with pytest.raises(engines.EngineUnavailable, match="analysis engine unavailable"):
             _CALLS[name](engine, _rebrew_project(tmp_path), _target(tmp_path))
 
     def test_unavailable_subclasses_engine_error(self) -> None:

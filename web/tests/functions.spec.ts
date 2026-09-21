@@ -7,6 +7,71 @@
 // label text carries its options, so its accessible name is matched without
 // `exact`.
 
+test("a list rename records history naming its actor with a relative age", async ({
+  page,
+}) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}/functions`);
+  const panel = panelByTitle(page, "Functions");
+  const row = panel.locator("table.data-table tbody tr").first();
+  const nameCell = row.locator("td").nth(3);
+  const seeded = (await nameCell.innerText()).trim();
+
+  page.once("dialog", (dialog) => void dialog.accept(`${seeded}_e2e`));
+  await row.getByRole("button", { name: "Rename", exact: true }).click();
+  await expect(nameCell).toHaveText(`${seeded}_e2e`);
+
+  await row.getByRole("button", { name: "History", exact: true }).click();
+  const history = page.locator(".panel").filter({
+    has: page.getByRole("heading", { name: /Rename history/, exact: false }),
+  });
+  // Each row names its actor with a relative age, like the detail panel.
+  await expect(history.getByText("spa, just now", { exact: false })).toBeVisible();
+
+  // Restore the seeded name so the shared workspace keeps its shape.  The
+  // open history reloads with the rename instead of keeping the old list, so
+  // the newest row's New cell already reads the restored name.
+  page.once("dialog", (dialog) => void dialog.accept(seeded));
+  await row.getByRole("button", { name: "Rename", exact: true }).click();
+  await expect(nameCell).toHaveText(seeded);
+  const newest = history.locator("table.data-table tbody tr").first();
+  await expect(newest.locator("td").nth(2)).toHaveText(seeded);
+});
+
+test("a bulk rename reloads an open history", async ({ page, request }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}/functions`);
+  const panel = panelByTitle(page, "Functions");
+  const row = panel.locator("table.data-table tbody tr").first();
+
+  await row.getByRole("checkbox").check();
+  await row.getByRole("button", { name: "History", exact: true }).click();
+  const history = page.locator(".panel").filter({
+    has: page.getByRole("heading", { name: /Rename history/, exact: false }),
+  });
+  // Settle the open panel before the bulk lands, or the bulk wins the race
+  // and the refresh guard sees no open history.
+  await expect(history).toBeVisible();
+  const before = await history.locator("table.data-table tbody tr").count();
+
+  const bulk = panelByTitle(page, "Bulk actions");
+  await bulk.getByPlaceholder("prefix").fill("e2e_");
+  const applied = page.waitForResponse(
+    (response) => response.url().includes("/functions/bulk") && response.ok(),
+  );
+  await bulk.getByRole("button", { name: "Apply prefix", exact: true }).click();
+  const report = (await (await applied).json()) as { journal_action?: string };
+  // The open history reloads with the bulk instead of keeping the old list.
+  await expect
+    .poll(() => history.locator("table.data-table tbody tr").count())
+    .toBeGreaterThan(before);
+
+  // Restore the seeded workspace through the bulk's own journal entry.
+  expect(report.journal_action).toBeTruthy();
+  const revert = await request.post("/api/journal/revert", {
+    data: { action: report.journal_action },
+  });
+  expect(revert.ok()).toBeTruthy();
+});
+
 import { e2eState } from "./e2e-state";
 import { panelByTitle } from "./helpers";
 import { expect, test } from "./fixtures";

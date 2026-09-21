@@ -9,7 +9,10 @@ match, or overwritten by a successful Go buildinfo recovery; `compiler`
 is stamped from the strongest filetype toolchain match.  An empty
 language or compiler is unknown, not a guess.  `notes` is an operator
 label, empty when none, capped at `store.MAX_BINARY_NOTES` (2000); the
-register `?search=` and `GET /api/search` `kind=all` match it.  `functions` is UNIQUE on `(analysis_id, va)`, which
+register `?search=` and `GET /api/search` `kind=all` match it.  `format_override`
+and `arch_override` are the operator's hand-set values (empty means detection
+stands); reads answer the override first through `store.effective_format` and
+`store.effective_arch`.  `functions` is UNIQUE on `(analysis_id, va)`, which
 is what makes `upsert_function` and therefore `import-rebrew` idempotent: a
 binary is keyed by sha256 (or name+path when the binary bytes are unavailable),
 its import analysis is reused by engine label, and functions are refreshed by VA.

@@ -12,6 +12,26 @@ import { expect, test } from "./fixtures";
 
 const state = e2eState();
 
+test("the register shows an asserted format first", async ({ page, request }) => {
+  const asserted = await request.patch(`/api/binaries/${state.ids.binary_id}`, {
+    data: { format_override: "elf" },
+  });
+  expect(asserted.ok()).toBeTruthy();
+
+  await page.goto("/#/binaries");
+  const panel = panelByTitle(page, "Binaries");
+  const row = panel
+    .locator("table.data-table tbody tr")
+    .filter({ hasText: "notepad.exe" })
+    .first();
+  await expect(row.getByTitle("Format asserted by hand")).toHaveText("elf");
+
+  const cleared = await request.patch(`/api/binaries/${state.ids.binary_id}`, {
+    data: { format_override: "" },
+  });
+  expect(cleared.ok()).toBeTruthy();
+});
+
 test("the register filters by name, hash and tag, and orders its rows", async ({ page }) => {
   await page.goto("/#/binaries");
   const panel = panelByTitle(page, "Binaries");

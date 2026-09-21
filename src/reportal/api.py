@@ -55,6 +55,7 @@ from reportal import (
     billing,
     bulk_actions,
     capabilities,
+    clock,
     comments,
     components,
     composition,
@@ -193,7 +194,7 @@ _log = logging.getLogger(__name__)
 CACHEABLE_DISASM_FORMAT = store.CACHEABLE_DISASM_FORMAT
 
 # Functions decompiled by a struct recovery run when the caller names no limit.
-# `rebrew recover-structs` decompiles each function, so a live request needs a
+# Struct recovery decompiles each function, so a live request needs a
 # bound; the engine's own `--limit 0` means unlimited.
 DEFAULT_STRUCT_LIMIT = 50
 
@@ -838,11 +839,11 @@ def _upload_error_entry(name: str, error: str, detail: str, status: int = 400) -
 
 @router.get("/api/binaries/{binary_id}")
 def get_binary(binary_id: int) -> Response:
-    """One binary's row, plus the rebrew project the engine reads it through.
+    """One binary's row, plus whether its detailed reads are ready.
 
-    ``rebrew_project`` is null for a binary imported without one, which is what
-    every engine-backed read of the binary answers 400 ``no-engine-context``
-    for; the route reports it so a client can say so before a read fails.
+    ``rebrew_project`` stays in the payload for compatibility but is null for
+    a tenant; an operator sees the path. A binary without analysis context
+    answers 400 ``no-engine-context`` on detailed reads.
     """
     with contextlib.closing(_open()) as conn:
         binary = store.get_binary(conn, binary_id)
@@ -856,14 +857,20 @@ def get_binary(binary_id: int) -> Response:
 
 @router.patch("/api/binaries/{binary_id}")
 def rename_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> Response:
-    """Set a binary's display name and/or operator notes; journaled.
+    """Set a binary's display name, operator notes and/or format/ISA override; journaled.
 
-    Dedupe stays on sha256. Empty notes clears the note.
+    Dedupe stays on sha256. Empty notes clears the note. A `format_override`
+    or `arch_override` must name one of the upload vocabularies (empty clears
+    that override, so detection stands again); reads answer the override first.
     """
     has_name = "name" in body
     has_notes = "notes" in body
-    if not has_name and not has_notes:
-        return json_error(400, error="invalid binary", detail="name or notes is required")
+    has_format = "format_override" in body
+    has_arch = "arch_override" in body
+    if not has_name and not has_notes and not has_format and not has_arch:
+        return json_error(
+            400, error="invalid binary", detail="name, notes or an override is required"
+        )
     name = (_optional_str(body, "name") or "").strip() if has_name else ""
     notes = _optional_str(body, "notes") if has_notes else None
     if has_name and not name:
@@ -873,6 +880,20 @@ def rename_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> 
             400,
             error="invalid binary",
             detail=f"binary notes must be at most {store.MAX_BINARY_NOTES} characters",
+        )
+    format_override = (_optional_str(body, "format_override") or "").strip()
+    arch_override = (_optional_str(body, "arch_override") or "").strip()
+    if format_override and format_override not in UPLOAD_FORMATS:
+        return json_error(
+            400,
+            error="invalid binary",
+            detail=f"format_override must be one of {', '.join(UPLOAD_FORMATS)}",
+        )
+    if arch_override and arch_override not in UPLOAD_ARCHITECTURES:
+        return json_error(
+            400,
+            error="invalid binary",
+            detail=f"arch_override must be one of {', '.join(UPLOAD_ARCHITECTURES)}",
         )
     with contextlib.closing(_open()) as conn:
         if store.get_binary(conn, binary_id) is None:
@@ -895,6 +916,18 @@ def rename_binary(binary_id: int, body: dict[str, Any] = Depends(json_body)) -> 
                     binary = store.rename_binary(conn, binary_id, name)
                 if notes is not None:
                     binary = store.set_binary_notes(conn, binary_id, notes)
+                if has_format or has_arch:
+                    current = store.get_binary(conn, binary_id) or {}
+                    binary = store.set_binary_format_override(
+                        conn,
+                        binary_id,
+                        format_override=format_override
+                        if has_format
+                        else str(current.get("format_override") or ""),
+                        arch_override=arch_override
+                        if has_arch
+                        else str(current.get("arch_override") or ""),
+                    )
         except ValueError as exc:
             return json_error(400, error="invalid binary", detail=str(exc))
     return json_response(log.attach(binary or {}))
@@ -1063,7 +1096,7 @@ def list_binary_functions(request: Request, binary_id: int) -> Response:
     :data:`reportal.store.FUNCTION_MATCH_VALUES`), ``name`` (a substring of the
     function's name), ``va`` (one exact address, decimal or ``0x`` hex) and
     ``refers_to`` (an address whose referrers the list keeps; the one
-    engine-backed filter, resolved through the same ``rebrew xrefs`` call the
+    engine-backed filter, resolved through the same cross-reference call the
     xrefs route makes), ``sort``
     (one of :data:`reportal.store.FUNCTION_SORT_COLUMNS`) and ``order`` (one
     of :data:`reportal.store.FUNCTION_ORDERS`).  An unknown value is a 400.
@@ -2124,6 +2157,33 @@ def convert_data_type_member_to_gap(
     return json_response(log.attach(row))
 
 
+@router.post("/api/data-types/{data_type_id}/members/{member}/move")
+def move_data_type_member(
+    data_type_id: int, member: str, body: dict[str, Any] = Depends(json_body)
+) -> Response:
+    """Move one member to another position, recomputing the layout offsets."""
+    to_index = body.get("to_index")
+    if isinstance(to_index, bool) or not isinstance(to_index, int):
+        return json_error(400, error="invalid index", detail="to_index must be an integer")
+    selector = _path_member_selector(member)
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                row = _journal_data_type_write(
+                    conn,
+                    log,
+                    data_type_id,
+                    f"moved a member of data type {data_type_id}",
+                    lambda: data_types.move_member(
+                        conn, data_type_id, **selector, to_index=to_index
+                    ),
+                )
+            except data_types.DataTypeError as exc:
+                return _data_type_failure(exc)
+    return json_response(log.attach(row))
+
+
 @router.post("/api/data-types/{data_type_id}/members/{member}/ungap")
 def convert_data_type_gap_to_member(
     data_type_id: int, member: str, body: dict[str, Any] = Depends(json_body)
@@ -3052,7 +3112,7 @@ def get_binary_capabilities(binary_id: int) -> Response:
 def store_binary_security_scan(
     binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
 ) -> Response:
-    """Run the engine's security scan in the binary's rebrew project and store it."""
+    """Run the engine's security scan in the binary's analysis context and store it."""
     min_severity = _optional_str(body, "min_severity", engines.DEFAULT_SECURITY_MIN_SEVERITY)
     if min_severity not in engines.SECURITY_SEVERITIES:
         return json_error(
@@ -3597,7 +3657,7 @@ def store_binary_library(
 ) -> Response:
     """Identify a binary's library functions and store the reading.
 
-    The engine's own signature match runs in the binary's stored rebrew project
+    The engine's own signature match runs in the binary's stored analysis context
     context, so a binary without one answers 400 `no-engine-context`; 404
     `binary not found` for an unknown id and 500 `engine-error` when the
     identification fails.  The body's optional ``min_confidence`` drops the
@@ -4575,7 +4635,20 @@ def function_history(function_id: int) -> Response:
             return json_error(
                 404, error="function not found", detail=f"no function with id {function_id}"
             )
-        history = store.list_name_history(conn, function_id)
+        entries = store.list_name_history(conn, function_id)
+        names = store.history_actor_names(conn, entries)
+        history = [
+            {
+                **entry,
+                "actor_name": (
+                    names.get(int(entry["actor_user_id"]))
+                    if entry.get("actor_user_id") is not None
+                    else None
+                ),
+                "age": clock.relative_age(entry.get("created_at")),
+            }
+            for entry in entries
+        ]
     return json_response({"history": history})
 
 
@@ -4691,7 +4764,7 @@ def function_disasm(request: Request, function_id: int) -> Response:
             return json_error(
                 400,
                 error="no-engine-context",
-                detail=f"binary {binary_id} has no rebrew project context",
+                detail=f"binary {binary_id} has no analysis context yet",
             )
         if fmt not in engines.DISASM_FORMATS:
             return json_error(
@@ -4731,7 +4804,7 @@ _CFG_EMPTY_NOTE = "the engine segmented no basic blocks for this function"
 def _cfg_address(value: Any) -> int | None:
     """Parse one address the CFG payload carries, or None when it is unusable.
 
-    ``rebrew asm --format cfg`` reports every address as a ``0x...`` string;
+    The engine reports every address as a ``0x...`` string;
     the route converts them to ints so the SPA never parses hex.  A bool, a
     malformed string and a missing field all answer None, and the caller drops
     the row rather than inventing an address.
@@ -4792,11 +4865,11 @@ def _cfg_edge_rows(raw: Any) -> list[dict[str, Any]]:
 
 @router.get("/api/functions/{function_id}/cfg")
 def function_cfg(function_id: int) -> Response:
-    """Basic-block control-flow graph of one function through its rebrew project.
+    """Basic-block control-flow graph of one function through its analysis context.
 
     The graph is derived from the target binary on every request (there is no
-    stored CFG): ``rebrew asm <hex-va> --size N --format cfg --json`` runs in
-    the binary's stored rebrew project and the route converts the engine's hex
+    stored CFG): the CFG call runs in
+    the binary's stored analysis context and the route converts the engine's hex
     addresses to ints.  ``block_count`` is what the payload returns,
     ``block_total`` the engine's true count and ``block_cap`` the engine's
     per-function cap, so a truncated graph states what it dropped; ``note``
@@ -4842,10 +4915,10 @@ def function_cfg(function_id: int) -> Response:
 
 
 def _decompilation_context(conn: sqlite3.Connection, function: dict[str, Any]) -> tuple[int, str]:
-    """Return the (*va*, rebrew project directory) a decompile call needs.
+    """Return the (*va*, analysis directory) a decompile call needs.
 
-    Raises a 400 when the function's binary has no rebrew project context,
-    since ``rebrew decompile`` resolves its target from that directory.
+    Raises a 400 when the function's binary has no analysis context yet,
+    since decompilation resolves its target from that directory.
     """
     va = int(function["va"])
     binary_id = int(function["binary_id"])
@@ -4854,7 +4927,7 @@ def _decompilation_context(conn: sqlite3.Connection, function: dict[str, Any]) -
         raise json_error(
             400,
             error="no-engine-context",
-            detail=f"binary {binary_id} has no rebrew project context",
+            detail=f"binary {binary_id} has no analysis context yet",
         )
     return va, project_dir
 
@@ -5131,7 +5204,7 @@ def _callee_rows(raw: Any) -> list[dict[str, Any]]:
 def function_references(function_id: int) -> Response:
     """One function's globals, callers and callees from the engine's dossier.
 
-    ``rebrew describe`` reports the data addresses the function touches, the
+    The engine describe call reports the data addresses the function touches, the
     call sites into it and the calls it makes.  A global carries the section
     that owns its address when the stored pe-info scan knows one and a read or
     a write when the instruction makes that clear; an address or an access the
@@ -8805,7 +8878,7 @@ def _database_health(path: Path) -> dict[str, Any]:
 def _engine_health() -> dict[str, Any]:
     """Where the in-process rebrew engine comes from, and whether it is there.
 
-    ``origin`` is the installed ``rebrew`` package's path, or null when the
+    ``origin`` is the installed engine package's path, or null when the
     package is not importable; the probe never imports the engine or spawns
     anything.
     """
@@ -10266,6 +10339,8 @@ def _external_failure(exc: external.ExternalError) -> Response:
         status = 503
     elif isinstance(exc, external.NoContentHashError):
         status = 400
+    elif isinstance(exc, external.RateLimitedExternalError):
+        status = 429
     elif exc.code == "analysis not found":
         status = 404
     else:
@@ -10390,8 +10465,8 @@ def get_analysis_status(analysis_id: int) -> Response:
 def get_analysis_params(analysis_id: int) -> Response:
     """What a re-run of this analysis would need, read from the stored rows.
 
-    The engine label, the binary with its content hash and identity, the rebrew
-    project context the engine calls resolve against, and the scan kinds already
+    The engine label, the binary with its content hash and identity, the
+    analysis context the engine calls resolve against, and the scan kinds already
     stored, so a re-run is reproducible and a missing input is visible.
     """
     with contextlib.closing(_open()) as conn:

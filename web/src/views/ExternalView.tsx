@@ -50,8 +50,6 @@ export function ExternalView(): ReactNode {
   const [report, setReport] = useState<ExternalReport | null>(null);
 
   const sources = registry.data?.sources ?? [];
-  // The named analysis's own status for the chosen source: whether a pull can
-  // run there and when the stored answer was fetched.
   const status = useAsync(
     () =>
       api<ExternalStatus>(
@@ -60,6 +58,12 @@ export function ExternalView(): ReactNode {
     [analysisId, source],
     Number(analysisId) > 0,
   );
+  // A remote re-pull inside the hour answers 429, so the Pull control stays
+  // disabled while the stored answer is fresh instead of spending the click.
+  // An unparseable stamp never blocks: the server is the gate, this is a hint.
+  const fetchedAt = status.data?.kind === "remote" ? status.data?.fetched_at : null;
+  const fetchedMs = fetchedAt === null || fetchedAt === undefined ? NaN : Date.parse(fetchedAt);
+  const cooledDown = Number.isNaN(fetchedMs) || Date.now() - fetchedMs >= 3600_000;
 
   const pull = (): void => {
     const id = Number(analysisId);
@@ -144,7 +148,13 @@ export function ExternalView(): ReactNode {
               ))}
             </select>
           </Field>
-          <Button tone="primary" pending={busy} disabled={!analysisId} onClick={pull}>
+          <Button
+            tone="primary"
+            pending={busy}
+            disabled={!analysisId || !cooledDown}
+            title={cooledDown ? undefined : "Remote re-pulls are limited to once an hour"}
+            onClick={pull}
+          >
             Pull
           </Button>
           <Button pending={busy} disabled={!analysisId} onClick={read}>
