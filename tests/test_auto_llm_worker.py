@@ -418,6 +418,48 @@ class TestExecute:
         assert result.status == auto_workers.WORKER_FAILED
         assert result.detail["reason"] == auto_llm_worker.REASON_NO_CANDIDATE
 
+    def test_an_oversized_candidate_is_rejected(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),), project_dir=str(tmp_path))
+        write_rebrew_project(tmp_path)
+        huge = "int f(void) { return 0; }\n" + (
+            "// pad\n" * auto_llm_worker.MAX_DECOMPILATION_CHARS
+        )
+        result = _worker().run(
+            _context(
+                conn,
+                ids["functions"][0],
+                tmp_path,
+                engine=AutoFakeEngine(),
+                llm_client=SourceLlmClient(response=huge),
+                execute=True,
+            )
+        )
+        assert result.status == auto_workers.WORKER_FAILED
+        assert result.detail["reason"] == auto_llm_worker.REASON_SOURCE_TOO_LARGE
+
+    def test_leaked_thinking_markup_is_stripped_from_a_candidate(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        ids = seed_rows(conn, rows=((0x1000, "Work", 8, "STUB"),), project_dir=str(tmp_path))
+        write_rebrew_project(tmp_path)
+        body = f"<thinking>rewrite locals</thinking>\n```c\n{CANDIDATE_SOURCE}```\n"
+        result = _worker().run(
+            _context(
+                conn,
+                ids["functions"][0],
+                tmp_path,
+                engine=AutoFakeEngine(),
+                llm_client=SourceLlmClient(response=body),
+                execute=False,
+            )
+        )
+        assert result.status == auto_workers.WORKER_IMPROVED
+        source = str(result.detail["source"])
+        assert "<thinking>" not in source
+        assert "```" not in source
+
 
 class TestRetry:
     def test_the_second_attempt_sees_the_first_delta(

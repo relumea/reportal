@@ -52,7 +52,7 @@ from reportal.auto_workers import (
     is_address_placeholder,
     is_matching_status,
 )
-from reportal.llm import strip_fences
+from reportal.llm import clean_completion
 
 # Disassembly format requested; the same format the disassembly route caches,
 # so the worker reuses a listing the portal already showed.
@@ -69,6 +69,7 @@ MAX_MISMATCHES_IN_PROMPT = 5
 
 # Reasons the worker reports beyond the shared skip reasons.
 REASON_NO_CANDIDATE = "no-candidate"
+REASON_SOURCE_TOO_LARGE = "source-too-large"
 REASON_FILE_EXISTS = "source-file-exists"
 REASON_NO_MARKER = "no-marker-module"
 REASON_NO_MATCHING_STATUS = "no-matching-status"
@@ -133,7 +134,7 @@ def source_slug(function: dict[str, Any]) -> str:
 def ensure_marker(source: str, marker: str, va: int) -> str:
     """Return *source* carrying the canonical marker line as its first line."""
     line = marker_line(marker, va)
-    body = strip_fences(source)
+    body = clean_completion(source)
     if line in body.splitlines():
         return body if body.endswith("\n") else f"{body}\n"
     return f"{line}\n\n{body}\n"
@@ -299,9 +300,15 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
     except llm.LlmError as exc:
         return _fail(ctx, REASON_LLM_ERROR, {"detail": str(exc)})
 
-    source = strip_fences(answer)
+    source = clean_completion(answer)
     if not source:
         return _fail(ctx, REASON_NO_CANDIDATE)
+    if len(source) > MAX_DECOMPILATION_CHARS:
+        return _fail(
+            ctx,
+            REASON_SOURCE_TOO_LARGE,
+            {"limit": MAX_DECOMPILATION_CHARS, "length": len(source)},
+        )
     source = ensure_marker(source, marker, int(function["va"]))
 
     if not ctx.execute:

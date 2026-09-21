@@ -299,6 +299,19 @@ def _rejects_json_object(exc: Exception) -> bool:
     return status == 400 and "response_format" in str(exc).lower()
 
 
+def _transport_error(exc: Exception) -> LlmError:
+    """Wrap a provider/SDK failure as :class:`LlmError` with a usable message.
+
+    A 429 is named as rate-limited rather than echoed raw: callers must not
+    retry it blindly, and operators see the overload instead of an opaque
+    SDK string.  Every other failure keeps the provider detail.
+    """
+    status = getattr(exc, "status_code", None)
+    if status == 429:
+        return LlmError("LLM rate limited; try again later")
+    return LlmError(f"LLM request failed: {exc}")
+
+
 @dataclass(frozen=True)
 class LlmConfig:
     """Resolved endpoint, key and model of the chat-completions bridge."""
@@ -557,7 +570,7 @@ class LlmClient:
         except (OpenAIError, ValueError) as exc:
             if json_object and _rejects_json_object(exc):
                 return self.complete(messages, temperature=temperature, max_tokens=max_tokens)
-            raise LlmError(f"LLM request failed: {exc}") from exc
+            raise _transport_error(exc) from exc
         _report_usage(completion, config.model)
         return _content_text(completion)
 
@@ -594,7 +607,7 @@ class LlmClient:
         try:
             completion = self._sdk().chat.completions.create(**request)
         except (OpenAIError, ValueError) as exc:
-            raise LlmError(f"LLM request failed: {exc}") from exc
+            raise _transport_error(exc) from exc
         _report_usage(completion, config.model)
         try:
             content = _content_text(completion)
@@ -637,6 +650,9 @@ class LlmClient:
                     encoding_format="float",
                 )
             except (OpenAIError, ValueError) as exc:
+                status = getattr(exc, "status_code", None)
+                if status == 429:
+                    raise LlmError("LLM rate limited; try again later") from exc
                 raise LlmError(f"LLM embeddings request failed: {exc}") from exc
             vectors.extend(_embedding_vectors(response, expected=len(batch)))
         return vectors
@@ -904,6 +920,17 @@ def strip_fences(text: str) -> str:
     return body.strip()
 
 
+def clean_completion(text: str) -> str:
+    """Return *text* without leaked reasoning markup or a surrounding fence.
+
+    Free-text call sites (C reconstruction, goal answers) must run the same
+    cleaning :func:`_parse_json` applies before trusting model output as code
+    or structured data: a ``<thinking>`` block left in a candidate would
+    otherwise land in a written source file.
+    """
+    return strip_fences(_strip_reasoning(text))
+
+
 def _strip_reasoning(text: str) -> str:
     """Return *text* without leaked reasoning or tool-call markup.
 
@@ -926,7 +953,7 @@ def _strip_reasoning(text: str) -> str:
 def _parse_json(text: str) -> Any:
     """Parse a JSON object or list from *text*, raising :class:`LlmError` otherwise."""
     try:
-        data = json.loads(strip_fences(_strip_reasoning(text)))
+        data = json.loads(clean_completion(text))
     except json.JSONDecodeError as exc:
         raise LlmError("LLM response was not valid JSON") from exc
     if not isinstance(data, (dict, list)):

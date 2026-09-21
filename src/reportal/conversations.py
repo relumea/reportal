@@ -12,7 +12,9 @@ every caller maps to 503.
 
 Retrieved document text is untrusted input.  It is quoted as context for the
 model to reason about, never executed, and never spliced into a command or a
-prompt instruction; the system prompt says so.
+prompt instruction; the system prompt says so.  The stored context rides as a
+``stored_context`` user turn wrapped in :func:`reportal.llm.data_block`, so a
+forged closer inside a document cannot escape the block.
 
 This module owns plain turns (`send_message`).  Those are not the hosted
 portal's tool-calling agent: the model receives a fixed system prompt, a
@@ -261,7 +263,11 @@ def send_message(
     )
     messages, sources = agent_messages(conn, conversation_id=conversation_id, content=content)
     active = client if client is not None else llm.get_client()
-    reply = active.complete(messages, temperature=llm.DEFAULT_TEMPERATURE)
+    reply = active.complete(
+        messages,
+        temperature=llm.DEFAULT_TEMPERATURE,
+        max_tokens=llm.MAX_AGENT_TOKENS,
+    )
     assistant_message = store.add_message(
         conn, conversation_id=conversation_id, role=ROLE_ASSISTANT, content=reply
     )
@@ -303,7 +309,12 @@ def agent_messages(
         system = f"{system}\n\n{extra_system}"
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
     if context:
-        messages.append({"role": ROLE_USER, "content": json.dumps({"stored_context": context})})
+        # Untrusted analysis and retrieval ride in a tagged data block inside
+        # the JSON envelope: role separation keeps them out of the system
+        # prompt, and the delimiter stops a forged closer in a document from
+        # escaping the stored_context field into surrounding instruction text.
+        wrapped = llm.data_block("stored_context", context, limit=MAX_CONTEXT_CHARS)
+        messages.append({"role": ROLE_USER, "content": json.dumps({"stored_context": wrapped})})
     messages.extend(_history(conn, conversation_id))
     messages.append({"role": ROLE_USER, "content": content})
     return messages, sources

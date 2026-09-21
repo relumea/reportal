@@ -233,6 +233,14 @@ class TestComplete:
         with pytest.raises(LlmError):
             client.complete([{"role": "user", "content": "hi"}], temperature=0.0)
 
+    def test_rate_limit_is_named_rather_than_retried(self) -> None:
+        capture: list[httpx.Request] = []
+        http = _mock_http(httpx.Response(429, text="slow down"), capture)
+        client = LlmClient(LlmConfig(endpoint="http://llm.local/v1"), http=http)
+        with pytest.raises(LlmError, match="rate limited"):
+            client.complete([{"role": "user", "content": "hi"}], temperature=0.0)
+        assert len(capture) == 1
+
     def test_non_json_body_becomes_llm_error(self) -> None:
         capture: list[httpx.Request] = []
         http = _mock_http(httpx.Response(200, text="not json"), capture)
@@ -488,6 +496,10 @@ class TestReasoningStripping:
     def test_ordinary_prose_starting_with_thinking_survives(self) -> None:
         text = "Thinking about the tradeoffs, this returns one."
         assert llm._strip_reasoning(text) == text
+
+    def test_clean_completion_strips_reasoning_then_fences(self) -> None:
+        text = "<thinking>plan</thinking>\n```c\nint f(void) { return 1; }\n```"
+        assert llm.clean_completion(text) == "int f(void) { return 1; }"
 
 
 class TestStrictSchema:
