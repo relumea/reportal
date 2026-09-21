@@ -114,6 +114,11 @@ hosted-specific part of each left open:
 
 Optional items that are not implemented:
 
+- **Function embedding progress** (`GET /v3/analyses/{analysis_id}/progress/functions`,
+  new in spec v4.51.0). The hosted portal counts how many functions carry a neural
+  embedding; reportal has no embedding model, so there is nothing to count. The
+  local analogue is match coverage: the composition scan reports matched versus
+  total functions, and `GET /api/binaries/<id>/composition` serves it.
 - **The hosted portal's model-driven software types this evidence cannot name** (Trojan, Backdoor, Spyware, Worm, Adware, Rootkit). reportal's classifier is limited to the types its static evidence distinguishes; it names no type rather than guessing one.
 - The full DIE signature database. Detection is bundled as the curated
   `filetypes.SIGNATURES` table over data reportal already fetches; the engine's
@@ -140,7 +145,7 @@ sources, all re-runnable:
 
 | Source | What it gives | Where |
 |--------|---------------|-------|
-| OpenAPI 3.1 spec, **v4.34.0** | 158 paths, 190 operations, 20 tags | `https://docs.reveng.ai/openapi.json` |
+| OpenAPI 3.1 spec, **v4.51.0** | 181 paths, 216 operations, 24 tags | `https://docs.reveng.ai/openapi.json` |
 | Hosted MCP server | 36 tools, 9 destructive | `https://api.reveng.ai/mcp/` (`tools/list`) |
 | Open-source survey | what is portable, what is not, and the API/auth facts | `docs/REVENGAI.md` |
 
@@ -156,7 +161,7 @@ symbols, teams and organisations, credits, the secret store, the in-app
 documentation site); those are [TODO.md](TODO.md), which also indexes the open
 clusters here.
 
-### A. Asynchronous operation workflow (hosted `Agent` tag, 35 operations)
+### A. Asynchronous operation workflow (hosted `Agent` tag, 55 operations)
 
 **Status:** Closed for the operations reportal has, with its two ceilings stated.
 `jobs.py` holds the `jobs` table (kind, target, status, progress, message, the
@@ -317,7 +322,7 @@ outright when no sandbox runner is installed.  Firmware detonation reuses the
 same runner over a carved member (`docs/REVENGAI.md` notes `mal_unpack` is
 Windows-only and orthogonal; the local runner is the general case).
 
-### D. Analysis lifecycle (hosted `Analyses - Core`, 32 operations)
+### D. Analysis lifecycle (hosted `Analyses - Core`, 33 operations)
 
 **Status:** Closed.  End to end over the tables that already existed (no new
 table):
@@ -574,7 +579,7 @@ is reportal's own derivation and says so, the remote one is a third party's
 normalized report and says how it was cut, and the offline answer is only as
 complete as the scans this workspace has run.
 
-### I. Config (hosted 1 operation)
+### I. Config (hosted 3 operations)
 
 `GET /v2/config` reports what the hosted instance can do.  reportal had only
 `/api/health`, which reports liveness and row counts.
@@ -781,7 +786,7 @@ than a model's narrative, so there is nothing for an agent to produce that the
 rendered report does not already carry.  The AI narrative that does exist is the
 threat report's `narrative`, served beside the deterministic payload.
 
-### N. Binary extras (hosted `Binaries`, 11 operations)
+### N. Binary extras (hosted `Binaries`, 14 operations)
 
 **Status:** Closed.  The password-protected download is closed end to end:
 `zipcrypto.py` writes the traditional PKWARE scheme the stdlib reads but cannot
