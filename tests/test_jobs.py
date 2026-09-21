@@ -67,6 +67,7 @@ class TestRegistry:
             "capabilities",
             "composition",
             "crypto",
+            "debug",
             "detect",
             "filetype",
             "firmware",
@@ -113,6 +114,7 @@ class TestRegistry:
         assert jobs.job_kind_for_scan(store.SCAN_KIND_RELATED) == ("related", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_LINEAGE) == ("lineage", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_BENCHMARK) == ("benchmark", {})
+        assert jobs.job_kind_for_scan(store.SCAN_KIND_DEBUG_SESSION) == ("debug", {})
         assert jobs.job_kind_for_scan(store.SCAN_KIND_EXECUTION) == (
             "behavior",
             {"domain": behavior.DOMAIN_EXECUTION},
@@ -429,6 +431,50 @@ class TestRun:
         jobs.run_pending(conn, limit=1)
 
         assert journal.list_entries(conn) == []
+
+    def test_a_queued_debug_probe_stores_the_session(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import debug
+
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("lldb-dap", "lldb-dap"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "lldb-dap",
+                "argv": ["lldb-dap"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [{"request": "initialize", "success": True}],
+                "notes": [],
+            },
+        )
+        binary_id = _binary(conn, tmp_path)
+        job = jobs.submit(conn, kind="debug", binary_id=binary_id)
+
+        finished = jobs.run_pending(conn, limit=1)
+
+        assert finished[0]["id"] == job["id"]
+        assert finished[0]["status"] == jobs.STATUS_DONE
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        assert analysis_id is not None
+        assert store.get_scan(conn, analysis_id, store.SCAN_KIND_DEBUG_SESSION) is not None
+
+    def test_a_queued_debug_probe_refused_without_opt_in(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import debug
+
+        monkeypatch.delenv(debug.ENABLED_ENV, raising=False)
+        job = jobs.submit(conn, kind="debug", binary_id=_binary(conn, tmp_path))
+
+        finished = jobs.run_pending(conn, limit=1)
+
+        assert finished[0]["id"] == job["id"]
+        assert finished[0]["status"] == jobs.STATUS_FAILED
+        assert "debug-disabled" in str(finished[0]["error"])
 
     def test_a_successful_job_is_journaled_like_its_route(
         self, conn: sqlite3.Connection, tmp_path: Path

@@ -638,6 +638,28 @@ def _perform_unpack(
         raise ValueError(exc.detail) from exc
 
 
+def _perform_debug(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Run a read-only debug probe and store the session."""
+    from reportal import debug
+
+    raw_timeout = params.get("timeout")
+    timeout: int | None = None
+    if raw_timeout is not None:
+        timeout = int(raw_timeout)
+    raw_points = params.get("breakpoints")
+    points: list[int] | None = None
+    if raw_points is not None:
+        if not isinstance(raw_points, list):
+            raise ValueError("breakpoints must be a list of integers")
+        points = [int(item) for item in raw_points]
+    try:
+        return debug.run_session(conn, binary_id, timeout=timeout, breakpoints=points)
+    except debug.DebugError as exc:
+        raise ValueError(f"{exc.code}: {exc.detail}") from exc
+
+
 def render_pdf(
     conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -904,6 +926,14 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             params=("packer", "name"),
             run=_perform_unpack,
             perform=_perform_unpack,
+        ),
+        JobKind(
+            name="debug",
+            label="Read-only debug probe over the sample",
+            scan_kinds=store.SCAN_KIND_DEBUG_SESSION,
+            params=("timeout", "breakpoints"),
+            run=_perform_debug,
+            perform=_perform_debug,
         ),
     )
 
