@@ -14,7 +14,7 @@ the built-ins so a reader can tell a built-in from a third-party part by its
 absence from that module.
 
 Nothing here starts a part, changes one or touches a binary: the inventory is a
-read of eight plugin seams, and each part's own ``describe``-style fields
+read of nine plugin seams, and each part's own ``describe``-style fields
 (availability, reloadability, a write plan, an annotation) are what a reader
 sees.
 """
@@ -26,6 +26,7 @@ from typing import Any
 from reportal import (
     auto_workers,
     components,
+    debug,
     effects,
     external,
     graph_backends,
@@ -86,6 +87,12 @@ SEAMS: tuple[dict[str, str], ...] = (
         "group": sandbox.RUNNER_ENTRY_POINT_GROUP,
         "module": "reportal.sandbox",
         "contributes": "an isolated way to run one stored sample, off unless the workspace opts in",
+    },
+    {
+        "name": "debug backends",
+        "group": debug.BACKEND_ENTRY_POINT_GROUP,
+        "module": "reportal.debug",
+        "contributes": "a read-only debugger a session probes one stored sample with",
     },
 )
 
@@ -193,6 +200,20 @@ def _runner_parts() -> list[dict[str, Any]]:
     ]
 
 
+def _debug_backend_parts() -> list[dict[str, Any]]:
+    """One row per registered debug backend, with its availability."""
+    return [
+        {
+            "name": backend.name,
+            "detail": backend.describe,
+            "origin": "",
+            "available": backend.available(),
+            "unavailable_reason": "" if backend.available() else backend.hint,
+        }
+        for backend in debug.registered_backends()
+    ]
+
+
 def _tool_parts() -> list[dict[str, Any]]:
     """One row per MCP tool, with its destructive annotation."""
     # Imported here rather than at module scope: mcp_tools imports integrations
@@ -220,6 +241,7 @@ PART_READERS = {
     "external sources": _source_parts,
     "models": _model_parts,
     "sandbox runners": _runner_parts,
+    "debug backends": _debug_backend_parts,
 }
 
 # A seam's name is the key of :data:`PART_READERS`, so the two cannot disagree.

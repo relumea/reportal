@@ -14,6 +14,7 @@ from reportal import (
     auto_workers,
     cli,
     components,
+    debug,
     effects,
     external,
     graph_backends,
@@ -48,6 +49,7 @@ class TestInventory:
             sandbox.RUNNER_ENTRY_POINT_GROUP,
             models.MODEL_ENTRY_POINT_GROUP,
             external.SOURCE_ENTRY_POINT_GROUP,
+            debug.BACKEND_ENTRY_POINT_GROUP,
         }
 
     def test_counts_match_the_registries(self) -> None:

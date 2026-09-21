@@ -2,9 +2,9 @@
 
 reportal is assembled from replaceable parts, and every kind of part registers
 through its own entry-point group: pipeline components, auto-mode workers,
-graph backends, effect handlers, MCP tools, external sources, models and
-sandbox runners.  This module is the one place that reads such a group and
-turns a ``module:attr`` value into an object, so the eight seams differ only in
+graph backends, effect handlers, MCP tools, external sources, models, sandbox
+runners and debug backends.  This module is the one place that reads such a group and
+turns a ``module:attr`` value into an object, so the nine seams differ only in
 what they accept and where the result is registered.
 
 Discovery never raises into the registry.  A malformed value, an unimportable
