@@ -2,10 +2,10 @@
 
 Sources: src/reportal/sandbox.py
 
-The one module that executes a stored sample, and the only place reportal runs a binary it holds.
-Detonation is refused unless the workspace opts in and an installed runner exists, and every run
-is bounded and recorded: the caps in force, the exit status, the duration, bounded output tails
-and the files the sample left behind.
+The detonation seam: it runs a stored sample free (the debugger in `debug.py` controls
+one instead). Detonation is refused unless the workspace opts in and an installed
+runner exists, and every run is bounded and recorded: the caps in force, the exit
+status, the duration, bounded output tails and the files the sample left behind.
 
 ## Vocabulary
 
