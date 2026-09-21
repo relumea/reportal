@@ -39,6 +39,8 @@ Nothing is stepped, continued or written.
   A third party registers through the `reportal.debug_backends` entry-point group.
 - `run_session` is the shared orchestration the route, the CLI and the MCP tool call, so the
   guards are checked once. The session and its scan are journaled, so a revert removes the record.
+- `run_session` renders the transcript with `render_transcript` and ingests it as a binary-scoped
+  document; the graph rebuild links it to the named functions through the VA-mention edge.
 
 ## Invariants
 
