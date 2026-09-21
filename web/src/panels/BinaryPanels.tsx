@@ -4528,7 +4528,7 @@ export function DebugPanel({ binaryId }: { binaryId: number }): ReactNode {
   return (
     <Panel
       title="Debug Session"
-      subtitle="Probe the sample under lldb-dap: entry stop, threads, registers and a memory window, then disconnect."
+      subtitle="Probe the sample under the debugger: entry stop, threads, registers and a memory window, then disconnect."
       actions={
         <>
           <Field label="Seconds">
