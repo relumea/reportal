@@ -2,12 +2,14 @@
 
 How reportal could talk to a live debugger, which protocol to pick first, and where the seam
 lands in this tree. Swept 2026-09-21 from the public protocol specs and the integration
-shims other tools already ship. reportal today has no live-debugger seam: static scans read
-stored bytes through `engines.py`, and `sandbox.py` is the only module that executes a sample
-(bounded detonation, boundary 7 in `docs/THREAT_MODEL.md`). A debugger would be the second
-execution path, and a disposable VM the third, so both inherit that opt-in posture. Static
-scans stay the default: a debug session adds evidence to a stored analysis, it never replaces
-one.
+shims other tools already ship. reportal now has the live-debugger seam this page
+specified (`debug.py`, slices 1 and 6: DAP over lldb-dap and MI over gdb, the
+`debug-session` scan, observed coverage, the knowledge digest, the `debug` job
+kind): static scans read stored bytes through `engines.py`, `sandbox.py`
+detonates a sample free and the debugger controls one, so detonation was the
+first execution path and debugging is the second, and a disposable VM would be
+the third. Static scans stay the default: a debug session adds evidence to a
+stored analysis, it never replaces one.
 
 ## What the protocols offer
 
