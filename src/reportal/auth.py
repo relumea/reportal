@@ -244,8 +244,11 @@ MAX_API_KEY_NAME = 64
 # HTTP signup window: the public path creates a tenant with no bearer, so an
 # unbounded caller can fill the user table. CLI and MCP skip this; they are
 # not the public surface. Shared across the ASGI thread pool.
+# Cap distinct peer keys so a flood of unique addresses within the window
+# cannot grow the map without bound; past the cap the oldest peer is dropped.
 SIGNUP_WINDOW_S = 3600.0
 SIGNUP_MAX_HITS = 5
+MAX_SIGNUP_KEYS = 1024
 _signup_states: dict[str, list[float]] = {}
 _signup_states_lock = threading.Lock()
 _signup_monotonic = time.monotonic
@@ -253,8 +256,10 @@ _signup_monotonic = time.monotonic
 # HTTP write window when token auth is on: one caller (user id, else TCP peer)
 # cannot fill the job queue or burn inference by repeating POST/PATCH/PUT/DELETE.
 # Loopback auth-off stays unbounded. CLI and MCP skip this; they are not HTTP.
+# Cap distinct caller keys the same way signup does.
 WRITE_WINDOW_S = 60.0
 WRITE_MAX_HITS = 60
+MAX_WRITE_KEYS = 4096
 _write_states: dict[str, list[float]] = {}
 _write_states_lock = threading.Lock()
 _write_monotonic = time.monotonic
@@ -1541,7 +1546,8 @@ def signup_allowed(client_key: str) -> bool:
     """Whether *client_key* may mint another HTTP tenant inside the window.
 
     A key whose window has emptied is dropped rather than left as a permanent
-    entry, so the limiter's state is bounded by callers signing up *now*.
+    entry.  Distinct live keys are also capped at :data:`MAX_SIGNUP_KEYS` so a
+    flood of unique peers cannot grow the map for the whole window.
     """
     key = (client_key or "").strip() or "unknown"
     now = _signup_monotonic()
@@ -1555,6 +1561,8 @@ def signup_allowed(client_key: str) -> bool:
             return False
         hits.append(now)
         _signup_states[key] = hits
+        while len(_signup_states) > MAX_SIGNUP_KEYS:
+            _signup_states.pop(next(iter(_signup_states)))
         return True
 
 
@@ -1562,7 +1570,7 @@ def write_allowed(client_key: str) -> bool:
     """Whether *client_key* may make another HTTP write inside the window.
 
     A key whose window has emptied is dropped rather than left as a permanent
-    entry, so the limiter's state is bounded by callers writing *now*.
+    entry.  Distinct live keys are also capped at :data:`MAX_WRITE_KEYS`.
     """
     key = (client_key or "").strip() or "unknown"
     now = _write_monotonic()
@@ -1576,4 +1584,6 @@ def write_allowed(client_key: str) -> bool:
             return False
         hits.append(now)
         _write_states[key] = hits
+        while len(_write_states) > MAX_WRITE_KEYS:
+            _write_states.pop(next(iter(_write_states)))
         return True

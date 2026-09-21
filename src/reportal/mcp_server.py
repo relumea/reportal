@@ -56,6 +56,14 @@ SERVER_INSTRUCTIONS = (
 # server.MCP_PATH ("/mcp"); auth is the same bearer as ``/api``.
 MAX_REPLAY_EVENTS = 1024
 
+# Concurrent Streamable HTTP sessions. The SDK defaults to 10_000 with a
+# 30-minute idle timeout; a local portal that answers JSON POSTs still opens a
+# stateful session per initialize, so a client that never reuses
+# ``mcp-session-id`` would pin transports until idle expiry. Keep both bound
+# well below the SDK defaults.
+MAX_HTTP_SESSIONS = 128
+SESSION_IDLE_TIMEOUT_S = 300.0
+
 _log = logging.getLogger(__name__)
 
 # MCP syslog names onto Python levels. notice sits with info; alert and
@@ -245,7 +253,11 @@ def http_session_manager() -> StreamableHTTPSessionManager:
     SDK's SSE session stream, resumed through :class:`MemoryEventStore`.
     """
     return StreamableHTTPSessionManager(
-        build_server(), json_response=True, event_store=MemoryEventStore()
+        build_server(),
+        json_response=True,
+        event_store=MemoryEventStore(),
+        max_sessions=MAX_HTTP_SESSIONS,
+        session_idle_timeout=SESSION_IDLE_TIMEOUT_S,
     )
 
 

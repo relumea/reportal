@@ -882,18 +882,21 @@ class ReconcileResult:
 # Per-organisation rate limit on the reconcile path: it calls the provider, so
 # an unbounded caller could be used to hammer Stripe through reportal.
 # Shared across the ASGI thread pool; compound check-and-append under the lock.
+# Cap distinct organisation keys so a scan of every tenant cannot grow the map
+# for the whole window; past the cap the oldest organisation is dropped.
 _rate_states: dict[int, list[float]] = {}
 _rate_states_lock = threading.Lock()
 _RECONCILE_WINDOW_S = 60.0
 _RECONCILE_MAX_HITS = 3
+MAX_RECONCILE_ORGS = 1024
 
 
 def reconcile_allowed(organisation_id: int) -> bool:
     """Whether the organisation may reconcile again inside the window.
 
     An organisation whose window has emptied is dropped rather than left as a
-    permanent key, so the limiter's state is bounded by the organisations
-    reconciling *now* instead of by every organisation this process ever saw.
+    permanent key.  Distinct live organisations are also capped at
+    :data:`MAX_RECONCILE_ORGS`.
     """
     now = _monotonic()
     with _rate_states_lock:
@@ -908,6 +911,8 @@ def reconcile_allowed(organisation_id: int) -> bool:
             return False
         hits.append(now)
         _rate_states[organisation_id] = hits
+        while len(_rate_states) > MAX_RECONCILE_ORGS:
+            _rate_states.pop(next(iter(_rate_states)))
         return True
 
 

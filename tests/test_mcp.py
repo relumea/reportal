@@ -3198,3 +3198,12 @@ class TestMemoryEventStore:
             assert replayed == []
 
         anyio.run(run)
+
+
+class TestHttpSessionManager:
+    def test_http_sessions_are_bounded(self) -> None:
+        manager = mcp_server.http_session_manager()
+        assert manager.max_sessions == mcp_server.MAX_HTTP_SESSIONS
+        assert manager.session_idle_timeout == mcp_server.SESSION_IDLE_TIMEOUT_S
+        assert manager.max_sessions < 10_000
+        assert manager.session_idle_timeout < 30 * 60

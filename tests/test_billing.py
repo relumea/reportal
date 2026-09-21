@@ -609,6 +609,16 @@ class TestReconcileRateLimit:
         assert billing.reconcile_allowed(222222) is True
         assert 111111 not in billing._rate_states, "the stale window is dropped"
 
+    def test_reconcile_orgs_are_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = [1000.0]
+        monkeypatch.setattr(billing, "_monotonic", lambda: clock[0])
+        billing._rate_states.clear()
+        for index in range(billing.MAX_RECONCILE_ORGS + 8):
+            assert billing.reconcile_allowed(index) is True
+        assert len(billing._rate_states) == billing.MAX_RECONCILE_ORGS
+        assert 0 not in billing._rate_states
+        assert billing.MAX_RECONCILE_ORGS + 7 in billing._rate_states
+
     def test_concurrent_reconciles_respect_the_cap(self) -> None:
         """The check-and-append is atomic across ASGI workers."""
         organisation_id = 555666

@@ -179,6 +179,26 @@ class TestSignup:
         clock[0] += 10
         assert auth.write_retry_after("user:1") == int(auth.WRITE_WINDOW_S) - 10
 
+    def test_signup_keys_are_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = [1000.0]
+        monkeypatch.setattr(auth, "_signup_monotonic", lambda: clock[0])
+        auth._signup_states.clear()
+        for index in range(auth.MAX_SIGNUP_KEYS + 8):
+            assert auth.signup_allowed(f"10.0.0.{index}") is True
+        assert len(auth._signup_states) == auth.MAX_SIGNUP_KEYS
+        assert "10.0.0.0" not in auth._signup_states
+        assert f"10.0.0.{auth.MAX_SIGNUP_KEYS + 7}" in auth._signup_states
+
+    def test_write_keys_are_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        clock = [1000.0]
+        monkeypatch.setattr(auth, "_write_monotonic", lambda: clock[0])
+        auth._write_states.clear()
+        for index in range(auth.MAX_WRITE_KEYS + 8):
+            assert auth.write_allowed(f"user:{index}") is True
+        assert len(auth._write_states) == auth.MAX_WRITE_KEYS
+        assert "user:0" not in auth._write_states
+        assert f"user:{auth.MAX_WRITE_KEYS + 7}" in auth._write_states
+
 
 class TestTenantIsolation:
     def test_org_listing_hides_other_tenants(
