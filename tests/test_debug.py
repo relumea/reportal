@@ -341,3 +341,504 @@ class TestRoutes:
             journal.revert_action(conn, actions[0]["action"])
             assert debug.latest_session(conn, analysis_id) is None
             _ = session
+
+
+def _dap_frame(payload: dict[str, object]) -> bytes:
+    import json as _json
+
+    body = _json.dumps(payload).encode()
+    return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+
+class _FakePipe:
+    """An os.read/select-compatible handle over canned bytes."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    def fileno(self) -> int:
+        return -1
+
+
+class TestDapReader:
+    def test_reads_batched_frames_without_loss(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        event = {"type": "event", "event": "initialized", "seq": 1}
+        response = {"type": "response", "request_seq": 2, "command": "launch", "success": True}
+        blob = _dap_frame(event) + _dap_frame(response)
+        chunks = [blob[:10], blob[10:]]
+
+        def fake_read(_fd: int, _n: int) -> bytes:
+            return chunks.pop(0) if chunks else b""
+
+        monkeypatch.setattr(_os, "read", fake_read)
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        reader = debug._DapReader(_FakePipe(b""), 65536, 5.0)
+        assert reader.read_event("initialized") == event
+        assert reader.read_response(2) == response
+
+    def test_request_frame_carries_content_length(self) -> None:
+        import json as _json
+
+        raw = debug._dap_request(3, "threads", {})
+        head, _, body = raw.partition(b"\r\n\r\n")
+        assert head.lower().startswith(b"content-length:")
+        assert _json.loads(body)["command"] == "threads"
+
+    def test_garbage_frame_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        monkeypatch.setattr(_os, "read", lambda _fd, _n: b"no-headers-here")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        reader = debug._DapReader(_FakePipe(b""), 65536, 5.0)
+        with pytest.raises(debug.DebugError) as caught:
+            reader.read_message()
+        assert caught.value.code == debug.ERROR_INVALID
+
+
+class TestRegistryAndLedger:
+    def test_backend_registry_round_trip(self) -> None:
+        backend = debug.Backend("probe-backend", "probe-backend")
+        debug.register_backend(backend)
+        try:
+            assert debug.get_backend("probe-backend") is backend
+            assert backend in debug.registered_backends()
+        finally:
+            from reportal.plugins import RegistryError
+
+            debug.BACKENDS[:] = [b for b in debug.BACKENDS if b.name != "probe-backend"]
+            with pytest.raises(RegistryError):
+                debug.unregister_backend("probe-backend")
+
+    def test_refresh_backends_returns_names(self) -> None:
+        names = debug.refresh_backends()
+        assert "lldb-dap" in names
+
+    def test_unavailable_detail_names_the_missing_backend(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(debug.ENABLED_ENV, raising=False)
+        monkeypatch.setenv(debug.BACKEND_ENV, "no-such-backend")
+        assert "no-such-backend" in debug.unavailable_detail()
+        with pytest.raises(debug.DebugError) as caught:
+            debug.require_backend()
+        assert caught.value.code == debug.ERROR_UNAVAILABLE
+
+    def test_configured_name_prefers_the_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "reportal.toml").write_text('[debug]\nbackend = "gdb"\n')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv(debug.BACKEND_ENV, raising=False)
+        assert debug.configured_backend_name() == "gdb"
+        monkeypatch.setenv(debug.BACKEND_ENV, "lldb-dap")
+        assert debug.configured_backend_name() == "lldb-dap"
+
+    def test_session_lifecycle_helpers(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "ledger.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            assert debug.find_live_session(conn, binary_id) is None
+            assert debug.get_session(conn, 4242) is None
+            assert debug.latest_session(conn, analysis_id) is None
+            assert debug.count_sessions(conn, analysis_id) == 0
+            caps = debug.requested_caps()
+            session_id, created = debug.start_session(
+                conn,
+                analysis_id=analysis_id,
+                binary_id=binary_id,
+                sha256="d" * 64,
+                backend="lldb-dap",
+                argv=["lldb-dap"],
+                caps=caps,
+            )
+            assert created is True
+            live = debug.find_live_session(conn, binary_id)
+            assert live is not None and live["id"] == session_id
+            again_id, again_created = debug.start_session(
+                conn,
+                analysis_id=analysis_id,
+                binary_id=binary_id,
+                sha256="d" * 64,
+                backend="lldb-dap",
+                argv=["lldb-dap"],
+                caps=caps,
+            )
+            assert (again_id, again_created) == (session_id, False)
+            debug.finish_session(conn, session_id, [{"request": "initialize", "success": True}])
+            assert debug.find_live_session(conn, binary_id) is None
+            assert debug.count_sessions(conn, analysis_id) == 1
+            payload = debug.status_payload(conn, analysis_id)
+            assert payload["sessions"] == 1
+            assert payload["last"]["id"] == session_id
+
+    def test_fail_session_closes_the_row(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "fail.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            session_id, _ = debug.start_session(
+                conn,
+                analysis_id=analysis_id,
+                binary_id=binary_id,
+                sha256="d" * 64,
+                backend="gdb",
+                argv=["gdb"],
+                caps=debug.requested_caps(),
+            )
+            debug.fail_session(conn, session_id, "boom")
+            row = debug.get_session(conn, session_id)
+            assert row is not None and row["status"] == debug.STATUS_FAILED
+
+    def test_parse_address_rejects_garbage(self) -> None:
+        assert debug._parse_address(None) is None
+        assert debug._parse_address("not-an-address") is None
+        assert debug._parse_address("0x1000") == 0x1000
+        assert debug._parse_address("") is None
+
+    def test_transcript_addresses_skips_bad_rows(self) -> None:
+        session = {
+            "transcript": [
+                {"request": "x", "address": "0x2000"},
+                {"request": "y", "frames": [{"instructionPointerReference": "0x3000"}]},
+                {"request": "z", "address": "garbage"},
+                "not-a-dict",
+                {"request": "w", "frames": ["not-a-dict"]},
+            ]
+        }
+        assert debug._transcript_addresses(session) == [0x2000, 0x3000]
+        assert debug._transcript_addresses({}) == []
+        assert debug._transcript_addresses({"transcript": "nope"}) == []
+
+
+class TestMiHelpers:
+    def test_send_writes_a_line(self) -> None:
+        import io as _io
+
+        handle = _io.BytesIO()
+        handle.flush = lambda: None  # type: ignore[method-assign]
+        debug._mi_send(handle, "-thread-info")
+        assert handle.getvalue() == b"-thread-info\n"
+
+    def test_wait_for_stop_collects_through_the_prompt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os as _os
+
+        blob = b'*stopped,reason="breakpoint-hit"\n(gdb)\n'
+        chunks = [blob]
+
+        def fake_read(_fd: int, _n: int) -> bytes:
+            return chunks.pop(0) if chunks else b""
+
+        monkeypatch.setattr(_os, "read", fake_read)
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        text = debug._mi_wait_for_stop(_FakePipe(b""), 65536, 5.0, marker="breakpoint-hit")
+        assert text is not None and "breakpoint-hit" in text
+
+    def test_wait_for_stop_times_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: ([], [], []))
+        assert debug._mi_wait_for_stop(_FakePipe(b""), 65536, 0.01, marker="breakpoint-hit") is None
+
+    def test_probe_run_session_refuses_without_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "nope"))
+        monkeypatch.setattr(debug.Backend, "path", lambda self: None)
+        db = _db(tmp_path, "noprobe.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            with pytest.raises(debug.DebugError) as caught:
+                debug.run_session(conn, binary_id)
+            assert caught.value.code == debug.ERROR_UNAVAILABLE
+
+
+class TestProbeDispatch:
+    def test_probe_binary_rejects_too_many_breakpoints(self, tmp_path: Path) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(
+                sample,
+                backend=debug.Backend("lldb-dap", "lldb-dap"),
+                breakpoints=list(range(debug.MAX_BREAKPOINTS + 1)),
+            )
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_probe_binary_needs_an_installed_executable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        monkeypatch.setattr(debug.Backend, "path", lambda self: None)
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        assert caught.value.code == debug.ERROR_UNAVAILABLE
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"))
+        assert caught.value.code == debug.ERROR_UNAVAILABLE
+
+    def test_dap_probe_with_a_scripted_backend(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import json as _json
+
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+
+        def frame(payload: dict[str, object]) -> bytes:
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        responses = [
+            {"type": "response", "request_seq": 1, "command": "initialize", "success": True},
+            {"type": "event", "event": "initialized", "seq": 10},
+            {"type": "response", "request_seq": 3, "command": "configurationDone", "success": True},
+            {"type": "response", "request_seq": 2, "command": "launch", "success": True},
+            {
+                "type": "event",
+                "event": "stopped",
+                "seq": 11,
+                "body": {"threadId": 7, "reason": "entry"},
+            },
+            {
+                "type": "response",
+                "request_seq": 4,
+                "command": "threads",
+                "success": True,
+                "body": {"threads": [{"id": 7, "name": "t"}]},
+            },
+            {
+                "type": "response",
+                "request_seq": 5,
+                "command": "stackTrace",
+                "success": True,
+                "body": {
+                    "stackFrames": [
+                        {"id": 9, "name": "main", "instructionPointerReference": "0x1000"}
+                    ]
+                },
+            },
+            {
+                "type": "response",
+                "request_seq": 6,
+                "command": "scopes",
+                "success": True,
+                "body": {
+                    "scopes": [
+                        {
+                            "name": "Registers",
+                            "presentationHint": "registers",
+                            "variablesReference": 3,
+                        }
+                    ]
+                },
+            },
+            {
+                "type": "response",
+                "request_seq": 7,
+                "command": "variables",
+                "success": True,
+                "body": {
+                    "variables": [{"name": "General Purpose Registers", "variablesReference": 4}]
+                },
+            },
+            {
+                "type": "response",
+                "request_seq": 8,
+                "command": "variables",
+                "success": True,
+                "body": {"variables": [{"name": "rax", "value": "0x1"}]},
+            },
+            {
+                "type": "response",
+                "request_seq": 9,
+                "command": "readMemory",
+                "success": True,
+                "body": {"data": "3q=="},
+            },
+            {"type": "response", "request_seq": 10, "command": "disconnect", "success": True},
+        ]
+        blob = b"".join(frame(payload) for payload in responses)
+        chunks = [blob]
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = _FakePipe(b"")
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                return None
+
+        import os as _os
+
+        def fake_read(_fd: int, _n: int) -> bytes:
+            return chunks.pop(0) if chunks else b""
+
+        monkeypatch.setattr(_os, "read", fake_read)
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        report = debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        kinds = [entry["request"] for entry in report["transcript"]]
+        assert kinds == [
+            "initialize",
+            "launch",
+            "configurationDone",
+            "stopped",
+            "threads",
+            "stackTrace",
+            "registers",
+            "readMemory",
+            "disconnect",
+        ]
+        registers = next(e for e in report["transcript"] if e["request"] == "registers")
+        assert registers["registers"] == [{"name": "rax", "value": "0x1"}]
+        memory = next(e for e in report["transcript"] if e["request"] == "readMemory")
+        assert memory["encoding"] == "base64"
+
+    def test_mi_probe_with_a_scripted_gdb(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeStdout:
+            def __init__(self, lines: list[bytes]) -> None:
+                self._chunks = lines
+
+            def fileno(self) -> int:
+                return -1
+
+        script_lines = [
+            b"(gdb)\n",
+            b'^done,bkpt={number="1"}\n',
+            b"(gdb)\n",
+            b"^running\n",
+            b'*stopped,reason="breakpoint-hit",thread-id="1"\n',
+            b"(gdb)\n",
+            b'^done,threads=[{id="1",name="t"}]\n',
+            b"(gdb)\n",
+            b'^done,stack=[frame={func="main",addr="0x1000"}]\n',
+            b"(gdb)\n",
+            b'^done,register-names=["rax","rbx"]\n',
+            b"(gdb)\n",
+            b'^done,memory=[{contents="ff"}]\n',
+            b"(gdb)\n",
+            b"^done\n",
+            b"(gdb)\n",
+        ]
+
+        import os as _os
+
+        holder: dict[str, object] = {}
+
+        def fake_read(_fd: int, _n: int) -> bytes:
+            pipe = holder.get("pipe")
+            if pipe is not None and getattr(pipe, "_chunks", []):
+                chunks = pipe._chunks
+                return chunks.pop(0)
+            return b""
+
+        monkeypatch.setattr(_os, "read", fake_read)
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = FakeStdout(script_lines)
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                return None
+
+        holder["pipe"] = FakeProcess.stdout
+
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/gdb")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        report = debug.probe_binary(
+            sample, backend=debug.Backend("gdb", "gdb"), breakpoints=[0x1000]
+        )
+        kinds = [entry["request"] for entry in report["transcript"]]
+        assert kinds == [
+            "break-insert",
+            "exec-run",
+            "threads",
+            "stackTrace",
+            "registers",
+            "readMemory",
+            "setBreakpoints",
+            "disconnect",
+        ]
+        point = next(e for e in report["transcript"] if e["request"] == "setBreakpoints")
+        assert point["address"] == 0x1000
+        memory = next(e for e in report["transcript"] if e["request"] == "readMemory")
+        assert memory["encoding"] == "hex"
+
+    def test_run_session_covers_missing_binary_and_missing_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "gdb"))
+        db = _db(tmp_path, "missing.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            with pytest.raises(debug.DebugError) as caught:
+                debug.run_session(conn, 4242)
+            assert caught.value.code == "binary not found"
+            binary_id = store.add_binary(
+                conn, sha256="e" * 64, name="gone.bin", path="/no/such/file", size=1
+            )
+            with pytest.raises(debug.DebugError) as caught:
+                debug.run_session(conn, binary_id)
+            assert caught.value.code == "binary not on disk"
+
+    def test_run_session_records_a_failed_probe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "gdb"))
+
+        def boom(*args: object, **kwargs: object) -> dict[str, object]:
+            raise RuntimeError("backend exploded")
+
+        monkeypatch.setattr(debug, "probe_binary", boom)
+        db = _db(tmp_path, "boom.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            with pytest.raises(RuntimeError):
+                debug.run_session(conn, binary_id)
+            analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+            assert analysis_id is not None
+            session = debug.latest_session(conn, analysis_id)
+            assert session is not None and session["status"] == debug.STATUS_FAILED
