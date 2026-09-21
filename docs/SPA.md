@@ -989,6 +989,15 @@ duration, the caps in force, the files the sample wrote and the stdout/stderr
 tails in code blocks.  With the opt-in off or no runner installed the button is
 disabled and the note says which of the two is missing.
 
+The binary detail's Debug Session panel (`panels/BinaryPanels.tsx`) reads
+`GET /api/binaries/<id>/debug-session/status` for the opt-in state, the
+backend in use and the sessions so far, carries a Probe button with the bounded
+seconds input that posts the probe, and renders the session: the status badge,
+the backend, the entry-stop thread and reason, the thread list, the top frame
+with its instruction pointer, the first registers, the base64 memory window and
+the notes.  With the opt-in off or no backend installed the button is disabled
+and the note says which of the two is missing.
+
 The binary detail's Firmware panel (`panels/BinaryPanels.tsx`) reads the stored
 carve pass and offers Carve (the POST), a region table (index, offset, size,
 kind badge, label, confidence, entropy) with a per-row Carve out control that
