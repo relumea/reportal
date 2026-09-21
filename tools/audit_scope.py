@@ -102,8 +102,8 @@ HANDLER_SCOPED = {
 
 
 def main() -> int:
-    src = API.read_text()
-    server = SERVER.read_text()
+    src = API.read_text(encoding="utf-8")
+    server = SERVER.read_text(encoding="utf-8")
     paths = re.findall(r'\(re\.compile\(r"\^/api/[^"]+"\),\s*"([a-z-]+)"\)', server)
     sys.stdout.write(f"gate kinds ({len(set(paths))}): {', '.join(sorted(set(paths)))}\n")
 

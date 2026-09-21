@@ -173,6 +173,19 @@ class TestEdits:
         with pytest.raises(data_types.InvalidIdentifierError):
             data_types.rename_type(conn, data_type_id, name="9lives")
 
+    def test_identifiers_collapse_nfd_to_nfc(self, conn: sqlite3.Connection) -> None:
+        nfc = "caf\u00e9"
+        nfd = "cafe\u0301"
+        assert nfc != nfd
+        assert data_types.validate_identifier(nfd) == nfc
+        binary_id = _seed_binary(conn)
+        data_type_id = _make_type(conn, binary_id, DEFINITION)
+        row = data_types.rename_type(conn, data_type_id, name=nfd)
+        assert row["name"] == nfc
+        other = _make_type(conn, binary_id, "typedef struct Other_s {\n\tint a;\n} Other;\n")
+        with pytest.raises(data_types.DuplicateNameError):
+            data_types.rename_type(conn, other, name=nfc)
+
     def test_rename_rejects_a_duplicate_name(self, conn: sqlite3.Connection) -> None:
         binary_id = _seed_binary(conn)
         _make_type(conn, binary_id, DEFINITION)

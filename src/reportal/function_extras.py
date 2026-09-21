@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -492,10 +493,15 @@ def match_rows(
 
 
 def normalize_callee(name: Any) -> str:
-    """Validate a callee name, raising :class:`InvalidEdgeError`."""
+    """Validate a callee name, raising :class:`InvalidEdgeError`.
+
+    The name is stripped and NFC-normalized so an NFD spelling cannot open a
+    second edge row for the same logical callee under the unique
+    ``(function_id, callee_name, kind)`` index.
+    """
     if not isinstance(name, str) or not name.strip():
         raise InvalidEdgeError("callee must be a non-empty name")
-    trimmed = name.strip()
+    trimmed = unicodedata.normalize("NFC", name.strip())
     if len(trimmed) > MAX_CALLEE_NAME_CHARS:
         raise InvalidEdgeError(f"callee exceeds {MAX_CALLEE_NAME_CHARS} characters")
     return trimmed

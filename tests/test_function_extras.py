@@ -178,6 +178,24 @@ class TestEdges:
                         conn, function_id=ids["functions"][0], callee=callee, kind=kind
                     )
 
+    def test_callee_names_collapse_nfd_to_nfc(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        nfc = "caf\u00e9"
+        nfd = "cafe\u0301"
+        assert nfc != nfd
+        assert function_extras.normalize_callee(nfd) == nfc
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            first = function_extras.add_edge(
+                conn, function_id=ids["functions"][0], callee=nfd
+            )
+            second = function_extras.add_edge(
+                conn, function_id=ids["functions"][0], callee=nfc, note="same"
+            )
+            assert first["id"] == second["id"]
+            assert second["callee"] == nfc
+
     def test_a_missing_edge_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

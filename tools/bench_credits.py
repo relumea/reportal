@@ -174,7 +174,7 @@ def sample_sources(corpus: Path, count: int) -> list[str]:
     paths = sorted(corpus.rglob("*.c"))
     bodies: list[str] = []
     for path in paths:
-        text = path.read_text(errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
         if MIN_SOURCE_CHARS < len(text) < MAX_SOURCE_CHARS:
             bodies.append(text)
     if not bodies:
@@ -336,7 +336,7 @@ def _configure(target: Target) -> None:
     first endpoint under every later label.
     """
     if target.key_file is not None:
-        os.environ["REPORTAL_LLM_API_KEY"] = target.key_file.read_text().strip()
+        os.environ["REPORTAL_LLM_API_KEY"] = target.key_file.read_text(encoding="utf-8").strip()
     os.environ["REPORTAL_LLM_ENDPOINT"] = target.endpoint
     os.environ["REPORTAL_LLM_MODEL"] = target.model
     llm.set_client(None)
@@ -398,7 +398,7 @@ def _print_verdict(results: list[TaskResult]) -> int:
 def _compare(previous: Path, results: list[TaskResult]) -> None:
     """Show the drift against an earlier run, which is what makes this a benchmark."""
     try:
-        stored = json.loads(previous.read_text())
+        stored = json.loads(previous.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         _say(f"could not read {previous}: {exc}")
         return
@@ -616,7 +616,7 @@ def main() -> int:
             "tasks": [result.describe() for result in runs[0][1]],
         }
         args.json.parent.mkdir(parents=True, exist_ok=True)
-        args.json.write_text(json.dumps(payload, indent=2) + "\n")
+        args.json.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         _say(f"\nWrote {args.json}")
     return status
 

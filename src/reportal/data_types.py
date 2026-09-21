@@ -64,6 +64,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -746,8 +747,13 @@ def _parse_typedef(match: re.Match[str]) -> dict[str, Any]:
 
 
 def validate_identifier(name: str) -> str:
-    """Return *name* when it is a C identifier, else raise :class:`InvalidIdentifierError`."""
-    candidate = (name or "").strip()
+    """Return *name* when it is a C identifier, else raise :class:`InvalidIdentifierError`.
+
+    The candidate is stripped and NFC-normalized first so an NFD spelling
+    (for example ``cafe\\u0301``) cannot collide with the NFC form of the same
+    identifier under the per-binary unique name index.
+    """
+    candidate = unicodedata.normalize("NFC", (name or "").strip())
     if not _IDENTIFIER_RE.match(candidate):
         raise InvalidIdentifierError(f"not a C identifier: {name!r}")
     return candidate

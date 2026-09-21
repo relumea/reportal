@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import unicodedata
 from collections.abc import Sequence
 from typing import Any
 
@@ -211,17 +212,21 @@ def register_family(
     The name must be non-empty and unused (case-insensitively) and the
     reference binary must exist with a file the engine can fingerprint; the
     bundle is derived once and stored, so detection never re-runs the engine
-    for the reference.  Raises :class:`InvalidFamilyNameError`,
+    for the reference.  The name and aliases are NFC-normalized so an NFD
+    spelling cannot collide with an NFC create of the same word.  Raises
+    :class:`InvalidFamilyNameError`,
     :class:`DuplicateFamilyError`, :class:`KeyError` for an unknown binary and
     :class:`engines.EngineUnavailable` without an engine.
     """
-    cleaned = name.strip()
+    cleaned = unicodedata.normalize("NFC", name.strip())
     if not cleaned:
         raise InvalidFamilyNameError("family name must not be empty")
     if store.find_family_by_name(conn, cleaned) is not None:
         raise DuplicateFamilyError(f"a family named {cleaned!r} already exists")
     bundle = derive_bundle(conn, binary_id=reference_binary_id, engine=engine)
-    alias_list = [alias.strip() for alias in aliases if alias.strip()]
+    alias_list = [
+        unicodedata.normalize("NFC", alias.strip()) for alias in aliases if alias.strip()
+    ]
     family_id = store.add_family(
         conn,
         name=cleaned,

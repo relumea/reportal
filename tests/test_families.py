@@ -218,6 +218,24 @@ class TestRegisterFamily:
                 conn, name="  ", reference_binary_id=binary_id, engine=_StubEngine()
             )
 
+    def test_family_names_collapse_nfd_to_nfc(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        nfc = "caf\u00e9"
+        nfd = "cafe\u0301"
+        assert nfc != nfd
+        binary_id = _binary(conn, tmp_path)
+        stub = _StubEngine()
+        family = families.register_family(
+            conn, name=nfd, reference_binary_id=binary_id, engine=stub
+        )
+        assert family["name"] == nfc
+        assert store.find_family_by_name(conn, nfd) is not None
+        with pytest.raises(families.DuplicateFamilyError, match="already exists"):
+            families.register_family(
+                conn, name=nfc, reference_binary_id=binary_id, engine=stub
+            )
+
     def test_duplicate_name_is_rejected_case_insensitively(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:

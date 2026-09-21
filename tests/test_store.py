@@ -551,6 +551,19 @@ class TestRenameHistory:
         store.rename_function(conn, function_id, new_name="same", actor="alice")
         assert store.list_name_history(conn, function_id) == []
 
+    def test_rename_collapses_nfd_to_nfc(self, conn: sqlite3.Connection) -> None:
+        nfc = "caf\u00e9"
+        nfd = "cafe\u0301"
+        assert nfc != nfd
+        function_id = _seed_function(conn, name="sub_1000")
+        change = store.rename_function(conn, function_id, new_name=nfd, actor="alice")
+        assert change["new_name"] == nfc
+        function = store.get_function(conn, function_id)
+        assert function is not None
+        assert function["name"] == nfc
+        store.rename_function(conn, function_id, new_name=nfd, actor="alice")
+        assert len(store.list_name_history(conn, function_id)) == 1
+
     def test_rename_rejects_blank(self, conn: sqlite3.Connection) -> None:
         function_id = _seed_function(conn)
         with pytest.raises(ValueError, match="must not be empty"):

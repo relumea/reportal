@@ -1350,8 +1350,15 @@ def get_family(conn: sqlite3.Connection, family_id: int) -> dict[str, Any] | Non
 
 
 def find_family_by_name(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
-    """One family by name, case-insensitively, or None."""
-    row = conn.execute("SELECT * FROM families WHERE name = ? COLLATE NOCASE", (name,)).fetchone()
+    """One family by name, case-insensitively, or None.
+
+    The query is NFC-normalized so an NFD spelling matches the stored form
+    the same way :func:`reportal.families.register_family` writes it.
+    """
+    cleaned = unicodedata.normalize("NFC", name.strip())
+    row = conn.execute(
+        "SELECT * FROM families WHERE name = ? COLLATE NOCASE", (cleaned,)
+    ).fetchone()
     return _family_row(row) if row else None
 
 
@@ -3381,29 +3388,33 @@ def rename_function(
 ) -> dict[str, Any]:
     """Rename a function and append the change to ``name_history``.
 
-    Raises ValueError for a blank name and KeyError for an unknown function.
-    Returns ``{function_id, old_name, new_name}``.
+    The name is stripped and NFC-normalized so a padded or NFD spelling
+    (typical of text pasted from macOS) matches the stored form and does not
+    open a spurious history row.  Raises ValueError for a blank name and
+    KeyError for an unknown function.  Returns
+    ``{function_id, old_name, new_name}``.
     """
-    if not new_name.strip():
+    cleaned = unicodedata.normalize("NFC", new_name.strip())
+    if not cleaned:
         raise ValueError("new_name must not be empty")
     row = conn.execute("SELECT name FROM functions WHERE id = ?", (function_id,)).fetchone()
     if row is None:
         raise KeyError(f"no function with id {function_id}")
     old_name = str(row["name"])
-    if old_name == new_name:
-        return {"function_id": function_id, "old_name": old_name, "new_name": new_name}
+    if unicodedata.normalize("NFC", old_name) == cleaned:
+        return {"function_id": function_id, "old_name": old_name, "new_name": cleaned}
     conn.execute(
         "INSERT INTO name_history"
         " (function_id, old_name, new_name, source, actor, actor_user_id, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (function_id, old_name, new_name, source, actor, actor_user_id, now()),
+        (function_id, old_name, cleaned, source, actor, actor_user_id, now()),
     )
     conn.execute(
         "UPDATE functions SET name = ?, name_source = ? WHERE id = ?",
-        (new_name, source, function_id),
+        (cleaned, source, function_id),
     )
     conn.commit()
-    return {"function_id": function_id, "old_name": old_name, "new_name": new_name}
+    return {"function_id": function_id, "old_name": old_name, "new_name": cleaned}
 
 
 def list_name_history(conn: sqlite3.Connection, function_id: int) -> list[dict[str, Any]]:
