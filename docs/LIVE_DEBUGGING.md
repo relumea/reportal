@@ -182,18 +182,26 @@ The last mile is the part the rest of the portal already has:
 ## Smallest useful slices, in order
 
 1. Read-only DAP client: attach, break, read registers and memory, detach; results stored as
-   a `debug-session` scan. Effort S.
+   a `debug-session` scan. Effort S. **Shipped** (`debug.py`, extended with a gdb MI
+   probe, the `debug` job kind, observed coverage, the knowledge digest and the panel).
 2. Disposable-VM backend for a Linux guest: pinned image, overlay clone, vsock channel,
    `debug_sessions` ledger, teardown on every path. Effort M.
 3. Trace-to-store join: hits resolved to stored function VAs, CFG edge coverage, per-function
-   observed facts. Effort M.
+   observed facts. Effort M. **Shipped, first half**: the VA join is `observed_coverage`
+   (session addresses to stored functions, observed versus unobserved); CFG edge coverage
+   and per-function observed facts stay open.
 4. `debug_probe` agent worker over the MCP registry, with the confirmation gate and probe
    recording. Effort M.
 5. Windows guest with a DAP shim in front of `DbgEng`, which is the slice that reaches PE
    malware. Effort M.
 6. QEMU `gdbstub` backend for firmware images `firmware.py` already carves. Effort S.
+   **Shipped in part**: the gdb MI probe drives a native binary; the qemu stub transport
+   stays open.
 7. Fusion digest: the `debug-digest` artifact, `observed` versus `inferred` labelling, the
-   knowledge ingest and the graph nodes. Effort M.
+   knowledge ingest and the graph nodes. Effort M. **Shipped in part**: the transcript
+   digest is ingested as a binary-scoped document and the graph links it through VA
+   mentions; a dedicated `debug-digest` artifact row and observed/inferred labelling stay
+   open.
 8. `ret-sync`-shaped rename sync: push stored renames into the session, pull session labels
    back as proposals, never as silent overwrites. Effort S.
 
