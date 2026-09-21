@@ -994,9 +994,10 @@ The binary detail's Debug Session panel (`panels/BinaryPanels.tsx`) reads
 backend in use and the sessions so far, carries a Probe button with the bounded
 seconds input that posts the probe, and renders the session: the status badge,
 the backend, the entry-stop thread and reason, the thread list, the top frame
-with its instruction pointer, the first registers, the base64 memory window and
-the notes.  With the opt-in off or no backend installed the button is disabled
-and the note says which of the two is missing.
+with its instruction pointer, the first registers, the hex memory window and
+the notes, plus the observed coverage (which stored functions the session saw)
+once a probe finished.  With the opt-in off or no backend installed the button
+is disabled and the note says which of the two is missing.
 
 The binary detail's Firmware panel (`panels/BinaryPanels.tsx`) reads the stored
 carve pass and offers Carve (the POST), a region table (index, offset, size,
