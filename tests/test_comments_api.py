@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 from conftest import json_body, wsgi_request
 
-from reportal import clock, auth, bulk_actions, comments, store
+from reportal import auth, bulk_actions, clock, comments, store
 
 
 def _seed(conn: sqlite3.Connection) -> dict[str, int]:

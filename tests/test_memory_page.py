@@ -326,9 +326,7 @@ class TestCli:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
     ) -> None:
         binary_id = self._seed(tmp_path, monkeypatch)
-        result = runner.invoke(
-            cli.app, ["memory-page", str(binary_id), "--length", "16", "--json"]
-        )
+        result = runner.invoke(cli.app, ["memory-page", str(binary_id), "--length", "16", "--json"])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
         assert payload["start"] == hex(TEXT_VA)

@@ -224,7 +224,7 @@ reader would reach for first:
 | Table | Holds |
 |-------|-------|
 | `binaries` | id, sha256 (dedupe key), name, path, size, format, arch |
-| `analyses` | one row per binary, engine label, status (the source of truth) |
+| `analyses` | one or more rows per binary (typically one per engine label), with status as the lifecycle source of truth |
 | `analysis_log_entries` | the structured analysis log: one row per lifecycle event with a severity, a message and its time |
 | `functions` | analysis, VA, name, size, STATUS, name_source, confidence |
 | `matches` | ranked candidate edges: function, candidate, similarity, confidence, the JSON scope (`settings_json`) the run recorded them under |
@@ -234,7 +234,7 @@ reader would reach for first:
 | `scans` | engine results keyed by (analysis, kind), upserted |
 | `binary_fingerprints` | stored fingerprint bundle per binary |
 | `disasm_cache` | function assembly listing, so matching does not re-spawn |
-| `decompilations` | stored decompiler output per function and backend |
+| `decompilations` | one stored decompilation per function (`function_id` is the primary key; a new backend replaces the row) |
 | `ai_artifacts` | optional LLM artifacts keyed by (function, kind), upserted; `function-triage` holds one score/summary row per function and `renames-applied` journals the text an apply replaced |
 | `conversations` | chat threads scoped to a function, binary, or docs (many per scope), with title |
 | `messages` | conversation turns, cascaded when the conversation is deleted |
@@ -411,7 +411,7 @@ tree, and the payload says so.  A gzip region is trimmed to the extent
 `firmware.gzip_member_length` reports (zlib reads the member; the archive reader
 rejects trailing non-zero data), which is what makes the gzip, tar and zip
 regions extractable through `archive.extract`, keyed by
-`firmware.ARCHIVE_SUFFIXES`.  `api.firmware_extract_binary` orchestrates one
+`firmware.ARCHIVE_SUFFIXES`.  `binary_actions.firmware_extract_binary` orchestrates one
 journaled action for the three surfaces: an extractable region contributes the
 members the archive reader finds, every other region is written out as a binary
 of its own through the same `_register_member` path an upload uses, and all of
@@ -712,7 +712,7 @@ objective rule instead of a model's judgement.
 | Execution | each batch thread opens its own SQLite connection and runs each function through up to `max_attempts` worker calls, each under `task_timeout` in its own daemon thread so a wedged worker is abandoned, not waited on |
 | Acceptance | `_accepted`: a `matched` result is accepted only when its status is a matching one and its `verified` flag is set, i.e. the worker got it from `rebrew test`; a rejected `matched` becomes `improved` (something was produced) or `failed` |
 | Aggregation | a batch with any accepted function is `done`, all-failed is `failed`, otherwise `skipped`; the root aggregates its children and is `failed` if any child never reached a terminal status; the run reports `matched`/`improved`/`failed`/`skipped` and the coverage delta |
-| Revertibility | an executing run records every file it wrote and every status it replaced in the batch result, and each completed batch folds its descriptors into `auto_runs.effects_json` in the same commit as that result, so a hard kill loses only the task in flight; `revert_auto_run` replays that plan newest-first through the shared dispatcher, removing exactly those files, restoring those statuses and deleting the run's rows |
+| Revertibility | an executing run records every file it wrote and every status it replaced in the batch result, and each completed batch folds its descriptors into `auto_runs.effects_json` in the same commit as that result, so a hard kill loses only the task in flight; `revert_auto_run` replays that plan newest-first through the shared dispatcher, removing exactly those files, restoring those statuses and deleting the run's rows, and raises `CorruptPlanError` (HTTP 409 `corrupt-undo-plan`) instead of treating an unreadable plan as empty |
 
 Planning and execution are separate calls (`create_auto_run` then
 `execute_auto_run`) so the API can create the run row in the request thread and
@@ -1558,7 +1558,8 @@ the request. Its optional body accepts `{"disabled": [...]}`. `GET` on the same
 path serves the latest run with its steps and the function's durable artifacts
 and answers 404 `no-run` before the first run. `GET /api/pipeline/runs/<id>`
 serves one run (404 `run not found`) and `POST /api/pipeline/runs/<id>/revert`
-replays the run's undo plan newest-first, returning what it undid. The
+replays the run's undo plan newest-first, returning what it undid (409
+`corrupt-undo-plan` when the stored plan is not a JSON array of objects). The
 whole-binary form is not a route of its own: it is the `ai-enrich` job kind, so
 `POST /api/jobs` queues it with `{"limit"}` or `{"function_ids"}` and the
 result lists one run id per function.
@@ -1585,7 +1586,8 @@ fields are all optional: `worker`, `execute` (false), `concurrency`,
 /api/binaries/<id>/auto` serves the binary's latest run with its task tree and
 coverage delta (404 `no-run` before the first run), `GET /api/auto/runs/<id>`
 one run (404 `run not found`), `POST /api/auto/runs/<id>/revert` removes
-the files the run wrote, restores the statuses it changed and deletes its rows,
+the files the run wrote, restores the statuses it changed and deletes its rows
+(409 `corrupt-undo-plan` when the stored plan is not a JSON array of objects),
 and `POST /api/auto/runs/<id>/recover` closes a run a dead process left
 `running`: it marks each unfinished task `failed`, merges what those tasks
 recorded into the run's undo plan and answers `{"run_id", "recovered_tasks",

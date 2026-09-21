@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from reportal import clock, auto_store, store
+from reportal import auto_store, clock, store
 
 
 @pytest.mark.parametrize("record_outcome", [False, True])

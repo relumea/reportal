@@ -16,7 +16,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import clock, cli, journal, sandbox, store
+from reportal import cli, clock, journal, sandbox, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()

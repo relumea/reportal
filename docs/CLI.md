@@ -269,6 +269,7 @@ reportal pipeline <function-id> [--json]   # run the component AI decompilation 
                                            #   kind: job-submit ai-enrich <binary-id>
                                            #   --param limit=25 or --param 'function_ids=[1,2]')
 reportal pipeline-revert <run-id> [--json] # undo exactly what one stored run wrote
+                                           #   (fails when the stored undo plan is corrupt)
 reportal components [--json]               # list the component registry: name, requires,
                                            #   provides, origin, reloadable
 reportal components-reload [NAME] [--all] [--json]
@@ -292,7 +293,8 @@ reportal auto <binary-id> [--worker offline|llm_c_source|llm_goal] [--goal TEXT]
 reportal auto-recover <run-id> [--json]    # close a run a dead process left `running`, merging the
                                            #   writes its unfinished tasks recorded into its plan
 reportal auto-revert <run-id> [--json]     # remove the files one stored auto run wrote, restore the
-                                           #   statuses it changed and delete its rows
+                                           #   statuses it changed and delete its rows (fails when
+                                           #   the stored undo plan is corrupt)
 reportal conversations [--json]            # list stored conversations
 reportal chat-new --function <id> | --binary <id> [--title TEXT] [--json]
                                            # open a chat scoped to a function or binary

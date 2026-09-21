@@ -30,21 +30,21 @@ under the hyphenated heading.
 ## Contents
 
 - Request shape: [invalid-body](#invalid-body), [invalid-json-body](#invalid-json-body), [request-body-must-be-a-json-object](#request-body-must-be-a-json-object), [invalid-params](#invalid-params), [invalid-bulk-request](#invalid-bulk-request), [invalid-data-type](#invalid-data-type), [invalid-scope-id](#invalid-scope-id), [invalid-scope-kind](#invalid-scope-kind), [invalid-size-range](#invalid-size-range), [invalid-kind](#invalid-kind), [invalid-limit](#invalid-limit), [invalid-hash](#invalid-hash), [short-hash](#short-hash), [ambiguous-hash](#ambiguous-hash), [invalid-url](#invalid-url), [invalid-binary](#invalid-binary)
-- Uploads and archives: [no-file](#no-file), [empty-file](#empty-file), [file-too-large](#file-too-large), [too-many-files](#too-many-files), [unsupported-format](#unsupported-format), [external-tool-required](#external-tool-required), [password-required](#password-required), [bad-password](#bad-password), [corrupt-archive](#corrupt-archive), [archive-too-large](#archive-too-large), [too-many-members](#too-many-members), [binary-not-on-disk](#binary-not-on-disk), [too-many-documents](#too-many-documents)
+- Uploads and archives: [no-file](#no-file), [not-a-file](#not-a-file), [unreadable-file](#unreadable-file), [empty-file](#empty-file), [file-too-large](#file-too-large), [too-many-files](#too-many-files), [unsupported-format](#unsupported-format), [external-tool-required](#external-tool-required), [password-required](#password-required), [bad-password](#bad-password), [corrupt-archive](#corrupt-archive), [archive-too-large](#archive-too-large), [too-many-members](#too-many-members), [binary-not-on-disk](#binary-not-on-disk), [too-many-documents](#too-many-documents)
 - Not found: [edge-not-found](#edge-not-found), [string-not-found](#string-not-found), [binary-not-found](#binary-not-found), [function-not-found](#function-not-found), [collection-not-found](#collection-not-found), [family-not-found](#family-not-found), [comment-not-found](#comment-not-found), [conversation-not-found](#conversation-not-found), [data-type-not-found](#data-type-not-found), [document-not-found](#document-not-found), [member-not-found](#member-not-found), [node-not-found](#node-not-found), [project-not-found](#project-not-found), [run-not-found](#run-not-found), [tag-not-found](#tag-not-found), [format-not-found](#format-not-found), [domain-not-found](#domain-not-found), [component-not-found](#component-not-found), [action-not-found](#action-not-found), [entry-not-found](#entry-not-found), [history-not-found](#history-not-found), [analysis-not-found](#analysis-not-found), [candidate-not-found](#candidate-not-found), [signature-not-found](#signature-not-found), [not-found](#not-found)
 - Debug symbols: [symbols-unreadable](#symbols-unreadable), [no-symbols](#no-symbols)
 - Go binaries: [not-go](#not-go), [unreadable](#unreadable)
-- Agent artifacts: [no-artifact](#no-artifact)
-- Stored-only reads: [no-scan](#no-scan), [no-flirt-scan](#no-flirt-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-engine-context](#no-engine-context), [no-signature-dir](#no-signature-dir), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
-- Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
-- Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [mcp-unavailable](#mcp-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error)
+- Agent artifacts: [no-artifact](#no-artifact), [unknown-artifact-kind](#unknown-artifact-kind)
+- Stored-only reads: [no-scan](#no-scan), [no-flirt-scan](#no-flirt-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-match](#no-match), [no-engine-context](#no-engine-context), [no-signature-dir](#no-signature-dir), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
+- Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [corrupt-undo-plan](#corrupt-undo-plan), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
+- Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [mcp-unavailable](#mcp-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error), [internal-error](#internal-error)
 - Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [blocked-target](#blocked-target), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
 - Sandbox: [sandbox-disabled](#sandbox-disabled), [sandbox-unavailable](#sandbox-unavailable), [invalid-sandbox](#invalid-sandbox)
 - Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [invite-not-found](#invite-not-found), [invite-used](#invite-used), [invite-expired](#invite-expired), [signup-disabled](#signup-disabled), [quota-exceeded](#quota-exceeded), [scope-forbidden](#scope-forbidden), [invalid-api-key](#invalid-api-key), [api-key-not-found](#api-key-not-found), [api-key-limit](#api-key-limit)
-- Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation), [auto-busy](#auto-busy)
+- Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation), [auto-busy](#auto-busy), [invalid-notification-query](#invalid-notification-query)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
 - Documentation: [no-docs](#no-docs), [no-doc](#no-doc)
 
@@ -168,12 +168,6 @@ that exists on another function reads the same way.
 scope. A string belongs to the function or analysis it was recorded against, so
 an id that exists at another scope reads the same way.
 
-### run-not-found
-
-`404`. A conversation has no agent run with the requested id (or has none at
-all, which the reads report the same way). A run id that belongs to another
-conversation reads the same, so one conversation cannot probe another's runs.
-
 ### run-not-cancellable
 
 `409`. The run already finished, failed or was cancelled, so there is nothing to
@@ -192,12 +186,12 @@ workspace, and only while it is waiting is a confirmation meaningful.
 allows. Wait for one to finish, or poll an existing run; the request did not
 create a new one.
 
-### no-artifact
+### invalid-notification-query
 
-`404`. An agent artifact's rating was asked for or set on a binary that has no
-stored scan of that kind, so there is nothing to have an opinion about. This is
-the artifact-specific sibling of `no-scan`: a rating route names a kind, and a
-kind the binary never produced is refused rather than stored against nothing.
+`400` (MCP; `invalid notification query`). A notifications feed argument failed
+validation (a bad `since`, an out-of-range `limit`, or an unknown `sources`
+value). The HTTP feed splits these into `invalid since`, `invalid limit` and
+`invalid sources`; the MCP tool collapses them under this one code.
 
 ### symbols-unreadable
 
@@ -235,6 +229,16 @@ needs no quoting.
 ### no-file
 
 `400`. A multipart upload carried no `file` part. Send the file.
+
+### not-a-file
+
+`400` (MCP). An ingest path names something that is not a regular file (a
+directory, a missing path, a non-file). Point the tool at a readable file.
+
+### unreadable-file
+
+`400` (MCP). The path is a file but its bytes could not be read (permissions,
+an I/O error), so no digest was taken and nothing was stored.
 
 ### no-docs
 
@@ -398,7 +402,9 @@ project id.
 
 ### run-not-found
 
-`404`. The id names no pipeline run, auto run or task.
+`404`. The id names no pipeline run, auto run, agent run or task. A conversation
+agent-run id that belongs to another conversation reads the same way, so one
+conversation cannot probe another's runs.
 
 ### tag-not-found
 
@@ -477,8 +483,17 @@ function, or rename the function by hand if the authored name is wrong.
 
 ### no-artifact
 
-`404`. The route serves a stored AI artifact or detection artifact and none is
-stored. Generate it first.
+`404`. The route serves a stored AI artifact, detection artifact or artifact
+rating and none is stored (or the named kind was never produced). Generate the
+artifact first. For ratings this is the artifact-specific sibling of
+`no-scan`: a rating route names a kind, and a kind the binary never produced is
+refused rather than stored against nothing.
+
+### unknown-artifact-kind
+
+`400` (MCP; `unknown artifact kind`). A discard or clear named an AI artifact
+kind outside the closed set (`ai_decomp.KIND` and `llm.DISCARDABLE_AI_KINDS`).
+Name one of the kinds those modules publish.
 
 ### no-run
 
@@ -527,8 +542,14 @@ name is a lowercase dotted path (`virustotal.api_key`) and a scope is `local`
 
 ### no-such-match
 
-`400`. A match transfer named a stored match edge that does not exist. List the
-function's matches first.
+`400`. A match transfer or an explicit-candidate diff named a stored match edge
+that does not exist. List the function's matches first.
+
+### no-match
+
+`404`. A diff without an explicit candidate asked for the function's best
+recorded match and the function has none. Run matching first, or pass a
+candidate id that is a recorded match for the source function.
 
 ### no-engine-context
 
@@ -580,6 +601,14 @@ name alone.
 
 `409`. The export target path exists and `force` was not set. Pass `force` to
 overwrite.
+
+### corrupt-undo-plan
+
+`409`. A pipeline or auto-mode revert refused to run because the stored undo
+plan (`effects_json`) is not a JSON array of objects. The run's writes stay in
+place and the plan is left untouched, so a later fix can still undo them. Soft
+readers may still list the run with an empty effects list and a warning; only a
+revert that would consume the plan answers this code.
 
 ### duplicate-name
 
@@ -716,6 +745,12 @@ inverse was not recorded. The writes it did make are reported in `detail`.
 
 `500`. An unhandled exception reached the route. The response is sanitized and
 carries no stack trace; the server log holds the traceback.
+
+### internal-error
+
+`500` (MCP). An unhandled exception reached a tool handler. Same role as
+`internal-server-error` on HTTP: the MCP result is `isError: true` with a
+sanitized `detail`, and the server log holds the traceback.
 
 ## Remote ingestion
 

@@ -278,7 +278,7 @@ the opt-in sandbox detonation.
 magics (across read boundaries, with a fixed-offset ext superblock checked at
 the file's start), reports each region's offset, size, kind, confidence, entropy
 and truncation, samples the entropy map, and stores the pass as the `firmware`
-scan.  `api.firmware_extract_binary` carves the regions out in one journal
+scan.  `binary_actions.firmware_extract_binary` carves the regions out in one journal
 action: a gzip (trimmed to the extent zlib reports), tar or zip region is
 unpacked by `reportal.archive` and its members registered, every other region is
 stored as a binary of its own.  `reportal firmware`/`firmware-extract`,

@@ -12,7 +12,7 @@ import pytest
 from conftest import FINGERPRINT, decode, json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import clock, cli, engines, remediation, store
+from reportal import cli, clock, engines, remediation, store
 from reportal.remediation import (
     MIN_SPECIFIC_STRINGS,
     SNORT_ANY_PORT,

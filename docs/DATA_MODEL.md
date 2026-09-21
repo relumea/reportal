@@ -143,8 +143,8 @@ through `effects.apply_undo_plan` and marks each entry, `revert_entry` does one,
 `list_entries` answers metadata without the payload and `prune_entries` keeps
 the newest `keep` ids.  `docs/ARCHITECTURE.md` carries the full policy.
 
-`comments` holds the analyst comments, one row per `(scope_kind, scope_id)`
-entry with `author`, `body`, `created_at` and `updated_at`; the scope is a loose
+`comments` holds the analyst comments: many rows per `(scope_kind, scope_id)`,
+each with `author`, `body`, `created_at` and `updated_at`; the scope is a loose
 reference like a conversation's (no table holds both functions and binaries), so
 `comments.py` is what checks the scope exists.  `delete_binary` removes the
 binary's own and its functions' comments, conversations and documents
@@ -185,7 +185,7 @@ recorded.  `auto_attempts` holds one
 row per worker call (`task_id`, `attempt`, `worker`, `status`,
 `detail_json`), unique on `(task_id, attempt)`, written as the attempt happens,
 so a run interrupted mid-batch
-is inspectable and `auto_store.planned_batches` returns exactly the batches
+is inspectable and `auto_mode.planned_batches` returns exactly the batches
 that still need running.  Deleting a run cascades to its tasks and attempts.
 `conversations` holds chat threads scoped to a `(scope_kind, scope_id)`
 reference (many conversations may share one scope; no foreign key: functions
