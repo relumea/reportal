@@ -46,6 +46,7 @@ const API_PREFIX = "/api";
  */
 export const BINARY_OPTIONS_PATH = "/binaries?summary=true";
 
+import { COMMENT_AUTHOR_STORAGE_KEY } from "./constants";
 import { resetSessionCache } from "./panelCache";
 
 /** Where the browser keeps the bearer token an authenticated install needs. */
@@ -72,9 +73,15 @@ export function storeToken(token: string): void {
     // Nothing to do: the header still comes from storedToken() this session.
   }
   // Panels and view queries are keyed by entity id alone; a different bearer
-  // must not keep serving the previous caller's cached rows.
+  // must not keep serving the previous caller's cached rows.  The free-text
+  // comment author is personal data bound to that session, so it goes too.
   if (token !== previous) {
     resetSessionCache();
+    try {
+      window.localStorage.removeItem(COMMENT_AUTHOR_STORAGE_KEY);
+    } catch {
+      // Private mode: nothing to clear.
+    }
   }
 }
 

@@ -629,27 +629,72 @@ def update_user(
     return get_user(conn, user_id)
 
 
+# Tables that keep a login name beside an optional user id.  On delete the id
+# may clear via ``ON DELETE SET NULL`` (or stay as an orphaned audit key where
+# there is no FK); the display name is personal data and must go either way.
+# Replacement is empty except for comments, which keep the module default
+# author so a note does not render as blank.
+_USER_NAME_COLUMNS: tuple[tuple[str, str, str, str], ...] = (
+    ("feedback", "actor", "user_id", ""),
+    ("comments", "author", "author_user_id", "analyst"),
+    ("journal_entries", "actor", "actor_user_id", ""),
+    ("name_history", "actor", "actor_user_id", ""),
+    ("signature_history", "actor", "actor_user_id", ""),
+    ("data_type_history", "actor", "actor_user_id", ""),
+    ("artifact_ratings", "actor", "actor_user_id", ""),
+    ("conversation_runs", "actor", "actor_user_id", ""),
+    ("user_strings", "actor", "actor_user_id", ""),
+    ("jobs", "submitted_by", "submitted_by_user_id", ""),
+)
+
+# The journal keeps ``actor_user_id`` after delete on purpose (see
+# ``journal`` module): a stable audit key without the display name.  Every
+# other table drops both.
+_KEEP_ACTOR_USER_ID = frozenset({"journal_entries"})
+
+
+def _scrub_deleted_user_names(
+    conn: sqlite3.Connection, *, tables: set[str], user_id: int, name: str
+) -> None:
+    """Clear login names attributed to *user_id* / *name* before the row goes."""
+    for table, name_col, id_col, blank in _USER_NAME_COLUMNS:
+        if table not in tables:
+            continue
+        columns = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})")}
+        if name_col not in columns:
+            continue
+        if id_col in columns:
+            conn.execute(
+                f"UPDATE {table} SET {name_col} = ? WHERE {id_col} = ?",
+                (blank, user_id),
+            )
+            if table not in _KEEP_ACTOR_USER_ID:
+                conn.execute(
+                    f"UPDATE {table} SET {id_col} = NULL WHERE {id_col} = ?",
+                    (user_id,),
+                )
+        # Rows that recorded the login name without a stable id (older schema
+        # or auth-off free text) still name the person.
+        conn.execute(
+            f"UPDATE {table} SET {name_col} = ? WHERE {name_col} = ?",
+            (blank, name),
+        )
+
+
 def delete_user(conn: sqlite3.Connection, user_id: int) -> bool:
     """Delete one user; False when the id is unknown.
 
-    Feedback notes and comments attributed to the user lose their display
-    name before the row goes: ``ON DELETE SET NULL`` clears the foreign key
-    but would otherwise leave the login name in those tables.
+    Attributed display names are scrubbed before the row goes: foreign keys
+    with ``ON DELETE SET NULL`` clear the id, but the login name would otherwise
+    remain in actor, author and submitter text columns.
     """
-    if get_user(conn, user_id) is None:
+    user = get_user(conn, user_id)
+    if user is None:
         return False
     tables = {
         str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
     }
-    if "feedback" in tables:
-        conn.execute("UPDATE feedback SET actor = '' WHERE user_id = ?", (user_id,))
-    if "comments" in tables:
-        # Match ``comments.DEFAULT_AUTHOR`` without importing that module (auth
-        # is under every surface; comments already imports store → auth).
-        conn.execute(
-            "UPDATE comments SET author = 'analyst' WHERE author_user_id = ?",
-            (user_id,),
-        )
+    _scrub_deleted_user_names(conn, tables=tables, user_id=user_id, name=str(user["name"]))
     cursor = conn.execute(f"DELETE FROM {TABLE} WHERE id = ?", (user_id,))
     conn.commit()
     return cursor.rowcount > 0

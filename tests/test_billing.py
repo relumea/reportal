@@ -431,6 +431,18 @@ class TestEventLedgerPrivacy:
         assert stored["customer_id"] == "cus_123"
         assert stored["subscription_id"] == "sub_123"
 
+    def test_normalization_does_not_retain_the_raw_provider_body(self) -> None:
+        raw = _subscription_event(1, event_id="evt_no_raw")
+        raw["data"]["object"]["customer_details"] = {
+            "email": "payer@example.com",
+            "name": "Payer Name",
+        }
+        event = billing.normalize_stripe_event(raw)
+        assert not hasattr(event, "payload")
+        dumped = repr(event)
+        assert "payer@example.com" not in dumped
+        assert "Payer Name" not in dumped
+
 
 class TestCheckoutGuards:
     """What a checkout refuses before it ever calls the provider."""

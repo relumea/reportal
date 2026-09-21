@@ -56,7 +56,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -151,7 +151,6 @@ class BillingEvent:
     current_period_end: str = ""
     cancel_at_period_end: bool = False
     payment_status: str = ""
-    payload: dict[str, Any] = field(default_factory=dict)
 
     def entitles(self) -> bool:
         """Whether this event should grant the plan it names.
@@ -664,7 +663,6 @@ def normalize_stripe_event(event: dict[str, Any]) -> BillingEvent:
         current_period_end=_period_end(obj),
         cancel_at_period_end=bool(obj.get("cancel_at_period_end")),
         payment_status=str(obj.get("payment_status") or ""),
-        payload=event,
     )
 
 

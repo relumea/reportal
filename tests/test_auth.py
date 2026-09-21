@@ -12,7 +12,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, clock, journal, store
+from reportal import auth, cli, clock, effects, journal, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -200,18 +200,46 @@ class TestStore:
     def test_delete_scrubs_the_login_name_from_attributed_notes(
         self, conn: sqlite3.Connection
     ) -> None:
+        from reportal import jobs
+
         user, _ = auth.add_user(conn, name="ana", role=auth.ROLE_ANALYST)
-        note_id = store.add_feedback(conn, body="please keep", actor="ana", user_id=int(user["id"]))
+        user_id = int(user["id"])
+        note_id = store.add_feedback(conn, body="please keep", actor="ana", user_id=user_id)
         comment = store.add_comment(
             conn,
             scope_kind="binary",
             scope_id=1,
             author="ana",
-            author_user_id=int(user["id"]),
+            author_user_id=user_id,
             body="a note",
         )
+        with (
+            journal.acting_as("ana", user_id=user_id),
+            journal.journaled(conn, journal.new_action()) as log,
+        ):
+            log.record(
+                effects.EFFECT_ROW_DELETE,
+                "probe",
+                journal.row_delete_descriptor("tags", 1),
+            )
+        binary_id = store.add_binary(conn, sha256="ab" * 32, name="demo.exe")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="t")
+        function_id = store.add_function(
+            conn, analysis_id=analysis_id, va=0x1000, size=16, name="sub_1000", name_source="auto"
+        )
+        store.rename_function(
+            conn, function_id, new_name="main", actor="ana", actor_user_id=user_id
+        )
+        jobs.ensure_schema(conn)
+        job = jobs.submit(
+            conn,
+            kind="triage",
+            binary_id=binary_id,
+            submitted_by="ana",
+            submitted_by_user_id=user_id,
+        )
 
-        assert auth.delete_user(conn, int(user["id"])) is True
+        assert auth.delete_user(conn, user_id) is True
 
         note = store.get_feedback(conn, note_id)
         assert note is not None
@@ -221,6 +249,20 @@ class TestStore:
         assert stored is not None
         assert stored["author"] == "analyst"
         assert stored["author_user_id"] is None
+        assert journal.list_entries(conn, actor="ana", limit=10) == []
+        history = store.list_name_history(conn, function_id)
+        assert history
+        assert all(row["actor"] == "" for row in history)
+        assert all(row["actor_user_id"] is None for row in history)
+        stored_job = jobs.get_job(conn, int(job["id"]))
+        assert stored_job is not None
+        assert stored_job["submitted_by"] == ""
+        assert stored_job["submitted_by_user_id"] is None
+        # The journal keeps the stable id as an audit key without the name.
+        entries = journal.list_entries(conn, limit=10)
+        assert entries
+        assert all(entry["actor"] == "" for entry in entries)
+        assert any(entry["actor_user_id"] == user_id for entry in entries)
 
     def test_the_role_permission_sets_are_the_documented_ones(self) -> None:
         assert auth.permissions_for(auth.ROLE_VIEWER) == ("read",)
