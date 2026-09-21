@@ -32,7 +32,11 @@ reportal/
 │   │                         #   in-process worker pool (off via REPORTAL_JOBS_POOL)
 │   ├── sandbox.py            # guarded sample detonation: the opt-in and runner guards,
 │   │                         #   the bounded bwrap argv, the run ledger and the runner
-│   │                         #   registry; the one module that executes a sample
+│   │                         #   registry; detonation is one of two sample-execution
+│   │                         #   paths (the other is debug.py, under a debugger)
+│   ├── debug.py              # read-only live-debug sessions: the opt-in and backend
+│   │                         #   guards, the DAP and MI probes, the session ledger,
+│   │                         #   observed coverage and the knowledge digest
 │   ├── auth.py               # local identity: users, teams, roles, bearer tokens, the gate
 │   │                         #   and the object-visibility rule (visible_clause/may_write)
 │   ├── disclosure.py         # what a tenant may see: model, tokens and
@@ -380,8 +384,9 @@ decision rather than by oversight.
 
 ## Sandbox detonation
 
-`sandbox.py` is the only module that executes a sample, and it is built so that
-the default install still never does.  `sandbox.enabled()` reads
+`sandbox.py` detonates a sample, and it is built so that
+the default install still never does (the other execution path is `debug.py`,
+which controls the sample under a debugger rather than running it free).  `sandbox.enabled()` reads
 `REPORTAL_SANDBOX` / `[sandbox] enabled`; `require_runner()` resolves the runner
 from `REPORTAL_SANDBOX_RUNNER` / `[sandbox] runner` or the first installed entry
 in the in-tree `RUNNERS` list (bwrap, whose user namespaces must be enabled), and
