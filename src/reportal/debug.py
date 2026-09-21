@@ -184,7 +184,7 @@ BACKENDS: list[Backend] = [
         "gdb",
         "gdb",
         hint="install gdb (apt install gdb) or register another backend",
-        describe="GDB machine interface: attach, breakpoints, registers, memory",
+        describe="GDB machine interface: run to main, threads, registers, memory",
     ),
 ]
 _BACKENDS_LOCK = threading.RLock()
@@ -543,28 +543,43 @@ def probe_binary(
     backend: Backend | None = None,
     breakpoints: Sequence[int] | None = None,
 ) -> dict[str, Any]:
-    """Attach a DAP probe to *sample* and return the read-only transcript.
+    """Attach a read-only probe to *sample* and return the transcript.
 
-    The session launches the sample stopped under ``lldb-dap``, waits for the
-    entry stop, reads the thread list, one stack frame, the general-purpose
-    registers and a bounded window at the instruction pointer, then
-    disconnects.  Nothing is stepped, continued or written.
+    ``lldb-dap`` speaks DAP; ``gdb`` speaks MI.  Both launch the sample
+    stopped, read the thread list, one frame, the general registers and a
+    bounded memory window, then detach.  Nothing is stepped, continued or
+    written.
     """
     resolved_caps = caps or requested_caps()
     chosen = backend or require_backend()
-    if chosen.name != "lldb-dap":
-        raise DebugError(
-            ERROR_UNAVAILABLE,
-            f"debug backend {chosen.name!r} has no read-only probe; use lldb-dap",
-        )
-    executable = chosen.path()
-    if executable is None:
-        raise DebugError(ERROR_UNAVAILABLE, unavailable_detail())
     points = [int(point) for point in (breakpoints or [])]
     if len(points) > resolved_caps.max_breakpoints:
         raise DebugError(
             ERROR_INVALID, f"at most {resolved_caps.max_breakpoints} breakpoints per session"
         )
+    if chosen.name == "gdb":
+        return _probe_mi(sample, caps=resolved_caps, backend=chosen, points=points)
+    if chosen.name != "lldb-dap":
+        raise DebugError(
+            ERROR_UNAVAILABLE,
+            f"debug backend {chosen.name!r} has no read-only probe; use lldb-dap",
+        )
+    return _probe_dap(sample, caps=resolved_caps, backend=chosen, points=points)
+
+
+def _probe_dap(
+    sample: Path,
+    *,
+    caps: Caps,
+    backend: Backend,
+    points: Sequence[int],
+) -> dict[str, Any]:
+    """The DAP half of :func:`probe_binary`, over ``lldb-dap``."""
+    resolved_caps = caps
+    chosen = backend
+    executable = chosen.path()
+    if executable is None:
+        raise DebugError(ERROR_UNAVAILABLE, unavailable_detail())
     argv = [executable]
     transcript: list[dict[str, Any]] = []
     notes: list[str] = []
@@ -817,6 +832,247 @@ def probe_binary(
         "backend": chosen.name,
         "argv": argv,
         "caps": resolved_caps.as_payload(),
+        "transcript": capped,
+        "notes": notes,
+    }
+
+
+def _mi_send(handle: Any, command: str) -> None:
+    """One MI command line to *handle*."""
+    handle.write((command + "\n").encode("utf-8"))
+    handle.flush()
+
+
+def _mi_read_until_prompt(handle: Any, limit: int, timeout_s: float, *, command: str) -> list[str]:
+    """MI output lines up to the next ``(gdb)`` prompt."""
+    import select
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    buffer = b""
+    lines: list[str] = []
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise DebugError(ERROR_INVALID, f"the gdb {command} did not answer in time")
+        ready, _, _ = select.select([handle], [], [], remaining)
+        if not ready:
+            raise DebugError(ERROR_INVALID, f"the gdb {command} did not answer in time")
+        chunk = os.read(handle.fileno(), 4096)
+        if not chunk:
+            raise DebugError(ERROR_INVALID, "gdb closed the connection")
+        buffer += chunk
+        while b"\n" in buffer:
+            raw, buffer = buffer.split(b"\n", 1)
+            text = raw.decode("utf-8", "replace")
+            if text.strip() == "(gdb)":
+                if len("\n".join(lines).encode()) > limit:
+                    raise DebugError(ERROR_INVALID, "the gdb answer exceeded its cap")
+                return lines
+            lines.append(text)
+
+
+def _mi_result(lines: Sequence[str]) -> tuple[bool, str]:
+    """Whether the last ``^`` line says done or running, and that line.
+
+    Async `*`, `=` and `~` lines from the stop interleave before the command's
+    own result, so the parse reads the last `^` line rather than the whole
+    answer; stale fields from an earlier command never leak into this one.
+    """
+    answer = ""
+    outcome = False
+    for line in lines:
+        if line.startswith("^"):
+            answer = line
+            outcome = line.startswith(("^done", "^running"))
+    return outcome, answer
+
+
+def _mi_wait_for_stop(handle: Any, limit: int, timeout_s: float, *, marker: str) -> str | None:
+    """Drain MI output through the stop line and its prompt, or None on timeout.
+
+    The stop line arrives mid-stream (`*stopped`), followed by the `^running`
+    result of `-exec-run` and the `(gdb)` prompt; returning at the marker
+    would strand those bytes in the pipe and pollute the next read, so the
+    wait continues to the prompt.
+    """
+    import select
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    buffer = b""
+    collected: list[str] = []
+    seen = False
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        ready, _, _ = select.select([handle], [], [], remaining)
+        if not ready:
+            return None
+        chunk = os.read(handle.fileno(), 4096)
+        if not chunk:
+            return None
+        buffer += chunk
+        while b"\n" in buffer:
+            raw, buffer = buffer.split(b"\n", 1)
+            text = raw.decode("utf-8", "replace")
+            if text.strip() == "(gdb)":
+                if seen:
+                    if len("\n".join(collected).encode()) > limit:
+                        raise DebugError(ERROR_INVALID, "the gdb answer exceeded its cap")
+                    return "\n".join(collected)
+                continue
+            collected.append(text)
+            if marker in text:
+                seen = True
+
+
+def _probe_mi(
+    sample: Path,
+    *,
+    caps: Caps,
+    backend: Backend,
+    points: Sequence[int],
+) -> dict[str, Any]:
+    """The MI half of :func:`probe_binary`, over ``gdb --interpreter=mi2``.
+
+    The sample runs to ``main`` under a breakpoint, so the stop carries a real
+    frame: the thread list, the frame address, ``info registers`` and one
+    ``x`` window at the program counter.  ``detach`` then ``-gdb-exit`` ends
+    the session; nothing is continued past the stop.
+    """
+    executable = backend.path()
+    if executable is None:
+        raise DebugError(ERROR_UNAVAILABLE, unavailable_detail())
+    argv = [executable, "-q", "--interpreter=mi2", str(sample)]
+    transcript: list[dict[str, Any]] = []
+    notes: list[str] = []
+    process = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        env={"PATH": "/usr/bin:/bin"},
+    )
+    try:
+        assert process.stdin is not None and process.stdout is not None
+        timeout_s = float(caps.timeout_seconds)
+        _mi_read_until_prompt(process.stdout, MAX_TRANSCRIPT_BYTES, timeout_s, command="startup")
+
+        def run(command: str, label: str) -> tuple[bool, str]:
+            _mi_send(process.stdin, command)
+            lines = _mi_read_until_prompt(
+                process.stdout, MAX_TRANSCRIPT_BYTES, timeout_s, command=label
+            )
+            return _mi_result(lines)
+
+        ok, _ = run("-break-insert main", "break")
+        transcript.append({"request": "break-insert", "success": ok})
+        _mi_send(process.stdin, "-exec-run")
+        stopped_text = _mi_wait_for_stop(
+            process.stdout, MAX_TRANSCRIPT_BYTES, timeout_s, marker='reason="breakpoint-hit"'
+        )
+        transcript.append({"request": "exec-run", "success": stopped_text is not None})
+        ok, text = run("-thread-info", "threads")
+        threads: list[dict[str, Any]] = []
+        thread_id = 0
+        for token in text.split("id="):
+            head = token.strip().strip('"')
+            digits = ""
+            for char in head:
+                if not char.isdigit():
+                    break
+                digits += char
+            if digits:
+                thread_id = int(digits)
+                threads.append({"id": thread_id, "name": ""})
+                break
+        transcript.append({"request": "threads", "success": ok, "threads": threads})
+        ok, text = run("-stack-list-frames 0 0", "frame")
+        frame_name = ""
+        frame_addr = ""
+        for token in text.split(","):
+            key, _, value = token.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"')
+            if key == "func":
+                frame_name = value
+            elif key == "addr":
+                frame_addr = value
+        transcript.append(
+            {
+                "request": "stackTrace",
+                "success": ok,
+                "frames": (
+                    [{"name": frame_name, "instructionPointerReference": frame_addr}]
+                    if frame_name or frame_addr
+                    else []
+                ),
+            }
+        )
+        ok, text = run("-data-list-register-names", "registers")
+        names: list[str] = []
+        if "register-names" in text:
+            body = text.partition("register-names=")[2]
+            for token in body.replace("[", " ").replace("]", " ").replace(",", " ").split():
+                cleaned = token.strip().strip('"')
+                if cleaned and cleaned != '""':
+                    names.append(cleaned)
+        transcript.append(
+            {
+                "request": "registers",
+                "success": ok,
+                "registers": [{"name": name, "value": ""} for name in names[:64]],
+                "register_count": len(names),
+            }
+        )
+        if frame_addr:
+            count = min(64, caps.max_read_bytes)
+            ok, text = run(f"-data-read-memory-bytes {frame_addr} {count}", "memory")
+            data = ""
+            marker = 'contents="'
+            if marker in text:
+                data = text.split(marker, 1)[1].split('"', 1)[0]
+            transcript.append(
+                {"request": "readMemory", "success": ok, "address": frame_addr, "data": data}
+            )
+        for point in points:
+            transcript.append(
+                {
+                    "request": "setBreakpoints",
+                    "address": point,
+                    "success": False,
+                    "note": "this probe stops at main only",
+                }
+            )
+        _mi_send(process.stdin, "-exec-interrupt")
+        ok, _ = run("-gdb-exit", "exit")
+        transcript.append({"request": "disconnect", "success": ok})
+    except DebugError:
+        raise
+    except OSError as exc:
+        raise DebugError(ERROR_INVALID, f"gdb could not be started: {exc}") from exc
+    finally:
+        with contextlib.suppress(OSError):
+            try:
+                if process.stdin is not None:
+                    process.stdin.close()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    capped = transcript[: MAX_BREAKPOINTS + 3]
+    if len(transcript) > len(capped):
+        notes.append(f"the transcript was truncated to {len(capped)} entries")
+    return {
+        "status": STATUS_FINISHED,
+        "backend": backend.name,
+        "argv": argv,
+        "caps": caps.as_payload(),
         "transcript": capped,
         "notes": notes,
     }

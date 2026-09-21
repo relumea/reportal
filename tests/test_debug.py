@@ -71,6 +71,24 @@ class TestGuards:
             debug.requested_caps(timeout=debug.MAX_TIMEOUT_SECONDS + 1)
         assert caught.value.code == debug.ERROR_INVALID
 
+    def test_both_backends_are_registered(self) -> None:
+        names = {entry.name for entry in debug.registered_backends()}
+        assert {"lldb-dap", "gdb"} <= names
+
+    def test_unknown_backend_has_no_probe(self, tmp_path: Path) -> None:
+        sample = tmp_path / "sample.bin"
+        sample.write_bytes(b"\x7fELF")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("other", "other"))
+        assert caught.value.code == debug.ERROR_UNAVAILABLE
+
+    def test_mi_result_reads_the_last_response_line(self) -> None:
+        ok, text = debug._mi_result(["*stopped", '^done,threads=[{id="1"}]'])
+        assert ok is True
+        assert text.startswith("^done")
+        ok, _ = debug._mi_result(["*stopped", '^error,msg="x"'])
+        assert ok is False
+
 
 class TestLedger:
     def test_live_session_reuse(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
