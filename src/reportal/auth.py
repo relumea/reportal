@@ -1292,8 +1292,15 @@ def create_organisation(
         raise AuthError(
             ERROR_ORGANISATION_EXISTS, f"an organisation named {cleaned!r} already exists"
         ) from None
+    organisation_id = int(cursor.lastrowid or 0)
+    # Open the first quota window now so free-tier usage is monthly from day
+    # one rather than a lifetime sum against an empty ``period_started_at``.
+    from reportal import metering
+
+    metering.ensure_schema(conn)
+    metering.start_period(conn, organisation_id, commit=False)
     conn.commit()
-    organisation = get_organisation(conn, int(cursor.lastrowid or 0))
+    organisation = get_organisation(conn, organisation_id)
     assert organisation is not None, "the row was just created"
     return organisation
 

@@ -121,7 +121,52 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     for column, declaration in _ORG_COLUMNS:
         if column not in existing:
             conn.execute(f"ALTER TABLE {auth.ORG_TABLE} ADD COLUMN {column} {declaration}")
+    # Orgs created before billing, or before create_organisation opened a
+    # window, still carry an empty stamp and would sum the whole ledger as one
+    # "month".  Open a period for each of them once.
+    for row in conn.execute(
+        f"SELECT id FROM {auth.ORG_TABLE} WHERE period_started_at = '' OR period_started_at IS NULL"
+    ).fetchall():
+        conn.execute(
+            f"UPDATE {auth.ORG_TABLE} SET period_started_at = ? WHERE id = ?",
+            (auth.now(), int(row["id"])),
+        )
     conn.commit()
+
+
+# Calendar length of a free-tier quota window when Stripe is not advancing it.
+# Paid plans move ``period_started_at`` from billing webhooks instead.
+PERIOD_DAYS = 31
+
+
+def ensure_open_period(
+    conn: sqlite3.Connection, organisation_id: int, *, commit: bool = True
+) -> None:
+    """Open or roll the organisation's quota window when nothing else owns it.
+
+    An empty stamp is always opened (new orgs, pre-billing rows).  Free tiers
+    without a Stripe period advance roll locally after :data:`PERIOD_DAYS` so
+    the advertised monthly allowance is not a lifetime cap.  Paid plans keep
+    the stamp Stripe last wrote.
+    """
+    if organisation_id == NO_ORG:
+        return
+    started = period_started_at(conn, organisation_id)
+    if not started:
+        start_period(conn, organisation_id, commit=commit)
+        return
+    plan = organisation_plan(conn, organisation_id)
+    if plan.price_cents > 0:
+        return
+    from reportal import clock
+
+    try:
+        began = clock.as_utc(started)
+    except ValueError:
+        start_period(conn, organisation_id, commit=commit)
+        return
+    if (clock.as_utc(auth.now()) - began).days >= PERIOD_DAYS:
+        start_period(conn, organisation_id, commit=commit)
 
 
 def _credits_mod() -> ModuleType:
@@ -303,6 +348,7 @@ def quota_check(
     A past-due organisation is refused whatever its allowance says: an unpaid
     subscription is the one case where remaining quota is not entitlement.
     """
+    ensure_open_period(conn, organisation_id)
     plan = organisation_plan(conn, organisation_id)
     limit = _limit_for(plan, kind)
     if limit == plans.UNLIMITED:
@@ -367,6 +413,7 @@ def usage_summary(conn: sqlite3.Connection, organisation_id: int) -> dict[str, A
     it cost, which an operator reads to check the credit price still covers the
     inference, and which the customer-facing panels do not show.
     """
+    ensure_open_period(conn, organisation_id)
     plan = organisation_plan(conn, organisation_id)
     return {
         "organisation_id": organisation_id,

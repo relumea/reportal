@@ -288,3 +288,45 @@ class TestDocumentationScope:
         )
         assert result["assistant"]["content"] == "Use reportal add-binary."
         assert len(fake_llm.calls) == 1
+
+
+class TestChatCharges:
+    """Plain chat turns bill like agent turns once a reply arrives."""
+
+    def test_send_message_reports_a_charge_after_a_reply(
+        self, conn: sqlite3.Connection, fake_llm: FakeLlmClient
+    ) -> None:
+        fake_llm.response = "hello"
+        conversation_id = _new_conversation(conn)
+        seen: list[tuple[str, int]] = []
+        with llm.charging(lambda task, size: seen.append((task, size))):
+            conversations.send_message(
+                conn, conversation_id=conversation_id, content="hi", client=fake_llm
+            )
+        assert len(seen) == 1
+        assert seen[0][0] == llm.TASK_AGENT
+        assert seen[0][1] > 0
+
+    def test_a_failed_reply_does_not_charge(self, conn: sqlite3.Connection) -> None:
+        conversation_id = _new_conversation(conn)
+        seen: list[tuple[str, int]] = []
+        with (
+            llm.charging(lambda task, size: seen.append((task, size))),
+            pytest.raises(llm.LlmError),
+        ):
+            conversations.send_message(
+                conn,
+                conversation_id=conversation_id,
+                content="hi",
+                client=FailingLlmClient("boom"),
+            )
+        assert seen == []
+
+    def test_gate_prompt_includes_more_than_the_user_turn(self, conn: sqlite3.Connection) -> None:
+        conversation_id = _new_conversation(conn)
+        messages, _ = conversations.agent_messages(
+            conn, conversation_id=conversation_id, content="hi", content_stored=False
+        )
+        text = conversations.prompt_text(messages)
+        assert "hi" in text
+        assert len(text) > len("hi")

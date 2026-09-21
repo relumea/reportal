@@ -6591,7 +6591,14 @@ def post_conversation_message(
     with contextlib.closing(_open()) as conn:
         if store.get_conversation(conn, conversation_id) is None:
             return _no_conversation(conversation_id)
-        refused = _refuse_over_credits(request, llm.TASK_AGENT, content)
+        # Size the gate on the prompt the charger will see (system, stored
+        # context, history, new turn), not the raw user string alone.
+        gate_messages, _ = conversations.agent_messages(
+            conn, conversation_id=conversation_id, content=content, content_stored=False
+        )
+        refused = _refuse_over_credits(
+            request, llm.TASK_AGENT, conversations.prompt_text(gate_messages)
+        )
         if refused is not None:
             return refused
         client = _ai_client()
@@ -6627,7 +6634,16 @@ def start_conversation_run(
     with contextlib.closing(_open()) as conn:
         if store.get_conversation(conn, conversation_id) is None:
             return _no_conversation(conversation_id)
-        refused = _refuse_over_credits(request, llm.TASK_AGENT, content)
+        gate_messages, _ = conversations.agent_messages(
+            conn,
+            conversation_id=conversation_id,
+            content=content,
+            extra_system=agent.AGENT_SYSTEM_SUFFIX,
+            content_stored=False,
+        )
+        refused = _refuse_over_credits(
+            request, llm.TASK_AGENT, conversations.prompt_text(gate_messages)
+        )
         if refused is not None:
             return refused
         client = _ai_client()

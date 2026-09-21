@@ -248,6 +248,23 @@ class TestSubmit:
         assert jobs.count_jobs(conn) == 1
         assert jobs.count_jobs(conn, status=jobs.STATUS_QUEUED) == 0
 
+    def test_reclaim_orphaned_running_jobs_unblocks_resubmit(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        """A process exit leaves ``running``; reclaim must free the live slot."""
+        binary_id = _binary(conn, tmp_path)
+        first = jobs.submit(conn, kind="composition", binary_id=binary_id)
+        claimed = jobs._claim(conn)
+        assert claimed is not None
+        assert claimed["status"] == jobs.STATUS_RUNNING
+        assert jobs.reclaim_orphaned_running_jobs(conn) == 1
+        orphan = jobs.get_job(conn, int(first["id"]))
+        assert orphan is not None
+        assert orphan["status"] == jobs.STATUS_FAILED
+        second = jobs.submit(conn, kind="composition", binary_id=binary_id)
+        assert second["id"] != first["id"]
+        assert second["status"] == jobs.STATUS_QUEUED
+
     def test_concurrent_submits_reuse_one_job(
         self,
         conn: sqlite3.Connection,

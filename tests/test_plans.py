@@ -41,6 +41,15 @@ class TestCostModel:
         priciest = max(plans.blended_usd_per_mtok(name) for name in plans.MODEL_RATES)
         assert plans.blended_usd_per_mtok("some-model-we-never-heard-of") == pytest.approx(priciest)
 
+    def test_the_default_bridge_model_has_a_catalog_rate(self) -> None:
+        """DEFAULT_MODEL must not fall through to the Opus fail-closed ceiling."""
+        from reportal import llm
+
+        assert llm.DEFAULT_MODEL in plans.MODEL_RATES
+        assert plans.blended_usd_per_mtok(llm.DEFAULT_MODEL) < plans.blended_usd_per_mtok(
+            plans.COST_MODEL
+        )
+
     def test_tokens_and_dollars_round_trip(self) -> None:
         """The two directions of the same rate agree."""
         assert plans.usd_for_tokens(plans.tokens_for_budget(10.0)) == pytest.approx(10.0, rel=1e-6)

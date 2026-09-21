@@ -35,6 +35,12 @@ AUTO_RUN_FAILED = "failed"
 AUTO_RUN_PARTIAL = "partial"
 AUTO_RUN_REVERTED = "reverted"
 
+# Statuses ``finish_auto_run`` may write.  ``reverted`` is reported after the
+# run row is deleted, not stored through finish.
+AUTO_RUN_FINISH_STATUSES: frozenset[str] = frozenset(
+    {AUTO_RUN_DONE, AUTO_RUN_FAILED, AUTO_RUN_PARTIAL}
+)
+
 # Statuses an `auto_tasks` row carries.  `pending` is a task that was planned
 # but never started (the run was capped or crashed), `running` is a batch a
 # worker is on, and the terminal three mirror the batch verdict: `done` when a
@@ -203,10 +209,21 @@ def create_auto_run(
 def finish_auto_run(
     conn: sqlite3.Connection, run_id: int, *, status: str, stats: dict[str, Any]
 ) -> bool:
-    """Close a run with its final *status* and the coverage numbers it measured."""
+    """Close a running run with a terminal *status* and its coverage numbers.
+
+    *status* must be one of :data:`AUTO_RUN_FINISH_STATUSES`.  Only a
+    ``running`` row is updated, so a racy second finish or a rewrite of a
+    closed run is a no-op rather than reopening the lifecycle.
+    """
+    if status not in AUTO_RUN_FINISH_STATUSES:
+        raise ValueError(
+            f"invalid auto-run finish status {status!r};"
+            f" expected one of {', '.join(sorted(AUTO_RUN_FINISH_STATUSES))}"
+        )
     cur = conn.execute(
-        "UPDATE auto_runs SET status = ?, stats_json = ?, finished_at = ? WHERE id = ?",
-        (status, json.dumps(stats), store.now(), run_id),
+        "UPDATE auto_runs SET status = ?, stats_json = ?, finished_at = ?"
+        " WHERE id = ? AND status = ?",
+        (status, json.dumps(stats), store.now(), run_id, AUTO_RUN_RUNNING),
     )
     conn.commit()
     return cur.rowcount > 0

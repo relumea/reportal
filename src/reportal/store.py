@@ -147,6 +147,8 @@ PIPELINE_RUN_RUNNING = "running"
 PIPELINE_RUN_DONE = "done"
 PIPELINE_RUN_FAILED = "failed"
 
+PIPELINE_RUN_FINISH_STATUSES: frozenset[str] = frozenset({PIPELINE_RUN_DONE, PIPELINE_RUN_FAILED})
+
 # Statuses a `pipeline_steps` row carries.  `done` means the component ran to
 # completion, `skipped` that the loader never activated it, `failed` that its
 # effect raised, and `deactivated` that it was ready and then lost a
@@ -3294,10 +3296,20 @@ def finish_pipeline_run(
     effects: Sequence[dict[str, Any]] = (),
     finished_at: str | None = None,
 ) -> bool:
-    """Close a run with its final *status* and the undo plan of its writes."""
+    """Close a running run with a terminal *status* and the undo plan of its writes.
+
+    *status* must be one of :data:`PIPELINE_RUN_FINISH_STATUSES`.  Only a
+    ``running`` row is updated.
+    """
+    if status not in PIPELINE_RUN_FINISH_STATUSES:
+        raise ValueError(
+            f"invalid pipeline-run finish status {status!r};"
+            f" expected one of {', '.join(sorted(PIPELINE_RUN_FINISH_STATUSES))}"
+        )
     cur = conn.execute(
-        "UPDATE pipeline_runs SET status = ?, finished_at = ?, effects_json = ? WHERE id = ?",
-        (status, finished_at or now(), json.dumps(list(effects)), run_id),
+        "UPDATE pipeline_runs SET status = ?, finished_at = ?, effects_json = ?"
+        " WHERE id = ? AND status = ?",
+        (status, finished_at or now(), json.dumps(list(effects)), run_id, PIPELINE_RUN_RUNNING),
     )
     conn.commit()
     return cur.rowcount > 0

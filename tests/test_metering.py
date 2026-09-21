@@ -212,3 +212,52 @@ class TestSummary:
         summary = metering.usage_summary(conn, organisation_id)
         assert summary["cost_usd"] == pytest.approx(4 / 1_000_000)
         assert summary["cost_usd"] > 0
+
+
+class TestPeriodLifecycle:
+    """Quota windows open on create and roll for free tiers without Stripe."""
+
+    def test_create_organisation_opens_a_period(self, conn: sqlite3.Connection) -> None:
+        created = auth.create_organisation(conn, name="period-org", description="")
+        started = metering.period_started_at(conn, int(created["id"]))
+        assert started
+
+    def test_free_tier_rolls_after_period_days(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import timedelta
+
+        from reportal import clock
+
+        start = "2026-01-01T00:00:00+00:00"
+        later = (clock.as_utc(start) + timedelta(days=metering.PERIOD_DAYS)).isoformat(
+            timespec="seconds"
+        )
+        monkeypatch.setattr(auth, "now", lambda: start)
+        organisation_id = _organisation(conn, "free")
+        metering.record_usage(conn, organisation_id, metering.KIND_CREDITS, 50)
+        assert metering.period_usage(conn, organisation_id, metering.KIND_CREDITS) == 50
+        monkeypatch.setattr(auth, "now", lambda: later)
+        checked = metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
+        assert checked["allowed"] is True
+        assert metering.period_usage(conn, organisation_id, metering.KIND_CREDITS) == 0
+        assert metering.period_started_at(conn, organisation_id) == later
+
+    def test_paid_tier_does_not_roll_locally(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from datetime import timedelta
+
+        from reportal import clock
+
+        start = "2026-01-01T00:00:00+00:00"
+        later = (clock.as_utc(start) + timedelta(days=metering.PERIOD_DAYS)).isoformat(
+            timespec="seconds"
+        )
+        monkeypatch.setattr(auth, "now", lambda: start)
+        organisation_id = _organisation(conn, "analyst")
+        metering.record_usage(conn, organisation_id, metering.KIND_CREDITS, 50)
+        monkeypatch.setattr(auth, "now", lambda: later)
+        metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
+        assert metering.period_started_at(conn, organisation_id) == start
+        assert metering.period_usage(conn, organisation_id, metering.KIND_CREDITS) == 50

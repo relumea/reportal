@@ -193,6 +193,28 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def reclaim_orphaned_running_jobs(conn: sqlite3.Connection) -> int:
+    """Mark ``running`` jobs failed after a process exit; return how many closed.
+
+    The pool is in-process: a restart cannot still be executing a prior
+    ``running`` row, and the live-dedupe index would otherwise block a resubmit
+    forever.  Call once when the worker starts, not on every schema touch
+    (that would race a live execute in the same process).
+    """
+    ensure_schema(conn)
+    cur = conn.execute(
+        f"UPDATE {TABLE} SET status = ?, message = ?, finished_at = ? WHERE status = ?",
+        (
+            STATUS_FAILED,
+            "abandoned: worker process exited while the job was running",
+            store.now(),
+            STATUS_RUNNING,
+        ),
+    )
+    conn.commit()
+    return int(cur.rowcount)
+
+
 class ProgressPerform(Protocol):
     """A `perform` that also takes the runner's step sink."""
 
@@ -1750,6 +1772,8 @@ def ensure_worker() -> JobWorker | None:
             _paths.db_path()
         except WorkspaceNotFound:  # pragma: no cover - the server refuses to start outside one
             return None
+        with contextlib.closing(store.connect(_paths.db_path())) as conn:
+            reclaim_orphaned_running_jobs(conn)
         _worker = JobWorker()
         _worker.start()
         return _worker

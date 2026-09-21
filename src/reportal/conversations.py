@@ -268,6 +268,9 @@ def send_message(
         temperature=llm.DEFAULT_TEMPERATURE,
         max_tokens=llm.MAX_AGENT_TOKENS,
     )
+    # One chat turn is one billable agent task; charge only after a usable
+    # reply, matching artifact and agent paths that bill after validation.
+    llm._report_charge(llm.TASK_AGENT, messages)
     assistant_message = store.add_message(
         conn, conversation_id=conversation_id, role=ROLE_ASSISTANT, content=reply
     )
@@ -285,6 +288,7 @@ def agent_messages(
     conversation_id: int,
     content: str,
     extra_system: str = "",
+    content_stored: bool = True,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """The system, context, history and new-message turns an agent run starts from.
 
@@ -292,7 +296,11 @@ def agent_messages(
     than inside the system prompt, so untrusted analysis and retrieved text can
     never sit in the instruction slot.  *extra_system* appends the agent's own
     instructions (the tool rules and the confirmation gate) to the system
-    prompt.  Returns the messages and the retrieved hits.
+    prompt.  When *content_stored* is true (the send/agent path after
+    ``add_message``), the trailing history row is the just-written user turn
+    and is dropped so it is not doubled; a pre-write credit gate passes
+    ``content_stored=False`` so history is left intact.  Returns the messages
+    and the retrieved hits.
     """
     conversation = store.get_conversation(conn, conversation_id)
     if conversation is None:
@@ -315,20 +323,35 @@ def agent_messages(
         # escaping the stored_context field into surrounding instruction text.
         wrapped = llm.data_block("stored_context", context, limit=MAX_CONTEXT_CHARS)
         messages.append({"role": ROLE_USER, "content": json.dumps({"stored_context": wrapped})})
-    messages.extend(_history(conn, conversation_id))
+    messages.extend(_history(conn, conversation_id, drop_trailing=content_stored))
     messages.append({"role": ROLE_USER, "content": content})
     return messages, sources
 
 
-def _history(conn: sqlite3.Connection, conversation_id: int) -> list[dict[str, str]]:
+def prompt_text(messages: list[dict[str, Any]]) -> str:
+    """Concatenate string message bodies the way :func:`llm._report_charge` sizes them."""
+    parts: list[str] = []
+    for message in messages:
+        content = message.get("content", "")
+        if isinstance(content, str):
+            parts.append(content)
+    return "".join(parts)
+
+
+def _history(
+    conn: sqlite3.Connection, conversation_id: int, *, drop_trailing: bool = True
+) -> list[dict[str, str]]:
     """Return the prior turns to send, newest last and capped at the limit.
 
-    The just-appended user message is the last row and is added by the caller,
-    so it is dropped here before the cap.  Each turn is capped at
-    :data:`MAX_MESSAGE_CHARS`, so one huge prior turn cannot dominate the
-    prompt: the bound every new message gets is the bound the history gets.
+    When *drop_trailing* is true, the just-appended user message is the last
+    row and is added by the caller, so it is dropped here before the cap.
+    Each turn is capped at :data:`MAX_MESSAGE_CHARS`, so one huge prior turn
+    cannot dominate the prompt: the bound every new message gets is the bound
+    the history gets.
     """
-    rows = store.list_messages(conn, conversation_id)[:-1]
+    rows = store.list_messages(conn, conversation_id)
+    if drop_trailing:
+        rows = rows[:-1]
     return [
         {
             "role": str(row["role"]),

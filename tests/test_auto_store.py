@@ -127,6 +127,26 @@ class TestAutoRuns:
     def test_finish_unknown_run_is_false(self, conn: sqlite3.Connection) -> None:
         assert not auto_store.finish_auto_run(conn, 999, status="done", stats={})
 
+    def test_finish_rejects_an_unknown_status(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        with pytest.raises(ValueError, match="invalid auto-run finish status"):
+            auto_store.finish_auto_run(conn, run_id, status="bogus", stats={})
+
+    def test_finish_does_not_reopen_a_closed_run(self, conn: sqlite3.Connection) -> None:
+        binary_id = store.add_binary(conn, sha256="aa" * 32, name="demo.exe")
+        run_id, _created = auto_store.create_auto_run(conn, binary_id=binary_id, config={})
+        assert auto_store.finish_auto_run(
+            conn, run_id, status=auto_store.AUTO_RUN_DONE, stats={"n": 1}
+        )
+        assert not auto_store.finish_auto_run(
+            conn, run_id, status=auto_store.AUTO_RUN_FAILED, stats={"n": 2}
+        )
+        run = auto_store.get_auto_run(conn, run_id)
+        assert run is not None
+        assert run["status"] == auto_store.AUTO_RUN_DONE
+        assert run["stats"] == {"n": 1}
+
     def test_get_unknown_run_is_none(self, conn: sqlite3.Connection) -> None:
         assert auto_store.get_auto_run(conn, 999) is None
 

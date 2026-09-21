@@ -1259,6 +1259,25 @@ class TestRunStore:
         assert store.get_pipeline_run(conn, run_id) is None
         assert store.list_pipeline_steps(conn, run_id) == []
 
+    def test_finish_rejects_an_unknown_status(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        run_id = store.create_pipeline_run(conn, function_id=ids["function"], model="m")
+        with pytest.raises(ValueError, match="invalid pipeline-run finish status"):
+            store.finish_pipeline_run(conn, run_id, status="bogus")
+
+    def test_finish_does_not_reopen_a_closed_run(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = seed_portal(tmp_path, monkeypatch)
+        run_id = store.create_pipeline_run(conn, function_id=ids["function"], model="m")
+        assert store.finish_pipeline_run(conn, run_id, status=store.PIPELINE_RUN_DONE)
+        assert not store.finish_pipeline_run(conn, run_id, status=store.PIPELINE_RUN_FAILED)
+        run = store.get_pipeline_run(conn, run_id)
+        assert run is not None
+        assert run["status"] == store.PIPELINE_RUN_DONE
+
     def test_latest_run_is_the_newest(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
