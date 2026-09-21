@@ -1,7 +1,8 @@
 """Guarded sandbox detonation: run a stored sample, off by default, and record it.
 
-reportal reads bytes and never runs a sample, with exactly one exception, and
-this is it.  The hosted portal detonates a sample in its own sandbox and reports
+reportal reads bytes and never runs a sample free, with one exception besides
+the debugger (``debug.py``, which controls the sample rather than running it),
+and this is it.  The hosted portal detonates a sample in its own sandbox and reports
 what it did; the local form runs the sample under a sandbox runner that is
 installed on the machine, with no network, a read-only root, its own PID and
 mount namespaces, a memory and CPU cap and a wall-clock timeout, and records the
