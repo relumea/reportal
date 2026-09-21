@@ -55,10 +55,10 @@ export function SearchView({
       subtitle="Names, hashes, tags and paths across the whole workspace."
       actions={
         <Toolbar>
-          <Field label="Query" hint="Enter searches">
+          <Field label="Query" hint="Enter searches, or prefix with tag:, binary:, collection:, sha256:">
             <input
               type="search"
-              placeholder="name, hash, path"
+              placeholder="name, hash, path, tag:foo"
               value={draft}
               onChange={(event) => {
                 const next = event.target.value;

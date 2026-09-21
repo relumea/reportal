@@ -48,6 +48,50 @@ def _seed(conn: sqlite3.Connection) -> dict[str, int]:
     return {"alpha": alpha, "beta": beta, "collection": collection, "tag": tag}
 
 
+class TestSearchPrefixes:
+    def test_tag_prefix_selects_the_tag_kind(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, "tag:alpha-tag")
+        assert [row["name"] for row in results["tags"]] == ["alpha-tag"]
+        assert [row["name"] for row in results["binaries"]] == ["alpha.dll"]
+
+    def test_binary_prefix_matches_the_name(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, "binary:beta")
+        assert [row["name"] for row in results["binaries"]] == ["beta.exe"]
+
+    def test_collection_prefix_matches_the_name(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, "collection:alpha collection")
+        assert [row["name"] for row in results["collections"]] == ["alpha collection"]
+
+    def test_hash_prefix_matches_the_digest(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, f"sha256:{HASH_C}")
+        assert [row["name"] for row in results["binaries"]] == ["gamma.sys"]
+
+    def test_prefix_match_is_case_insensitive(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, "TAG:alpha-tag")
+        assert [row["name"] for row in results["tags"]] == ["alpha-tag"]
+
+    def test_explicit_kind_wins_over_the_prefix(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, "tag:alpha-tag", kind=store.SEARCH_KIND_BINARY)
+        assert results["tags"] == []
+        assert [row["name"] for row in results["binaries"]] == []
+
+    def test_unknown_prefix_stays_a_literal(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, "bogus:alpha")
+        assert results["binaries"] == []
+
+    def test_bare_prefix_answers_empty(self, conn: sqlite3.Connection) -> None:
+        _seed(conn)
+        results = store.search(conn, "tag:")
+        assert results["binaries"] == [] and results["tags"] == []
+
+
 class TestSearchKinds:
     def test_default_substring_spans_entities(self, conn: sqlite3.Connection) -> None:
         _seed(conn)

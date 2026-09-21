@@ -4835,6 +4835,36 @@ SEARCH_KINDS: tuple[str, ...] = (
     SEARCH_KIND_TAG,
 )
 
+# Inline prefixes a query may carry (`tag:foo`), in the Binja plugin grammar.
+# A prefix selects the kind for that query; an explicit ``kind`` argument wins
+# over the prefix, and an unknown prefix is a literal, not an error.
+SEARCH_PREFIXES: dict[str, str] = {
+    "sha256:": SEARCH_KIND_SHA256,
+    "sha_256_hash:": SEARCH_KIND_SHA256,
+    "hash:": SEARCH_KIND_SHA256,
+    "binary:": SEARCH_KIND_BINARY,
+    "binary_name:": SEARCH_KIND_BINARY,
+    "collection:": SEARCH_KIND_COLLECTION,
+    "collection_name:": SEARCH_KIND_COLLECTION,
+    "tag:": SEARCH_KIND_TAG,
+}
+
+
+def split_search_prefix(query: str) -> tuple[str, str]:
+    """Split an inline ``prefix:value`` off *query*; ``(kind, value)``.
+
+    Returns ``(SEARCH_KIND_ALL, query)`` when no known prefix leads.  The
+    match is case-insensitive on the prefix and the value keeps its case, so
+    `TAG:Foo` searches tags for `Foo`.
+    """
+    stripped = query.strip()
+    lowered = stripped.lower()
+    for prefix, kind in SEARCH_PREFIXES.items():
+        if lowered.startswith(prefix):
+            return kind, stripped[len(prefix) :].strip()
+    return SEARCH_KIND_ALL, query
+
+
 # The result groups one search answers, in the order the SPA renders them.
 SEARCH_GROUPS: tuple[str, ...] = ("binaries", "functions", "collections", "tags")
 
@@ -5188,6 +5218,13 @@ def search(
     query = query.strip()
     if not query:
         return _empty_search()
+    if kind == SEARCH_KIND_ALL:
+        prefixed_kind, prefixed_query = split_search_prefix(query)
+        if prefixed_kind != SEARCH_KIND_ALL:
+            kind = prefixed_kind
+            query = prefixed_query
+            if not query:
+                return _empty_search()
     if regex:
         if kind == SEARCH_KIND_SHA256:
             raise SearchError(
