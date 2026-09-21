@@ -1071,3 +1071,187 @@ class TestProbeFailureBranches:
                 backend=debug.Backend("gdb", "gdb"),
                 breakpoints=["x"],  # type: ignore[list-item]
             )
+
+
+class TestDebugFinalBranches:
+    def test_configured_backend_returns_when_installed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.BACKEND_ENV, "lldb-dap")
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/x")
+        assert debug.available_backend() is not None
+
+    def test_configured_but_uninstalled_backend_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.BACKEND_ENV, "lldb-dap")
+        monkeypatch.setattr(debug.Backend, "path", lambda self: None)
+        assert debug.available_backend() is None
+
+    def test_start_session_reraises_without_a_live_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = _db(tmp_path, "reraises.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            monkeypatch.setattr(debug, "find_live_session", lambda conn, binary_id: None)
+            import sqlite3 as _sqlite
+
+            with pytest.raises(_sqlite.IntegrityError):
+                debug.start_session(
+                    conn,
+                    analysis_id=999999,
+                    binary_id=binary_id,
+                    sha256="d" * 64,
+                    backend="lldb-dap",
+                    argv=["lldb-dap"],
+                    caps=debug.requested_caps(),
+                )
+            _ = analysis_id
+
+    def test_coverage_with_no_analysis_returns_none(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "noanalysis.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            assert debug.observed_coverage(conn, binary_id) is None
+
+    def test_coverage_counts_zero_size_exact_match_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("lldb-dap", "lldb-dap"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "lldb-dap",
+                "argv": ["lldb-dap"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [
+                    {
+                        "request": "stackTrace",
+                        "success": True,
+                        "frames": [{"name": "f", "instructionPointerReference": "0x1001"}],
+                    },
+                ],
+                "notes": [],
+            },
+        )
+        db = _db(tmp_path, "exact.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            store.upsert_function(
+                conn, analysis_id=analysis_id, va=0x1000, name="f", size=0, status="STUB"
+            )
+            debug.run_session(conn, binary_id)
+            coverage = debug.observed_coverage(conn, binary_id)
+            assert coverage is not None
+            assert coverage["observed"] == 0
+            assert coverage["total"] == 1
+
+
+class TestDapVariants:
+    def _scripted_dap(
+        self, monkeypatch: pytest.MonkeyPatch, responses: list[dict[str, object]]
+    ) -> None:
+        import os as _os
+
+        def frame(payload: dict[str, object]) -> bytes:
+            import json as _json
+
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        blob = b"".join(frame(payload) for payload in responses)
+        chunks = [blob]
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = _FakePipe(b"")
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                return None
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+
+    def _full_responses(self) -> list[dict[str, object]]:
+        return [
+            {"type": "response", "request_seq": 1, "command": "initialize", "success": True},
+            {"type": "event", "event": "output", "seq": 20, "body": {"output": "hi"}},
+            {"type": "event", "event": "initialized", "seq": 21},
+            {"type": "response", "request_seq": 3, "command": "configurationDone", "success": True},
+            {"type": "response", "request_seq": 2, "command": "launch", "success": True},
+            {
+                "type": "event",
+                "event": "stopped",
+                "seq": 22,
+                "body": {"threadId": 1, "reason": "entry"},
+            },
+            {"type": "event", "event": "output", "seq": 23, "body": {"output": "x"}},
+            {
+                "type": "response",
+                "request_seq": 4,
+                "command": "threads",
+                "success": True,
+                "body": {"threads": []},
+            },
+            {
+                "type": "response",
+                "request_seq": 5,
+                "command": "stackTrace",
+                "success": True,
+                "body": {"stackFrames": []},
+            },
+            {"type": "response", "request_seq": 6, "command": "disconnect", "success": True},
+        ]
+
+    def test_launch_loop_skips_non_stopped_events(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._scripted_dap(monkeypatch, self._full_responses())
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        report = debug.probe_binary(
+            sample, backend=debug.Backend("lldb-dap", "lldb-dap"), breakpoints=[0x1000]
+        )
+        kinds = [entry["request"] for entry in report["transcript"]]
+        assert "setBreakpoints" in kinds
+        point = next(e for e in report["transcript"] if e["request"] == "setBreakpoints")
+        assert point["address"] == 0x1000
+
+    def test_launch_loop_refuses_an_invalid_message(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        responses = [
+            {"type": "response", "request_seq": 1, "command": "initialize", "success": True},
+            {"type": "event", "event": "initialized", "seq": 21},
+            {"type": "bogus"},
+        ]
+        self._scripted_dap(monkeypatch, responses)
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        assert caught.value.code == debug.ERROR_INVALID
