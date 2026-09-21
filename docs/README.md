@@ -40,6 +40,7 @@ below are the tree it governs.
 | [REVENGAI.md](REVENGAI.md) | survey of the RevEng.AI open-source repositories and what is reusable here |
 | [RESEARCH_ROADMAP.md](RESEARCH_ROADMAP.md) | vendor research techniques (Zenyard, RevEng.AI, independent writeups), reportal coverage per technique, and what is left to build |
 | [FUNDING.md](FUNDING.md) | funding targets for the private SaaS project: SG grants, US SBIR, accelerators, pre-seed investors, and the application sequence |
+| [reviews/](reviews/README.md) | reusable review prompts for agent rules and the MCP registry |
 
 The user-facing entry point is the [project README](../README.md); the root
 [AGENTS.md](../AGENTS.md) holds the working guide for this tree: its structure,

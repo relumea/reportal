@@ -140,7 +140,7 @@ The shell's own bindings (`src/App.tsx`) are the sidebar collapse
 per-tab view history on `Alt+Left`/`Alt+Right` and `{`/`}` (`HISTORY_STORAGE_KEY`
 in `sessionStorage`, fifty entries), `[`/`]` section cycling
 (`keys.cycleViewSection`) and `Space` flipping a function's Disassembly and
-Control Flow, or a diff's Disassembly and AI decompilation
+Control Flow, or a diff's Disassembly and AI Decompilation
 (`toggleFunctionCodeView`, which the mounted `CodeSection` or `DiffView`
 publishes).  The router's own back and forward keep working beside the in-app
 history, and `stepHistory` marks its navigation so recording does not push the
@@ -631,7 +631,7 @@ follows the run's state stream at `GET /api/conversations/<id>/events`.  The
 panel is explicit that a tool which changes the workspace waits for the
 analyst's approval and that a rejection is answered another way.
 
-The Data types panel's neighbour is the Debug symbols panel: a file control, an
+The Data Types panel's neighbour is the Debug symbols panel: a file control, an
 `Apply names and types` checkbox and `Ingest symbols`, which posts the file as
 `multipart/form-data` to `POST /api/binaries/<id>/symbols` and renders the
 result (kind, symbol count, type count, names applied) with the parse's own
@@ -660,8 +660,8 @@ one-string-per-line Replace list box, which posts to `PUT
 of it reads the derived payloads as labelled derivations and never calls an
 engine or a model on render.
 An AI
-section groups the AI decompilation, Summary, AI comments, Type suggestions and
-Renames panels.  The AI decompilation panel is the whole-function rewrite: the
+section groups the AI Decompilation, Summary, AI Comments, Type Suggestions and
+Renames panels.  The AI Decompilation panel is the whole-function rewrite: the
 lines with their origin (`original`/`rewritten`/`added`) in a table, a per-token
 override input beside its kind, uses and lines, a rating selector with its note,
 and a comment editor for the line the analyst picks, all over the
@@ -687,7 +687,7 @@ reads `GET /api/secrets` and writes `PUT`/`DELETE /api/secrets/<name>`, and it
 never renders a value because no response carries one.  The signature panel carries a copy control: comma-separated target ids and
 Copy signature, posting to `POST /api/analyses/<id>/signatures/copy` with the
 panel's function as the source, and reporting how many targets took the copy.
-The binary detail's Agent feedback panel lists every stored agent artifact with
+The binary detail's Agent Feedback panel lists every stored agent artifact with
 its verdict and carries Up, Down, a Note control and Clear per row, over
 `GET`/`PUT /api/binaries/<id>/ratings[/<kind>]`; the Note control opens a
 verdict select prefilled with the stored verdict and a note input (capped at
@@ -766,12 +766,13 @@ software-type totals and any note the payload carries.  The bars read
 `GET /api/stats/series` and are computed from stored rows only, so the panel
 never runs an engine and cannot disagree with the lists beside it.
 
-The Data types panel opens with a provenance strip (one toggle per label,
+The Data Types panel opens with a provenance strip (one toggle per label,
 carrying the count over the whole model), a kind strip (one C tag per
 declaration kind, carrying the count, hover the full name, Type alias for
 typedef), a coloured source
 dot on each type
-card (the kind badge is the C tag, hover the full name), a Source filter
+card (the kind badge is the C tag, hover the full name), an As C declaration
+box that copies when clicked, and a Source filter
 beside the search filters (the search
 placeholder states `Search N types or namespaces...`, the needle matches
 the name, the namespace or `namespace::name`, and typing waits
@@ -807,7 +808,7 @@ the view reports.  The
 Renames panel lists each stored suggestion with a checkbox, its reason and
 confidence, an Apply selected / Apply all pair (with a rename-function toggle
 for a function-kind suggestion) and a Revert; an apply or a revert refreshes the
-decompilation panel and the function header.  The AI decompilation panel
+decompilation panel and the function header.  The AI Decompilation panel
 (`panels/PipelinePanel.tsx`) auto-loads the stored run through its stored-only
 `GET`, renders the step timeline (name, status, duration, skip reason,
 provided names), the predicted name with an Apply rename action, the summary,
@@ -1248,12 +1249,12 @@ when the selected backend reports `supports_query`, a text box that queries
 `assets/dist/index.html` is missing (`bun install` when `web/node_modules` is
 absent, then `bun run build` with `cwd=web`), seeds a scratch workspace under
 `.scratch/` (binary, rebrew context, analysis, functions from the notepad
-project, a stored PE metadata scan so the Binary details panel renders its
+project, a stored PE metadata scan so the Binary Details panel renders its
 identity, security flags and section table, a stored file-type detection so the
 File type panel renders a packed-section match,
 a stored structs scan plus a seeded editable data type whose members carry a
 bitfield and an explicit gap member and whose declared size is past their extent,
-so the Data types panel renders both a stored recovery and a model row, the
+so the Data Types panel renders both a stored recovery and a model row, the
 member shape controls and the size-vs-members warning, a stored
 function-triage scan so the Function triage panel renders a scored row and its
 model line, a stored match pair

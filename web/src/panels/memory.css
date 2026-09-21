@@ -1,0 +1,108 @@
+/* ── Full-file memory page ────────────────────────────────────────────
+   One row per 16 backed bytes (address, file offset, byte grid, ASCII
+   gutter) and one row per stated gap.  A zero byte is dimmed to --text-muted,
+   which still clears WCAG AA on the surface, so a non-zero region stands out
+   without the zeroes disappearing. */
+.memory-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.memory-row {
+  display: grid;
+  grid-template-columns: max-content max-content minmax(0, 1fr) max-content;
+  gap: 12px;
+  align-items: baseline;
+  padding: 1px 4px;
+  white-space: nowrap;
+}
+
+.memory-address,
+.memory-offset {
+  color: var(--text-muted);
+}
+
+.memory-ascii {
+  color: var(--text);
+  display: inline-flex;
+}
+
+.memory-ascii .byte {
+  padding: 0;
+}
+
+.memory-gap {
+  color: var(--text-muted);
+  background: var(--surface-2);
+}
+
+.memory-gap .memory-bytes {
+  font-style: italic;
+}
+
+.memory-bytes {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.memory-bytes > :nth-child(8) {
+  margin-right: 12px;
+}
+
+.byte {
+  padding: 0 2px;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+}
+
+.byte-zero {
+  color: var(--text-muted);
+}
+
+.byte-selected {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+}
+
+/* The continuous dump: the scroll container is the viewport and the inner
+   spacer is the whole address span, so the rows absolutely positioned inside it
+   are the only ones the browser has to lay out.  The row height here and
+   ROW_HEIGHT in MemoryPanel.tsx are one number. */
+.memory-scroll {
+  height: 380px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.memory-scroll-inner {
+  position: relative;
+}
+
+.memory-scroll-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18px;
+  line-height: 18px;
+}
+
+.memory-pending {
+  color: var(--text-faint);
+}
+
+.byte-pending {
+  color: var(--text-faint);
+}
+

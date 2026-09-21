@@ -756,7 +756,14 @@ export function EmptyState({
 
 export function CodeBlock({ text, title }: { text: string; title?: string }): ReactNode {
   return (
-    <div className="code-block">
+    <div
+      className="code-block"
+      title="Click to copy"
+      onClick={(event) => {
+        if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+        void writeClipboard(text);
+      }}
+    >
       <div className="code-head">
         <span className="code-title">{title ?? "output"}</span>
         <CopyButton text={text} />

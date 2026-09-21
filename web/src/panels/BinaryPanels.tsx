@@ -526,7 +526,7 @@ export function IdentityPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [busy, setBusy] = useState(false);
   return (
     <Panel
-      title="Binary details"
+      title="Binary Details"
       subtitle="Identity, export hashes and the stored PE scan this page is built from."
       actions={
         <Button
@@ -1936,7 +1936,7 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
 
   return (
     <Panel
-      title="Agent feedback"
+      title="Agent Feedback"
       subtitle="Thumbs up or down on a stored agent artifact; the verdict survives a re-run of the scan."
     >
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}
@@ -4376,7 +4376,7 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
   };
   return (
     <Panel
-      title="Composition analysis"
+      title="Composition Analysis"
       subtitle="How this binary's functions match the other registered binaries, from the stored matches."
       actions={
         <Toolbar>
@@ -4385,7 +4385,7 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
               className="btn btn-ghost"
               href={`#/matches?function=${entry.data.functions[0].function_id}`}
             >
-              Open matching view
+              Open Matching View
             </a>
           ) : null}
           <Button

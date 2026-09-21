@@ -121,6 +121,14 @@ view renders it from here.
 - Binary panel reads Security.
 - Binary panel reads Packer Detection.
 - Binary panel reads Unpacked Files.
+- Binary panel reads Binary Details.
+- Binary panel reads Composition Analysis with Open Matching View.
+- Binary panel reads Agent Feedback.
+- Code blocks copy when clicked, including Data Types As C.
+- Function panels read AI Decompilation, AI Comments and Type Suggestions.
+- Pipeline panel reads AI Decompilation.
+- Function panels read Analysis Strings and Canonical Name.
+- Binary panel reads Data Types.
 - Strings sort reads String Length with ASC/DESC direction.
 - Functions and Data types search placeholders state the total count.
   Analyses carries an Upload File action that opens the binaries panel.

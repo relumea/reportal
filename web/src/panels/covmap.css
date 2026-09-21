@@ -1,0 +1,124 @@
+/* ── Coverage map: one cell per address range, the defrag view ────── */
+
+.covmap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.covmap-key {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.covmap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.covmap-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.covmap-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.covmap-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+
+.covmap-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+}
+
+.covmap-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--surface-3);
+  flex: none;
+}
+
+a.covmap-cell:hover {
+  outline: 1px solid var(--text);
+}
+
+a.covmap-cell:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+/* Cell ink per status entity: the same tokens the badges use, so a status
+   keeps one colour across the map, the legend and the tables. */
+.covmap-cell[data-state="exact"] {
+  background: var(--st-exact);
+}
+
+.covmap-cell[data-state="reloc"] {
+  background: var(--st-reloc);
+}
+
+.covmap-cell[data-state="proven"] {
+  background: var(--st-proven);
+}
+
+.covmap-cell[data-state="thunk"] {
+  background: var(--st-thunk);
+}
+
+.covmap-cell[data-state="near"] {
+  background: var(--st-near);
+}
+
+.covmap-cell[data-state="stub"] {
+  background: var(--st-stub);
+}
+
+.covmap-cell[data-state="idle"] {
+  background: var(--st-idle);
+}
+
+.covmap-cell[data-state="fail"] {
+  background: var(--st-fail);
+}
+
+.entropy-strip {
+  display: flex;
+  gap: var(--meter-gap);
+  min-width: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--ramp-track);
+}
+
+.entropy-strip-cell {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: var(--meter-height);
+  border-radius: 1px;
+  background: var(--meter-unlit);
+}
+
+.entropy-strip-cell[data-hue] {
+  background: var(--hue-ink);
+}
+
+.entropy-strip-cell[data-packed="true"] {
+  background: var(--hue-ink, var(--status-fail));
+}

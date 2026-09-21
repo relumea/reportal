@@ -49,7 +49,7 @@ class TestAutoCommand:
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
         assert payload["binary_id"] == ids["binary"]
-        assert payload["status"] == auto_store.AUTO_RUN_DONE
+        assert payload["status"] == auto_store.AUTO_RUN_PARTIAL
         assert payload["worker"] == auto_workers.WORKER_OFFLINE
         assert payload["matched"] == 1
         assert payload["failed"] == 1

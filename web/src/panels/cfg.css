@@ -1,0 +1,129 @@
+/* ── Control-flow graph ───────────────────────────────────────────── */
+
+/* The Disassembly / Control Flow toggle: two toggle buttons that read as one
+   segmented control, with the active view on the primary fill. */
+.code-view-toggle {
+  display: inline-flex;
+  gap: var(--space-1);
+}
+
+.cfg-blocks {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* One basic block, in address order.  The block is focusable (not tabbable)
+   so an edge's jump lands the keyboard where the viewport lands. */
+.cfg-block {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.cfg-block:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.cfg-block-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.cfg-block-index {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.cfg-block-head .muted {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.cfg-instrs {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 1px var(--space-2);
+  margin: var(--space-1) 0 0;
+}
+
+.cfg-instr-label {
+  margin: 0;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.cfg-instr {
+  overflow-wrap: anywhere;
+}
+
+.cfg-edges {
+  list-style: none;
+  margin: var(--space-1) 0 0;
+  padding-left: 0;
+}
+
+/* An outgoing edge: the arrow, the target (a jump control when the target is
+   a block in the payload), the target's index and the back-edge label. */
+.cfg-edge {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  padding: 1px 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* A back edge closes a loop, so it carries the warn ink on the row itself and
+   the labelled badge beside the target. */
+.cfg-edge[data-back="true"] {
+  color: var(--warn);
+  border-left: 2px solid var(--warn);
+  padding-left: var(--space-2);
+}
+
+.cfg-edge-arrow {
+  color: var(--text-faint);
+}
+
+.cfg-edge[data-back="true"] .cfg-edge-arrow {
+  color: var(--warn);
+}
+
+.cfg-edge-jump {
+  padding: 0 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cfg-edge-jump:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.cfg-edge-jump:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.cfg-no-edge {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+}
+

@@ -1,0 +1,233 @@
+/* ── Documentation reader ─────────────────────────────────────────────
+   The in-app manual: the index cards, the on-this-page column and one rule
+   per block kind the server emits.  Every document is read, so the type is
+   the body size rather than a caption. */
+
+.doc-index {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-2);
+}
+
+.doc-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  text-decoration: none;
+  color: var(--text);
+}
+
+.doc-card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.doc-card-slug {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--accent);
+}
+
+.doc-card-title {
+  font-size: var(--text-base);
+}
+
+.doc-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 13rem) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.doc-toc {
+  position: sticky;
+  top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: var(--space-2);
+  border-right: 1px solid var(--border);
+}
+
+.doc-toc-label {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.doc-toc-link {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-1);
+}
+
+.doc-toc-link:hover,
+.doc-toc-link.active {
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+}
+
+.doc-body {
+  min-width: 0;
+}
+
+/* The reading-order pair at the foot of a page; the empty side keeps the one
+   link on the side it belongs to rather than centring it. */
+.doc-pager {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.doc-pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 45%;
+  font-size: var(--text-base);
+  color: var(--accent-hover);
+  text-decoration: none;
+}
+
+.doc-pager-link.next {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.doc-pager-link:hover {
+  text-decoration: underline;
+}
+
+.doc-pager-label {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.doc-heading {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-lg);
+  color: var(--text);
+}
+
+.doc-heading[data-level="3"] {
+  font-size: var(--text-base);
+}
+
+.doc-paragraph,
+.doc-list p,
+.doc-quote {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.doc-list p {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* The bullet is a fixed gutter and the text takes the rest; a flex item that
+   may not shrink is what made a long item overrun its column. */
+.doc-bullet {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  min-width: 1.2rem;
+}
+
+.doc-item-text {
+  min-width: 0;
+}
+
+.doc-quote {
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.doc-code {
+  margin: 0 0 var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-x: auto;
+}
+
+.doc-body code {
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+  padding: 1px 4px;
+  border-radius: var(--radius-1);
+  background: var(--surface-3);
+}
+
+.doc-code code {
+  padding: 0;
+  background: none;
+  font-size: inherit;
+}
+
+.doc-table-wrap {
+  overflow-x: auto;
+  margin-bottom: var(--space-2);
+}
+
+.doc-table {
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.doc-table th,
+.doc-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.doc-table th {
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+  /* The manual reads as one column: the on-this-page list becomes a strip
+     above the body rather than a column beside it. */
+  .doc-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .doc-toc {
+    position: static;
+    max-height: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 0 0 var(--space-2);
+  }
+
+  .doc-toc-label {
+    flex: 1 1 100%;
+  }
+}

@@ -255,14 +255,14 @@ class TestRequeue:
         assert payload["finished_at"] is None
         assert payload["jobs"] == []
         entries, _ = analysis_log.list_entries(conn, ids["analysis"])
-        assert "requeued" in str(entries[0]["message"])
+        assert "status changed to pending (was failed)" in str(entries[0]["message"])
         journal.revert_action(conn, payload["journal_action"])
         after = store.get_analysis(conn, ids["analysis"])
         assert after is not None
         assert after["status"] == "failed"
         assert after["finished_at"] == before["finished_at"]
         restored, _ = analysis_log.list_entries(conn, ids["analysis"])
-        assert all("requeued" not in str(entry["message"]) for entry in restored)
+        assert all("status changed to pending" not in str(entry["message"]) for entry in restored)
 
     def test_an_unknown_analysis_is_404(self, conn: sqlite3.Connection) -> None:
         status, payload = _send("POST", "/api/analyses/4242/requeue")

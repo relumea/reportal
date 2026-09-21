@@ -1,0 +1,18 @@
+# Extra files the sdist must carry beyond the Python package tree.
+# `deploy/` is the operator-facing unit template layout documented in
+# docs/DEPLOY.md; the wheel also ships a mirrored copy under reportal/deploy/
+# via package-data after scripts/sync_packaged_deploy.py runs.
+include deploy/*.service
+include deploy/*.timer
+
+# Host-dependent SPA siblings and bytecode must never enter the sdist: the
+# same release contamination `scripts/check_wheel.py` refuses in the wheel.
+# (setuptools still embeds a generated `*.egg-info/` tree in every sdist; that
+# is backend metadata, not something MANIFEST.in can prune.)
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude *.map
+global-exclude *.map.gz
+global-exclude *.br
+global-exclude .DS_Store
+recursive-exclude * __pycache__

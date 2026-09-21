@@ -49,7 +49,7 @@ test("a file-offset read renders the window's own bytes", async ({ page }) => {
 
 test("filtering the type list narrows it and counts stay exact", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const types = panelByTitle(page, "Data types");
+  const types = panelByTitle(page, "Data Types");
   const total = state.types.length;
 
   await expect(types.getByText(`of ${total} types`, { exact: false })).toBeVisible();
@@ -177,8 +177,8 @@ test("function callers names link a function", async ({ page }) => {
 
 test("composition analysis opens the matching view", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const composition = panelByTitle(page, "Composition analysis");
-  const link = composition.getByRole("link", { name: "Open matching view" });
+  const composition = panelByTitle(page, "Composition Analysis");
+  const link = composition.getByRole("link", { name: "Open Matching View" });
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", /#\/matches\?function=\d+/);
   const topBinary = composition.locator("table.data-table a[href^='#/binaries/']").first();
@@ -208,7 +208,7 @@ test("composition analysis opens the matching view", async ({ page }) => {
 
 test("the binary details entry point links to a function", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const details = panelByTitle(page, "Binary details");
+  const details = panelByTitle(page, "Binary Details");
   const link = details.getByTitle("Open the function at this address");
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", /#\/(functions\/\d+|binaries\/\d+\/functions\?va=)/);
@@ -424,7 +424,7 @@ test("a gated scan panel carves without a prior fetch", async ({ page }) => {
 
 test("an artifact note round-trips through the panel", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const feedback = panelByTitle(page, "Agent feedback");
+  const feedback = panelByTitle(page, "Agent Feedback");
   const row = feedback.locator("table.table tbody tr").first();
 
   // The seeded scans carry no notes, so the row starts clean and the note

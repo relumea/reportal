@@ -1,0 +1,60 @@
+/* ── Diff ─────────────────────────────────────────────────────────── */
+
+.diff-table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.diff-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  font-weight: 600;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-strong);
+  padding: var(--space-2) var(--space-3);
+}
+
+.diff-table td {
+  padding: 0 var(--space-3);
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-line {
+  display: inline-block;
+  width: 3.5em;
+  padding-right: var(--space-2);
+  color: var(--text-faint);
+  text-align: right;
+  user-select: none;
+}
+
+.diff-row.diff-delete {
+  background: var(--diff-delete-soft);
+}
+
+.diff-row.diff-delete .diff-text {
+  color: var(--diff-delete);
+}
+
+.diff-row.diff-insert {
+  background: var(--diff-insert-soft);
+}
+
+.diff-row.diff-insert .diff-text {
+  color: var(--diff-insert);
+}
+
+.diff-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+

@@ -1,0 +1,7 @@
+/* The analyses status multi-select: one toggle per status, which fits a
+   toolbar row better than a multi-line list box. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}

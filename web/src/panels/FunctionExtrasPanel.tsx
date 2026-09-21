@@ -260,7 +260,7 @@ export function AnalysisStringsPanel({ analysisId }: { analysisId: number }): Re
 
   return (
     <Panel
-      title="Analysis strings"
+      title="Analysis Strings"
       subtitle="The whole list at once, as the hosted portal stores it; a revert puts the previous list back."
     >
       <StringsSection path={path} key={key} load={load} limit={1024} />
@@ -323,7 +323,7 @@ function CanonicalNamePanel({ functionId }: { functionId: number }): ReactNode {
 
   return (
     <Panel
-      title="Canonical name"
+      title="Canonical Name"
       subtitle="Rename to the candidate the store already recorded: a predicted name, else the newest rename. Never a guess."
     >
       <Toolbar>

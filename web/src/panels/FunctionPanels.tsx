@@ -918,7 +918,7 @@ function AiCommentsPanel({ functionId }: { functionId: number }): ReactNode {
     <AiArtifactPanel<AiCommentsPayload>
       functionId={functionId}
       kind="comments"
-      title="AI comments"
+      title="AI Comments"
       subtitle="Inline comments a model proposed for the decompilation."
       loading="Loading the AI comments"
       absentHint="No AI comments stored for this function. Generate them from the stored decompilation."
@@ -948,7 +948,7 @@ function AiTypeSuggestionsPanel({ functionId }: { functionId: number }): ReactNo
     <AiArtifactPanel<AiTypeSuggestionsPayload>
       functionId={functionId}
       kind="type-suggestions"
-      title="Type suggestions"
+      title="Type Suggestions"
       subtitle="Types a model proposed for the local variables."
       loading="Loading the type suggestions"
       absentHint="No type suggestions stored for this function. Generate them from the stored decompilation."
@@ -1383,7 +1383,7 @@ function AiDecompilationPanel({ functionId }: { functionId: number }): ReactNode
 
   return (
     <Panel
-      title="AI decompilation"
+      title="AI Decompilation"
       subtitle="A whole-function rewrite, the placeholders it still carries and the overrides that name them."
       actions={
         <>

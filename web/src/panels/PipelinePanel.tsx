@@ -229,7 +229,7 @@ export function PipelinePanel({
 
   return (
     <Panel
-      title="AI decompilation"
+      title="AI Decompilation"
       subtitle="The stored model-assisted run over this function: steps, artifacts and the commented source."
       actions={
         <>

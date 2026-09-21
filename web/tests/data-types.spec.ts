@@ -17,7 +17,7 @@ const NAMESPACED_POINTER = "WIN_HANDLE";
 const FUNCTION_TYPE = "NP_CALLBACK";
 
 function panelTypes(page: Page) {
-  return panelByTitle(page, "Data types");
+  return panelByTitle(page, "Data Types");
 }
 
 test("the kind filter narrows the type list", async ({ page }) => {
@@ -37,7 +37,7 @@ test("the kind filter narrows the type list", async ({ page }) => {
   await expect(
     entryCard.getByRole("link", { name: "NP_HEADER" }),
   ).toHaveAttribute("href", /search=NP_HEADER/);
-  await expect(types.locator(".code-scroll").first()).toHaveAttribute("title", "Click to copy");
+  await expect(types.locator(".code-block").first()).toHaveAttribute("title", "Click to copy");
   await types.getByRole("button", { name: /^enum: / }).click();
   await expect(types.getByRole("button", { name: /^typedef: / })).toHaveAttribute(
     "title",

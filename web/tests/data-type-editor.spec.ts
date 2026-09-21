@@ -18,7 +18,7 @@ const ENUM_NAME = "NP_FLAGS";
 const UNION_NAME = "NP_BLOCK";
 
 function panelTypes(page: Page) {
-  return panelByTitle(page, "Data types");
+  return panelByTitle(page, "Data Types");
 }
 
 function cardFor(page: Page, name: string) {

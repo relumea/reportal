@@ -1581,38 +1581,40 @@ def execute(conn: sqlite3.Connection, job: dict[str, Any]) -> dict[str, Any]:
                 payload = None
                 failure = f"{type(exc).__name__}: {exc}"
                 failure_exc = exc
+        duration_ms = int((_monotonic() - started) * 1000)
+        status = STATUS_FAILED if failure else STATUS_DONE
+        try:
+            observability.record_job(failed=bool(failure), duration_ms=duration_ms)
+            if failure_exc is not None:
+                _log_job_failure(
+                    job_id=job_id,
+                    kind=str(job["kind"]),
+                    binary_id=binary_id,
+                    duration_ms=duration_ms,
+                    error=failure[:200],
+                    exc=failure_exc,
+                )
+            elif duration_ms >= observability.SLOW_JOB_MS:
+                _log_job_slow(
+                    job_id=job_id,
+                    kind=str(job["kind"]),
+                    binary_id=binary_id,
+                    duration_ms=duration_ms,
+                )
+        except Exception:
+            # Metrics must not flip a finished job back to an unrecorded crash.
+            _log.exception(
+                "job metrics failed job_id=%s kind=%s binary_id=%s%s",
+                job_id,
+                job["kind"],
+                binary_id,
+                observability.request_id_suffix(),
+            )
     finally:
+        # The reset runs after the failure and slow lines above, so they
+        # still carry the submit request id.
         if request_id_token is not None:
             observability.reset_request_id(request_id_token)
-    duration_ms = int((_monotonic() - started) * 1000)
-    status = STATUS_FAILED if failure else STATUS_DONE
-    try:
-        observability.record_job(failed=bool(failure), duration_ms=duration_ms)
-        if failure_exc is not None:
-            _log_job_failure(
-                job_id=job_id,
-                kind=str(job["kind"]),
-                binary_id=binary_id,
-                duration_ms=duration_ms,
-                error=failure[:200],
-                exc=failure_exc,
-            )
-        elif duration_ms >= observability.SLOW_JOB_MS:
-            _log_job_slow(
-                job_id=job_id,
-                kind=str(job["kind"]),
-                binary_id=binary_id,
-                duration_ms=duration_ms,
-            )
-    except Exception:
-        # Metrics must not flip a finished job back to an unrecorded crash.
-        _log.exception(
-            "job metrics failed job_id=%s kind=%s binary_id=%s%s",
-            job_id,
-            job["kind"],
-            binary_id,
-            observability.request_id_suffix(),
-        )
     conn.execute(
         f"UPDATE {TABLE} SET status = ?, progress = ?, message = ?, result_json = ?,"
         " error = ?, finished_at = ? WHERE id = ?",

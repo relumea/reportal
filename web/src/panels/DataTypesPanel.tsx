@@ -390,7 +390,7 @@ export function DataTypesPanel({
 
   return (
     <Panel
-      title="Data types"
+      title="Data Types"
       subtitle="The editable type model of this binary: its structs, unions, enums, aliases and function types, plus the prototypes exported from the signature model."
       actions={
         <Toolbar>
