@@ -155,8 +155,9 @@ it is written out in full below.
    approving agent tools, is what moves the model from text producer to
    actuator.
 7. **Sample bytes to the sandbox (opt-in, bounded).**  `POST
-   /api/binaries/<id>/dynamic-execution` executes a stored sample, and it is the
-   only path in reportal that does.  Four guards hold before any process starts:
+   /api/binaries/<id>/dynamic-execution` detonates a stored sample; it is one
+   of two paths that execute one (the other is the debug session below).
+   Four guards hold before any process starts:
    the workspace opts in (`REPORTAL_SANDBOX=enabled` or `[sandbox] enabled =
    true`, `sandbox.require_enabled`), a runner is installed
    (`sandbox.require_runner`, else 503 `sandbox-unavailable`), the row has a file
@@ -478,8 +479,8 @@ path named.  None of these are demonstrated here.
   agent confirm gate, `auto_goal_worker` / `auto_llm_worker` apply writes when
   the run's `execute` is true.  Byte edits are length-preserving and checked
   against the live function bytes before a sibling patched binary is written;
-  that copy is not detonated here (boundary 7 stays the only sample execution
-  path).  `engine.test_source` still runs in the portal process under the
+  that copy is not detonated here (neither detonation nor a debug session
+  runs it).  `engine.test_source` still runs in the portal process under the
   operator OS user (boundary 9).
 - **A LAN bind drops the Host allowlist.**  `cli.serve` with a non-loopback
   `--host` requires auth (`cli._require_lan_auth`) and sets
