@@ -4580,7 +4580,7 @@ def function_history(function_id: int) -> Response:
 
 
 @router.post("/api/functions/{function_id}/history/{history_id}/revert")
-def revert_function_name(request: Request, function_id: int, history_id: int) -> Response:
+def revert_function_name(function_id: int, history_id: int) -> Response:
     """Restore the pre-rename name recorded by one history row of a function."""
     with contextlib.closing(_open()) as conn:
         if store.get_function(conn, function_id) is None:

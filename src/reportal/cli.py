@@ -8591,6 +8591,19 @@ def _print_hits(results: list[dict[str, Any]]) -> None:
         console.print(f"   {_snippet(str(hit['text']))}", markup=False)
 
 
+def _print_ingest_result(payload: dict[str, Any], log: journal.Journal, json_output: bool) -> None:
+    """Echo one ingest payload as JSON or a one-line summary, then the journal id."""
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        verb = "Already stored" if payload["duplicate"] else "Ingested"
+        console.print(
+            f"[green]{verb}[/green] document {payload['id']}: {payload['title']}"
+            f" ({payload['chunk_count']} chunks, {payload['size']} bytes)"
+        )
+    _print_journal_action(log, json_output)
+
+
 @app.command()
 def ingest(
     binary_id: int = typer.Argument(..., help="Binary id to scope the document to"),
@@ -8634,15 +8647,7 @@ def ingest(
             journal.journaled_ingest(conn, log, payload)
         payload = log.attach(payload)
 
-    if json_output:
-        typer.echo(json.dumps(payload))
-    else:
-        verb = "Already stored" if payload["duplicate"] else "Ingested"
-        console.print(
-            f"[green]{verb}[/green] document {payload['id']}: {payload['title']}"
-            f" ({payload['chunk_count']} chunks, {payload['size']} bytes)"
-        )
-    _print_journal_action(log, json_output)
+    _print_ingest_result(payload, log, json_output)
 
 
 @app.command()
@@ -8688,15 +8693,7 @@ def ingest_url(
             journal.journaled_ingest(conn, log, payload)
         payload = log.attach(payload)
 
-    if json_output:
-        typer.echo(json.dumps(payload))
-    else:
-        verb = "Already stored" if payload["duplicate"] else "Ingested"
-        console.print(
-            f"[green]{verb}[/green] document {payload['id']}: {payload['title']}"
-            f" ({payload['chunk_count']} chunks, {payload['size']} bytes)"
-        )
-    _print_journal_action(log, json_output)
+    _print_ingest_result(payload, log, json_output)
 
 
 @app.command()
@@ -10768,7 +10765,6 @@ def crypto_scan(
         return
     _print_journal_action(log, json_output)
     _print_confidence_findings(
-        binary_id,
         result,
         title=f"binary {binary_id}",
         empty="No crypto indicators.",
@@ -11353,7 +11349,6 @@ def protocols_command(
 
 
 def _print_confidence_findings(
-    binary_id: int,
     result: dict[str, Any],
     *,
     title: str,
@@ -11390,7 +11385,6 @@ def _print_confidence_findings(
 def _print_behavior(binary_id: int, domain: str, result: dict[str, Any]) -> None:
     """Print one behavior scan's confidence counts and findings table."""
     _print_confidence_findings(
-        binary_id,
         result,
         title=f"binary {binary_id} {domain}",
         empty=f"No {domain} behavior found.",

@@ -232,9 +232,7 @@ class TestRegisterFamily:
         assert family["name"] == nfc
         assert store.find_family_by_name(conn, nfd) is not None
         with pytest.raises(families.DuplicateFamilyError, match="already exists"):
-            families.register_family(
-                conn, name=nfc, reference_binary_id=binary_id, engine=stub
-            )
+            families.register_family(conn, name=nfc, reference_binary_id=binary_id, engine=stub)
 
     def test_duplicate_name_is_rejected_case_insensitively(
         self, conn: sqlite3.Connection, tmp_path: Path

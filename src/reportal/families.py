@@ -224,9 +224,7 @@ def register_family(
     if store.find_family_by_name(conn, cleaned) is not None:
         raise DuplicateFamilyError(f"a family named {cleaned!r} already exists")
     bundle = derive_bundle(conn, binary_id=reference_binary_id, engine=engine)
-    alias_list = [
-        unicodedata.normalize("NFC", alias.strip()) for alias in aliases if alias.strip()
-    ]
+    alias_list = [unicodedata.normalize("NFC", alias.strip()) for alias in aliases if alias.strip()]
     family_id = store.add_family(
         conn,
         name=cleaned,

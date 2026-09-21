@@ -187,9 +187,7 @@ class TestEdges:
         assert function_extras.normalize_callee(nfd) == nfc
         ids = _seed(tmp_path, monkeypatch)
         with contextlib.closing(store.connect(ids["db"])) as conn:
-            first = function_extras.add_edge(
-                conn, function_id=ids["functions"][0], callee=nfd
-            )
+            first = function_extras.add_edge(conn, function_id=ids["functions"][0], callee=nfd)
             second = function_extras.add_edge(
                 conn, function_id=ids["functions"][0], callee=nfc, note="same"
             )
