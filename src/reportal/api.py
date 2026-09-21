@@ -61,6 +61,7 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    debug,
     decompiler_scripts,
     details,
     diffview,
@@ -12460,6 +12461,80 @@ def get_analysis_sandbox_status(analysis_id: int) -> Response:
                 404, error="analysis not found", detail=f"no analysis with id {analysis_id}"
             )
         return json_response(sandbox.status_payload(conn, analysis_id))
+
+
+def debug_failure(exc: debug.DebugError) -> Response:
+    """Map a debug refusal onto its status and error name."""
+    if exc.code == debug.ERROR_DISABLED:
+        return json_error(403, error=exc.code, detail=exc.detail)
+    if exc.code == debug.ERROR_UNAVAILABLE:
+        return json_error(503, error=exc.code, detail=exc.detail)
+    if exc.code == debug.ERROR_NO_SESSION or exc.code.endswith("not found"):
+        return json_error(404, error=exc.code, detail=exc.detail)
+    return json_error(400, error=exc.code, detail=exc.detail)
+
+
+@router.post("/api/binaries/{binary_id}/debug-session")
+def run_binary_debug(
+    binary_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Run a read-only debug probe over a stored binary and store the transcript.
+
+    Body ``{"timeout": seconds, "breakpoints": [va, ...]}`` narrows the caps.
+    Refused unless the workspace opted in (403 `debug-disabled`), a backend is
+    installed (503 `debug-unavailable`) and the bounds are inside the caps (400
+    `invalid-debug`); 404 `binary not found`, 400 `binary not on disk`.  A
+    second POST while a session is still `running` returns that live row (202).
+    """
+    raw_timeout = body.get("timeout")
+    if raw_timeout is not None and (
+        isinstance(raw_timeout, bool) or not isinstance(raw_timeout, int)
+    ):
+        return json_error(400, error=debug.ERROR_INVALID, detail="timeout must be an integer")
+    raw_points = body.get("breakpoints")
+    points: list[int] | None = None
+    if raw_points is not None:
+        if not isinstance(raw_points, list) or any(
+            isinstance(item, bool) or not isinstance(item, int) for item in raw_points
+        ):
+            return json_error(
+                400, error=debug.ERROR_INVALID, detail="breakpoints must be a list of integers"
+            )
+        points = list(raw_points)
+    with contextlib.closing(_open()) as conn:
+        try:
+            session = debug.run_session(conn, binary_id, timeout=raw_timeout, breakpoints=points)
+        except debug.DebugError as exc:
+            return debug_failure(exc)
+    status = 202 if session.get("status") == debug.STATUS_RUNNING else 201
+    return json_response(session, status=status)
+
+
+@router.get("/api/binaries/{binary_id}/debug-session")
+def get_binary_debug(binary_id: int) -> Response:
+    """The newest debug session of a binary's newest analysis; 404 `no-debug-session`."""
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        session = None if analysis_id is None else debug.latest_session(conn, analysis_id)
+        payload = debug.status_payload(conn, analysis_id or 0)
+    if session is None:
+        return json_error(
+            404,
+            error=debug.ERROR_NO_SESSION,
+            detail=f"binary {binary_id} has no debug session",
+        )
+    return json_response({**session, "debug": payload})
+
+
+@router.get("/api/binaries/{binary_id}/debug-session/status")
+def get_binary_debug_status(binary_id: int) -> Response:
+    """Whether this binary can be debugged, by which backend, and its last session."""
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        payload = debug.status_payload(conn, analysis_id or 0)
+    return json_response({"binary_id": binary_id, **payload})
 
 
 # ── FLIRT signatures ───────────────────────────────────────────────

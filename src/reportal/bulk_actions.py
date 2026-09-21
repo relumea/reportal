@@ -81,6 +81,7 @@ _DOCUMENTS_OF_BINARY = (
 # makes the reversed replay insert parents first and satisfy the foreign keys.
 BINARY_DELETE_SNAPSHOTS: tuple[tuple[str, str], ...] = (
     ("sandbox_runs", "binary_id = ?"),
+    ("debug_sessions", "binary_id = ?"),
     ("collection_binaries", "binary_id = ?"),
     ("data_type_history", "binary_id = ?"),
     ("data_types", "binary_id = ?"),

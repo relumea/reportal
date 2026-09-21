@@ -175,6 +175,15 @@ it is written out in full below.
    the exit status, the duration, bounded stdout/stderr tails and the files the
    sample wrote) and journaled, and a run that outlives its timeout is killed by
    process group.
+   A debug session (`POST /api/binaries/<id>/debug-session`, `debug.py`) controls
+   the stored sample under the debugger, so it carries boundary 7 verbatim
+   (opt-in via `REPORTAL_DEBUG` or `[debug] enabled`, an installed backend, a
+   file on disk, caps with a wall-clock timeout), plus two debugger-only
+   residuals: an attached process can be anti-debug aware and change behavior,
+   and a breakpoint trace is capped (`MAX_BREAKPOINTS`, `MAX_TRANSCRIPT_BYTES`)
+   rather than unbounded. The probe only reads (launch stopped, breakpoints,
+   register and memory reads, disconnect); nothing is stepped, continued or
+   written.
 8. **Firmware bytes to the carve.**  `firmware.py` reads the stored file and
    looks for magics; it writes nothing itself, and
    `api.firmware_extract_binary` writes carved regions into temporary files

@@ -47,6 +47,7 @@ from reportal import (
     composition,
     conversations,
     data_types,
+    debug,
     decompiler_scripts,
     details,
     diffview,
@@ -5494,6 +5495,44 @@ def _tool_get_sandbox_status(arguments: dict[str, Any]) -> dict[str, Any]:
         return sandbox.status_payload(conn, analysis_id)
 
 
+def _tool_run_debug_session(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    timeout = _arg_optional_int(arguments, "timeout", 0) or None
+    raw_points = arguments.get("breakpoints")
+    points: list[int] | None = None
+    if raw_points is not None:
+        if not isinstance(raw_points, list) or any(
+            isinstance(item, bool) or not isinstance(item, int) for item in raw_points
+        ):
+            raise ToolError(debug.ERROR_INVALID, "breakpoints must be a list of integers")
+        points = list(raw_points)
+    with contextlib.closing(_open()) as conn:
+        try:
+            return debug.run_session(conn, binary_id, timeout=timeout, breakpoints=points)
+        except debug.DebugError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
+def _tool_get_debug_session(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+        session = None if analysis_id is None else debug.latest_session(conn, analysis_id)
+        status = debug.status_payload(conn, analysis_id or 0)
+    if session is None:
+        raise ToolError(debug.ERROR_NO_SESSION, f"binary {binary_id} has no debug session")
+    return {**session, "debug": status}
+
+
+def _tool_get_debug_status(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id) or 0
+        return debug.status_payload(conn, analysis_id)
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -8653,6 +8692,42 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_run_sandbox_detonation,
+        ),
+        Tool(
+            "get_debug_status",
+            "Whether this install can run a read-only debug session (the opt-in and the"
+            " installed backend) and when it last did.  Read-only.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _READ,
+            _tool_get_debug_status,
+        ),
+        Tool(
+            "get_debug_session",
+            "The newest read-only debug transcript of a binary's newest analysis.  Read-only.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _READ,
+            _tool_get_debug_session,
+        ),
+        Tool(
+            "run_debug_session",
+            "Run a read-only debug probe over a stored sample and store the transcript."
+            "  Off by default: refused unless the workspace opts in and a backend is"
+            " installed; the probe only reads (launch stopped, breakpoints, register"
+            " and memory reads, disconnect).",
+            _object(
+                {
+                    "binary_id": _int("Binary id."),
+                    "timeout": _int("Wall-clock seconds (1 to 120)."),
+                    "breakpoints": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "description": "Breakpoint addresses.",
+                    },
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_run_debug_session,
         ),
         Tool(
             "list_artifact_ratings",

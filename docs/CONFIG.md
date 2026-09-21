@@ -34,6 +34,13 @@ returned, only its presence and length.
 |---------|-------------|---------------|------|---------|------------|
 | `auth.required` | `REPORTAL_AUTH` | `[auth] required` | flag | `off` | put every /api route behind an Authorization bearer token |
 
+## [debug]
+
+| Setting | Environment | Workspace key | Kind | Default | What it is |
+|---------|-------------|---------------|------|---------|------------|
+| `debug.backend` | `REPORTAL_DEBUG_BACKEND` | `[debug] backend` | text | `the first installed backend` | the debug backend a session uses |
+| `debug.enabled` | `REPORTAL_DEBUG` | `[debug] enabled` | flag | `off` | allow read-only debug sessions under an installed backend |
+
 ## [deployment]
 
 | Setting | Environment | Workspace key | Kind | Default | What it is |

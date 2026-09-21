@@ -773,6 +773,7 @@ _FUNCTIONS_OF_ANALYSIS = "SELECT id FROM functions WHERE analysis_id = ?"
 # parents, so the reversed replay inserts the analysis before its functions.
 ANALYSIS_DELETE_SNAPSHOTS: tuple[tuple[str, str], ...] = (
     ("sandbox_runs", "analysis_id = ?"),
+    ("debug_sessions", "analysis_id = ?"),
     ("scans", "analysis_id = ?"),
     (analysis_log.TABLE, "analysis_id = ?"),
     ("function_signatures", f"function_id IN ({_FUNCTIONS_OF_ANALYSIS})"),

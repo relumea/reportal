@@ -44,6 +44,7 @@ under the hyphenated heading.
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
 - Sandbox: [sandbox-disabled](#sandbox-disabled), [sandbox-unavailable](#sandbox-unavailable), [invalid-sandbox](#invalid-sandbox)
+- Debug: [debug-disabled](#debug-disabled), [debug-unavailable](#debug-unavailable), [invalid-debug](#invalid-debug), [no-debug-session](#no-debug-session)
 - Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [invite-not-found](#invite-not-found), [invite-used](#invite-used), [invite-expired](#invite-expired), [signup-disabled](#signup-disabled), [quota-exceeded](#quota-exceeded), [scope-forbidden](#scope-forbidden), [invalid-api-key](#invalid-api-key), [api-key-not-found](#api-key-not-found), [api-key-limit](#api-key-limit)
 - Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation), [auto-busy](#auto-busy), [invalid-notification-query](#invalid-notification-query)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
@@ -913,6 +914,31 @@ without one.
 `400`. A detonation bound is outside its cap: `timeout` must be 1 to 60 seconds,
 `memory_mb` 64 to 4096, and both must be integers. Capturing less than the cap is
 allowed; raising it is not.
+
+### debug-disabled
+
+`403`. A debug session was asked for while the workspace has not opted in. Set
+`REPORTAL_DEBUG=enabled` or `[debug] enabled = true`, which is the guard that
+keeps reportal from controlling a process by default.
+
+### debug-unavailable
+
+`503`. The workspace opted in but no usable debug backend is installed (or the
+configured one, `REPORTAL_DEBUG_BACKEND` or `[debug] backend`, is not). Install
+lldb (`apt install lldb`) or register a backend through the
+`reportal.debug_backends` entry-point group; reportal never probes a sample
+without one.
+
+### invalid-debug
+
+`400`. A debug bound is outside its cap: `timeout` must be 1 to 120 seconds, at
+most 64 breakpoints per session, and both the timeout and every breakpoint must
+be integers.
+
+### no-debug-session
+
+`404`. A binary has no stored debug session yet. Run one first with
+`POST /api/binaries/<id>/debug-session` (or `reportal debug-session`).
 
 ### invalid-team
 

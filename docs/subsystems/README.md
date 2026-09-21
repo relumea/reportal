@@ -41,6 +41,7 @@ module, when a module is owned twice, or when a module is owned by no page.
 | [analytics.md](analytics.md) | the time-series analytics, activity and notification feeds | `analytics.py`, `activity.py`, `notifications.py` |
 | [operations.md](operations.md) | backup and restore, pre-flight readiness and the PDF report | `backup.py`, `doctor.py`, `pdf.py` |
 | [sandbox.md](sandbox.md) | the guarded sample detonation seam: the opt-in, the runners and the run ledger | `sandbox.py` |
+| [debug.md](debug.md) | the read-only live-debugger seam: the opt-in, the backends and the session ledger | `debug.py` |
 
 ## See also
 

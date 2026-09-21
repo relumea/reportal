@@ -259,7 +259,8 @@ The kinds are `SCAN_KIND_TRIAGE`, `SCAN_KIND_REPORT`, `SCAN_KIND_STRUCTS`, `SCAN
 `SCAN_KIND_DETECT`, `SCAN_KIND_FUNCTION_TRIAGE`, `SCAN_KIND_RELATED`,
 `SCAN_KIND_PE_INFO`, `SCAN_KIND_FILETYPE`, `SCAN_KIND_COMPOSITION`,
 `SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`, `SCAN_KIND_BENCHMARK`,
-`SCAN_KIND_FIRMWARE`, `SCAN_KIND_GOBUILDINFO`, `SCAN_KIND_FLIRT`); `list_scans`
+`SCAN_KIND_FIRMWARE`, `SCAN_KIND_GOBUILDINFO`, `SCAN_KIND_FLIRT`,
+`SCAN_KIND_DEBUG_SESSION`); `list_scans`
 returns each row's recorded inputs and leaves the payload out, and the unique index
 makes `set_scan` an upsert, so a re-run refreshes the stored dossier, report or
 struct recovery instead of adding a row.  A scan hangs off an analysis, so
@@ -595,4 +596,14 @@ revert removes the record.  A binary or analysis delete snapshots the table with
 the rest of the cascade, and `journal.snapshot_rows` treats a table the schema
 has not created yet as empty rather than failing, which is what lets a database
 where nothing was ever detonated take the same path.
+
+`debug_sessions` is the live-debug ledger, owned by `debug.py` and created
+lazily by its own `ensure_schema`.  One row is one session: the `analysis_id`
+and `binary_id` it belongs to, the `sha256` it was run from, the `backend` and
+the exact `argv_json`, the `caps_json` in force, the terminal `status`
+(`running`, `finished`, `failed`), the `transcript_json` (one entry per DAP
+exchange), `notes_json` and the times.  The row is written as `running` before
+the probe starts and updated with the transcript after, and the transcript is
+stored as the `debug-session` scan, so the whole session is one journaled
+action and a revert removes the record.
 

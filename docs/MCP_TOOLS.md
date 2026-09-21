@@ -2,7 +2,7 @@
 
 # MCP tool catalog
 
-The 267 tools the MCP registry exposes (124 read-only, 143 destructive).
+The 270 tools the MCP registry exposes (126 read-only, 144 destructive).
 `reportal mcp` serves them over stdio JSON-RPC; `POST /mcp` and `GET /mcp`
 serve the same registry over HTTP. A read-only tool runs at once; a
 destructive tool pauses an agent run for confirmation. Names must be unique
@@ -43,6 +43,8 @@ registry, its registration rules and the agent loop that drives it are on
 | `get_crypto_scan` | Return a binary's stored crypto scan; fails when none was stored. |
 | `get_data_type_functions` | The functions that use one data type of an analysis's binary, from the stored reference index. |
 | `get_data_type_history` | List a data type's edit history, newest first, with each entry's per-field diff; a deleted type's history stays listed. |
+| `get_debug_session` | The newest read-only debug transcript of a binary's newest analysis. Read-only. |
+| `get_debug_status` | Whether this install can run a read-only debug session (the opt-in and the installed backend) and when it last did. Read-only. |
 | `get_decompilation` | Return a function's stored decompilation, else compute one live through rebrew without storing it. |
 | `get_details_status` | Report which scans the binary-detail reads have, and what fills a gap. |
 | `get_detect_scan` | Return a binary's stored family detection; fails when none was run. |
@@ -237,6 +239,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `run_composition` | Build a binary's composition analysis from the stored matches (matched counts, name-source and quality breakdowns, the hosted categories and the per-binary rollup) and store it. Stored-only: it runs no matching and no engine. binary_ids/collection_ids narrow the candidate corpus the same way the match settings sheet does. |
 | `run_conversation_agent` | Run one agent turn in a conversation: the model may call the local MCP tools and then answer. A read-only tool runs at once; a destructive one pauses the run for confirm_conversation_run. |
 | `run_crypto_scan` | Scan a binary for crypto constants and APIs and store the result. |
+| `run_debug_session` | Run a read-only debug probe over a stored sample and store the transcript. Off by default: refused unless the workspace opts in and a backend is installed; the probe only reads (launch stopped, breakpoints, register and memory reads, disconnect). |
 | `run_detect` | Match a binary against the registered families and store the detection: every matched signal with its confidence and evidence. |
 | `run_external_source` | Run one external source for an analysis and store its answer; journaled. The offline source reads stored rows, a remote one needs the workspace opt-in and a configured key. |
 | `run_filetype` | Detect a binary's file type, packer and protector signatures from the engine's pe-info, fingerprints, imports and strings, and store the result. |

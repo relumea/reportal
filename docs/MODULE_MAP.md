@@ -46,6 +46,7 @@ the reading order across these modules; the
 | `credits.py` | [tenancy-billing](subsystems/tenancy-billing.md) | What each AI task costs a tenant, in credits. |
 | `customer_cli.py` | [cli](subsystems/cli.md) | Customer CLI: the platform surface of reportal, over HTTP only. |
 | `data_types.py` | [symbols-and-types](subsystems/symbols-and-types.md) | Editable data types: the local type model, its C rendering and its indices. |
+| `debug.py` | [debug](subsystems/debug.md) | Read-only live-debug sessions over the Debug Adapter Protocol, off by default. |
 | `decompiler_scripts.py` | [ai-artifacts](subsystems/ai-artifacts.md) | Decompiler round-trip scripts: stored renames as runnable tool scripts. |
 | `details.py` | [binary-detail](subsystems/binary-detail.md) | The binary-detail reads the hosted portal derives from a scan. |
 | `diffing.py` | [diff-and-lineage](subsystems/diff-and-lineage.md) | Line-level alignment of two listings for the portal's Match / Diff surface. |

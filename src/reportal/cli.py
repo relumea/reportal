@@ -970,6 +970,71 @@ def sandbox_command(
         console.print(f"  [yellow]{note}[/yellow]")
 
 
+@app.command("debug-session")
+def debug_session_command(
+    binary_id: int = typer.Argument(..., help="Stored sample to probe under the debugger"),
+    timeout: int | None = typer.Option(None, "--timeout", help="Wall-clock seconds (1 to 120)"),
+    breakpoints: list[int] | None = typer.Option(
+        None, "--breakpoint", help="Breakpoint address (repeatable)"
+    ),
+    report: bool = typer.Option(
+        False, "--report", help="Print the stored session instead of running"
+    ),
+    status: bool = typer.Option(False, "--status", help="Print whether a session is possible here"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Run a read-only debug probe over a stored binary and store the transcript.
+
+    Off by default: the workspace opts in with REPORTAL_DEBUG=enabled or
+    `[debug] enabled = true`, a backend must be installed, and the probe only
+    reads (launch stopped, breakpoints, register and memory reads, disconnect).
+    `--report` prints the last stored session and `--status` says whether a
+    session is possible here; the two flags are mutually exclusive.
+    """
+    from reportal import debug
+
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if status and report:
+        _fail("--report and --status are mutually exclusive", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        _cli_require_binary(conn, binary_id, json_output)
+        analysis_id = store.latest_analysis_for_binary(conn, binary_id) or 0
+        if status:
+            payload = debug.status_payload(conn, analysis_id)
+        elif report:
+            stored = None if not analysis_id else debug.latest_session(conn, analysis_id)
+            if stored is None:
+                _fail(f"binary {binary_id} has no debug session", json_output)
+            payload = stored
+        else:
+            try:
+                payload = debug.run_session(
+                    conn, binary_id, timeout=timeout, breakpoints=breakpoints
+                )
+            except debug.DebugError as exc:
+                _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if status:
+        console.print(
+            f"enabled: {payload['enabled']}, backend: {payload['backend'] or 'none'},"
+            f" sessions: {payload['sessions']}"
+        )
+        for entry in payload["backends"]:
+            console.print(f"  {entry['name']}: {'available' if entry['available'] else 'missing'}")
+        return
+    console.print(
+        f"[bold]{payload['status']}[/bold] backend {payload['backend']} session {payload['id']}"
+    )
+    for entry in payload["transcript"]:
+        console.print(f"  {entry.get('request')}: {'ok' if entry.get('success') else 'failed'}")
+    for note in payload["notes"]:
+        console.print(f"  [yellow]{note}[/yellow]")
+
+
 # ── activity and feedback ──────────────────────────────────────────
 
 

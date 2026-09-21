@@ -124,6 +124,9 @@ SCAN_KIND_GOBUILDINFO = "gobuildinfo"
 # (:mod:`reportal.flirt_sigs`).  The reading is a catalog lookup, not an engine
 # call, so it is stored like any other scan and never runs rebrew.
 SCAN_KIND_FLIRT = "flirt"
+# A read-only live-debug transcript (:mod:`reportal.debug`).  The session
+# controls the sample under the debugger, so it is opt-in like detonation.
+SCAN_KIND_DEBUG_SESSION = "debug-session"
 
 # Per-section byte coverage is reportal's own metric over the stored function
 # table and the stored `pe-info` section table.  The hosted portal publishes no
