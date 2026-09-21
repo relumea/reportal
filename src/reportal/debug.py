@@ -790,6 +790,7 @@ def _probe_dap(
                         "success": bool(memory_answer.get("success", True)),
                         "address": instruction_pointer,
                         "data": str(memory_answer.get("body", {}).get("data") or ""),
+                        "encoding": "base64",
                     }
                 )
         for point in points:
@@ -1036,7 +1037,13 @@ def _probe_mi(
             if marker in text:
                 data = text.split(marker, 1)[1].split('"', 1)[0]
             transcript.append(
-                {"request": "readMemory", "success": ok, "address": frame_addr, "data": data}
+                {
+                    "request": "readMemory",
+                    "success": ok,
+                    "address": frame_addr,
+                    "data": data,
+                    "encoding": "hex",
+                }
             )
         for point in points:
             transcript.append(

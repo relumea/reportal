@@ -4584,6 +4584,25 @@ export function DebugPanel({ binaryId }: { binaryId: number }): ReactNode {
   );
 }
 
+/** A memory window arrives base64 (DAP) or raw hex (GDB MI); render hex either way. */
+function memoryHex(data: string, encoding?: string): string {
+  if (encoding === "hex" || /^[0-9a-fA-F\s]+$/.test(data)) {
+    const compact = data.replace(/\s+/g, "");
+    if (/^[0-9a-fA-F]+$/.test(compact) && compact.length % 2 === 0) {
+      return compact
+        .toLowerCase()
+        .replace(/../g, (pair) => `${pair} `)
+        .trim();
+    }
+  }
+  try {
+    const bytes = Uint8Array.from(atob(data), (char) => char.charCodeAt(0));
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(" ");
+  } catch {
+    return data;
+  }
+}
+
 /** One stored debug session: the entry stop, the registers and the memory window. */
 function DebugReport({ session }: { session: DebugSession }): ReactNode {
   const byRequest = new Map(session.transcript.map((entry) => [entry.request, entry]));
@@ -4620,7 +4639,10 @@ function DebugReport({ session }: { session: DebugSession }): ReactNode {
         <Muted>{registers.register_count - 12} more registers in the stored transcript.</Muted>
       ) : null}
       {memory?.data ? (
-        <CodeBlock text={`[${memory.address}] base64: ${memory.data}`} title="memory window" />
+        <CodeBlock
+          text={`[${memory.address}] ${memoryHex(memory.data, memory.encoding)}`}
+          title="memory window"
+        />
       ) : null}
       {session.notes.map((note: string) => (
         <Muted key={note}>{note}</Muted>

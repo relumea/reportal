@@ -2464,6 +2464,7 @@ export interface DebugTranscriptEntry {
   register_count?: number;
   address?: string;
   data?: string;
+  encoding?: string;
   note?: string;
 }
 
