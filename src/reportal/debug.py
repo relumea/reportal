@@ -633,7 +633,10 @@ def probe_binary(
     """
     resolved_caps = caps or requested_caps()
     chosen = backend or require_backend()
-    points = [int(point) for point in (breakpoints or [])]
+    try:
+        points = [int(point) for point in (breakpoints or [])]
+    except (TypeError, ValueError) as exc:
+        raise DebugError(ERROR_INVALID, f"breakpoints must be integers: {exc}") from exc
     if len(points) > resolved_caps.max_breakpoints:
         raise DebugError(
             ERROR_INVALID, f"at most {resolved_caps.max_breakpoints} breakpoints per session"
@@ -664,14 +667,17 @@ def _probe_dap(
     argv = [executable]
     transcript: list[dict[str, Any]] = []
     notes: list[str] = []
-    process = subprocess.Popen(
-        argv,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        env={"PATH": "/usr/bin:/bin"},
-    )
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+    except OSError as exc:
+        raise DebugError(ERROR_INVALID, f"the debug backend could not be started: {exc}") from exc
     try:
         assert process.stdin is not None and process.stdout is not None
         reader = _DapReader(process.stdout, MAX_TRANSCRIPT_BYTES, resolved_caps.timeout_seconds)
@@ -1030,14 +1036,17 @@ def _probe_mi(
     argv = [executable, "-q", "--interpreter=mi2", str(sample)]
     transcript: list[dict[str, Any]] = []
     notes: list[str] = []
-    process = subprocess.Popen(
-        argv,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        env={"PATH": "/usr/bin:/bin"},
-    )
+    try:
+        process = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            env={"PATH": "/usr/bin:/bin"},
+        )
+    except OSError as exc:
+        raise DebugError(ERROR_INVALID, f"gdb could not be started: {exc}") from exc
     try:
         assert process.stdin is not None and process.stdout is not None
         timeout_s = float(caps.timeout_seconds)

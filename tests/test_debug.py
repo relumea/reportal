@@ -842,3 +842,232 @@ class TestProbeDispatch:
             assert analysis_id is not None
             session = debug.latest_session(conn, analysis_id)
             assert session is not None and session["status"] == debug.STATUS_FAILED
+
+
+class TestDebugErrorBranches:
+    def test_unreadable_workspace_logs_and_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv(debug.ENABLED_ENV, raising=False)
+        (tmp_path / "reportal.toml").write_text("this is not [toml\n")
+        monkeypatch.chdir(tmp_path)
+        with caplog.at_level("WARNING", logger="reportal.debug"):
+            assert debug.enabled() is False
+        assert any("falls back to off" in r.message for r in caplog.records)
+
+    def test_workspace_without_marker_disables(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(debug.ENABLED_ENV, raising=False)
+        monkeypatch.chdir(tmp_path)
+        assert debug.enabled() is False
+        assert debug.configured_backend_name() == ""
+
+    def test_unknown_backend_name_is_refused(self) -> None:
+        from reportal.plugins import RegistryError
+
+        with pytest.raises(RegistryError):
+            debug.unregister_backend("no-such-backend")
+
+    def test_configured_but_missing_backend_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.BACKEND_ENV, "no-such-backend")
+        assert debug.available_backend() is None
+
+    def test_first_installed_backend_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(debug.BACKEND_ENV, raising=False)
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/x")
+        assert debug.available_backend() is not None
+        assert debug.require_backend() is not None
+
+    def test_no_installed_backend_is_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(debug.BACKEND_ENV, raising=False)
+        monkeypatch.setattr(debug.Backend, "path", lambda self: None)
+        assert debug.available_backend() is None
+        assert "no debug backend" in debug.unavailable_detail()
+
+    def test_dap_reader_refuses_oversize_frame(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        body = b"x" * 10
+        blob = b"Content-Length: 10\r\n\r\n" + body
+        chunks = [blob]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        reader = debug._DapReader(_FakePipe(b""), 5, 5.0)
+        with pytest.raises(debug.DebugError) as caught:
+            reader.read_message()
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_dap_reader_refuses_bad_json(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        body = b"not json!!"
+        blob = b"Content-Length: 10\r\n\r\n" + body
+        chunks = [blob]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        reader = debug._DapReader(_FakePipe(b""), 65536, 5.0)
+        with pytest.raises(debug.DebugError) as caught:
+            reader.read_message()
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_dap_reader_times_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: ([], [], []))
+        reader = debug._DapReader(_FakePipe(b""), 65536, 0.01)
+        with pytest.raises(debug.DebugError) as caught:
+            reader.read_message()
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_dap_response_with_wrong_seq_is_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        def frame(payload: dict[str, object]) -> bytes:
+            import json as _json
+
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        blob = frame({"type": "response", "request_seq": 99, "success": True}) + frame(
+            {"type": "response", "request_seq": 1, "success": True}
+        )
+        chunks = [blob]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        reader = debug._DapReader(_FakePipe(b""), 65536, 5.0)
+        assert reader.read_response(1)["request_seq"] == 1
+
+    def test_dap_response_with_bad_type_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        def frame(payload: dict[str, object]) -> bytes:
+            import json as _json
+
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        chunks = [frame({"type": "request", "command": "x"})]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        reader = debug._DapReader(_FakePipe(b""), 65536, 5.0)
+        with pytest.raises(debug.DebugError):
+            reader.read_response(1)
+
+    def test_mi_result_with_no_response_line(self) -> None:
+        ok, text = debug._mi_result(["~output only"])
+        assert (ok, text) == (False, "")
+
+    def test_mi_wait_rejects_an_oversized_answer(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        blob = b'x\n*stopped,reason="breakpoint-hit"\n(gdb)\n'
+        chunks = [blob]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        with pytest.raises(debug.DebugError):
+            debug._mi_wait_for_stop(_FakePipe(b""), 1, 5.0, marker="breakpoint-hit")
+
+    def test_run_session_reuses_a_live_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("lldb-dap", "lldb-dap"))
+        db = _db(tmp_path, "live.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            session_id, _ = debug.start_session(
+                conn,
+                analysis_id=analysis_id,
+                binary_id=binary_id,
+                sha256="d" * 64,
+                backend="lldb-dap",
+                argv=["lldb-dap"],
+                caps=debug.requested_caps(),
+            )
+            assert debug.run_session(conn, binary_id)["id"] == session_id
+
+
+class TestProbeFailureBranches:
+    def test_dap_probe_refuses_an_invalid_message(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os as _os
+
+        def frame(payload: dict[str, object]) -> bytes:
+            import json as _json
+
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        blob = frame({"type": "response", "request_seq": 1, "success": True}) + frame(
+            {"type": "bogus"}
+        )
+        chunks = [blob]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = _FakePipe(b"")
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_dap_probe_maps_oserror_to_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(*args: object, **kwargs: object) -> object:
+            raise OSError("nope")
+
+        monkeypatch.setattr("subprocess.Popen", boom)
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_mi_probe_maps_oserror_to_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(*args: object, **kwargs: object) -> object:
+            raise OSError("nope")
+
+        monkeypatch.setattr("subprocess.Popen", boom)
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/gdb")
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"))
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_mi_probe_rejects_bad_breakpoints(self, tmp_path: Path) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError):
+            debug.probe_binary(
+                sample,
+                backend=debug.Backend("gdb", "gdb"),
+                breakpoints=["x"],  # type: ignore[list-item]
+            )
