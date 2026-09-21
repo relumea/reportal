@@ -231,6 +231,16 @@ and `delete_graph` are the CRUD the graph module and the routes use, and each
 row's parsed `meta` is the JSON object its builder wrote (a node's VA, status
 or chunk count, and the `truncated` flag on the binary node).
 
+`sigset` and `flirt_scan` are owned by `flirt_sigs.py` (created through
+`store.open_db` via `flirt_sigs.ensure_schema`), not by the engine.  `sigset` is
+the global catalog of compiled `.sig` files under `REPORTAL_FLIRT_SIGS_DIR`: one
+row per relative path with arch, family, source, content hash, size, pattern
+count and an `enabled` flag.  `flirt_scan` caches one binary's match payload
+under `(binary_sha256, sigset_key, arch)`, where `sigset_key` digests the enabled
+blobs of that architecture so a catalog refresh never serves a stale reading.
+Neither table is tenant-scoped; response disclosure scopes what a tenant may
+see.  The analysis-scoped `flirt` scan is the durable copy the GET routes serve.
+
 `scans` stores one result per `(analysis_id, kind)` pair, beside the inputs the
 caller named when it ran (`params_json`, an object: a decompiler, a severity
 floor, the other binary of a comparison).  The result is stored exactly as the
@@ -245,7 +255,8 @@ The kinds are `SCAN_KIND_TRIAGE`, `SCAN_KIND_REPORT`, `SCAN_KIND_STRUCTS`, `SCAN
 `SCAN_KIND_ANTI_ANALYSIS`, `SCAN_KIND_OBFUSCATION`, `SCAN_KIND_LINEAGE`,
 `SCAN_KIND_DETECT`, `SCAN_KIND_FUNCTION_TRIAGE`, `SCAN_KIND_RELATED`,
 `SCAN_KIND_PE_INFO`, `SCAN_KIND_FILETYPE`, `SCAN_KIND_COMPOSITION`,
-`SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`, `SCAN_KIND_BENCHMARK`); `list_scans`
+`SCAN_KIND_LIBRARY`, `SCAN_KIND_UNPACK`, `SCAN_KIND_BENCHMARK`,
+`SCAN_KIND_FIRMWARE`, `SCAN_KIND_GOBUILDINFO`, `SCAN_KIND_FLIRT`); `list_scans`
 returns each row's recorded inputs and leaves the payload out, and the unique index
 makes `set_scan` an upsert, so a re-run refreshes the stored dossier, report or
 struct recovery instead of adding a row.  A scan hangs off an analysis, so
@@ -270,6 +281,10 @@ entropy check happen locally over the strings the engine returns; each finding
 carries the raw value, so the stored payload is sensitive.  The stored protocols
 value is reportal's own scan object (`protocols`, `count`, `by_confidence`,
 `notes`), since the inference happens locally over what the engine returns.
+The stored flirt value is reportal's own reading from `flirt_sigs.py` (matched
+symbols grouped by library, the `sigset_key` and whether the answer came from
+the `flirt_scan` cache), never an engine call.  The stored firmware and
+gobuildinfo values are likewise reportal's own payloads over the stored bytes.
 The stored lineage
 value is reportal's own comparison payload: one `comparisons` object keyed by
 the compared binary's id as a string, each entry carrying the two binary ids and

@@ -39,11 +39,13 @@ reportal/
 │   │                         #   reasoning are redacted at the response seam
 │   ├── credits.py            # the per-task price list, derived from measured
 │   │                         #   token profiles (what a tenant actually spends)
+│   ├── model_rates.py        # published LLM token rates shared by credits and plans
 │   ├── plans.py              # the subscription catalog and the cost model it is
-│   │                         #   derived from (Claude token rates -> allowances)
+│   │                         #   derived from (model_rates -> allowances)
 │   ├── metering.py           # the append-only usage ledger and the quota checks
 │   ├── billing.py            # Stripe checkout, portal, webhooks and reconcile
 │   ├── landing.py            # the public /pricing page, rendered from plans.py
+│   ├── clock.py              # shared UTC now/as_utc for writers and readers
 │   ├── api.py                # every /api/* route (the JSON API)
 │   ├── ui.py                 # the built SPA, /static assets, /pricing and /reports site
 │   ├── webapp.py             # composition root: includes the two routers
@@ -95,6 +97,7 @@ reportal/
 │   ├── composition.py        # stored-only composition of one binary against its matches:
 │   │                         #   matched counts, name sources, quality bands and the rollup
 │   ├── unstrip.py            # library-identification proposals and explicit apply
+│   ├── flirt_sigs.py         # FLIRT signature catalog, matcher cache and stored reading
 │   ├── renames.py            # LLM identifier renaming: suggestions, word-boundary apply
 │   │                         #   with a revert journal, and the `renames-applied` restore
 │   ├── capabilities.py       # deterministic capability tagging over imports and strings
@@ -231,7 +234,7 @@ reader would reach for first:
 | `name_history` | rename log: old/new name, source, actor, timestamp |
 | `collections`, `collection_binaries` | named binary groups |
 | `tags`, `binary_tags` | tags and their binary links |
-| `scans` | engine results keyed by (analysis, kind), upserted |
+| `scans` | scan results keyed by (analysis, kind), upserted (engine and local) |
 | `binary_fingerprints` | stored fingerprint bundle per binary |
 | `disasm_cache` | function assembly listing, so matching does not re-spawn |
 | `decompilations` | one stored decompilation per function (`function_id` is the primary key; a new backend replaces the row) |
@@ -253,6 +256,8 @@ reader would reach for first:
 | `data_types` | editable type model: one row per (binary, name) with kind, namespace, declared size (recomputed by a member write, stored as given by a size edit), members JSON (each with name, type, pointer, count, bits and its derived offset/size), enum values JSON, target, element count and source |
 | `data_type_history` | one row per type mutation: the type id (no foreign key, so a deleted type's history survives), the binary, the states before and after, source, actor, time |
 | `function_signatures` | editable signature model: one row per function with name, return type, convention, parameters JSON, source |
+| `sigset` | global FLIRT signature catalog: one row per compiled `.sig` under `REPORTAL_FLIRT_SIGS_DIR` |
+| `flirt_scan` | cached FLIRT match payload keyed by `(binary_sha256, sigset_key, arch)` |
 
 Idempotency rules: binaries dedupe by sha256, functions are unique on
 `(analysis_id, va)`, scans upsert on `(analysis_id, kind)`. Uploaded binaries
@@ -2574,9 +2579,10 @@ becomes a feature instead of a leak.
 
 ## Plans, credits, metering and billing
 
-Four modules, split by what each is allowed to know.  `credits.py` is the price
-list, `plans.py` the catalog, `metering.py` the ledger and the quota, and
-`billing.py` the provider integration.  Nothing above them knows a price and
+Five modules, split by what each is allowed to know.  `model_rates.py` holds the
+published per-million token rates both price lists share, `credits.py` is the
+task price list, `plans.py` the catalog, `metering.py` the ledger and the quota,
+and `billing.py` the provider integration.  Nothing above them knows a price and
 nothing below them knows a customer.
 
 **Tokens are not the unit of sale.**  A customer cannot predict a token count,
@@ -2628,9 +2634,10 @@ corpus's 90th percentile, so an ordinary function is never surcharged.
 **The catalog is code, and the allowances are derived.**  A plan grants
 credits, so a tenant reads its allowance as "2,000 triage calls, or 1,000
 summaries, or 125 AI decompilations" rather than as a token count.  The chain
-is: `MODEL_RATES` gives the published per-million rates,
-`credits.credit_cogs_usd()` prices one credit at those rates, and a tier may
-spend at most `MAX_COGS_SHARE` (20%) of its price on inference.
+is: `model_rates.MODEL_RATES` gives the published per-million rates (re-exported
+by `plans.py` for existing call sites), `credits.credit_cogs_usd()` prices one
+credit at those rates, and a tier may spend at most `MAX_COGS_SHARE` (20%) of
+its price on inference.
 `tests/test_plans.py` asserts that ceiling rather than the literal numbers, so
 raising an allowance is allowed and raising it past what the price supports
 fails the gate.  The free tier has no price to take a share of, so it is
@@ -2817,6 +2824,19 @@ rather than several: it warns only when a path is asked for and unusable
 configured graph backend whose package is missing) and lists every path's state
 either way, so an install that chose not to install the similarity extra reads
 as `similarity=off` rather than as a defect.
+
+## FLIRT signature matching
+
+`flirt_sigs.py` is the local FLIRT catalog and matcher, separate from the
+engine's FLIRT hits inside auto-unstrip and triage.  Signature blobs live on
+disk under `REPORTAL_FLIRT_SIGS_DIR` (compiled `.sig` only; `.pat` is refused),
+indexed into the global `sigset` table, and matched through `python-flirt` with
+a process-local matcher cache keyed by architecture.  A binary's reading is
+cached in `flirt_scan` under `(binary_sha256, sigset_key, arch)` and also stored
+as the analysis `flirt` scan so GET routes stay stored-only.  Apply renames one
+matched symbol onto a function and refuses a name a person authored
+(`manual-name`).  Without the env checkout every FLIRT route answers
+`no-signature-dir`.
 
 ## Library identification and the bill of materials
 
