@@ -2423,6 +2423,68 @@ export interface SandboxRun {
   journal_action?: string;
 }
 
+/** One registered debug backend and whether it is installed. */
+export interface DebugBackendInfo {
+  name: string;
+  available: boolean;
+  describe: string;
+}
+
+/** `GET /api/binaries/<id>/debug-session/status`: can this install debug? */
+export interface DebugStatus {
+  analysis_id: number;
+  enabled: boolean;
+  available: boolean;
+  backend: string | null;
+  backends: DebugBackendInfo[];
+  caps: {
+    timeout_seconds: number;
+    max_timeout_seconds: number;
+    max_breakpoints: number;
+    max_read_bytes: number;
+  };
+  sessions: number;
+  last: {
+    id: number;
+    status: string;
+    created_at: string;
+  } | null;
+  note: string;
+}
+
+/** One DAP transcript entry of a stored debug session. */
+export interface DebugTranscriptEntry {
+  request: string;
+  success: boolean;
+  threadId?: number;
+  reason?: string;
+  threads?: { id: number; name: string }[];
+  frames?: { name: string; instructionPointerReference: string }[];
+  registers?: { name: string; value: string }[];
+  register_count?: number;
+  address?: string;
+  data?: string;
+  note?: string;
+}
+
+/** One stored read-only debug session. */
+export interface DebugSession {
+  id: number;
+  analysis_id: number;
+  binary_id: number;
+  sha256: string;
+  status: string;
+  backend: string;
+  argv: string[];
+  caps: Record<string, string | number>;
+  transcript: DebugTranscriptEntry[];
+  notes: string[];
+  created_at: string;
+  finished_at: string | null;
+  debug?: DebugStatus;
+  journal_action?: string;
+}
+
 /** One embedded region a firmware carve found. */
 export interface FirmwareRegion {
   index: number;

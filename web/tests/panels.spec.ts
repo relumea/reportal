@@ -503,3 +503,21 @@ test("an artifact note round-trips through the panel", async ({ page }) => {
   await row.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(row.getByText("unrated")).toBeVisible();
 });
+
+test("the debug panel reports the opt-in state and refuses while off", async ({ page }) => {
+  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  const debugPanel = panelByTitle(page, "Debug Session");
+  await debugPanel.scrollIntoViewIfNeeded();
+
+  // The default install never opted in: the panel settles on the enable hint
+  // first, then the probe control is disabled and the empty state shows.
+  await expect(debugPanel.getByText(/REPORTAL_DEBUG=enabled/)).toBeVisible();
+  await expect(debugPanel.getByRole("button", { name: "Probe", exact: true })).toBeDisabled();
+  await expect(debugPanel.getByText(/No debug session yet/)).toBeVisible();
+
+  // And the status read behind the panel agrees, so the assertion is the
+  // stored state rather than the panel's own render.
+  const status = await page.request.get(`/api/binaries/${state.ids.binary_id}/debug-session/status`);
+  const payload = (await status.json()) as { enabled: boolean; available: boolean };
+  expect(payload.enabled).toBe(false);
+});

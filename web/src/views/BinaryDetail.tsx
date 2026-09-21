@@ -26,6 +26,7 @@ import {
   ProtocolsPanel,
   FirmwarePanel,
   SandboxPanel,
+  DebugPanel,
   RelatedPanel,
   RelocationsPanel,
   RemediationPanel,
@@ -90,6 +91,7 @@ export function BinaryDetail({
           <LineagePanel binaryId={binary.id} />
           <FirmwarePanel binaryId={binary.id} />
           <SandboxPanel binaryId={binary.id} />
+          <DebugPanel binaryId={binary.id} />
           <RelatedPanel binaryId={binary.id} />
           <LibraryPanel binaryId={binary.id} />
           <BenchmarkPanel binaryId={binary.id} />

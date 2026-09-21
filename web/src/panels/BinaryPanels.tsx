@@ -116,6 +116,8 @@ import type {
   PeSecurityItem,
   ProtocolsResult,
   RelatedResult,
+  DebugSession,
+  DebugStatus,
   SandboxRun,
   SandboxStatus,
   RemediationResult,
@@ -300,6 +302,7 @@ const NO_SCAN_MESSAGES = {
   firmware:
     "No firmware carve yet. Run it to find the images embedded in this file.",
   sandbox: "No detonation report yet. Run the sample to record what it does.",
+  debug: "No debug session yet. Probe the sample to record the entry stop, registers and memory.",
 } as const;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -4493,6 +4496,135 @@ function SandboxReport({ run }: { run: SandboxRun }): ReactNode {
       ))}
       {run.stdout ? <CodeBlock text={run.stdout} title="stdout" /> : null}
       {run.stderr ? <CodeBlock text={run.stderr} title="stderr" /> : null}
+    </>
+  );
+}
+
+export function DebugPanel({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "debug");
+  const statusPath = `/binaries/${binaryId}/debug-session/status`;
+  const status = usePanel(key, () => api<DebugStatus>(statusPath));
+  const sessionPath = `/binaries/${binaryId}/debug-session`;
+  const [session, setSession] = useState<DebugSession | null>(null);
+  const [timeout, setTimeoutSeconds] = useState("30");
+  const [error, setError] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
+  const current: DebugStatus | undefined = status?.state === "ready" ? status.data : undefined;
+  const probe = (): void => {
+    setError(null);
+    setBusy(true);
+    void api<DebugSession>(sessionPath, {
+      method: "POST",
+      json: { timeout: Number(timeout) },
+    })
+      .then((run) => {
+        setSession(run);
+        refreshPanel(key, () => api<DebugStatus>(statusPath));
+      })
+      .catch((failure: unknown) => setError(failure))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <Panel
+      title="Debug Session"
+      subtitle="Probe the sample under lldb-dap: entry stop, threads, registers and a memory window, then disconnect."
+      actions={
+        <>
+          <Field label="Seconds">
+            <input
+              size={4}
+              value={timeout}
+              onChange={(event) => setTimeoutSeconds(event.target.value)}
+            />
+          </Field>
+          <Button
+            tone="primary"
+            pending={busy}
+            disabled={!current?.enabled || !current?.available}
+            onClick={probe}
+          >
+            Probe
+          </Button>
+        </>
+      }
+    >
+      {status?.state === "error" ? (
+        <ErrorNote
+          error={status.error}
+          onRetry={() => refreshPanel(key, () => api<DebugStatus>(statusPath))}
+        />
+      ) : null}
+      {error ? <ErrorNote error={error} /> : null}
+      {current ? (
+        <KeyValue
+          rows={[
+            ["opt-in", current.enabled ? <Badge tone="warn">enabled</Badge> : <Badge>off</Badge>],
+            ["backend", current.backend ?? "none installed"],
+            ["backends", current.backends.map((entry) => `${entry.name}${entry.available ? "" : " (missing)"}`).join(", ") || NA],
+            ["sessions", current.sessions],
+            ["last", current.last ? `${current.last.status} (#${current.last.id})` : NA],
+          ]}
+        />
+      ) : null}
+      {current && !current.enabled ? (
+        <Muted>
+          Debug sessions are off. Set <code>REPORTAL_DEBUG=enabled</code> or{" "}
+          <code>[debug] enabled = true</code> to allow them.
+        </Muted>
+      ) : null}
+      {current && current.enabled && !current.available ? (
+        <Muted>No debug backend is installed: {current.backends.map((entry) => entry.name).join(", ") || "none declared"}.</Muted>
+      ) : null}
+      {session === null ? (
+        <EmptyState>{NO_SCAN_MESSAGES.debug}</EmptyState>
+      ) : (
+        <DebugReport session={session} />
+      )}
+    </Panel>
+  );
+}
+
+/** One stored debug session: the entry stop, the registers and the memory window. */
+function DebugReport({ session }: { session: DebugSession }): ReactNode {
+  const byRequest = new Map(session.transcript.map((entry) => [entry.request, entry]));
+  const threads = byRequest.get("threads");
+  const stack = byRequest.get("stackTrace");
+  const registers = byRequest.get("registers");
+  const memory = byRequest.get("readMemory");
+  const stopped = byRequest.get("stopped");
+  return (
+    <>
+      <KeyValue
+        rows={[
+          ["status", <Badge tone="ok">{session.status}</Badge>],
+          ["backend", session.backend],
+          ["thread", stopped?.threadId ?? NA],
+          ["stop reason", stopped?.reason ?? NA],
+          [
+            "threads",
+            threads?.threads?.map((entry) => `${entry.name} (${entry.id})`).join(", ") || NA,
+          ],
+          [
+            "frame",
+            stack?.frames?.map((entry) => `${entry.name} @ ${entry.instructionPointerReference}`).join(", ") || NA,
+          ],
+          ["sha256", session.sha256],
+        ]}
+      />
+      {registers?.registers?.length ? (
+        <KeyValue
+          rows={registers.registers.slice(0, 12).map((entry) => [entry.name, entry.value])}
+        />
+      ) : null}
+      {registers && registers.register_count != null && registers.register_count > 12 ? (
+        <Muted>{registers.register_count - 12} more registers in the stored transcript.</Muted>
+      ) : null}
+      {memory?.data ? (
+        <CodeBlock text={`[${memory.address}] base64: ${memory.data}`} title="memory window" />
+      ) : null}
+      {session.notes.map((note: string) => (
+        <Muted key={note}>{note}</Muted>
+      ))}
     </>
   );
 }
