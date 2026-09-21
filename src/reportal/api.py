@@ -12480,9 +12480,11 @@ def run_binary_debug(
 ) -> Response:
     """Run a read-only debug probe over a stored binary and store the transcript.
 
-    Body ``{"timeout": seconds, "breakpoints": [va, ...]}`` narrows the caps.
-    Refused unless the workspace opted in (403 `debug-disabled`), a backend is
-    installed (503 `debug-unavailable`) and the bounds are inside the caps (400
+    Body ``{"timeout": seconds, "breakpoints": [va, ...]}`` narrows the caps;
+    breakpoint addresses are recorded in the transcript while the probe stops
+    at entry (lldb-dap) or main (gdb) only.  Refused unless the workspace opted
+    in (403 `debug-disabled`), a backend is installed (503
+    `debug-unavailable`) and the bounds are inside the caps (400
     `invalid-debug`); 404 `binary not found`, 400 `binary not on disk`.  A
     second POST while a session is still `running` returns that live row (202).
     """

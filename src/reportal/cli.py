@@ -975,7 +975,7 @@ def debug_session_command(
     binary_id: int = typer.Argument(..., help="Stored sample to probe under the debugger"),
     timeout: int | None = typer.Option(None, "--timeout", help="Wall-clock seconds (1 to 120)"),
     breakpoints: list[int] | None = typer.Option(
-        None, "--breakpoint", help="Breakpoint address (repeatable)"
+        None, "--breakpoint", help="Breakpoint address, recorded but not set (repeatable)"
     ),
     report: bool = typer.Option(
         False, "--report", help="Print the stored session instead of running"
