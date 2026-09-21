@@ -4,16 +4,15 @@ Sources: src/reportal/debug.py
 
 The read-only live-debugger seam, and the second execution path beside detonation. A session is
 refused unless the workspace opts in and an installed backend exists, and every session is bounded
-and recorded: the backend, the caps, the DAP transcript and the stored scan. The probe launches
-the sample stopped, waits for the entry stop, reads the thread list, one stack frame, the
-general-purpose registers and a bounded window at the instruction pointer, then disconnects.
+and recorded: the backend, the caps, the transcript and the stored scan. `lldb-dap` speaks DAP,
+`gdb` speaks MI (or drives `qemu-<arch>` through `target remote` with `--qemu`); the probe
+reads threads, one frame, registers and a memory window, then disconnects.
 Nothing is stepped, continued or written.
 
 ## Vocabulary
 
 - `Backend(name, executable, hint, describe)`: `path()` and `available()` report installation.
-  `lldb-dap` and `gdb` are the shipped backends; `register_backend` and `unregister_backend` are
-  the registry, with the built-in backend unremovable.
+  `register_backend` and `unregister_backend` are the registry, with the built-in unremovable.
 - `Caps(timeout_seconds)`: `requested_caps` validates a request against
   `DEFAULT_TIMEOUT_SECONDS`/`MAX_TIMEOUT_SECONDS`; reads cap at `MAX_READ_BYTES`, breakpoints at
   `MAX_BREAKPOINTS`, the transcript at `MAX_TRANSCRIPT_BYTES`.
@@ -21,26 +20,21 @@ Nothing is stepped, continued or written.
   one `running` row per `binary_id` (`idx_debug_sessions_live_binary`); a second session while
   live reuses that row.
 - `DebugError.code`: `debug-disabled`, `debug-unavailable`, `invalid-debug`, `no-debug-session`.
-  `status_payload` reports the opt-in, the backends, the caps, the session count and the last
-  session.
 - The transcript is stored as the `debug-session` scan (`SCAN_KIND_DEBUG_SESSION`).
 - `observed_coverage` joins the newest session's addresses to the stored functions by VA
-  containment: an address in `[va, va + size)` marks the function observed, a zero-size
-  function matches its exact VA only, and untouched functions are `unobserved`, never absent.
+  containment; untouched functions are `unobserved`, never absent.
 
 ## Wiring
 
-- Routes: `POST`/`GET /api/binaries/{binary_id}/debug-session`,
-  `GET /api/binaries/{binary_id}/debug-session/status`,
-  `GET /api/binaries/{binary_id}/debug-coverage` (stored-only, needs no backend).
-- CLI: `debug-session` (`--coverage` prints the observed functions). MCP:
-  `run_debug_session`, `get_debug_session`, `get_debug_status`, `get_debug_coverage`.
+- Routes: `POST`/`GET /api/binaries/{binary_id}/debug-session` (body `qemu_arch` selects the
+  stub), `GET .../debug-session/status`, `GET .../debug-coverage` (stored-only).
+- CLI: `debug-session` (`--coverage`, `--qemu`). MCP: `run_debug_session`, `get_debug_session`,
+  `get_debug_status`, `get_debug_coverage`. Jobs: the `debug` kind.
 - Settings: `REPORTAL_DEBUG` or `[debug] enabled`, `REPORTAL_DEBUG_BACKEND` or `[debug] backend`.
   A third party registers through the `reportal.debug_backends` entry-point group.
-- `run_session` is the shared orchestration the route, the CLI and the MCP tool call, so the
-  guards are checked once. The session and its scan are journaled, so a revert removes the record.
-- `run_session` renders the transcript with `render_transcript` and ingests it as a binary-scoped
-  document; the graph rebuild links it to the named functions through the VA-mention edge.
+- `run_session` is the shared orchestration the route, CLI, MCP tool and job call, so the
+  guards are checked once. The session, its scan and its knowledge digest are journaled, so a
+  revert removes the record; the graph rebuild links the digest through the VA-mention edge.
 
 ## Invariants
 
