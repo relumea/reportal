@@ -31,15 +31,11 @@ documentation, `changelog.mjs` scrolls the feed, `auth.mjs` sets the
 (a URL a browser can open) or an API path the portal itself called, both
 re-checkable.
 
-**Re-crawled 2026-09-14 and nothing new.**  `changelog.mjs` came back
-byte-identical to the 2026-09-13 capture, so no weekly entry has been published
-since the 3 to 9 August one, and `crawl.mjs` walked 68 routes against the
-previous walk's 69, every one the same shape (the only differences are which
-concrete `/analyses/<id>` pages the walk happened to open, plus the dashboard's
-greeting, `Greetings maci` having become `Hello maci`, and one row's
-single-digit label moving with the data).  The `/v3/analyses` call the list
-makes still asks for `page_size=50` with no page parameter, and no route or form
-appeared that the entries below do not already name.  So the crawl feed is
+**Re-crawled 2026-09-21 and nothing new.** The changelog feed still ends at the 3
+to 9 August entry, and `crawl.mjs` walked 60 routes against the previous walk's
+69: the only differences are which concrete `/analyses/<id>` pages the walk
+happened to open (the list contents rotated, the shapes did not). No route or
+form appeared that the entries below do not already name. The crawl feed stays
 exhausted: what is left in this file is the gaps stated inside its closed
 entries, not surfaces the crawl has not seen.
 
