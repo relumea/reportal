@@ -624,13 +624,15 @@ def probe_binary(
     caps: Caps | None = None,
     backend: Backend | None = None,
     breakpoints: Sequence[int] | None = None,
+    qemu_arch: str | None = None,
 ) -> dict[str, Any]:
     """Attach a read-only probe to *sample* and return the transcript.
 
     ``lldb-dap`` speaks DAP; ``gdb`` speaks MI.  Both launch the sample
     stopped, read the thread list, one frame, the general registers and a
     bounded memory window, then detach.  Nothing is stepped, continued or
-    written.
+    written.  With *qemu_arch* the gdb probe runs the sample under
+    ``qemu-<arch> -g`` and drives it through ``target remote``.
     """
     resolved_caps = caps or requested_caps()
     chosen = backend or require_backend()
@@ -642,8 +644,11 @@ def probe_binary(
         raise DebugError(
             ERROR_INVALID, f"at most {resolved_caps.max_breakpoints} breakpoints per session"
         )
+    arch = (qemu_arch or "").strip() or None
+    if arch is not None and chosen.name != "gdb":
+        raise DebugError(ERROR_INVALID, "qemu_arch needs the gdb backend")
     if chosen.name == "gdb":
-        return _probe_mi(sample, caps=resolved_caps, backend=chosen, points=points)
+        return _probe_mi(sample, caps=resolved_caps, backend=chosen, points=points, qemu_arch=arch)
     if chosen.name != "lldb-dap":
         raise DebugError(
             ERROR_UNAVAILABLE,
@@ -1017,24 +1022,60 @@ def _mi_wait_for_stop(handle: Any, limit: int, timeout_s: float, *, marker: str)
                 seen = True
 
 
+def _free_tcp_port() -> int:
+    """One free loopback TCP port for a qemu stub to listen on."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 def _probe_mi(
     sample: Path,
     *,
     caps: Caps,
     backend: Backend,
     points: Sequence[int],
+    qemu_arch: str | None = None,
 ) -> dict[str, Any]:
     """The MI half of :func:`probe_binary`, over ``gdb --interpreter=mi2``.
 
-    The sample runs to ``main`` under a breakpoint, so the stop carries a real
-    frame: the thread list, the frame address, ``info registers`` and one
-    ``x`` window at the program counter.  ``detach`` then ``-gdb-exit`` ends
-    the session; nothing is continued past the stop.
+    Without *qemu_arch* gdb runs the sample natively: break on ``main``,
+    run to the stop, read threads, one frame, register names and one memory
+    window, then exit.  With *qemu_arch* (``x86_64``, ``aarch64``, ``arm``,
+    ``mips`` ...) the sample runs under ``qemu-<arch> -g <port>`` and gdb
+    drives it through ``target remote``: the same reads over a stub, which is
+    how a foreign-arch firmware ELF is probed.  Nothing is continued past the
+    stop either way.
     """
     executable = backend.path()
     if executable is None:
         raise DebugError(ERROR_UNAVAILABLE, unavailable_detail())
-    argv = [executable, "-q", "--interpreter=mi2", str(sample)]
+    stub: subprocess.Popen[bytes] | None = None
+    gdb_argv = [executable, "-q", "--interpreter=mi2"]
+    if qemu_arch is None:
+        gdb_argv.append(str(sample))
+    else:
+        qemu = shutil.which(f"qemu-{qemu_arch}")
+        if qemu is None:
+            raise DebugError(
+                ERROR_UNAVAILABLE, f"qemu-{qemu_arch} is not installed; cannot probe under it"
+            )
+        port = _free_tcp_port()
+        try:
+            stub = subprocess.Popen(
+                [qemu, "-g", str(port), str(sample)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+                env={"PATH": "/usr/bin:/bin"},
+            )
+        except OSError as exc:
+            raise DebugError(
+                ERROR_INVALID, f"qemu-{qemu_arch} could not be started: {exc}"
+            ) from exc
+    argv = gdb_argv
     transcript: list[dict[str, Any]] = []
     notes: list[str] = []
     try:
@@ -1047,6 +1088,8 @@ def _probe_mi(
             env={"PATH": "/usr/bin:/bin"},
         )
     except OSError as exc:
+        if stub is not None:
+            stub.kill()
         raise DebugError(ERROR_INVALID, f"gdb could not be started: {exc}") from exc
     try:
         assert process.stdin is not None and process.stdout is not None
@@ -1060,13 +1103,29 @@ def _probe_mi(
             )
             return _mi_result(lines)
 
+        if stub is not None:
+            ok, _ = run(f"target remote :{port}", "remote")
+            transcript.append({"request": "target-remote", "success": ok})
+            # The stub serves its libraries over the RSP file channel, which
+            # is slow; reading them locally skips the transfer.
+            run("set sysroot /", "sysroot")
+
         ok, _ = run("-break-insert main", "break")
         transcript.append({"request": "break-insert", "success": ok})
-        _mi_send(process.stdin, "-exec-run")
-        stopped_text = _mi_wait_for_stop(
-            process.stdout, MAX_TRANSCRIPT_BYTES, timeout_s, marker='reason="breakpoint-hit"'
-        )
-        transcript.append({"request": "exec-run", "success": stopped_text is not None})
+        if stub is None:
+            _mi_send(process.stdin, "-exec-run")
+            stopped_text = _mi_wait_for_stop(
+                process.stdout, MAX_TRANSCRIPT_BYTES, timeout_s, marker='reason="breakpoint-hit"'
+            )
+            transcript.append({"request": "exec-run", "success": stopped_text is not None})
+        else:
+            # A remote stub is already stopped at entry and refuses `run`;
+            # continue to the breakpoint instead.  Any stop ends the wait.
+            _mi_send(process.stdin, "-exec-continue")
+            stopped_text = _mi_wait_for_stop(
+                process.stdout, MAX_TRANSCRIPT_BYTES, timeout_s, marker="*stopped"
+            )
+            transcript.append({"request": "exec-continue", "success": stopped_text is not None})
         ok, text = run("-thread-info", "threads")
         threads: list[dict[str, Any]] = []
         thread_id = 0
@@ -1163,6 +1222,11 @@ def _probe_mi(
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
+        if stub is not None:
+            with contextlib.suppress(OSError):
+                stub.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+                stub.wait(timeout=5)
     capped = transcript[: MAX_BREAKPOINTS + 3]
     if len(transcript) > len(capped):
         notes.append(f"the transcript was truncated to {len(capped)} entries")
@@ -1182,13 +1246,15 @@ def run_session(
     *,
     timeout: int | None = None,
     breakpoints: Sequence[int] | None = None,
+    qemu_arch: str | None = None,
 ) -> dict[str, Any]:
     """Run one read-only probe over a stored binary and store the session.
 
     Shared by the HTTP route, the CLI and the MCP tool, so the guards are
     checked once.  A second call while a session is still ``running`` returns
     that row without starting another probe.  The transcript is stored as the
-    ``debug-session`` scan, so a revert removes the record.
+    ``debug-session`` scan, so a revert removes the record.  *qemu_arch* runs
+    the gdb probe under ``qemu-<arch>`` through ``target remote``.
     """
     require_enabled()
     backend = require_backend()
@@ -1234,7 +1300,9 @@ def run_session(
             description=f"ran binary {binary_id} under the {backend.name} debugger",
         )
         try:
-            report = probe_binary(stored, caps=caps, backend=backend, breakpoints=breakpoints)
+            report = probe_binary(
+                stored, caps=caps, backend=backend, breakpoints=breakpoints, qemu_arch=qemu_arch
+            )
         except Exception as exc:
             _log.error(
                 "debug session aborted session_id=%s binary_id=%s error=%s%s",

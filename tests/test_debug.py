@@ -101,6 +101,7 @@ class TestLedger:
             caps: debug.Caps | None = None,
             backend: debug.Backend | None = None,
             breakpoints: Any = None,
+            qemu_arch: Any = None,
         ) -> dict[str, Any]:
             calls.append(str(sample))
             return {
@@ -759,13 +760,12 @@ class TestProbeDispatch:
 
         import os as _os
 
-        holder: dict[str, object] = {}
+        holder: dict[str, FakeStdout] = {}
 
         def fake_read(_fd: int, _n: int) -> bytes:
             pipe = holder.get("pipe")
-            if pipe is not None and getattr(pipe, "_chunks", []):
-                chunks = pipe._chunks
-                return chunks.pop(0)
+            if pipe is not None and pipe._chunks:
+                return pipe._chunks.pop(0)
             return b""
 
         monkeypatch.setattr(_os, "read", fake_read)
@@ -773,7 +773,7 @@ class TestProbeDispatch:
 
         class FakeProcess:
             stdin: object = FakeStdin()
-            stdout: object = FakeStdout(script_lines)
+            stdout: FakeStdout = FakeStdout(script_lines)
 
             def wait(self, timeout: float | None = None) -> int:
                 return 0
@@ -1158,7 +1158,7 @@ class TestDebugFinalBranches:
 
 class TestDapVariants:
     def _scripted_dap(
-        self, monkeypatch: pytest.MonkeyPatch, responses: list[dict[str, object]]
+        self, monkeypatch: pytest.MonkeyPatch, responses: list[dict[str, object | None]]
     ) -> None:
         import os as _os
 
@@ -1244,7 +1244,7 @@ class TestDapVariants:
     def test_launch_loop_refuses_an_invalid_message(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        responses = [
+        responses: list[dict[str, object | None]] = [
             {"type": "response", "request_seq": 1, "command": "initialize", "success": True},
             {"type": "event", "event": "initialized", "seq": 21},
             {"type": "bogus"},
@@ -1255,3 +1255,28 @@ class TestDapVariants:
         with pytest.raises(debug.DebugError) as caught:
             debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
         assert caught.value.code == debug.ERROR_INVALID
+
+
+class TestQemuStub:
+    def test_qemu_arch_needs_gdb(self, tmp_path: Path) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(
+                sample, backend=debug.Backend("lldb-dap", "lldb-dap"), qemu_arch="x86_64"
+            )
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_missing_qemu_is_unavailable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        monkeypatch.setattr(debug.shutil, "which", lambda name: None)
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"), qemu_arch="x86_64")
+        assert caught.value.code == debug.ERROR_UNAVAILABLE
+
+    def test_free_tcp_port_is_loopback(self) -> None:
+        port = debug._free_tcp_port()
+        assert 1 <= port <= 65535

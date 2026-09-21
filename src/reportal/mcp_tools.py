@@ -5506,9 +5506,12 @@ def _tool_run_debug_session(arguments: dict[str, Any]) -> dict[str, Any]:
         ):
             raise ToolError(debug.ERROR_INVALID, "breakpoints must be a list of integers")
         points = list(raw_points)
+    arch = _arg_optional_str(arguments, "qemu_arch") or None
     with contextlib.closing(_open()) as conn:
         try:
-            return debug.run_session(conn, binary_id, timeout=timeout, breakpoints=points)
+            return debug.run_session(
+                conn, binary_id, timeout=timeout, breakpoints=points, qemu_arch=arch
+            )
         except debug.DebugError as exc:
             raise ToolError(exc.code, exc.detail) from exc
 
@@ -8741,6 +8744,10 @@ def builtin_tools() -> tuple[Tool, ...]:
                         "type": "array",
                         "items": {"type": "integer"},
                         "description": "Breakpoint addresses, recorded but not set.",
+                    },
+                    "qemu_arch": {
+                        "type": ["string", "null"],
+                        "description": "Run under qemu-<arch> through target remote.",
                     },
                 },
                 ("binary_id",),

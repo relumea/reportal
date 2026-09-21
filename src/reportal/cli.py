@@ -977,6 +977,9 @@ def debug_session_command(
     breakpoints: list[int] | None = typer.Option(
         None, "--breakpoint", help="Breakpoint address, recorded but not set (repeatable)"
     ),
+    qemu_arch: str | None = typer.Option(
+        None, "--qemu", help="Run the gdb probe under qemu-<arch> through target remote"
+    ),
     report: bool = typer.Option(
         False, "--report", help="Print the stored session instead of running"
     ),
@@ -1020,7 +1023,7 @@ def debug_session_command(
         else:
             try:
                 payload = debug.run_session(
-                    conn, binary_id, timeout=timeout, breakpoints=breakpoints
+                    conn, binary_id, timeout=timeout, breakpoints=breakpoints, qemu_arch=qemu_arch
                 )
             except debug.DebugError as exc:
                 _fail(f"{exc.code}: {exc.detail}", json_output)

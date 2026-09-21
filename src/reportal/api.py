@@ -12503,9 +12503,19 @@ def run_binary_debug(
                 400, error=debug.ERROR_INVALID, detail="breakpoints must be a list of integers"
             )
         points = list(raw_points)
+    raw_arch = body.get("qemu_arch")
+    arch: str | None = None
+    if raw_arch is not None:
+        if not isinstance(raw_arch, str) or not raw_arch.strip():
+            return json_error(
+                400, error=debug.ERROR_INVALID, detail="qemu_arch must be a non-empty string"
+            )
+        arch = raw_arch.strip()
     with contextlib.closing(_open()) as conn:
         try:
-            session = debug.run_session(conn, binary_id, timeout=raw_timeout, breakpoints=points)
+            session = debug.run_session(
+                conn, binary_id, timeout=raw_timeout, breakpoints=points, qemu_arch=arch
+            )
         except debug.DebugError as exc:
             return debug_failure(exc)
     status = 202 if session.get("status") == debug.STATUS_RUNNING else 201

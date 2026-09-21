@@ -654,8 +654,16 @@ def _perform_debug(
         if not isinstance(raw_points, list):
             raise ValueError("breakpoints must be a list of integers")
         points = [int(item) for item in raw_points]
+    raw_arch = params.get("qemu_arch")
+    arch: str | None = None
+    if raw_arch is not None:
+        if not isinstance(raw_arch, str) or not raw_arch.strip():
+            raise ValueError("qemu_arch must be a non-empty string")
+        arch = raw_arch.strip()
     try:
-        return debug.run_session(conn, binary_id, timeout=timeout, breakpoints=points)
+        return debug.run_session(
+            conn, binary_id, timeout=timeout, breakpoints=points, qemu_arch=arch
+        )
     except debug.DebugError as exc:
         raise ValueError(f"{exc.code}: {exc.detail}") from exc
 
@@ -931,7 +939,7 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             name="debug",
             label="Read-only debug probe over the sample",
             scan_kinds=store.SCAN_KIND_DEBUG_SESSION,
-            params=("timeout", "breakpoints"),
+            params=("timeout", "breakpoints", "qemu_arch"),
             run=_perform_debug,
             perform=_perform_debug,
         ),
