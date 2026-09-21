@@ -8730,8 +8730,9 @@ def builtin_tools() -> tuple[Tool, ...]:
             "run_debug_session",
             "Run a read-only debug probe over a stored sample and store the transcript."
             "  Off by default: refused unless the workspace opts in and a backend is"
-            " installed; the probe only reads (launch stopped, breakpoints, register"
-            " and memory reads, disconnect).",
+            " installed; the probe launches stopped, reads threads, registers and"
+            " memory, then disconnects. Breakpoint addresses are recorded in the"
+            " transcript but the probe stops at entry (lldb-dap) or main (gdb) only.",
             _object(
                 {
                     "binary_id": _int("Binary id."),
@@ -8739,7 +8740,7 @@ def builtin_tools() -> tuple[Tool, ...]:
                     "breakpoints": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "description": "Breakpoint addresses.",
+                        "description": "Breakpoint addresses, recorded but not set.",
                     },
                 },
                 ("binary_id",),
