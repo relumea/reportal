@@ -7,7 +7,15 @@ view renders it from here.
 
 ## Unreleased
 
-## 3.0.0
+- Read-only live-debug sessions (`debug.py`): opt-in probes over `lldb-dap`
+  (DAP) and `gdb` (MI, or `qemu-<arch>` stubs via `--qemu`), stored as the
+  `debug-session` scan with observed-function coverage, a knowledge digest,
+  a `debug` job kind, four MCP tools, and a binary detail panel.
+- Inline search prefixes (`tag:`, `binary:`, `collection:`, `sha256:` and
+  aliases) selecting the search kind per query.
+- Repeat unstrip runs short-circuit when the candidate set is unchanged.
+- `REPORTAL_SERVER` and `REPORTAL_TOKEN` registered as `client.*` settings.
+- Debug backends listed as the ninth integrations seam.
 
 Hosted parity for the analysis workflow: match scoping by name source,
 hand-asserted binary identity with provenance, hourly remote refresh limits,
