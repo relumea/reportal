@@ -681,7 +681,12 @@ def _parse_function_type(match: re.Match[str]) -> dict[str, Any]:
     """Parse a ``typedef <ret> (*name)(<params>);`` match into the model fields."""
     name = match.group("name")
     validate_identifier(name)
-    target, pointer, count = parse_member_type(match.group("return").strip())
+    try:
+        target, pointer, count = parse_member_type(match.group("return").strip())
+    except InvalidMemberError as exc:
+        raise DefinitionError(
+            f"unsupported function-type return: {match.group('return').strip()!r}"
+        ) from exc
     if count is not None:
         raise DefinitionError("a function type's return type cannot be an array")
     parameters = _parse_function_parameters(match.group("params"))

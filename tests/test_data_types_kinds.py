@@ -122,6 +122,10 @@ class TestParseKinds:
             ("char", True, "value"),
         ]
 
+    def test_a_garbled_function_return_raises_definition_error(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="unsupported function-type return"):
+            data_types.parse_definition("typedef 123 (*Callback)(int);")
+
     def test_bitfield_member_carries_its_width(self) -> None:
         parsed = data_types.parse_definition(BITFIELD_DEFINITION)
         assert [member["bits"] for member in parsed["members"]] == [3, 5]
