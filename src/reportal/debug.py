@@ -1,9 +1,10 @@
-"""Read-only live-debug sessions over the Debug Adapter Protocol, off by default.
+"""Read-only live-debug sessions, off by default.
 
 The hosted portal has no live debugger; this is the local debugging tier from
-``docs/LIVE_DEBUGGING.md``, slice 1: attach to a process, set breakpoints, read
-registers and memory, then detach.  The results are stored as the
-``debug-session`` scan, never as live process handles in the store.
+``docs/LIVE_DEBUGGING.md``: launch the sample stopped, read registers and
+memory, then detach.  ``lldb-dap`` speaks DAP, ``gdb`` speaks MI; both store
+the transcript as the ``debug-session`` scan, never as live process handles
+in the store.
 
 Four guards hold before any session starts, mirroring :mod:`reportal.sandbox`:
 
