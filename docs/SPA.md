@@ -429,7 +429,7 @@ below); strings (loaded on demand,
 a client-side filter whose placeholder states `Search N strings...` with
 the filtered-of-total count, capped at
 `MAX_STRINGS_SHOWN` with the true total stated, server-side `sort`/`order`
-controls over `value` or `length`, and each row's VA and text linking to the
+controls over Value or String Length, and each row's VA and text linking to the
 Functions view filtered to the functions that reference that address (clicking
 the row does the same)); tags (a
 table of tags with an add control and a per-row Remove behind an inline
@@ -948,7 +948,7 @@ command that supplies it, never a table of zeros.  `web/tests/benchmark.spec.ts`
 covers the empty reading, the partner select, the disabled-to-enabled run
 control and the rename half's missing input.
 
-The binary detail's Unpacked files panel (`panels/BinaryPanels.tsx`) reads
+The binary detail's Unpacked Files panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/unpack`, which answers the provenance of a binary
 reportal unpacked and `stored: false` for one it did not, and posts from its
 `Run unpack` control with a packer select (Auto, LZEXE, UPX; Auto is the

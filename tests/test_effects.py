@@ -10,31 +10,11 @@ from typing import Any
 
 import pytest
 from pipeline_helpers import seed_portal
+from plugin_helpers import EntryPoint as _EntryPoint
+from plugin_helpers import patch_entry_points as _patch_entry_points
 
-from reportal import auto_store, effects, plugins, store
+from reportal import auto_store, effects, store
 from reportal.components import EFFECT_FAILED, EFFECT_REVERTED
-
-
-class _EntryPoint:
-    """Minimal stand-in for importlib.metadata.EntryPoint."""
-
-    def __init__(self, name: str, value: str) -> None:
-        self.name = name
-        self.value = value
-
-
-class _EntryPoints:
-    """Minimal stand-in for the EntryPoints collection."""
-
-    def __init__(self, entries: list[_EntryPoint]) -> None:
-        self._entries = entries
-
-    def select(self, *, group: str) -> list[_EntryPoint]:
-        return list(self._entries)
-
-
-def _patch_entry_points(monkeypatch: pytest.MonkeyPatch, *entries: _EntryPoint) -> None:
-    monkeypatch.setattr(plugins, "entry_points", lambda: _EntryPoints(list(entries)))
 
 
 @pytest.fixture(autouse=True)

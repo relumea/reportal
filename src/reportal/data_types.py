@@ -59,17 +59,15 @@ call.
 
 from __future__ import annotations
 
-import contextlib
-import os
 import re
 import sqlite3
-import tempfile
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from reportal import store
+from reportal._paths import write_bytes_atomic
 
 # Declaration kinds the model carries.  These are reportal's own lower-case
 # names for the shapes a recovered or hand-authored declaration can take; the
@@ -2299,20 +2297,5 @@ def export_header(
     if target.exists() and not force:
         raise ExportExistsError(f"refusing to overwrite {target} without force")
 
-    handle, temp_name = tempfile.mkstemp(dir=parent, prefix=".types-")
-    # fdopen takes ownership only on success; close the raw fd only when it never did.
-    owned = True
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            owned = False
-            stream.write(header)
-        os.replace(temp_name, target)
-    except BaseException:
-        if owned:
-            with contextlib.suppress(OSError):
-                os.close(handle)
-        raise
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp_name)
+    write_bytes_atomic(target, header, prefix=".types-")
     return {"path": str(target), "bytes": len(header), "types": len(types)}

@@ -17,6 +17,10 @@ test("clicking a string opens the functions that reference it", async ({ page })
     timeout: 60_000,
   });
   await expect(strings.getByPlaceholder(/Search \d+ strings\.\.\./)).toBeVisible();
+  await expect(strings.getByLabel("Sort")).toHaveValue("value");
+  await expect(strings.getByLabel("Sort").locator("option[value='length']")).toHaveText("String Length");
+  await expect(strings.getByLabel("Direction").locator("option[value='asc']")).toHaveText("ASC");
+  await expect(strings.getByLabel("Direction").locator("option[value='desc']")).toHaveText("DESC");
 
   const row = strings.locator("table.data-table tbody tr").first();
   await expect(row.locator('a[href*="refers_to="]').first()).toBeVisible();

@@ -732,7 +732,7 @@ export function SecurityMitigationsPanel({ binaryId }: { binaryId: number }): Re
     <Panel
       title={
         <CountTitle
-          label="Security mitigations"
+          label="Security"
           count={
             entry?.state === "ready" && entry.data.security_score
               ? `${entry.data.security_score.enabled}/${entry.data.security_score.total}`
@@ -1358,7 +1358,7 @@ export function PackerPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [busy, setBusy] = useState(false);
   return (
     <Panel
-      title="Packer detection"
+      title="Packer Detection"
       subtitle="Packer verdict, peak section entropy, section count and the toolchain signature."
       actions={
         <Button
@@ -1801,7 +1801,7 @@ export function UnpackedFilesPanel({ binaryId }: { binaryId: number }): ReactNod
 
   return (
     <Panel
-      title="Unpacked files"
+      title="Unpacked Files"
       subtitle="Rebuild the image a packer replaced and register it as a binary of its own. Nothing is executed."
       actions={
         <Button tone="primary" pending={busy} onClick={() => void run()}>
@@ -2283,7 +2283,7 @@ export function StringsPanel({ binaryId }: { binaryId: number }): ReactNode {
           >
             {STRING_SORTS.map((option) => (
               <option key={option} value={option}>
-                {option === "value" ? "Value" : "String length"}
+                {option === "value" ? "Value" : "String Length"}
               </option>
             ))}
           </select>
@@ -2295,7 +2295,7 @@ export function StringsPanel({ binaryId }: { binaryId: number }): ReactNode {
           >
             {FUNCTION_ORDERS.map((option) => (
               <option key={option} value={option}>
-                {option === "asc" ? "Ascending" : "Descending"}
+                {option === "asc" ? "ASC" : "DESC"}
               </option>
             ))}
           </select>

@@ -16,36 +16,16 @@ from typing import Any
 import pytest
 from graph_backend_helpers import recording_backend
 from graph_helpers import FUNCTION_NAME, seed_corpus
+from plugin_helpers import EntryPoint as _EntryPoint
+from plugin_helpers import patch_entry_points as _patch_entry_points
 
-from reportal import graph, graph_backends, mcp_server, plugins, store
+from reportal import graph, graph_backends, mcp_server, store
 from reportal.graph_backends import (
     COGNEE_INSTALL_HINT,
     COGNEE_MODEL_REQUIRED_REASON,
     DEFAULT_BACKEND,
     DEFAULT_COGNEE_DATASET,
 )
-
-
-class _EntryPoint:
-    """Minimal stand-in for importlib.metadata.EntryPoint."""
-
-    def __init__(self, name: str, value: str) -> None:
-        self.name = name
-        self.value = value
-
-
-class _EntryPoints:
-    """Minimal stand-in for the EntryPoints collection."""
-
-    def __init__(self, entries: list[_EntryPoint]) -> None:
-        self._entries = entries
-
-    def select(self, *, group: str) -> list[_EntryPoint]:
-        return list(self._entries)
-
-
-def _patch_entry_points(monkeypatch: pytest.MonkeyPatch, *entries: _EntryPoint) -> None:
-    monkeypatch.setattr(plugins, "entry_points", lambda: _EntryPoints(list(entries)))
 
 
 @pytest.fixture(autouse=True)

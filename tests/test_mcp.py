@@ -19,6 +19,8 @@ from mcp import types
 from mcp.server.streamable_http import EventMessage
 from mcp.shared.exceptions import MCPError
 from mcp.shared.message import SessionMessage
+from plugin_helpers import EntryPoint as _EntryPoint
+from plugin_helpers import patch_entry_points as _patch_entry_points
 from typer.main import get_command
 from typer.testing import CliRunner
 
@@ -36,7 +38,6 @@ from reportal import (
     mcp_tools,
     observability,
     pipeline,
-    plugins,
     profiles,
     remote_ingest,
     store,
@@ -345,28 +346,6 @@ _DESTRUCTIVE_TOOLS = frozenset(
 )
 
 _EXPECTED_TOOLS = _READ_ONLY_TOOLS | _DESTRUCTIVE_TOOLS
-
-
-class _EntryPoint:
-    """Minimal stand-in for importlib.metadata.EntryPoint."""
-
-    def __init__(self, name: str, value: str) -> None:
-        self.name = name
-        self.value = value
-
-
-class _EntryPoints:
-    """Minimal stand-in for the EntryPoints collection."""
-
-    def __init__(self, entries: list[_EntryPoint]) -> None:
-        self._entries = entries
-
-    def select(self, *, group: str) -> list[_EntryPoint]:
-        return list(self._entries)
-
-
-def _patch_entry_points(monkeypatch: pytest.MonkeyPatch, *entries: _EntryPoint) -> None:
-    monkeypatch.setattr(plugins, "entry_points", lambda: _EntryPoints(list(entries)))
 
 
 @pytest.fixture(autouse=True)

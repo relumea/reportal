@@ -12,14 +12,14 @@ const state = e2eState();
 
 test("packer detection shows a per-section entropy strip", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const packer = panelByTitle(page, "Packer detection");
+  const packer = panelByTitle(page, "Packer Detection");
   await expect(packer.locator(".entropy-strip")).toBeVisible();
   await expect(packer.locator(".entropy-strip-cell").first()).toHaveAttribute("title", /bits\/byte|unavailable/);
 });
 
 test("the unpack panel reads empty and offers the packer choice", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const panel = panelByTitle(page, "Unpacked files");
+  const panel = panelByTitle(page, "Unpacked Files");
   await expect(panel).toBeVisible();
 
   // Nothing was unpacked from the seeded binary, so the panel names the command

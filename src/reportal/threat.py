@@ -64,7 +64,7 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from reportal import engines, llm, store
-from reportal.capabilities import require_binary_file
+from reportal.capabilities import MAX_STRINGS_INSPECTED, require_binary_file
 
 # IOC categories, in the order every payload and view lists them.
 IOC_CATEGORY_URLS = "urls"
@@ -91,10 +91,6 @@ IOC_CATEGORIES: tuple[str, ...] = (
 # of times, so the list is bounded; deduplication happens first, which is what
 # makes the cap meaningful.
 MAX_IOCS_PER_CATEGORY = 25
-
-# Strings inspected by one run.  The engine can return tens of thousands and
-# every rule regexes each one, so the tail is dropped.
-MAX_STRINGS_INSPECTED = 5000
 
 # Findings kept as evidence per technique; the table is small enough that a
 # curated sample reads better than every matching import.

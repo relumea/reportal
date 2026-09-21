@@ -118,6 +118,10 @@ view renders it from here.
   64-character hex string.
 - Search binary hits show a 12-character SHA-256 with a copy control.
 - Binary panel reads Code Signature.
+- Binary panel reads Security.
+- Binary panel reads Packer Detection.
+- Binary panel reads Unpacked Files.
+- Strings sort reads String Length with ASC/DESC direction.
 - Functions and Data types search placeholders state the total count.
   Analyses carries an Upload File action that opens the binaries panel.
 - Binary header, Analyses rows and Binaries rows show a hash identicon

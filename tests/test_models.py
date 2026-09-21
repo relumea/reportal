@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 from conftest import FakeLlmClient, json_body, wsgi_request
+from plugin_helpers import EntryPoint as _EntryPoint
+from plugin_helpers import patch_entry_points as _patch_entry_points
 from typer.testing import CliRunner
 
 from reportal import cli, journal, llm, mcp_server, models, plugins, renames, store
@@ -35,28 +37,6 @@ RENAMES = '[{"from": "local_8", "to": "handle", "kind": "variable", "reason": "c
 # the canned rename suggestion targets, because renames drops a suggestion whose
 # `from` no longer occurs in the code.
 CODE = "int sub_1000(int param_1)\n{\n  int local_8 = param_1;\n  return local_8;\n}\n"
-
-
-class _EntryPoint:
-    """Minimal stand-in for importlib.metadata.EntryPoint."""
-
-    def __init__(self, name: str, value: str) -> None:
-        self.name = name
-        self.value = value
-
-
-class _EntryPoints:
-    """Minimal stand-in for the EntryPoints collection."""
-
-    def __init__(self, entries: list[_EntryPoint]) -> None:
-        self._entries = entries
-
-    def select(self, *, group: str) -> list[_EntryPoint]:
-        return list(self._entries)
-
-
-def _patch_entry_points(monkeypatch: pytest.MonkeyPatch, *entries: _EntryPoint) -> None:
-    monkeypatch.setattr(plugins, "entry_points", lambda: _EntryPoints(list(entries)))
 
 
 @pytest.fixture(autouse=True)

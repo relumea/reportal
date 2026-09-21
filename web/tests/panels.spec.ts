@@ -213,7 +213,7 @@ test("the binary details entry point links to a function", async ({ page }) => {
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", /#\/(functions\/\d+|binaries\/\d+\/functions\?va=)/);
   await expect(page.getByRole("heading", { name: /^Sections \d+$/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^Security mitigations \d+\/\d+$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Security \d+\/\d+$/ })).toBeVisible();
   await expect(page.getByRole("heading", { name: /^Relocations \d+$/ })).toBeVisible();
   const imports = page
     .locator(".panel")

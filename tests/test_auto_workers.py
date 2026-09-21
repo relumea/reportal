@@ -7,8 +7,10 @@ from typing import Any
 
 import pytest
 from auto_helpers import make_context, seed_rows
+from plugin_helpers import EntryPoint as _EntryPoint
+from plugin_helpers import patch_entry_points as _patch_entry_points
 
-from reportal import auto_workers, plugins, store
+from reportal import auto_workers, store
 from reportal.auto_workers import Worker, WorkerContext, WorkerResult
 
 
@@ -28,24 +30,6 @@ def _plugin_worker() -> Worker:
 # An attribute an entry-point value can name but that is not a Worker, so the
 # registry's type check is what rejects it (not a missing attribute).
 _NOT_A_WORKER = "a string"
-
-
-class _EntryPoint:
-    def __init__(self, name: str, value: str) -> None:
-        self.name = name
-        self.value = value
-
-
-class _EntryPoints:
-    def __init__(self, entries: list[_EntryPoint]) -> None:
-        self._entries = entries
-
-    def select(self, *, group: str) -> list[_EntryPoint]:
-        return list(self._entries)
-
-
-def _patch_entry_points(monkeypatch: pytest.MonkeyPatch, *entries: _EntryPoint) -> None:
-    monkeypatch.setattr(plugins, "entry_points", lambda: _EntryPoints(list(entries)))
 
 
 class TestRegistry:
