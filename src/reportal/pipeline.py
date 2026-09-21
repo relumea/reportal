@@ -650,23 +650,23 @@ def _effect_prepare(ctx: Context) -> None:
     if not engine.available():
         raise StepFailure(REASON_ENGINE_UNAVAILABLE)
     try:
-        listing = engine.disassemble(
-            project_dir, int(function["va"]), int(function["size"]), DISASM_FORMAT
+        listing, filled = store.get_or_compute_disasm(
+            conn,
+            function_id,
+            lambda: engine.disassemble(
+                project_dir, int(function["va"]), int(function["size"]), DISASM_FORMAT
+            ),
+            extent_size=int(function["size"]),
+            project_dir=project_dir,
         )
     except engines.EngineError as exc:
         raise StepFailure(f"engine-error: {exc}") from exc
-    store.set_disasm(
-        conn,
-        function_id,
-        listing,
-        extent_size=int(function["size"]),
-        project_dir=project_dir,
-    )
-    _record_effect(
-        ctx,
-        conn,
-        {"kind": EFFECT_DISASM, "function_id": function_id},
-    )
+    if filled:
+        _record_effect(
+            ctx,
+            conn,
+            {"kind": EFFECT_DISASM, "function_id": function_id},
+        )
     ctx.provide(NAME_DISASSEMBLY, listing)
 
 

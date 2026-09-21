@@ -30,7 +30,8 @@ import re
 import sqlite3
 import threading
 import unicodedata
-from collections.abc import Iterator, Mapping, Sequence
+from collections import OrderedDict
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -1255,7 +1256,9 @@ def set_rebrew_context(conn: sqlite3.Connection, binary_id: int, project_dir: st
     A changed project directory is a different engine input for every function of
     the binary, so the disassembly cache for those functions is dropped together
     with stored decompilations and AI artifacts that came from the previous
-    project; a write that keeps the same path leaves those alone.
+    project; the first context set (``None`` to a path) is the same change for
+    rows recorded against the empty identity.  A write that keeps the same path
+    leaves those alone.
     """
     previous = get_rebrew_context(conn, binary_id)
     conn.execute(
@@ -1264,7 +1267,10 @@ def set_rebrew_context(conn: sqlite3.Connection, binary_id: int, project_dir: st
         (binary_id, project_dir),
     )
     conn.commit()
-    if previous is not None and previous != project_dir:
+    # ``previous is None`` is a live identity change too: listings and
+    # decompilations recorded against the empty project_dir must not survive
+    # the first real context.  Same-path refreshes leave derived rows alone.
+    if previous != project_dir:
         clear_disasm_for_binary(conn, binary_id)
         conn.execute(
             "DELETE FROM decompilations WHERE function_id IN ("
@@ -2911,6 +2917,68 @@ def clear_disasm(conn: sqlite3.Connection, function_id: int) -> bool:
     cur = conn.execute("DELETE FROM disasm_cache WHERE function_id = ?", (function_id,))
     conn.commit()
     return cur.rowcount > 0
+
+
+# In-flight disassembly fills keyed by function id.  A cache miss under
+# concurrency must not fan every waiter into its own engine call: the first
+# computes and stores, the rest wait and re-read.
+_DISASM_GATES: dict[int, threading.Event] = {}
+_DISASM_GATES_LOCK = threading.Lock()
+
+
+def get_or_compute_disasm(
+    conn: sqlite3.Connection,
+    function_id: int,
+    compute: Callable[[], str],
+    *,
+    extent_size: int,
+    project_dir: str,
+) -> tuple[str, bool]:
+    """Return ``(listing, filled)`` under singleflight.
+
+    *filled* is True when this caller ran *compute* and attempted the store,
+    False on a cache hit (including a waiter that read the leader's row).
+    *compute* runs only for the leader of a concurrent miss; if the leader
+    fails, waiters re-enter so one of them becomes the next leader rather than
+    every waiter spawning the engine.  The computed text is returned even when
+    :func:`set_disasm` refuses the write (a concurrent identity change).
+    """
+    hit = get_disasm(conn, function_id)
+    if hit is not None:
+        return hit, False
+    with _DISASM_GATES_LOCK:
+        gate = _DISASM_GATES.get(function_id)
+        leader = gate is None
+        if leader:
+            gate = threading.Event()
+            _DISASM_GATES[function_id] = gate
+    assert gate is not None
+    if not leader:
+        gate.wait()
+        hit = get_disasm(conn, function_id)
+        if hit is not None:
+            return hit, False
+        return get_or_compute_disasm(
+            conn,
+            function_id,
+            compute,
+            extent_size=extent_size,
+            project_dir=project_dir,
+        )
+    try:
+        text = compute()
+        set_disasm(
+            conn,
+            function_id,
+            text,
+            extent_size=extent_size,
+            project_dir=project_dir,
+        )
+        return text, True
+    finally:
+        gate.set()
+        with _DISASM_GATES_LOCK:
+            _DISASM_GATES.pop(function_id, None)
 
 
 def clear_disasm_for_binary(conn: sqlite3.Connection, binary_id: int) -> int:
@@ -4749,7 +4817,7 @@ def _binary_match(row: Mapping[str, Any], needle: _Match) -> str:
 # costs (a stated ceiling, not a timeout this module can enforce).
 MAX_REGEX_CHARS = 200
 REGEX_CACHE_SIZE = 64
-_REGEX_CACHE: dict[str, re.Pattern[str]] = {}
+_REGEX_CACHE: OrderedDict[str, re.Pattern[str]] = OrderedDict()
 _REGEX_CACHE_LOCK = threading.Lock()
 
 
@@ -4800,6 +4868,7 @@ def compile_regex(pattern: str) -> re.Pattern[str]:
     with _REGEX_CACHE_LOCK:
         cached = _REGEX_CACHE.get(pattern)
         if cached is not None:
+            _REGEX_CACHE.move_to_end(pattern)
             return cached
     try:
         compiled = re.compile(pattern)
@@ -4810,10 +4879,11 @@ def compile_regex(pattern: str) -> re.Pattern[str]:
     with _REGEX_CACHE_LOCK:
         existing = _REGEX_CACHE.get(pattern)
         if existing is not None:
+            _REGEX_CACHE.move_to_end(pattern)
             return existing
-        if len(_REGEX_CACHE) >= REGEX_CACHE_SIZE:
-            _REGEX_CACHE.pop(next(iter(_REGEX_CACHE)))
         _REGEX_CACHE[pattern] = compiled
+        while len(_REGEX_CACHE) > REGEX_CACHE_SIZE:
+            _REGEX_CACHE.popitem(last=False)
     return compiled
 
 

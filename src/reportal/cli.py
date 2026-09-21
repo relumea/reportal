@@ -9283,13 +9283,18 @@ def disasm(
         )
         if cached is None:
             try:
-                listing = str(engine.disassemble(project_dir, va, size, fmt))
+                if fmt == store.CACHEABLE_DISASM_FORMAT:
+                    listing, _filled = store.get_or_compute_disasm(
+                        conn,
+                        function_id,
+                        lambda: str(engine.disassemble(project_dir, va, size, fmt)),
+                        extent_size=size,
+                        project_dir=project_dir,
+                    )
+                else:
+                    listing = str(engine.disassemble(project_dir, va, size, fmt))
             except engines.EngineError as exc:
                 _fail(str(exc), json_output)
-            if fmt == store.CACHEABLE_DISASM_FORMAT:
-                store.set_disasm(
-                    conn, function_id, listing, extent_size=size, project_dir=project_dir
-                )
         else:
             listing = cached
     payload = {

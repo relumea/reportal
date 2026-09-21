@@ -76,24 +76,23 @@ def _disassembly(
 ) -> str:
     """Return a function's NASM listing, from ``disasm_cache`` or the engine."""
     function_id = int(function["id"])
-    project_dir = _project_context(conn, function)
     cached = store.get_disasm(conn, function_id)
     if cached is not None:
         return cached
+    project_dir = _project_context(conn, function)
     _require_engine(engine)
     try:
-        listing = engine.disassemble(
-            project_dir, int(function["va"]), int(function["size"]), LISTING_FORMAT
+        listing, _filled = store.get_or_compute_disasm(
+            conn,
+            function_id,
+            lambda: engine.disassemble(
+                project_dir, int(function["va"]), int(function["size"]), LISTING_FORMAT
+            ),
+            extent_size=int(function["size"]),
+            project_dir=project_dir,
         )
     except engines.EngineError as exc:
         raise DiffError(500, "engine-error", str(exc)) from exc
-    store.set_disasm(
-        conn,
-        function_id,
-        listing,
-        extent_size=int(function["size"]),
-        project_dir=project_dir,
-    )
     return listing
 
 

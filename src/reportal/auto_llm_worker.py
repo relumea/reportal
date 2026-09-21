@@ -229,13 +229,12 @@ def gather_context(ctx: WorkerContext) -> tuple[str, str] | WorkerResult:
     va = int(ctx.function["va"])
     try:
         if disasm is None:
-            disasm = engine.disassemble(
-                str(ctx.project_dir), va, int(ctx.function["size"]), DISASM_FORMAT
-            )
-            store.set_disasm(
+            disasm, _filled = store.get_or_compute_disasm(
                 ctx.conn,
                 function_id,
-                disasm,
+                lambda: engine.disassemble(
+                    str(ctx.project_dir), va, int(ctx.function["size"]), DISASM_FORMAT
+                ),
                 extent_size=int(ctx.function["size"]),
                 project_dir=str(ctx.project_dir),
             )

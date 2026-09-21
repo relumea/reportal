@@ -2022,14 +2022,15 @@ def _tool_get_disasm(arguments: dict[str, Any]) -> dict[str, Any]:
         va = int(function["va"])
         size = int(function["size"])
         if fmt == CACHEABLE_DISASM_FORMAT:
-            cached = store.get_disasm(conn, function_id)
-            if cached is not None:
-                return {"va": va, "size": size, "format": fmt, "disasm": cached}
-        disasm = _run_engine(lambda: _engine().disassemble(project_dir, va, size, fmt))
-        if fmt == CACHEABLE_DISASM_FORMAT:
-            store.set_disasm(
-                conn, function_id, str(disasm), extent_size=size, project_dir=project_dir
+            disasm, _filled = store.get_or_compute_disasm(
+                conn,
+                function_id,
+                lambda: str(_run_engine(lambda: _engine().disassemble(project_dir, va, size, fmt))),
+                extent_size=size,
+                project_dir=project_dir,
             )
+            return {"va": va, "size": size, "format": fmt, "disasm": disasm}
+        disasm = _run_engine(lambda: _engine().disassemble(project_dir, va, size, fmt))
     return {"va": va, "size": size, "format": fmt, "disasm": disasm}
 
 

@@ -749,6 +749,75 @@ class TestDisasmCache:
         conn.commit()
         assert store.get_disasm(conn, function_id) is None
 
+    def test_first_project_context_drops_empty_identity_listings(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """None -> path is an identity change; empty-dir rows must not survive it."""
+        binary_id = store.add_binary(conn, sha256="3e" * 32, name="demo")
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        function_id = store.add_function(conn, analysis_id=analysis_id, va=0x1000, size=8)
+        store.set_disasm(conn, function_id, "bits 32\n")
+        assert store.get_disasm(conn, function_id) == "bits 32\n"
+        store.set_decompilation(conn, function_id, "void a(void) {}", "kuna")
+        store.set_ai_artifact(conn, function_id, "summary", {"text": "old"}, "test")
+        store.set_rebrew_context(conn, binary_id, "/projects/demo")
+        assert store.get_disasm(conn, function_id) is None
+        assert store.get_decompilation(conn, function_id) is None
+        assert store.get_ai_artifact(conn, function_id, "summary") is None
+
+    def test_concurrent_misses_share_one_compute(self, portal_db: Path) -> None:
+        import threading
+        import time
+
+        with contextlib.closing(store.connect(portal_db)) as seed:
+            binary_id = store.add_binary(seed, sha256="3f" * 32, name="demo")
+            analysis_id = store.create_analysis(seed, binary_id=binary_id, engine="manual")
+            function_id = store.add_function(seed, analysis_id=analysis_id, va=0x1000, size=8)
+            store.set_rebrew_context(seed, binary_id, "/projects/demo")
+
+        computes = 0
+        compute_lock = threading.Lock()
+
+        def compute() -> str:
+            nonlocal computes
+            with compute_lock:
+                computes += 1
+            time.sleep(0.15)
+            return "bits 32\nnop\n"
+
+        results: list[str] = []
+        errors: list[BaseException] = []
+        barrier = threading.Barrier(4)
+
+        def worker() -> None:
+            try:
+                with contextlib.closing(store.connect(portal_db)) as local:
+                    barrier.wait(timeout=5.0)
+                    text, _filled = store.get_or_compute_disasm(
+                        local,
+                        function_id,
+                        compute,
+                        extent_size=8,
+                        project_dir="/projects/demo",
+                    )
+                    results.append(text)
+            except BaseException as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5.0)
+            assert not thread.is_alive()
+
+        assert not errors
+        assert len(results) == 4
+        assert computes == 1
+        assert results == ["bits 32\nnop\n"] * 4
+        with contextlib.closing(store.connect(portal_db)) as check:
+            assert store.get_disasm(check, function_id) == "bits 32\nnop\n"
+
 
 class TestDecompilations:
     def test_round_trip(self, conn: sqlite3.Connection) -> None:

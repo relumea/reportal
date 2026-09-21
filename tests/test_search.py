@@ -317,6 +317,16 @@ class TestRegexSearch:
             store.compile_regex(f"pattern-{index}")
         assert len(store._REGEX_CACHE) <= store.REGEX_CACHE_SIZE
 
+    def test_a_hot_pattern_survives_fifo_pressure(self) -> None:
+        """Hits move to the newest slot so a flood of unique patterns cannot drop them."""
+        store._REGEX_CACHE.clear()
+        hot = store.compile_regex("hot-pattern.*")
+        for index in range(store.REGEX_CACHE_SIZE + 4):
+            store.compile_regex(hot.pattern)
+            store.compile_regex(f"flood-{index}")
+        assert store.compile_regex("hot-pattern.*") is hot
+        assert "hot-pattern.*" in store._REGEX_CACHE
+
     def test_the_route_takes_the_pattern_flag(self, conn: sqlite3.Connection) -> None:
         _seed(conn)
         status, headers, body = wsgi_request("GET", "/api/search?q=%5Ebeta&regex=true")

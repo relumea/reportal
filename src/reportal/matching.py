@@ -577,7 +577,14 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
             return None
         extent_size = int(function["size"])
         try:
-            text = engine.disassemble(project_dir, int(function["va"]), extent_size)
+            text, _filled = store.get_or_compute_disasm(
+                conn,
+                function_id,
+                lambda: engine.disassemble(project_dir, int(function["va"]), extent_size),
+                extent_size=extent_size,
+                project_dir=project_dir,
+            )
+            return text
         except engines.EngineError as exc:
             _log.warning(
                 "match disasm failed function_id=%s va=%s: %s",
@@ -586,8 +593,6 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
                 exc,
             )
             return None
-        store.set_disasm(conn, function_id, text, extent_size=extent_size, project_dir=project_dir)
-        return text
 
     return disassemble
 

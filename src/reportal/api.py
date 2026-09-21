@@ -4700,15 +4700,21 @@ def function_disasm(request: Request, function_id: int) -> Response:
         va = int(function["va"])
         size = int(function["size"])
         if fmt == CACHEABLE_DISASM_FORMAT:
-            cached = store.get_disasm(conn, function_id)
-            if cached is not None:
-                return json_response({"va": va, "size": size, "format": fmt, "disasm": cached})
+            try:
+                disasm, _filled = store.get_or_compute_disasm(
+                    conn,
+                    function_id,
+                    lambda: _engine().disassemble(project_dir, va, size, fmt),
+                    extent_size=size,
+                    project_dir=project_dir,
+                )
+            except engines.EngineError as exc:
+                return json_error(500, error="engine-error", detail=str(exc))
+            return json_response({"va": va, "size": size, "format": fmt, "disasm": disasm})
         try:
             disasm = _engine().disassemble(project_dir, va, size, fmt)
         except engines.EngineError as exc:
             return json_error(500, error="engine-error", detail=str(exc))
-        if fmt == CACHEABLE_DISASM_FORMAT:
-            store.set_disasm(conn, function_id, disasm, extent_size=size, project_dir=project_dir)
     return json_response({"va": va, "size": size, "format": fmt, "disasm": disasm})
 
 
