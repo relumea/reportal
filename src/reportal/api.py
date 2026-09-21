@@ -4659,6 +4659,7 @@ def apply_match(
                 function_id=function_id,
                 candidate_function_id=candidate_id,
                 mode=mode,
+                visible_to=_caller(request),
             )
         except matching.InvalidSettingsError as exc:
             return json_error(400, error=exc.error, detail=exc.detail)

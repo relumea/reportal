@@ -388,6 +388,20 @@ def _run_library(
     )
 
 
+def _run_unstrip(
+    conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Identify Auto-unstrip proposals and store the reading."""
+    raw = params.get("min_confidence")
+    confidence = unstrip.DEFAULT_MIN_CONFIDENCE if raw is None else float(raw)
+    return unstrip.run_unstrip(
+        conn,
+        binary_id=binary_id,
+        engine=engines.get_engine(),
+        min_confidence=confidence,
+    )
+
+
 def _perform_security(
     conn: sqlite3.Connection, binary_id: int, params: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -694,9 +708,8 @@ def builtin_kinds() -> tuple[JobKind, ...]:
             name="unstrip",
             label="Auto-unstrip identification proposals",
             scan_kinds=store.SCAN_KIND_UNSTRIP,
-            run=lambda conn, binary_id, params: unstrip.run_unstrip(
-                conn, binary_id=binary_id, engine=engines.get_engine()
-            ),
+            params=("min_confidence",),
+            run=_run_unstrip,
         ),
         JobKind(
             name="crypto",
@@ -1215,10 +1228,13 @@ def submit(
         ids = resolved.get("function_ids")
         if ids is not None and (not isinstance(ids, list) or not all(_is_int(v) for v in ids)):
             raise ValueError("function_ids must be a list of function ids")
-    if kind == "library":
+    if kind in ("library", "unstrip"):
+        default_confidence = (
+            library.DEFAULT_MIN_CONFIDENCE if kind == "library" else unstrip.DEFAULT_MIN_CONFIDENCE
+        )
         raw_confidence = resolved.get("min_confidence")
         if raw_confidence is None:
-            resolved["min_confidence"] = library.DEFAULT_MIN_CONFIDENCE
+            resolved["min_confidence"] = default_confidence
         else:
             try:
                 confidence = float(raw_confidence)

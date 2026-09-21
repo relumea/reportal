@@ -347,6 +347,20 @@ def _mcp_caller(conn: sqlite3.Connection) -> dict[str, Any] | None:
     return auth.get_user(conn, user_id)
 
 
+def _mcp_visible_binary_ids(
+    conn: sqlite3.Connection, caller: dict[str, Any] | None
+) -> set[int] | None:
+    """Binary ids *caller* may reach, or None for no restriction (auth off / admin)."""
+    scope = auth.visible_clause(conn, caller, prefix="b.")
+    if scope is None:
+        return None
+    clause, params = scope
+    return {
+        int(row["id"])
+        for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
+    }
+
+
 def _mcp_team_ids(conn: sqlite3.Connection) -> list[int]:
     """Team ids the MCP caller belongs to; empty while auth is off."""
     caller = _mcp_caller(conn)
@@ -2332,7 +2346,11 @@ def _tool_apply_match(arguments: dict[str, Any]) -> dict[str, Any]:
     with contextlib.closing(_open()) as conn:
         try:
             plan = matching.plan_transfer(
-                conn, function_id=function_id, candidate_function_id=candidate_id, mode=mode
+                conn,
+                function_id=function_id,
+                candidate_function_id=candidate_id,
+                mode=mode,
+                visible_to=_mcp_caller(conn),
             )
         except matching.InvalidSettingsError as exc:
             raise ToolError(exc.error, exc.detail) from exc
@@ -3702,14 +3720,20 @@ def _tool_canonicalize_function_names(arguments: dict[str, Any]) -> dict[str, An
     ids = _bounded_function_ids(arguments, "function_ids")
     apply_renames = _arg_optional_bool(arguments, "apply", True)
     with contextlib.closing(_open()) as conn:
-        plan = function_extras.canonical_names(conn, ids)
+        caller = _mcp_caller(conn)
+        plan = function_extras.canonical_names(conn, ids, visible_to=caller)
         if not apply_renames:
             return {**plan, "applied": [], "applied_count": 0, "dry_run": True}
+        allowed = _mcp_visible_binary_ids(conn, caller)
         with journal.journaled(conn, journal.new_action()) as log:
             applied: list[dict[str, Any]] = []
             for entry in plan["planned"]:
                 if not entry["changed"]:
                     continue
+                if allowed is not None:
+                    owner = store.get_function(conn, int(entry["function_id"]))
+                    if owner is None or int(owner["binary_id"]) not in allowed:
+                        continue
                 result = journal.journaled_rename(
                     conn,
                     log,
@@ -4690,11 +4714,12 @@ def _tool_bulk_binaries(arguments: dict[str, Any]) -> dict[str, Any]:
         raise ToolError("invalid params", "binary_ids must be a list of integers")
     tag = _arg_optional_str(arguments, "tag")
     with contextlib.closing(_open()) as conn:
+        allowed = _mcp_visible_binary_ids(conn, _mcp_caller(conn))
         action_id = journal.new_action()
         with journal.journaled(conn, action_id) as log:
             try:
                 result = bulk_actions.apply_binary_action(
-                    conn, action=action, ids=ids, tag=tag, log=log
+                    conn, action=action, ids=ids, tag=tag, log=log, allowed=allowed
                 )
             except bulk_actions.BulkError as exc:
                 raise ToolError("invalid bulk request", str(exc)) from exc
@@ -4709,11 +4734,18 @@ def _tool_bulk_functions(arguments: dict[str, Any]) -> dict[str, Any]:
     prefix = _arg_optional_str(arguments, "prefix")
     replace = _arg_optional_bool(arguments, "replace", False)
     with contextlib.closing(_open()) as conn:
+        allowed = _mcp_visible_binary_ids(conn, _mcp_caller(conn))
         action_id = journal.new_action()
         with journal.journaled(conn, action_id) as log:
             try:
                 result = bulk_actions.apply_function_action(
-                    conn, action=action, ids=ids, prefix=prefix, replace=replace, log=log
+                    conn,
+                    action=action,
+                    ids=ids,
+                    prefix=prefix,
+                    replace=replace,
+                    log=log,
+                    allowed=allowed,
                 )
             except bulk_actions.BulkError as exc:
                 raise ToolError("invalid bulk request", str(exc)) from exc
@@ -4727,11 +4759,12 @@ def _tool_bulk_analyses(arguments: dict[str, Any]) -> dict[str, Any]:
         raise ToolError("invalid params", "analysis_ids must be a list of integers")
     tag = _arg_optional_str(arguments, "tag")
     with contextlib.closing(_open()) as conn:
+        allowed = _mcp_visible_binary_ids(conn, _mcp_caller(conn))
         action_id = journal.new_action()
         with journal.journaled(conn, action_id) as log:
             try:
                 result = bulk_actions.apply_analysis_action(
-                    conn, action=action, ids=ids, tag=tag, log=log
+                    conn, action=action, ids=ids, tag=tag, log=log, allowed=allowed
                 )
             except bulk_actions.BulkError as exc:
                 raise ToolError("invalid bulk request", str(exc)) from exc

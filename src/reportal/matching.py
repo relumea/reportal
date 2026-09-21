@@ -969,6 +969,7 @@ def plan_transfer(
     function_id: int,
     candidate_function_id: int,
     mode: str = DEFAULT_TRANSFER_MODE,
+    visible_to: Mapping[str, Any] | None = None,
 ) -> TransferPlan:
     """Plan one symbol transfer without writing anything.
 
@@ -977,6 +978,9 @@ def plan_transfer(
     carries a different non-empty calling convention is refused with reason
     ``signature-conflict``, so an ABI-level mismatch is never overwritten
     silently.  A target with no signature is not a conflict.
+
+    ``visible_to`` refuses a candidate on a binary the caller may not see,
+    reporting it as ``unknown-candidate`` the way :func:`transfer_matches` does.
     """
     if mode not in TRANSFER_MODES:
         raise InvalidSettingsError(
@@ -1000,6 +1004,24 @@ def plan_transfer(
             REASON_UNKNOWN_CANDIDATE,
             f"no function with id {candidate_function_id}",
         )
+    if visible_to is not None:
+        from reportal import auth
+
+        scope = auth.visible_clause(conn, visible_to, prefix="b.")
+        if scope is not None:
+            clause, params = scope
+            row = conn.execute(
+                f"SELECT 1 AS ok FROM binaries b WHERE b.id = ? AND ({clause})",
+                (int(candidate["binary_id"]), *params),
+            ).fetchone()
+            if row is None:
+                return _failed_plan(
+                    function_id,
+                    candidate_function_id,
+                    mode,
+                    REASON_UNKNOWN_CANDIDATE,
+                    f"no function with id {candidate_function_id}",
+                )
     if not store.has_match(conn, function_id, candidate_function_id):
         return _failed_plan(
             function_id,
@@ -1209,16 +1231,6 @@ def transfer_matches(
     may not see, so a transfer never copies a hidden name or signature; the
     refusal reads as unknown, like the match scope.
     """
-    from reportal import auth
-
-    scope = auth.visible_clause(conn, visible_to, prefix="b.")
-    visible: set[int] | None = None
-    if scope is not None:
-        clause, params = scope
-        visible = {
-            int(row["id"])
-            for row in conn.execute(f"SELECT b.id AS id FROM binaries b WHERE {clause}", params)
-        }
     rows: list[dict[str, Any]] = []
     applied = 0
     skipped = 0
@@ -1229,18 +1241,8 @@ def transfer_matches(
             function_id=request.function_id,
             candidate_function_id=request.candidate_function_id,
             mode=request.mode,
+            visible_to=visible_to,
         )
-        if plan.status == TRANSFER_STATUS_APPLIED and visible is not None:
-            candidate = store.get_function(conn, request.candidate_function_id)
-            candidate_binary = int(candidate["binary_id"]) if candidate is not None else -1
-            if candidate_binary not in visible:
-                plan = _failed_plan(
-                    request.function_id,
-                    request.candidate_function_id,
-                    request.mode,
-                    REASON_UNKNOWN_CANDIDATE,
-                    f"no function with id {request.candidate_function_id}",
-                )
         if plan.status == TRANSFER_STATUS_APPLIED and binary_id is not None:
             owner = store.get_function(conn, request.function_id)
             owner_binary = int(owner["binary_id"]) if owner is not None else -1
