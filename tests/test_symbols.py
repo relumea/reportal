@@ -1099,3 +1099,13 @@ class TestSymbolMcp:
         )
         assert failed
         assert bad_format["error"] == "invalid format"
+
+        outside = tmp_path.parent / f"outside-{tmp_path.name}" / "escaped.h"
+        escaped, failed = mcp_server.call_tool(
+            "export_symbols",
+            {"binary_id": ids["binary"], "path": str(outside)},
+        )
+        assert failed
+        assert escaped["error"] == "invalid path"
+        assert "workspace" in escaped["detail"]
+        assert not outside.exists()

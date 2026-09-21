@@ -381,6 +381,23 @@ class TestMcp:
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("a control-character password must be a tool error")
 
+    def test_a_path_outside_the_workspace_is_a_tool_error(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        outside = tmp_path.parent / f"outside-{tmp_path.name}" / "escaped.zip"
+        tool = mcp_tools.get_tool("export_zipped_binary")
+        assert tool is not None
+
+        try:
+            tool.handler({"binary_id": ids["binary"], "path": str(outside)})
+        except mcp_tools.ToolError as exc:
+            assert exc.error == "invalid path"
+            assert "workspace" in exc.detail
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("a path outside the workspace must be a tool error")
+        assert not outside.exists()
+
     def test_the_write_is_revertible(self, tmp_path: Path, monkeypatch: Any) -> None:
         ids = _seed(tmp_path, monkeypatch)
         target = tmp_path / "revertible.zip"

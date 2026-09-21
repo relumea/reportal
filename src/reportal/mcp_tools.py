@@ -3775,6 +3775,8 @@ def _tool_import_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
 def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     path = _arg_str(arguments, "path")
+    if not under_workspace(path):
+        raise ToolError("invalid path", "export path must be under the workspace")
     kind = _arg_optional_str(arguments, "format", "c").strip().lower() or "c"
     if kind not in ("c", "json"):
         raise ToolError("invalid format", "format must be c or json")
@@ -4335,6 +4337,8 @@ def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
 
     binary_id = _arg_int(arguments, "binary_id")
     path = _arg_str(arguments, "path")
+    if not under_workspace(path):
+        raise ToolError("invalid path", "export path must be under the workspace")
     password = _arg_optional_str(arguments, "password", zipcrypto.DEFAULT_PASSWORD)
     try:
         password = zipcrypto.validate_password(password)

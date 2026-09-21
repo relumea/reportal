@@ -1958,6 +1958,20 @@ class TestDataTypeTools:
         assert is_error is True
         assert payload["error"] == "export exists"
 
+    def test_export_data_types_refuses_a_path_outside_the_workspace(
+        self, conn: Any, tmp_path: Path
+    ) -> None:
+        ids = _seed_binary(conn, tmp_path)
+        _seed_data_type(conn, ids["binary"])
+        outside = tmp_path.parent / f"outside-{tmp_path.name}" / "types.h"
+        payload, is_error = _call(
+            "export_data_types", {"binary_id": ids["binary"], "path": str(outside)}
+        )
+        assert is_error is True
+        assert payload["error"] == "invalid path"
+        assert "workspace" in payload["detail"]
+        assert not outside.exists()
+
 
 ENUM_DEFINITION = "typedef enum NPFlags_s {\n\tNP_FLAG_A = 0,\n\tNP_FLAG_B = 1\n} NPFlags;\n"
 
@@ -2343,6 +2357,21 @@ class TestSignatureTools:
         )
         assert is_error is True
         assert payload["error"] == "export exists"
+
+    def test_export_signatures_refuses_a_path_outside_the_workspace(
+        self, conn: Any, tmp_path: Path
+    ) -> None:
+        ids = _seed_binary(conn, tmp_path)
+        _seed_signature_source(conn, ids)
+        _call("run_signature_import", {"binary_id": ids["binary"]})
+        outside = tmp_path.parent / f"outside-{tmp_path.name}" / "prototypes.h"
+        payload, is_error = _call(
+            "export_signatures", {"binary_id": ids["binary"], "path": str(outside)}
+        )
+        assert is_error is True
+        assert payload["error"] == "invalid path"
+        assert "workspace" in payload["detail"]
+        assert not outside.exists()
 
 
 # Note text the knowledge tool tests ingest; the query term appears in it and
