@@ -258,6 +258,60 @@ class TestRoutes:
         assert status.startswith("404")
         assert payload["error"] == debug.ERROR_NO_SESSION
 
+    def test_render_transcript_is_citable(self) -> None:
+        text = debug.render_transcript(
+            [
+                {"request": "threads", "success": True, "threads": [{"id": 1, "name": "t"}]},
+                {
+                    "request": "stackTrace",
+                    "success": True,
+                    "frames": [{"name": "main", "instructionPointerReference": "0x1000"}],
+                },
+            ],
+            backend="gdb",
+        )
+        assert "# Debug session (gdb)" in text
+        assert "thread 1: t" in text
+        assert "frame main @ 0x1000" in text
+        assert "unobserved is not absent" in text
+
+    def test_session_ingests_a_digest_document(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import knowledge
+
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("lldb-dap", "lldb-dap"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "lldb-dap",
+                "argv": ["lldb-dap"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [{"request": "initialize", "success": True}],
+                "notes": [],
+            },
+        )
+        db = _db(tmp_path, "digest.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            debug.run_session(conn, binary_id)
+            documents = store.list_documents(
+                conn, scope_kind=knowledge.SCOPE_KIND_BINARY, scope_id=binary_id
+            )
+            assert len(documents) == 1
+            assert documents[0]["title"].startswith("Debug session")
+            hits = knowledge.retrieve(
+                conn,
+                query="initialize",
+                scope_kind=knowledge.SCOPE_KIND_BINARY,
+                scope_id=binary_id,
+            )
+            assert hits
+
     def test_scan_records_journal_revert(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

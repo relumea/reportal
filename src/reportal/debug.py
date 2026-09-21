@@ -1244,5 +1244,59 @@ def run_session(
             description=f"stored {SCAN_KIND} scan for binary {binary_id}",
         )
         store.set_scan(conn, analysis_id, SCAN_KIND, {**report, "session_id": session_id})
+        digest = render_transcript(report["transcript"], backend=backend.name)
+        try:
+            from reportal import knowledge
+
+            payload = knowledge.ingest_document(
+                conn,
+                scope_kind=knowledge.SCOPE_KIND_BINARY,
+                scope_id=binary_id,
+                title=f"Debug session {session_id}",
+                source=f"debug-session-{session_id}.md",
+                mime="text/markdown",
+                data=digest.encode("utf-8"),
+            )
+            journal.journaled_ingest(conn, log, payload)
+        except Exception as exc:
+            _log.warning(
+                "debug digest ingest skipped session_id=%s binary_id=%s error=%s%s",
+                session_id,
+                binary_id,
+                f"{type(exc).__name__}: {exc}"[:200],
+                observability.request_id_suffix(),
+            )
         finished = get_session(conn, session_id)
     return log.attach(finished or {"id": session_id, **report})
+
+
+def render_transcript(transcript: Sequence[Mapping[str, Any]], *, backend: str) -> str:
+    """The session transcript as a citable markdown digest."""
+    lines = [f"# Debug session ({backend})", ""]
+    for entry in transcript:
+        request = str(entry.get("request") or "unknown")
+        ok = entry.get("success", True)
+        lines.append(f"## {request} ({'ok' if ok else 'failed'})")
+        if entry.get("threadId") is not None:
+            lines.append(f"thread: {entry['threadId']}, reason: {entry.get('reason', '')}")
+        for thread in entry.get("threads") or []:
+            if isinstance(thread, dict):
+                lines.append(f"thread {thread.get('id')}: {thread.get('name', '')}")
+        for frame in entry.get("frames") or []:
+            if isinstance(frame, dict):
+                lines.append(
+                    f"frame {frame.get('name', '')} @"
+                    f" {frame.get('instructionPointerReference', '')}"
+                )
+        for register in (entry.get("registers") or [])[:32]:
+            if isinstance(register, dict) and register.get("name"):
+                lines.append(f"{register['name']} = {register.get('value', '')}")
+        if int(entry.get("register_count") or 0) > 32:
+            lines.append(f"({int(entry['register_count']) - 32} more registers)")
+        if entry.get("address"):
+            lines.append(f"memory [{entry['address']}]: {entry.get('data', '')}")
+        if entry.get("note"):
+            lines.append(str(entry["note"]))
+        lines.append("")
+    lines.append("One session is one path: unobserved is not absent.")
+    return "\n".join(lines)
