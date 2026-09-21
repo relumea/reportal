@@ -38,6 +38,11 @@ console = Console(stderr=True)
 
 DEFAULT_PORT = 8002
 
+# Environment overrides the settings registry documents; the test pins that
+# every REPORTAL_* variable the package reads has a registry entry.
+SERVER_ENV = "REPORTAL_SERVER"
+TOKEN_ENV = "REPORTAL_TOKEN"
+
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -69,7 +74,7 @@ def _base_url(server: str) -> str:
 
 
 def _token(explicit: str | None) -> str:
-    token = (explicit or "").strip() or os.environ.get("REPORTAL_TOKEN", "").strip()
+    token = (explicit or "").strip() or os.environ.get(TOKEN_ENV, "").strip()
     if not token:
         raise CustomerError("no token: pass --token or set REPORTAL_TOKEN")
     return token
@@ -151,7 +156,7 @@ def _json_option() -> Any:
 
 
 def _resolve_server(server: str) -> str:
-    return (os.environ.get("REPORTAL_SERVER", "").strip() or server).strip()
+    return (os.environ.get(SERVER_ENV, "").strip() or server).strip()
 
 
 @app.command("binaries")

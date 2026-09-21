@@ -24,6 +24,8 @@ returned, only its presence and length.
 | `billing.stripe_price_team` | `REPORTAL_STRIPE_PRICE_TEAM` |  | text | `none; checkout for this plan answers 503` | the Stripe price id checkout uses for the Team plan |
 | `billing.stripe_secret_key` | `REPORTAL_STRIPE_SECRET_KEY` |  | secret | `none, so billing stays disabled` | the Stripe secret key checkout and portal calls authenticate with |
 | `billing.stripe_webhook_secret` | `REPORTAL_STRIPE_WEBHOOK_SECRET` |  | secret | `none, so every webhook is refused` | the signing secret every incoming webhook is verified against |
+| `client.server` | `REPORTAL_SERVER` |  | text | `the --server value` | the portal base URL the customer CLI calls |
+| `client.token` | `REPORTAL_TOKEN` |  | secret | `not set` | the API token the customer CLI sends as a bearer |
 | `docs.directory` | `REPORTAL_DOCS` |  | path | `the shipped manual, else the workspace's docs/` | the directory the in-app documentation is read from |
 | `flirt.sigs_dir` | `REPORTAL_FLIRT_SIGS_DIR` |  | path | `unset, so the FLIRT routes report an empty catalog` | the FLIRT signature checkout the catalog indexes, and the only path it reads |
 | `jobs.pool` | `REPORTAL_JOBS_POOL` |  | flag | `on` | the bounded background pool that drains the job queue in this process |
