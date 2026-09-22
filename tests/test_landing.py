@@ -134,3 +134,20 @@ class TestRoute:
         for plan in plans.public_plans():
             if plan.price_cents:
                 assert f"${plan.price_usd:,.0f}" in body
+
+
+class TestLandingEdges:
+    def test_unlimited_allowances_read_unlimited(self) -> None:
+        unlimited = plans.Plan(
+            id="x",
+            name="X",
+            tagline="",
+            price_cents=100,
+            monthly_credits=plans.UNLIMITED,
+            monthly_auto_runs=0,
+            max_binaries=1,
+            max_api_keys=1,
+            max_seats=1,
+        )
+        assert landing._credits(unlimited) == "Unlimited"
+        assert landing._decompilations(unlimited) == "Unlimited"
