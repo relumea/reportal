@@ -1874,3 +1874,34 @@ class TestStructsParamValidation:
                 binary_id=_binary(conn, tmp_path),
                 params={"limit": -1},
             )
+
+
+class TestFunctionTriageParamValidation:
+    def test_non_integer_limit_is_rejected(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="limit must be an integer"):
+            jobs.submit(
+                conn,
+                kind="function-triage",
+                binary_id=_binary(conn, tmp_path),
+                params={"limit": "many"},
+            )
+
+    def test_out_of_range_limit_is_rejected(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="limit must be between"):
+            jobs.submit(
+                conn,
+                kind="function-triage",
+                binary_id=_binary(conn, tmp_path),
+                params={"limit": 0},
+            )
+
+    def test_non_list_function_ids_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="function_ids must be a list"):
+            jobs.submit(
+                conn,
+                kind="function-triage",
+                binary_id=_binary(conn, tmp_path),
+                params={"function_ids": 0x1000},
+            )
