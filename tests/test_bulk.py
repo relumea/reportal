@@ -803,3 +803,16 @@ class TestSurfaceHelpers:
             assert "400" in str(exc)
         else:
             raise AssertionError("missing file must raise")
+
+
+class TestSurfaceProjectContext:
+    def test_no_engine_context_raises(self, conn: sqlite3.Connection) -> None:
+        def fail(status: int, error: str, detail: str = "") -> Exception:
+            return Exception(f"{status} {error} {detail}")
+
+        try:
+            surface.project_context(conn, 424242, fail=fail)
+        except Exception as exc:
+            assert "400" in str(exc)
+        else:
+            raise AssertionError("missing context must raise")
