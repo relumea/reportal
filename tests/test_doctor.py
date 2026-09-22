@@ -780,3 +780,12 @@ class TestDoctorBrokenChecks:
         report = doctor.report()
         optional = _check(report, "optional")
         assert "graph backend" in optional.get("hint", "")
+
+
+class TestDoctorDebugBackendMissing:
+    def test_debug_without_backend_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("REPORTAL_DEBUG", "1")
+        monkeypatch.setattr(doctor.debug, "available_backend", lambda: None)
+        report = doctor.report()
+        optional = _check(report, "optional")
+        assert "debug backend" in optional.get("hint", "")
