@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 from rebrew.workspace import sqlite_ro_uri
 from typer.testing import CliRunner
 
-from reportal import cli
+from reportal import _paths, cli
 from reportal._paths import DB_ENV, WorkspaceNotFound, db_path, project_root
 
 runner = CliRunner()
@@ -84,3 +85,42 @@ class TestSqliteUri:
         uri = sqlite_ro_uri(tmp_path / "portal.db")
         assert uri.endswith("?mode=ro")
         assert uri.startswith("file://")
+
+
+class TestAtomicWriters:
+    def test_round_trip(self, tmp_path: Path) -> None:
+        target = tmp_path / "sub" / "f.bin"
+        assert _paths.write_bytes_atomic(target, b"data") == target
+        assert target.read_bytes() == b"data"
+        text = tmp_path / "t.txt"
+        assert _paths.write_text_atomic(text, "hi") == text
+        assert text.read_text(encoding="utf-8") == "hi"
+
+    def test_fdopen_failure_closes_the_fd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        closed: list[int] = []
+        real_close = os.close
+
+        def boom(handle: int, *args: object, **kwargs: object) -> object:
+            raise OSError("denied")
+
+        monkeypatch.setattr("os.fdopen", boom)
+        monkeypatch.setattr("os.close", lambda handle: closed.append(handle))
+        try:
+            with pytest.raises(OSError):
+                _paths.write_bytes_atomic(tmp_path / "f.bin", b"x")
+        finally:
+            monkeypatch.setattr("os.close", real_close)
+        assert closed
+
+    def test_replace_failure_removes_the_temp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(src: object, dst: object, *args: object, **kwargs: object) -> None:
+            raise OSError("denied")
+
+        monkeypatch.setattr("os.replace", boom)
+        with pytest.raises(OSError):
+            _paths.write_text_atomic(tmp_path / "f.txt", "x")
+        assert list(tmp_path.glob("*.tmp")) == []
