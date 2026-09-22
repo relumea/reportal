@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -512,3 +513,21 @@ def test_bulk_routes_are_json(conn: sqlite3.Connection) -> None:
     assert status.startswith("400")
     assert headers["Content-Type"].startswith("application/json")
     assert "binary_ids" in json_body(body, headers)["detail"]
+
+
+class TestCommentScopes:
+    def test_function_scope_exists(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="ab" * 32, name="demo.exe", path=str(target), size=2
+        )
+        analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+        function_id, _ = store.upsert_function(
+            conn, analysis_id=analysis_id, va=0x1000, name="f", size=4, status="STUB"
+        )
+        comments.check_scope(conn, scope_kind=comments.SCOPE_FUNCTION, scope_id=function_id)
+        with pytest.raises(comments.UnknownScopeError):
+            comments.check_scope(conn, scope_kind=comments.SCOPE_FUNCTION, scope_id=424242)
+        with pytest.raises(comments.InvalidCommentError):
+            comments.check_scope(conn, scope_kind="mystery", scope_id=1)
