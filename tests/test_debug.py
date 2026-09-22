@@ -2062,3 +2062,93 @@ class TestRunSessionRace:
             result = debug.run_session(conn, binary_id)
             assert result["status"] == debug.STATUS_RUNNING
             assert result["binary_id"] == binary_id
+
+
+class TestDebugInvalidMessages:
+    def test_probe_invalid_message_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        responses: list[dict[str, object]] = [
+            {"type": "response", "request_seq": 1, "command": "initialize", "success": True},
+            {"type": "event", "event": "initialized", "seq": 2},
+            {"type": "response", "request_seq": 3, "command": "configurationDone", "success": True},
+            {"type": "event", "event": "stopped", "seq": 9, "body": {"threadId": 1}},
+            {"type": "junk", "payload": "not a message"},
+        ]
+
+        def frame(payload: dict[str, object]) -> bytes:
+            import json as _json
+
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        chunks = [b"".join(frame(p) for p in responses)]
+        import os as _os
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                return None
+
+        class FakeStdout:
+            def __init__(self) -> None:
+                self._buf = b""
+
+            def fileno(self) -> int:
+                return -1
+
+        FakeProcess.stdout = FakeStdout()
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        assert "invalid message" in caught.value.detail
+
+    def test_digest_ingest_failure_is_recoverable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "gdb"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "gdb",
+                "argv": ["gdb"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [],
+                "notes": [],
+            },
+        )
+
+        def boom(*_a: object, **_k: object) -> object:
+            raise RuntimeError("ingest down")
+
+        monkeypatch.setattr(debug.journal, "journaled_ingest", boom)
+        db = _db(tmp_path, "ingest-fail.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            result = debug.run_session(conn, binary_id)
+            assert result["status"] == debug.STATUS_FINISHED
