@@ -604,6 +604,21 @@ class TestCatalogEdges:
         assert result["added"] == 1
         assert {row["rel_path"] for row in flirt_sigs.list_sigsets(conn)} == {"msvc/vc6/libc.sig"}
 
+    def test_unresolvable_paths_are_skipped(
+        self, tmp_path: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = _checkout(tmp_path)
+        real_resolve = Path.resolve
+
+        def boom(self: Path, *args: object, **kwargs: object) -> Path:
+            if self.name == "libc.sig":
+                raise OSError("denied")
+            return real_resolve(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "resolve", boom)
+        result = flirt_sigs.refresh(conn, root)
+        assert result["added"] == 0
+
 
 class TestFlirtEdges:
     def test_arch_from_filename_tokens(self) -> None:
