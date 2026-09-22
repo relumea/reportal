@@ -2007,3 +2007,36 @@ class TestRelatedLineageBenchmarkUnpackValidation:
                 binary_id=_binary(conn, tmp_path),
                 params={"packer": "mystery"},
             )
+
+
+class TestSubmitDefaults:
+    def test_security_default_severity(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        job = jobs.submit(conn, kind="security", binary_id=_binary(conn, tmp_path))
+        assert job["params"]["min_severity"] == engines.DEFAULT_SECURITY_MIN_SEVERITY
+
+    def test_structs_defaults(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        job = jobs.submit(conn, kind="structs", binary_id=_binary(conn, tmp_path))
+        assert job["params"]["decompiler"] == engines.DEFAULT_DECOMPILER_BACKEND
+        assert job["params"]["limit"] == jobs.DEFAULT_STRUCT_LIMIT
+
+    def test_function_triage_default_limit(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        from reportal import function_triage
+
+        job = jobs.submit(conn, kind="function-triage", binary_id=_binary(conn, tmp_path))
+        assert job["params"]["limit"] == function_triage.DEFAULT_LIMIT
+
+    def test_related_defaults(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        from reportal import related
+
+        job = jobs.submit(conn, kind="related", binary_id=_binary(conn, tmp_path))
+        assert job["params"]["limit"] == related.DEFAULT_LIMIT
+        assert job["params"]["include_unrelated"] is False
+
+    def test_lineage_default_refine(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        job = jobs.submit(conn, kind="lineage", binary_id=_binary(conn, tmp_path))
+        assert job["params"]["refine"] is True
+
+    def test_unpack_defaults(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        job = jobs.submit(conn, kind="unpack", binary_id=_binary(conn, tmp_path))
+        assert job["params"]["packer"] == ""
+        assert job["params"]["name"] == ""
