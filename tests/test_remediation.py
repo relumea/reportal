@@ -1387,3 +1387,15 @@ class TestSnortStixCommands:
         notes = [obj for obj in bundle["objects"] if obj["type"] == "note"]
         assert notes and notes[0]["content"] == STIX_NO_INDICATORS_NOTE
         assert "0 STIX indicators" in result.stderr
+
+
+class TestRemediationHelpers:
+    def test_meta_renders_numbers_bools_and_strings(self) -> None:
+        assert remediation._meta_value(True) == "true"
+        assert remediation._meta_value(False) == "false"
+        assert remediation._meta_value(42) == "42"
+        assert remediation._meta_value("x") == '"x"'
+
+    def test_entries_by_text_dedupes(self) -> None:
+        entries = [{"text": "a"}, {"text": "b"}, {"text": "a"}]
+        assert list(remediation._entries_by_text(entries)) == ["a", "b"]
