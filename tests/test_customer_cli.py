@@ -226,3 +226,61 @@ class TestShowCommands:
         ):
             result = CliRunner().invoke(customer_cli.app, args)
             assert result.exit_code == 0, result.output
+
+
+class TestWriteCommands:
+    def test_rename_posts_the_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_call(
+            method: str, path: str, *, server: str, token: str | None, body: object = None
+        ) -> object:
+            seen.update(method=method, path=path, body=body or {})
+            return {"ok": True}
+
+        monkeypatch.setattr(customer_cli, "_call", fake_call)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["rename", "3", "main", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert seen == {
+            "method": "POST",
+            "path": "/api/functions/3/rename",
+            "body": {"name": "main"},
+        }
+
+    def test_comment_posts_the_body(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_call(
+            method: str, path: str, *, server: str, token: str | None, body: object = None
+        ) -> object:
+            seen.update(method=method, path=path, body=body or {})
+            return {"ok": True}
+
+        monkeypatch.setattr(customer_cli, "_call", fake_call)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            [
+                "comment-add",
+                "4",
+                "looks packed",
+                "--server",
+                "http://127.0.0.1:1",
+                "--token",
+                "x",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert seen["path"] == "/api/binaries/4/comments"
+
+    def test_collections_lists(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(customer_cli, "_call", lambda *a, **k: {"collections": [{"id": 1}]})
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["collections", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout) == {"collections": [{"id": 1}]}
