@@ -879,6 +879,7 @@ def serve(
     console.print(f"  DB: {path}")
     console.print("  Stop: Ctrl+C")
 
+    # cordis-boundary: emission, cancel() stops only a timer that has not fired.
     opener = threading.Timer(0.5, webbrowser.open, args=(url,)) if not no_open else None
     if opener is not None:
         opener.start()
@@ -2598,6 +2599,55 @@ def function_capabilities_command(
             str(entry["evidence_count"]),
         )
     console.print(table)
+
+
+@app.command("function-explain")
+def function_explain_command(
+    function_id: int = typer.Argument(..., help="Function to explain"),
+    domain: str | None = typer.Argument(
+        None, help=f"Explain domain: {', '.join(behavior.EXPLAIN_DOMAINS)}"
+    ),
+    all_domains: bool = typer.Option(False, "--all", help="Run every explain domain"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Match one explain domain (or all four) against a function's stored text."""
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if domain is None and not all_domains:
+        _fail("provide an explain domain or --all", json_output)
+    if domain is not None and domain not in behavior.EXPLAIN_DOMAINS:
+        _fail(f"unknown explain domain: {domain}", json_output)
+    domains = behavior.EXPLAIN_DOMAINS if all_domains else (str(domain),)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if store.get_function(conn, function_id) is None:
+            _fail(f"no function with id {function_id}", json_output)
+        results = {
+            name: function_extras.function_explain(conn, function_id, name) for name in domains
+        }
+    payload = {"function_id": function_id, "domains": results}
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    for name, result in results.items():
+        if not result["findings"]:
+            console.print(f"[yellow]No {name} rule matched this function.[/yellow]")
+            continue
+        table = Table(title=f"{name} explain of function {function_id}")
+        table.add_column("Evidence", style="cyan")
+        table.add_column("Rule")
+        table.add_column("Kind")
+        table.add_column("Confidence")
+        table.add_column("Count", justify="right")
+        for finding in result["findings"]:
+            table.add_row(
+                str(finding["name"]),
+                str(finding["detail"]),
+                str(finding["kind"]),
+                str(finding["confidence"]),
+                str(finding["count"]),
+            )
+        console.print(table)
 
 
 @app.command("function-strings")

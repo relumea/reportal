@@ -7,12 +7,19 @@ view renders it from here.
 
 ## Unreleased
 
+- Per-function explain agents as a deterministic text match (`GET
+  /api/functions/<id>/explain/<domain>`, `reportal function-explain`, the read-only
+  `explain_function` MCP tool and the function detail Explain panel): one of `crypto`,
+  `execution`, `filesystem` or `networking` matched over the imports and literals the stored
+  decompilation names, with a new `behavior.CRYPTO_RULES` table beside the three behavior
+  domains. No engine call, no endpoint, no narrative model output.
 - A live composition retires the fiber of a component whose declaration left the registry
   (`ComponentHost.sync`), and a plugin rescan that fails part-way still tracks what it registered,
   so the next refresh can withdraw those names.
 - The data-types panel withdraws its published type-edit restore on unmount, so a focused field
   that unmounts without a blur leaves no stale closure on the global Escape handler.
-
+- A derived realm's own interception hooks apply to a name the parent binds, after the parent's
+  hooks, so a read through the realm carries that realm's behavior.
 - The component model carries the paper's remaining mechanisms: derived realms
   (`Context.derive`/`Context.drop`), dependency interception (`Context.intercept`), the reified
   load (`Context.load`, `EffectStep`), fibers (`Fiber`, `Context.spawn`, `ComponentHost.fibers`)

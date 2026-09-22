@@ -2,7 +2,7 @@
 
 # MCP tool catalog
 
-The 273 tools the MCP registry exposes (128 read-only, 145 destructive).
+The 274 tools the MCP registry exposes (129 read-only, 145 destructive).
 `reportal mcp` serves them over stdio JSON-RPC; `POST /mcp` and `GET /mcp`
 serve the same registry over HTTP. A read-only tool runs at once; a
 destructive tool pauses an agent run for confirmation. Names must be unique
@@ -18,6 +18,7 @@ registry, its registration rules and the agent loop that drives it are on
 | Tool | What it does |
 |------|--------------|
 | `diff_functions` | Align two functions' disassembly or decompilation side by side, with the changed lines marked. |
+| `explain_function` | Match one explain domain (crypto, execution, filesystem or networking) against the imports and string literals a function's stored decompilation mentions: the hosted portal's per-function explain agents, as a deterministic text match. |
 | `export_decompiler_script` | Render a binary's stored renames as a runnable decompiler script: a Ghidra Python script, an IDA script or a Binary Ninja rename document. Stored-only; placeholders are left out, so only real names are carried. |
 | `export_sbom` | Render a binary's stored library reading as a bill of materials: CycloneDX or SPDX JSON, or a CSV component list. Stored-only; it runs no engine. |
 | `get_activity` | What was done here and by whom: the journaled actions with the actor that made each, plus the analysis-log entries. Derived, never stored. A non-admin caller only sees its own actions. |

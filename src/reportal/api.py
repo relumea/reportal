@@ -9812,6 +9812,26 @@ def get_function_capabilities(function_id: int) -> Response:
     return json_response(payload)
 
 
+@router.get("/api/functions/{function_id}/explain/{domain}")
+def get_function_explain(function_id: int, domain: str) -> Response:
+    """Match one explain domain against the imports and literals the function names."""
+    if domain not in behavior.EXPLAIN_DOMAINS:
+        return json_error(
+            404,
+            error="domain not found",
+            detail=f"unknown explain domain: {domain}",
+        )
+    with contextlib.closing(_open()) as conn:
+        missing = _function_or_404(conn, function_id)
+        if missing is not None:
+            return missing
+        try:
+            payload = function_extras.function_explain(conn, function_id, domain)
+        except function_extras.EdgeError as exc:
+            return json_error(404, error="function not found", detail=exc.detail)
+    return json_response(payload)
+
+
 @router.get("/api/functions/{function_id}/strings")
 def get_function_strings(request: Request, function_id: int) -> Response:
     """The analyst's strings, decompilation literals, and decoded listing runs."""

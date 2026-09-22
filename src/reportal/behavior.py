@@ -13,6 +13,12 @@ read the binary file alone, so a scan needs no rebrew project context.  Each
 domain's result is stored as its own scan kind (:data:`DOMAIN_SCAN_KINDS`).
 Import-name matching reuses the :mod:`reportal.capabilities` rule primitives
 rather than repeating the comparison.
+
+The same rules back the per-function explain surface: :data:`EXPLAIN_RULES`
+adds :data:`CRYPTO_RULES` under :data:`DOMAIN_CRYPTO`, and
+:func:`reportal.function_extras.function_explain` feeds
+:func:`classify` the imports and literals one function's stored decompilation
+names.
 """
 
 from __future__ import annotations
@@ -269,6 +275,92 @@ BEHAVIOR_RULES: dict[str, tuple[BehaviorRule, ...]] = {
     ),
 }
 
+# The crypto rule table.  The binary-level behavior scan has no crypto domain
+# (the engine's crypto scan owns that scan kind), so these rules exist for the
+# per-function explain surface, where the evidence is the function's own stored
+# text rather than the whole file.
+DOMAIN_CRYPTO = "crypto"
+
+CRYPTO_RULES: tuple[BehaviorRule, ...] = (
+    BehaviorRule(
+        name="symmetric-cipher",
+        description="Encrypts or decrypts with a symmetric cipher",
+        imports=capabilities._prefix(
+            "CryptEncrypt",
+            "CryptDecrypt",
+            "CryptDeriveKey",
+            "EVP_Encrypt",
+            "EVP_Decrypt",
+            "AES_",
+            "DES_",
+            "RC4",
+            "ChaCha",
+            "salsa",
+        ),
+        strings=_regex(r"\bAES[-_ ]?\d*\b", r"\bRC4\b", r"\bchacha\b", r"\bsalsa20\b"),
+    ),
+    BehaviorRule(
+        name="hash",
+        description="Hashes data with a message digest",
+        imports=capabilities._prefix(
+            "CryptHash",
+            "CryptCreateHash",
+            "EVP_sha",
+            "SHA1",
+            "SHA256",
+            "SHA512",
+            "MD5",
+            "_sha",
+            "blake",
+        ),
+        strings=_regex(r"\bSHA[-_]?(?:1|256|512)\b", r"\bMD5\b"),
+    ),
+    BehaviorRule(
+        name="key-management",
+        description="Creates, imports, exports or wraps a key",
+        imports=capabilities._prefix(
+            "CryptGenKey",
+            "CryptImportKey",
+            "CryptExportKey",
+            "CryptOpenKey",
+            "BCrypt",
+            "NCrypt",
+            "RSA_",
+            "EVP_PKEY",
+            "PEM_read",
+            "d2i_",
+        ),
+        strings=_regex(
+            r"-----BEGIN [A-Z ]*(?:PRIVATE|PUBLIC) KEY",
+            r"\bPKCS#?[158]\b",
+            r"\bRSA\b",
+        ),
+    ),
+    BehaviorRule(
+        name="random",
+        description="Draws cryptographically random bytes",
+        imports=capabilities._exact("RAND_bytes", "RAND_priv_bytes", "CryptGenRandom"),
+    ),
+)
+
+# The domains the hosted portal runs as per-function explain agents
+# (`crypto-explain`, `execution-explain`, `filesystem-analyse` and
+# `networking-explain`).  `EXPLAIN_DOMAINS` is the closed order the CLI, the API
+# and the SPA list them in; `EXPLAIN_RULES` is what the shared classifier reads,
+# so an explain finding and a binary-level scan finding cannot disagree about a
+# rule.
+EXPLAIN_DOMAINS: tuple[str, ...] = (
+    DOMAIN_CRYPTO,
+    DOMAIN_EXECUTION,
+    DOMAIN_FILESYSTEM,
+    DOMAIN_NETWORKING,
+)
+
+EXPLAIN_RULES: dict[str, tuple[BehaviorRule, ...]] = {
+    **BEHAVIOR_RULES,
+    DOMAIN_CRYPTO: CRYPTO_RULES,
+}
+
 
 def _add(
     findings: dict[tuple[str, str], dict[str, Any]],
@@ -307,9 +399,9 @@ def classify(
     ``by_confidence`` stay exact
     while the list itself is capped at :data:`MAX_FINDINGS`.
 
-    Raises :class:`ValueError` for a domain outside :data:`BEHAVIOR_DOMAINS`.
+    Raises :class:`ValueError` for a domain outside :data:`EXPLAIN_RULES`.
     """
-    rules = BEHAVIOR_RULES.get(domain)
+    rules = EXPLAIN_RULES.get(domain)
     if rules is None:
         raise ValueError(f"unknown behavior domain: {domain}")
 

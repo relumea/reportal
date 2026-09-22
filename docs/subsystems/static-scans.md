@@ -11,7 +11,9 @@ only module here that may contact a third party, and only when the workspace opt
 - `capabilities.Capability` and `ImportRule` (mode `exact`, `prefix` or `substring`): a matched
   import is `high` confidence, string-only evidence `medium`.
 - `behavior.BehaviorRule` and `BEHAVIOR_RULES`, keyed by `BEHAVIOR_DOMAINS`; `DOMAIN_SCAN_KINDS`
-  maps each domain to its scan kind.
+  maps each domain to its scan kind. `EXPLAIN_RULES` adds `CRYPTO_RULES` under `DOMAIN_CRYPTO`;
+  `EXPLAIN_DOMAINS` (`crypto`, `execution`, `filesystem`, `networking`) is the closed set
+  `classify` accepts for the per-function explain surface.
 - `hardening.AntiAnalysisRule` and `ANTI_ANALYSIS_RULES`; obfuscation grades a
   `PACKER_LIKELIHOOD_*` value from the findings that fired.
 - `protocols.ProtocolSpec`, `PROTOCOLS` and `WELL_KNOWN_PORTS`; evidence kinds are `import`,

@@ -216,6 +216,10 @@ reportal indirect-calls <function-id> [--json]
 reportal function-capabilities <function-id> [--json]
                                            # classify one function from the imports and
                                            #   literals its stored decompilation mentions
+reportal function-explain <function-id> <domain> [--all] [--json]
+                                           # match one explain domain (crypto, execution,
+                                           #   filesystem, networking) against the function's
+                                           #   stored text; --all runs every domain
 reportal function-strings <function-id> [--json]
                                            # the analyst strings recorded for the function,
                                            #   the literals its decompilation carries, and

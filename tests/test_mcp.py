@@ -90,6 +90,7 @@ _READ_ONLY_TOOLS = frozenset(
         "get_conversation_run",
         "get_indirect_call_sites",
         "get_function_capabilities",
+        "explain_function",
         "get_function_strings",
         "list_analysis_strings",
         "list_function_edges",
@@ -489,8 +490,8 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 273
-        assert len(_READ_ONLY_TOOLS) == 128
+        assert len(names) == 274
+        assert len(_READ_ONLY_TOOLS) == 129
         assert len(_DESTRUCTIVE_TOOLS) == 145
 
     def test_every_tool_is_well_formed(self) -> None:
@@ -3234,6 +3235,7 @@ class TestMcpEdges:
                 replayed.append(event)
 
             assert await store.replay_events_after(first_id, send) == "a"
-            assert [event.message.method for event in replayed] == ["notifications/third"]
+            seen = [cast(types.JSONRPCNotification, event.message).method for event in replayed]
+            assert seen == ["notifications/third"]
 
         anyio.run(run)

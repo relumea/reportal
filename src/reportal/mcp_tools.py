@@ -3598,6 +3598,18 @@ def _tool_get_function_capabilities(arguments: dict[str, Any]) -> dict[str, Any]
             raise ToolError(exc.code, exc.detail) from exc
 
 
+def _tool_explain_function(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    domain = _arg_str(arguments, "domain")
+    if domain not in behavior.EXPLAIN_DOMAINS:
+        raise ToolError("invalid domain", f"unknown explain domain: {domain}")
+    with contextlib.closing(_open()) as conn:
+        try:
+            return function_extras.function_explain(conn, function_id, domain)
+        except function_extras.EdgeError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+
+
 def _tool_get_function_strings(arguments: dict[str, Any]) -> dict[str, Any]:
     function_id = _arg_int(arguments, "function_id")
     with contextlib.closing(_open()) as conn:
@@ -9339,6 +9351,24 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"function_id": _FUNCTION_ID}, ("function_id",)),
             _READ,
             _tool_get_function_capabilities,
+        ),
+        Tool(
+            "explain_function",
+            "Match one explain domain (crypto, execution, filesystem or networking) against the"
+            " imports and string literals a function's stored decompilation mentions: the hosted"
+            " portal's per-function explain agents, as a deterministic text match.",
+            _object(
+                {
+                    "function_id": _FUNCTION_ID,
+                    "domain": _enum(
+                        "Explain domain: crypto, execution, filesystem or networking.",
+                        behavior.EXPLAIN_DOMAINS,
+                    ),
+                },
+                ("function_id", "domain"),
+            ),
+            _READ,
+            _tool_explain_function,
         ),
         Tool(
             "get_function_strings",

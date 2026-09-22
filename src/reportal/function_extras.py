@@ -7,6 +7,8 @@ decompilation it already stores:
   callers and callees of many functions at once (`GET
   /v3/functions/callees-callers`);
 * per-function capabilities (`GET /v3/functions/{id}/capabilities`);
+* the per-function explain agents (`POST /v3/functions/{id}/crypto-explain:run`,
+  `execution-explain:run`, `filesystem-analyse:run`, `networking-explain:run`);
 * analyst-declared callee edges (`POST /v3/functions/{id}/callees`);
 * name canonicalisation over a batch (`POST /v3/functions/canonical-names`);
 * matching over an explicit function set (`GET|POST /v3/functions/matches`).
@@ -35,7 +37,7 @@ import unicodedata
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from reportal import capabilities, journal, store
+from reportal import behavior, capabilities, journal, store
 
 # The table the analyst edges live in (created on first use).
 EDGE_TABLE = "function_edges"
@@ -339,6 +341,46 @@ def function_capabilities(conn: sqlite3.Connection, function_id: int) -> dict[st
             "classified from the imports and string literals this function's"
             " stored decompilation mentions, with the same rule table the"
             " binary-level scan uses"
+        ),
+    }
+
+
+def function_explain(conn: sqlite3.Connection, function_id: int, domain: str) -> dict[str, Any]:
+    """Match one explain domain against a function's stored decompilation.
+
+    *domain* is one of :data:`reportal.behavior.EXPLAIN_DOMAINS`, the four
+    per-function explain agents the hosted portal runs (`crypto-explain`,
+    `execution-explain`, `filesystem-analyse`, `networking-explain`).  The rules
+    and the classifier are the binary-level behavior scan's own
+    (:func:`reportal.behavior.classify`), fed with the imports and the string
+    literals the function's own text mentions, so an explain finding and a
+    binary-level finding cannot disagree about a rule.
+
+    Raises :class:`InvalidEdgeError` for a domain outside
+    :data:`reportal.behavior.EXPLAIN_DOMAINS` and :class:`UnknownEdgeError` for
+    an unknown function.
+    """
+    if domain not in behavior.EXPLAIN_DOMAINS:
+        raise InvalidEdgeError(f"unknown explain domain: {domain}")
+    function = store.get_function(conn, function_id)
+    if function is None:
+        raise UnknownEdgeError(f"no function with id {function_id}")
+    binary_id = int(function["binary_id"])
+    stored = store.get_decompilation(conn, function_id)
+    code = str(stored["code"]) if stored is not None else ""
+    imports, strings = capability_inputs(code, known_imports=_known_imports(conn, binary_id))
+    result = behavior.classify(domain, imports, strings)
+    return {
+        "function_id": function_id,
+        "domain": domain,
+        **result,
+        "inputs": {"imports": len(imports), "strings": len(strings)},
+        "has_decompilation": stored is not None,
+        "derivation": (
+            "matched against the imports and string literals this function's"
+            " stored decompilation mentions, with the same rule table the"
+            " binary-level behavior scan uses; a deterministic text match, not"
+            " the hosted portal's model narrative"
         ),
     }
 

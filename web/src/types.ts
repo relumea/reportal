@@ -3146,6 +3146,27 @@ export interface FunctionCapabilities {
   derivation: string;
 }
 
+/** One rule match a function's stored text produced for an explain domain. */
+export interface ExplainFinding {
+  kind: string;
+  name: string;
+  detail: string;
+  confidence: string;
+  count: number;
+}
+
+/** `GET /api/functions/<id>/explain/<domain>`. */
+export interface FunctionExplain {
+  function_id: number;
+  domain: string;
+  findings: ExplainFinding[];
+  count: number;
+  by_confidence: Record<string, number>;
+  inputs: { imports: number; strings: number };
+  has_decompilation: boolean;
+  derivation: string;
+}
+
 /** One analyst-recorded string, at function or analysis scope. */
 export interface AnalystString {
   id: number;

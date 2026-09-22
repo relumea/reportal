@@ -15,6 +15,9 @@ not derived is an analyst-declared callee edge.
 - `function_extras.EDGE_TABLE` (`function_edges`) holds an analyst edge with `EDGE_SOURCE_ANALYST`;
   `EDGE_KINDS` is `call` and `indirect`. Bounds: `MAX_FUNCTIONS_PER_QUERY` (50),
   `MAX_EDGES_PER_FUNCTION`.
+- `function_extras.function_explain(conn, function_id, domain)` matches one
+  `behavior.EXPLAIN_DOMAINS` entry against the imports and literals the stored decompilation
+  names, through the behavior classifier; an unknown domain raises `InvalidEdgeError`.
 - `composition.NAME_SOURCE_MAP` maps reportal's stored `name_source` vocabulary onto five labels,
   and `QUALITY_BANDS` onto four cutoffs (95.0, 80.0, 70.0). `CATEGORIES` is `malware`, `debug`,
   `unique`, `library`; `MAX_ROWS` is 500.
@@ -30,13 +33,16 @@ not derived is an analyst-declared callee edge.
 - Routes: `GET .../die-info`, `GET .../additional-details`, `GET .../additional-details/status`;
   `GET /api/functions/callees-callers`, `/api/functions/matches`,
   `/api/functions/canonical-names`, `GET`/`POST /api/functions/<id>/callees`, `DELETE
-  .../callees/<edge_id>`; `.../related`, `.../composition`, `.../detect`, `/api/families`.
+  .../callees/<edge_id>`, `GET .../explain/{domain}`; `.../related`, `.../composition`,
+  `.../detect`, `/api/families`.
 - CLI: `die-info`, `additional-details`, `callees-callers`, `callee-add`, `callee-rm`,
-  `function-matches`, `canonical-names`, `related`, `composition`, `families`, `family-add`,
+  `function-matches`, `function-explain`, `canonical-names`, `related`, `composition`, `families`,
+  `family-add`,
   `family-rm`, `detect`.
 - MCP: `get_die_info`, `get_additional_details`, `get_details_status`,
   `get_functions_callees_callers`, `add_function_edge`, `delete_function_edge`,
-  `list_function_edges`, `get_related_binaries`, `run_related_binaries`, `get_composition`,
+  `list_function_edges`, `explain_function`, `get_related_binaries`, `run_related_binaries`,
+  `get_composition`,
   `run_composition`, `list_families`, `get_detect_scan`, `register_family`, `delete_family`,
   `run_detect`.
 - Scans: `related`, `composition`, `detect`.
@@ -45,6 +51,9 @@ not derived is an analyst-declared callee edge.
 
 - A read never starts work: a function with no cached listing reports `has_disassembly: false` and
   no call sites. `tests/test_function_extras.py`.
+- An explain read runs no engine and no model: an empty `findings` list with
+  `has_decompilation: false` is an unanalysed function, not a clean verdict.
+  `tests/test_function_extras.py`.
 - An analyst edge is reported beside derived callees, never merged into them, and `add_edge`
   replaces a row for the same `(function, callee, kind)` in place. `tests/test_function_extras.py`.
 - A self-match is excluded from the composition rollup and its function count is reported in the

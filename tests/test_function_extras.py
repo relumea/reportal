@@ -17,7 +17,7 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import auth, cli, function_extras, journal, mcp_server, store
+from reportal import auth, behavior, cli, function_extras, journal, mcp_server, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -35,6 +35,11 @@ CODE = """int sub_0(void) {
     char *path = "/etc/passwd";
     sub_1();
     return CreateFileA(path, 0, 0, 0, 0, 0, 0);
+}
+"""
+
+CRYPTO_CODE = """void sub_1(void) {
+    CryptEncrypt(handle, "AES-256 key");
 }
 """
 
@@ -123,6 +128,78 @@ class TestCapabilities:
             pytest.raises(function_extras.UnknownEdgeError),
         ):
             function_extras.function_capabilities(conn, 999)
+
+
+class TestExplain:
+    def test_the_function_explain_reads_its_own_text(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            payload = function_extras.function_explain(conn, ids["functions"][0], "filesystem")
+        assert payload["function_id"] == ids["functions"][0]
+        assert payload["domain"] == "filesystem"
+        assert payload["has_decompilation"] is True
+        evidence = {(row["name"], row["detail"]) for row in payload["findings"]}
+        assert ("CreateFileA", "file-io") in evidence
+        assert payload["by_confidence"] == {"high": 1, "medium": 0}
+        assert "derivation" in payload
+
+    def test_the_crypto_domain_reads_imports_and_literals(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            store.add_function(
+                conn,
+                analysis_id=ids["analysis"],
+                va=0x3000,
+                name="CryptEncrypt",
+                name_source=store.IMPORTED_NAME_SOURCE,
+            )
+            store.set_decompilation(conn, ids["functions"][1], CRYPTO_CODE, "kuna")
+            payload = function_extras.function_explain(conn, ids["functions"][1], "crypto")
+        evidence = {(row["name"], row["detail"], row["confidence"]) for row in payload["findings"]}
+        assert ("CryptEncrypt", "symmetric-cipher", "high") in evidence
+        assert ("AES-256 key", "symmetric-cipher", "medium") in evidence
+
+    def test_a_function_with_no_decompilation_explains_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            payload = function_extras.function_explain(conn, ids["functions"][2], "execution")
+        assert payload["has_decompilation"] is False
+        assert payload["findings"] == []
+
+    def test_an_unknown_domain_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with (
+            contextlib.closing(store.connect(ids["db"])) as conn,
+            pytest.raises(function_extras.InvalidEdgeError, match="unknown explain domain"),
+        ):
+            function_extras.function_explain(conn, ids["functions"][0], "registry")
+
+    def test_an_unknown_function_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with (
+            contextlib.closing(store.connect(ids["db"])) as conn,
+            pytest.raises(function_extras.UnknownEdgeError),
+        ):
+            function_extras.function_explain(conn, 999, "crypto")
+
+    def test_every_explain_domain_is_classifiable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            for domain in behavior.EXPLAIN_DOMAINS:
+                payload = function_extras.function_explain(conn, ids["functions"][0], domain)
+                assert payload["domain"] == domain
 
 
 class TestEdges:
@@ -408,6 +485,25 @@ class TestRoutes:
         missing, _, _ = wsgi_request("GET", "/api/functions/999/capabilities")
         assert missing.startswith("404")
 
+    def test_the_explain_route(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        status, headers, body = wsgi_request(
+            "GET", f"/api/functions/{ids['functions'][0]}/explain/filesystem"
+        )
+        assert status.startswith("200"), body
+        payload = json_body(body, headers)
+        assert payload["domain"] == "filesystem"
+        assert payload["count"] >= 1
+
+        bad_domain, headers, body = wsgi_request(
+            "GET", f"/api/functions/{ids['functions'][0]}/explain/registry"
+        )
+        assert bad_domain.startswith("404")
+        assert json_body(body, headers)["error"] == "domain not found"
+
+        missing, _, _ = wsgi_request("GET", "/api/functions/999/explain/crypto")
+        assert missing.startswith("404")
+
     def test_the_function_string_routes(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -612,6 +708,27 @@ class TestCli:
         plain = runner.invoke(cli.app, ["function-capabilities", function_id])
         assert plain.exit_code == 0, plain.output
 
+        explained = runner.invoke(
+            cli.app, ["function-explain", function_id, "filesystem", "--json"]
+        )
+        assert explained.exit_code == 0, explained.output
+        assert json.loads(explained.output)["domains"]["filesystem"]["count"] >= 1
+
+        every = runner.invoke(cli.app, ["function-explain", function_id, "--all", "--json"])
+        assert every.exit_code == 0, every.output
+        assert set(json.loads(every.output)["domains"]) == set(behavior.EXPLAIN_DOMAINS)
+
+        plain_explain = runner.invoke(cli.app, ["function-explain", function_id, "filesystem"])
+        assert plain_explain.exit_code == 0, plain_explain.output
+
+        refused = runner.invoke(cli.app, ["function-explain", function_id, "registry"])
+        assert refused.exit_code == 1
+        assert "unknown explain domain" in refused.output
+
+        unnamed = runner.invoke(cli.app, ["function-explain", function_id])
+        assert unnamed.exit_code == 1
+        assert "provide an explain domain or --all" in unnamed.output
+
         strings = runner.invoke(cli.app, ["function-strings", function_id])
         assert strings.exit_code == 0, strings.output
         assert "/etc/passwd" in strings.output
@@ -721,6 +838,7 @@ class TestCli:
         for argv in (
             ["indirect-calls", "1"],
             ["function-capabilities", "1"],
+            ["function-explain", "1", "crypto"],
             ["function-strings", "1"],
             ["user-string-add", "1", "x"],
             ["user-string-rm", "1", "2"],
@@ -752,6 +870,18 @@ class TestMcp:
         )
         assert not failed, capabilities
         assert capabilities["inputs"]["imports"] == 1
+
+        explained, failed = mcp_server.call_tool(
+            "explain_function", {"function_id": function_id, "domain": "filesystem"}
+        )
+        assert not failed, explained
+        assert explained["domain"] == "filesystem"
+
+        bad_domain, failed = mcp_server.call_tool(
+            "explain_function", {"function_id": function_id, "domain": "registry"}
+        )
+        assert failed
+        assert "unknown explain domain" in str(bad_domain)
 
         strings, failed = mcp_server.call_tool("get_function_strings", {"function_id": function_id})
         assert not failed, strings

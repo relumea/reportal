@@ -649,7 +649,10 @@ panel: indirect call sites (the cached listing's register and memory calls, each
 with its line, mnemonic and operand, with the nothing-cached hint when the
 function has no listing and a Refresh control); capabilities (the rules the
 function's own imports and literals matched, with their confidence and evidence
-count); strings (the analyst's list with an add form and a Remove per row, and
+count); explain (one domain of `behavior.EXPLAIN_RULES` picked from a Domain
+control, each match rendered as evidence, rule, kind, confidence and count under
+the derivation note that says it is a text match rather than a model narrative);
+strings (the analyst's list with an add form and a Remove per row, and
 below it, labelled as the text scan it is, the literals the stored
 decompilation carries, then stack-built or single-byte-XOR strings recovered
 from the stored NASM listing); callees (a Declare callee form with the edge's kind and

@@ -21,12 +21,14 @@ import type {
   AnalystString,
   FunctionCapabilities,
   FunctionCallees,
+  FunctionExplain,
   FunctionStrings,
   IndirectCallSites,
 } from "../types";
 
 const EDGE_KINDS = ["call", "indirect"] as const;
 const STRING_KINDS = ["string", "import", "export"] as const;
+const EXPLAIN_DOMAINS = ["crypto", "execution", "filesystem", "networking"] as const;
 
 function siteLabel(site: { line: number; instruction: string }): string {
   return `${site.line}: ${site.instruction}`;
@@ -434,10 +436,75 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
           }
         </PanelBody>
       </Panel>
+      <ExplainPanel functionId={functionId} />
       <FunctionStringsPanel functionId={functionId} />
       <CalleesPanel functionId={functionId} />
       <CanonicalNamePanel functionId={functionId} />
     </>
+  );
+}
+
+function ExplainPanel({ functionId }: { functionId: number }): ReactNode {
+  const [domain, setDomain] = useState<string>(EXPLAIN_DOMAINS[0]);
+  const key = panelKey("function", functionId, `explain-${domain}`);
+  const load = (): Promise<FunctionExplain> =>
+    api<FunctionExplain>(`/functions/${functionId}/explain/${domain}`);
+  const entry = usePanel<FunctionExplain>(key, load);
+
+  return (
+    <Panel
+      title="Explain"
+      subtitle="One explain domain matched against this function's stored text. A deterministic text match, not a model narrative."
+    >
+      <Toolbar>
+        <Field label="Domain">
+          <select value={domain} onChange={(event) => setDomain(event.target.value)}>
+            {EXPLAIN_DOMAINS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Field>
+      </Toolbar>
+      <PanelBody entry={entry} hint="Loading the explain findings">
+        {(data) =>
+          data.findings.length === 0 ? (
+            <EmptyState>No {data.domain} rule matched this function.</EmptyState>
+          ) : (
+            <>
+              <table className="table" aria-label="Explain findings">
+                <thead>
+                  <tr>
+                    <th>Evidence</th>
+                    <th>Rule</th>
+                    <th>Kind</th>
+                    <th>Confidence</th>
+                    <th>Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.findings.map((row) => (
+                    <tr key={`${row.kind}:${row.name}:${row.detail}`}>
+                      <td className="mono">{row.name}</td>
+                      <td>{row.detail}</td>
+                      <td>
+                        <Badge mono>{row.kind}</Badge>
+                      </td>
+                      <td>
+                        <Badge mono>{row.confidence}</Badge>
+                      </td>
+                      <td className="mono">{row.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <Muted>{data.derivation}</Muted>
+            </>
+          )
+        }
+      </PanelBody>
+    </Panel>
   );
 }
 
