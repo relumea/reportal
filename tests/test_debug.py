@@ -2191,3 +2191,56 @@ class TestMiWaitEdges:
     def test_an_expired_deadline_stops(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._drive(monkeypatch, b"partial\n")
         assert debug._mi_wait_for_stop(_FakePipe(b""), 65536, 0.0, marker="x") is None
+
+
+class TestEnvFlag:
+    def test_neither_spelling_reads_unset(self) -> None:
+        import os as _os
+
+        saved = _os.environ.get("REPORTAL_DEBUG")
+        _os.environ["REPORTAL_DEBUG"] = "maybe"
+        try:
+            assert debug._env_flag(debug.ENABLED_ENV) is None
+        finally:
+            if saved is None:
+                _os.environ.pop(debug.ENABLED_ENV, None)
+            else:
+                _os.environ[debug.ENABLED_ENV] = saved
+
+    def test_true_and_false_spellings(self) -> None:
+        import os as _os
+
+        saved = _os.environ.get("REPORTAL_DEBUG")
+        try:
+            _os.environ[debug.ENABLED_ENV] = "on"
+            assert debug._env_flag(debug.ENABLED_ENV) is True
+            _os.environ[debug.ENABLED_ENV] = "off"
+            assert debug._env_flag(debug.ENABLED_ENV) is False
+            _os.environ[debug.ENABLED_ENV] = "  "
+            assert debug._env_flag(debug.ENABLED_ENV) is None
+        finally:
+            if saved is None:
+                _os.environ.pop(debug.ENABLED_ENV, None)
+            else:
+                _os.environ[debug.ENABLED_ENV] = saved
+
+
+class TestProposalAndFrameGuards:
+    def test_proposals_without_analysis_is_none(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "no-analysis.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            assert debug.session_proposals(conn, 424242) is None
+
+    def test_proposals_without_a_session_is_none(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "no-session.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            assert debug.session_proposals(conn, binary_id) is None
+
+    def test_session_frames_skips_bad_shapes(self) -> None:
+        assert debug._session_frames({"transcript": "not-a-list"}) == []
+        assert debug._session_frames({"transcript": ["not-a-dict"]}) == []
+        assert debug._session_frames({"transcript": [{"frames": ["not-a-dict"]}]}) == []
