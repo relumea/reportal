@@ -866,3 +866,21 @@ class TestMcp:
         assert not failed, applied
         assert applied["applied_count"] == 1
         assert applied["journal_action"]
+
+
+class TestEdgeValidation:
+    def test_add_to_an_unknown_function_is_refused(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(function_extras.UnknownEdgeError):
+            function_extras.add_edge(conn, function_id=424242, callee="f")
+
+    def test_list_of_an_unknown_function_is_refused(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(function_extras.UnknownEdgeError):
+            function_extras.list_edges(conn, 424242)
+
+    def test_note_must_be_a_short_string(self) -> None:
+        with pytest.raises(function_extras.InvalidEdgeError):
+            function_extras.normalize_note(42)
+        with pytest.raises(function_extras.InvalidEdgeError):
+            function_extras.normalize_note("x" * (function_extras.MAX_NOTE_CHARS + 1))
+        assert function_extras.normalize_note(None) == ""
+        assert function_extras.normalize_note("  hi  ") == "hi"
