@@ -1738,3 +1738,13 @@ class TestQueueStoredScans:
         action = journal.new_action()
         with journal.journaled(conn, action) as log:
             assert jobs.queue_stored_scans(conn, log, analysis_id) == []
+
+
+class TestSubmitRace:
+    def test_duplicate_live_submit_reuses_the_row(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        first = jobs.submit(conn, kind="pe-info", binary_id=binary_id)
+        second = jobs.submit(conn, kind="pe-info", binary_id=binary_id)
+        assert int(second["id"]) == int(first["id"])
