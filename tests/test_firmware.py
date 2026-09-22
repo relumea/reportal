@@ -477,3 +477,51 @@ class TestTarInsideGzip:
         names = {member["name"] for member in carved["members"]}
         assert "inner.txt" in names
         assert carved["kept"] == 1
+
+
+class TestFirmwareEdges:
+    def test_empty_window_has_zero_entropy(self) -> None:
+        assert firmware._entropy(b"") == 0.0
+
+    def test_read_without_a_scan_is_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+
+        db = tmp_path / "edge.db"
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            path = tmp_path / "plain.bin"
+            path.write_bytes(b"\x00" * 64)
+            binary_id = store.add_binary(
+                conn, sha256="ab" * 32, name="plain.bin", path=str(path), size=64
+            )
+            assert firmware.regions(conn, binary_id) is None
+
+    def test_extract_of_an_empty_region_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+
+        db = tmp_path / "empty.db"
+        store.init_db(db)
+        with contextlib.closing(store.connect(db)) as conn:
+            path = tmp_path / "plain.bin"
+            path.write_bytes(b"\x00" * 64)
+            binary_id = store.add_binary(
+                conn, sha256="ab" * 32, name="plain.bin", path=str(path), size=64
+            )
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            store.set_scan(
+                conn,
+                analysis_id,
+                firmware.SCAN_KIND,
+                {"regions": [{"offset": 0, "size": 0, "kind": "raw"}]},
+            )
+            payload = firmware.regions(conn, binary_id)
+            assert payload is not None
+            with pytest.raises(firmware.FirmwareError, match="empty"):
+                firmware.region(path, index=0, regions_payload=payload)
+
+    def test_truncated_gzip_measures_nothing(self, tmp_path: Path) -> None:
+        target = tmp_path / "cut.gz"
+        target.write_bytes(gzip.compress(b"hello world")[:10])
+        assert firmware.gzip_member_length(target, offset=0, size=10) is None
