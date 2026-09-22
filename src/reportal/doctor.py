@@ -278,6 +278,7 @@ def _optional_check() -> dict[str, str]:
     runner = sandbox.available_runner() if enabled else None
     debug_on = debug.enabled()
     debug_backend = debug.available_backend() if debug_on else None
+    debug_image = debug.configured_image() if debug_on else ""
     external_on = external.remote_enabled()
     key_present = bool(external.virustotal_key()) if external_on else False
     backend = graph_backends.configured_backend_name()
@@ -290,6 +291,7 @@ def _optional_check() -> dict[str, str]:
         f"similarity={'on' if similarity.available() else 'off'}",
         f"sandbox={'on' if enabled else 'off'}",
         f"debug={'on' if debug_on else 'off'}",
+        f"debug_image={'set' if debug_image else 'unset'}",
         f"external={'on' if external_on else 'off'}",
         f"remote_ingest={'on' if remote_ingest.remote_enabled() else 'off'}",
         f"graph_backend={backend}",
@@ -304,6 +306,11 @@ def _optional_check() -> dict[str, str]:
         broken.append("detonation is opted in but no sandbox runner is installed")
     if debug_on and debug_backend is None:
         broken.append("debug sessions are opted in but no debug backend is installed")
+    if debug_image and not debug_image.startswith("sha256:"):
+        from pathlib import Path as _Path
+
+        if not _Path(debug_image).is_file():
+            broken.append(f"the debug image {debug_image!r} is not a file")
     if external_on and not key_present:
         broken.append("remote sources are opted in but no VirusTotal key resolves")
     if backend_entry is not None and not backend_entry.available():

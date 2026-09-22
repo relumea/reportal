@@ -169,6 +169,19 @@ class TestOptional:
         assert "sandbox=on" in row["detail"]
         assert "no sandbox runner is installed" in row["hint"]
 
+    def test_debug_image_state_is_reported(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import debug
+
+        _workspace(tmp_path, monkeypatch)
+        row = _check(doctor.report(), "optional")
+        assert "debug_image=unset" in row["detail"]
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setenv(debug.IMAGE_ENV, "/no/such/image.qcow2")
+        row = _check(doctor.report(), "optional")
+        assert "debug_image=set" in row["detail"]
+
     def test_remote_sources_without_a_key_warn(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
