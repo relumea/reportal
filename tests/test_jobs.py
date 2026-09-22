@@ -1657,3 +1657,20 @@ class TestDebugParamValidation:
         binary_id = self._binary_id(conn, tmp_path)
         with pytest.raises(ValueError, match="qemu_arch must be a non-empty"):
             jobs._perform_debug(conn, binary_id, {"qemu_arch": "  "})
+
+
+class TestRenderPdf:
+    def test_pdf_report_is_written_and_journaled(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="de" * 32, name="demo.exe", path=str(target), size=2
+        )
+        result = jobs.render_pdf(conn, binary_id, {})
+        assert result["path"].endswith(".pdf")
+        from reportal import _paths
+
+        written = _paths.reports_dir(binary_id) / "report.pdf"
+        assert written.is_file()
