@@ -337,6 +337,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         " sha256 TEXT NOT NULL DEFAULT '',"
         f" status TEXT NOT NULL DEFAULT '{STATUS_RUNNING}',"
         " backend TEXT NOT NULL DEFAULT '',"
+        " image TEXT NOT NULL DEFAULT '',"
         " argv_json TEXT NOT NULL DEFAULT '[]',"
         " caps_json TEXT NOT NULL DEFAULT '{}',"
         " transcript_json TEXT NOT NULL DEFAULT '[]',"
@@ -344,6 +345,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         " created_at TEXT NOT NULL,"
         " finished_at TEXT)"
     )
+    existing = {str(row["name"]) for row in conn.execute(f"PRAGMA table_info({TABLE})")}
+    if existing and "image" not in existing:
+        conn.execute(f"ALTER TABLE {TABLE} ADD COLUMN image TEXT NOT NULL DEFAULT ''")
     conn.execute(f"CREATE INDEX IF NOT EXISTS idx_debug_sessions_analysis ON {TABLE}(analysis_id)")
     conn.execute(
         f"CREATE UNIQUE INDEX IF NOT EXISTS idx_debug_sessions_live_binary"
@@ -353,6 +357,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     """One session row as the API reports it."""
+    keys = set(row.keys()) if isinstance(row, sqlite3.Row) else set(row)
     return {
         "id": int(row["id"]),
         "analysis_id": int(row["analysis_id"]),
@@ -360,6 +365,7 @@ def _row(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
         "sha256": str(row["sha256"]),
         "status": str(row["status"]),
         "backend": str(row["backend"]),
+        "image": str(row["image"]) if "image" in keys else "",
         "argv": json.loads(str(row["argv_json"]) or "[]"),
         "caps": json.loads(str(row["caps_json"]) or "{}"),
         "transcript": json.loads(str(row["transcript_json"]) or "[]"),
@@ -388,6 +394,7 @@ def start_session(
     backend: str,
     argv: Sequence[str],
     caps: Caps,
+    image: str = "",
 ) -> tuple[int, bool]:
     """Claim a ``running`` row before the session starts; returns ``(id, created)``."""
     ensure_schema(conn)
@@ -395,14 +402,15 @@ def start_session(
         with conn:
             conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
-                f"INSERT INTO {TABLE} (analysis_id, binary_id, sha256, status, backend,"
-                " argv_json, caps_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                f"INSERT INTO {TABLE} (analysis_id, binary_id, sha256, status, backend, image,"
+                " argv_json, caps_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     analysis_id,
                     binary_id,
                     sha256,
                     STATUS_RUNNING,
                     backend,
+                    image,
                     json.dumps(list(argv)),
                     json.dumps(caps.as_payload()),
                     store.now(),
@@ -1456,6 +1464,7 @@ def run_session(
             backend=backend.name,
             argv=[backend.path() or backend.executable],
             caps=caps,
+            image=configured_image(),
         )
         if not created:
             raced = get_session(conn, session_id)

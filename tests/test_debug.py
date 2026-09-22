@@ -1410,3 +1410,45 @@ class TestVmOverlay:
         target.write_bytes(b"x")
         debug.destroy_vm_overlay(target)
         assert not target.exists()
+
+
+class TestSessionImage:
+    def test_image_recorded_on_the_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.IMAGE_ENV, "sha256:abc")
+        db = _db(tmp_path, "img.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            session_id, _ = debug.start_session(
+                conn,
+                analysis_id=analysis_id,
+                binary_id=binary_id,
+                sha256="d" * 64,
+                backend="gdb",
+                argv=["gdb"],
+                caps=debug.requested_caps(),
+                image=debug.configured_image(),
+            )
+            row = debug.get_session(conn, session_id)
+            assert row is not None and row["image"] == "sha256:abc"
+
+    def test_upgrade_adds_the_image_column(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "old.db")
+        with store.connect(db) as conn:
+            conn.execute("DROP TABLE IF EXISTS debug_sessions")
+            conn.execute(
+                "CREATE TABLE debug_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " analysis_id INTEGER NOT NULL, binary_id INTEGER NOT NULL,"
+                " sha256 TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'running',"
+                " backend TEXT NOT NULL DEFAULT '', argv_json TEXT NOT NULL DEFAULT '[]',"
+                " caps_json TEXT NOT NULL DEFAULT '{}', transcript_json TEXT NOT NULL"
+                " DEFAULT '[]', notes_json TEXT NOT NULL DEFAULT '[]',"
+                " created_at TEXT NOT NULL, finished_at TEXT)"
+            )
+            conn.commit()
+            debug.ensure_schema(conn)
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(debug_sessions)")}
+            assert "image" in columns
