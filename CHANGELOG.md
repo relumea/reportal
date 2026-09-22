@@ -9,8 +9,9 @@ view renders it from here.
 
 - Read-only live-debug sessions (`debug.py`): opt-in probes over `lldb-dap`
   (DAP) and `gdb` (MI, or `qemu-<arch>` stubs via `--qemu`), stored as the
-  `debug-session` scan with observed-function coverage, a knowledge digest,
-  a `debug` job kind, four MCP tools, and a binary detail panel.
+  `debug-session` scan with observed-function coverage, session rename
+  proposals (guarded apply, source `debug`), a knowledge digest, a `debug`
+  job kind, six MCP tools, and a binary detail panel.
 - Inline search prefixes (`tag:`, `binary:`, `collection:`, `sha256:` and
   aliases) selecting the search kind per query.
 - Repeat unstrip runs short-circuit when the candidate set is unchanged.
