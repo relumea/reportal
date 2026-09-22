@@ -405,3 +405,25 @@ class TestDefinitionEdges:
     def test_duplicate_enum_name_is_rejected(self) -> None:
         with pytest.raises(data_types.DefinitionError, match="duplicate enum"):
             data_types.parse_definition("typedef enum E {\n\tA = 1,\n\tA = 2,\n} E;\n")
+
+
+class TestTypedefEdges:
+    def test_bad_return_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="return"):
+            data_types.parse_definition("typedef int! (*cb)(int);")
+
+    def test_array_return_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="array"):
+            data_types.parse_definition("typedef int[4] (*cb)(int);")
+
+    def test_unsized_typedef_array_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="sized"):
+            data_types.parse_definition("typedef int arr[];")
+
+    def test_bad_typedef_type_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="not a type"):
+            data_types.parse_definition("typedef int! myint;")
+
+    def test_not_a_typedef_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="not a typedef"):
+            data_types.parse_definition("int x;")
