@@ -1843,3 +1843,34 @@ class TestSecurityThreatParamValidation:
                 binary_id=_binary(conn, tmp_path),
                 params={"narrative": "yes"},
             )
+
+
+class TestStructsParamValidation:
+    def test_unsupported_decompiler_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="unsupported decompiler backend"):
+            jobs.submit(
+                conn,
+                kind="structs",
+                binary_id=_binary(conn, tmp_path),
+                params={"decompiler": "mystery"},
+            )
+
+    def test_non_integer_limit_is_rejected(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="limit must be an integer"):
+            jobs.submit(
+                conn,
+                kind="structs",
+                binary_id=_binary(conn, tmp_path),
+                params={"limit": "many"},
+            )
+
+    def test_negative_limit_is_rejected(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="limit must not be negative"):
+            jobs.submit(
+                conn,
+                kind="structs",
+                binary_id=_binary(conn, tmp_path),
+                params={"limit": -1},
+            )
