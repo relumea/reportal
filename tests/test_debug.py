@@ -2152,3 +2152,42 @@ class TestDebugInvalidMessages:
             binary_id = _seed(conn, tmp_path)
             result = debug.run_session(conn, binary_id)
             assert result["status"] == debug.STATUS_FINISHED
+
+
+class TestMiWaitEdges:
+    def _drive(self, monkeypatch: pytest.MonkeyPatch, blob: bytes) -> None:
+        import os as _os
+
+        chunks = [blob]
+
+        def fake_read(_fd: int, _n: int) -> bytes:
+            return chunks.pop(0) if chunks else b""
+
+        monkeypatch.setattr(_os, "read", fake_read)
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+
+    def test_cap_exceeded_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._drive(monkeypatch, b"line1\nline2\n(gdb)\n")
+        with pytest.raises(debug.DebugError) as caught:
+            debug._mi_wait_for_stop(_FakePipe(b""), 5, 1.0, marker="line1")
+        assert "cap" in caught.value.detail
+
+    def test_marker_and_prompt_deliver_the_lines(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._drive(monkeypatch, b"(gdb)\na\nstop here\n(gdb)\nmore\n(gdb)\n")
+        text = debug._mi_wait_for_stop(_FakePipe(b""), 65536, 1.0, marker="stop here")
+        assert text == "a\nstop here"
+
+    def test_a_silent_backend_times_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: ([], [], []))
+        assert debug._mi_wait_for_stop(_FakePipe(b""), 65536, 0.01, marker="x") is None
+
+    def test_a_closed_stream_stops(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._drive(monkeypatch, b"")
+        assert debug._mi_wait_for_stop(_FakePipe(b""), 65536, 1.0, marker="x") is None
+
+    def test_an_expired_deadline_stops(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._drive(monkeypatch, b"partial\n")
+        assert debug._mi_wait_for_stop(_FakePipe(b""), 65536, 0.0, marker="x") is None
