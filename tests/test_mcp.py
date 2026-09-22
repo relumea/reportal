@@ -3206,3 +3206,34 @@ class TestHttpSessionManager:
         assert manager.session_idle_timeout == mcp_server.SESSION_IDLE_TIMEOUT_S
         assert manager.max_sessions < 10_000
         assert manager.session_idle_timeout < 30 * 60
+
+
+class TestMcpEdges:
+    def test_non_object_arguments_are_invalid_params(self) -> None:
+        with pytest.raises(MCPError) as caught:
+            mcp_server.call_tool("list_integrations", [1])  # type: ignore[arg-type]
+        assert caught.value.code == INVALID_PARAMS
+        message = _request(90, "tools/call", {"name": "list_integrations", "arguments": [1]})
+        (reply,) = protocol([message], responses=1)
+        assert reply["error"]["code"] == INVALID_PARAMS
+
+    def test_replay_skips_other_streams(self) -> None:
+        store = mcp_server.MemoryEventStore()
+        first = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/message")
+        second = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/other")
+        third = types.JSONRPCNotification(jsonrpc="2.0", method="notifications/third")
+
+        async def run() -> None:
+            first_id = await store.store_event("a", first)
+            await store.store_event("b", second)
+            await store.store_event("a", None)
+            await store.store_event("a", third)
+            replayed: list[EventMessage] = []
+
+            async def send(event: EventMessage) -> None:
+                replayed.append(event)
+
+            assert await store.replay_events_after(first_id, send) == "a"
+            assert [event.message.method for event in replayed] == ["notifications/third"]
+
+        anyio.run(run)
