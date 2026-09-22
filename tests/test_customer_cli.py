@@ -495,3 +495,22 @@ class TestUploadErrors:
         )
         assert result.exit_code == 1
         assert "upload failed" in result.stdout
+
+
+class TestHumanRenders:
+    def test_binaries_table_lists_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            customer_cli,
+            "_call",
+            lambda *a, **k: [{"id": 1, "name": "a.exe", "sha256": "b" * 64, "function_count": 3}],
+        )
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["binaries", "--server", "http://127.0.0.1:1", "--token", "x"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "a.exe" in result.stderr
+
+    def test_emit_dict_renders_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        customer_cli._emit({"id": 1}, False)
+        assert json.loads(capsys.readouterr().out) == {"id": 1}
