@@ -207,7 +207,10 @@ The last mile is the part the rest of the portal already has:
    mentions; a dedicated `debug-digest` artifact row and observed/inferred labelling stay
    open.
 8. `ret-sync`-shaped rename sync: push stored renames into the session, pull session labels
-   back as proposals, never as silent overwrites. Effort S.
+   back as proposals, never as silent overwrites. Effort S. **Shipped, pull half**:
+   `session_proposals` joins frame names to stored functions by VA (person-authored
+   names never proposed), with `debug-proposals`, `debug-apply`, the two routes and
+   the two MCP tools; pushing stored renames into a live session stays open.
 
 
 ## Deliberately out of scope
