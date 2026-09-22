@@ -1697,3 +1697,44 @@ class TestLatestJob:
         latest = jobs.latest_job(conn, kind="pe-info", binary_id=first)
         assert latest is not None
         assert int(latest["binary_id"]) == first
+
+
+class TestQueueStoredScans:
+    def test_unknown_analysis_queues_nothing(self, conn: sqlite3.Connection) -> None:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            assert jobs.queue_stored_scans(conn, log, 424242) == []
+
+    def test_scans_with_a_job_kind_are_queued(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="fa" * 32, name="demo.exe", path=str(target), size=2
+        )
+        analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+        store.set_scan(
+            conn,
+            analysis_id,
+            store.SCAN_KIND_PE_INFO,
+            {"machine": 0x14C},
+            params={"min_severity": "low"},
+        )
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            queued = jobs.queue_stored_scans(conn, log, analysis_id)
+        assert len(queued) == 1
+        assert queued[0]["kind"] == "pe-info"
+
+    def test_unmapped_scans_are_skipped(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="0b" * 32, name="demo.exe", path=str(target), size=2
+        )
+        analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+        store.set_scan(conn, analysis_id, "no-such-kind", {"x": 1})
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            assert jobs.queue_stored_scans(conn, log, analysis_id) == []
