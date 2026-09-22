@@ -536,3 +536,45 @@ class TestRefusalHelpers:
         assert archive._ratio_refusal(10, 0) == ""
         assert archive._ratio_refusal(10, 10) == ""
         assert "ratio" in archive._ratio_refusal(10**9, 10)
+
+
+class TestCorruptArchives:
+    def test_truncated_zip_is_corrupt(self, tmp_path: Path) -> None:
+        target = tmp_path / "cut.zip"
+        target.write_bytes(b"PK\x03\x04" + b"\x00" * 20)
+        with pytest.raises(archive.ArchiveError) as caught:
+            archive.extract(target, tmp_path / "out")
+        assert caught.value.code == "corrupt-archive"
+
+    def test_truncated_tar_is_corrupt(self, tmp_path: Path) -> None:
+        target = tmp_path / "cut.tar"
+        target.write_bytes(b"\x00" * 100)
+        with pytest.raises(archive.ArchiveError) as caught:
+            archive.extract(target, tmp_path / "out")
+        assert caught.value.code == "corrupt-archive"
+
+    def test_too_many_zip_members_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(archive, "MAX_MEMBERS", 2)
+        target = tmp_path / "many.zip"
+        with zipfile.ZipFile(target, "w") as handle:
+            for index in range(3):
+                handle.writestr(f"f{index}.txt", b"x")
+        with pytest.raises(archive.ArchiveError) as caught:
+            archive.extract(target, tmp_path / "out")
+        assert caught.value.code == "too-many-members"
+
+    def test_too_many_tar_members_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(archive, "MAX_MEMBERS", 2)
+        target = tmp_path / "many.tar"
+        with tarfile.open(target, "w") as handle:
+            for index in range(3):
+                info = tarfile.TarInfo(f"f{index}.txt")
+                info.size = 1
+                handle.addfile(info, io.BytesIO(b"x"))
+        with pytest.raises(archive.ArchiveError) as caught:
+            archive.extract(target, tmp_path / "out")
+        assert caught.value.code == "too-many-members"
