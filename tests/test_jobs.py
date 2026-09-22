@@ -1819,3 +1819,27 @@ class TestSubmitParamValidation:
                 binary_id=_binary(conn, tmp_path),
                 params={"min_confidence": 1.5},
             )
+
+
+class TestSecurityThreatParamValidation:
+    def test_unsupported_severity_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="unsupported security severity"):
+            jobs.submit(
+                conn,
+                kind="security",
+                binary_id=_binary(conn, tmp_path),
+                params={"min_severity": "cosmic"},
+            )
+
+    def test_non_boolean_narrative_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="narrative must be a boolean"):
+            jobs.submit(
+                conn,
+                kind="threat",
+                binary_id=_binary(conn, tmp_path),
+                params={"narrative": "yes"},
+            )
