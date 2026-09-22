@@ -442,3 +442,56 @@ class TestHelpers:
 
         with pytest.raises(_typer.Exit):
             customer_cli._fail("boom", False)
+
+
+class TestUploadErrors:
+    def test_plain_text_error_names_the_status(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import http.client as _http
+
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+
+        class FakeResponse:
+            status = 500
+
+            def read(self) -> bytes:
+                return b"server exploded"
+
+        class FakeConn:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def request(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def getresponse(self) -> FakeResponse:
+                return FakeResponse()
+
+        monkeypatch.setattr(_http, "HTTPConnection", FakeConn)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["upload", str(target), "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        )
+        assert result.exit_code == 1
+        assert "HTTP 500" in result.stdout
+
+    def test_connection_failure_is_one_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import http.client as _http
+
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+
+        def boom(*args: object, **kwargs: object) -> object:
+            raise OSError("down")
+
+        monkeypatch.setattr(_http, "HTTPConnection", boom)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["upload", str(target), "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        )
+        assert result.exit_code == 1
+        assert "upload failed" in result.stdout
