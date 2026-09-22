@@ -671,3 +671,34 @@ class TestDoctorEdges:
         row = _check(doctor.report(), "backup")
         assert row["status"] == "warn"
         assert "archive" in row["detail"]
+
+
+class TestDoctorReadErrors:
+    def test_corrupt_database_read_fails_gracefully(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        db = tmp_path / "reportal.db"
+        db.write_bytes(b"not a database")
+        row = _check(doctor.report(), "schema")
+        assert row["status"] == "fail"
+        assert "cannot" in row["detail"]
+
+
+class TestDoctorReadFailure:
+    def test_read_error_after_connect_fails_gracefully(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sqlite3 as _sqlite
+
+        _workspace(tmp_path, monkeypatch)
+        db = tmp_path / "reportal.db"
+        store.init_db(db)
+
+        def boom(conn: _sqlite.Connection) -> dict[str, int]:
+            raise _sqlite.DatabaseError("read failed")
+
+        monkeypatch.setattr(store, "counts", boom)
+        row = _check(doctor.report(), "schema")
+        assert row["status"] == "fail"
+        assert "cannot read" in row["detail"]
