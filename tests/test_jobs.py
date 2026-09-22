@@ -1631,3 +1631,29 @@ class TestMorePerforms:
         )
         with pytest.raises(ValueError):
             jobs._run_library(conn, binary_id, {"min_confidence": "high"})
+
+
+class TestDebugParamValidation:
+    def _binary_id(self, conn: sqlite3.Connection, tmp_path: Path) -> int:
+        target = tmp_path / "demo.bin"
+        target.write_bytes(b"x")
+        return store.add_binary(conn, sha256="bc" * 32, name="demo.bin", path=str(target), size=1)
+
+    def test_non_numeric_timeout_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = self._binary_id(conn, tmp_path)
+        with pytest.raises(ValueError):
+            jobs._perform_debug(conn, binary_id, {"timeout": "soon"})
+
+    def test_non_list_breakpoints_are_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = self._binary_id(conn, tmp_path)
+        with pytest.raises(ValueError, match="breakpoints must be a list"):
+            jobs._perform_debug(conn, binary_id, {"breakpoints": 0x1000})
+
+    def test_empty_qemu_arch_is_rejected(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        binary_id = self._binary_id(conn, tmp_path)
+        with pytest.raises(ValueError, match="qemu_arch must be a non-empty"):
+            jobs._perform_debug(conn, binary_id, {"qemu_arch": "  "})
