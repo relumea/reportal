@@ -1774,3 +1774,24 @@ class TestLogSlow:
     def test_slow_job_logs_a_warning(self, caplog: pytest.LogCaptureFixture) -> None:
         jobs._log_job_slow(job_id=1, kind="pe-info", binary_id=2, duration_ms=5000)
         assert any("job slow" in record.message for record in caplog.records)
+
+
+class TestSlowJobCallSite:
+    def test_slow_threshold_triggers_the_warning(
+        self,
+        tmp_path: Path,
+        conn: sqlite3.Connection,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from reportal import observability
+
+        monkeypatch.setattr(observability, "SLOW_JOB_MS", 0)
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            job = jobs.submit(conn, kind="pe-info", binary_id=_binary(conn, tmp_path))
+            jobs.execute(conn, jobs.get_job(conn, int(job["id"])) or {})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert any("job slow" in record.message for record in caplog.records)
