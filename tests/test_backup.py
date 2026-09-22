@@ -701,3 +701,25 @@ class TestManifestRefusals:
         with pytest.raises(backup.BackupError) as failure:
             backup.read_manifest(_rewrite(archive, ghost))
         assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
+
+class TestPruneEdges:
+    def test_negative_keep_values_are_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(backup.BackupError) as failure:
+            backup.prune(directory=tmp_path, keep_days=-1)
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+        with pytest.raises(backup.BackupError) as failure:
+            backup.prune(directory=tmp_path, keep_min=-1)
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
+    def test_missing_directory_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(backup.BackupError) as failure:
+            backup.prune(directory=tmp_path / "gone")
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
+    def test_newest_archive_without_directories_is_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(backup, "TIMER_BACKUP_DIR", tmp_path / "absent-srv")
+        assert backup.newest_archive(tmp_path / "ws") is None
+        assert backup.archive_dirs(tmp_path / "ws") == []
