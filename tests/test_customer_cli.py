@@ -178,3 +178,51 @@ class TestCommandWiring:
         )
         assert result.exit_code == 1
         assert json.loads(result.stdout)["error"] == "down"
+
+
+class TestShowCommands:
+    def _ok(self, monkeypatch: pytest.MonkeyPatch, payload: object) -> None:
+        monkeypatch.setattr(customer_cli, "_call", lambda *a, **k: payload)
+
+    def test_show_function_merges_decompilation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        def fake_call(
+            method: str, path: str, *, server: str, token: str | None, body: object = None
+        ) -> object:
+            calls.append(path)
+            return {"decompilation": "int f(){}"} if "decompilation" in path else {"id": 1}
+
+        monkeypatch.setattr(customer_cli, "_call", fake_call)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["function", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["decompilation"] == {"decompilation": "int f(){}"}
+        assert len(calls) == 2
+
+    def test_show_function_without_decompilation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_call(
+            method: str, path: str, *, server: str, token: str | None, body: object = None
+        ) -> object:
+            if "decompilation" in path:
+                raise customer_cli.CustomerError("gone")
+            return {"id": 1}
+
+        monkeypatch.setattr(customer_cli, "_call", fake_call)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["function", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.stdout)["decompilation"] is None
+
+    def test_show_matches_and_scans(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._ok(monkeypatch, {"matches": []})
+        for args in (
+            ["matches", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+            ["scans", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        ):
+            result = CliRunner().invoke(customer_cli.app, args)
+            assert result.exit_code == 0, result.output
