@@ -204,8 +204,10 @@ The last mile is the part the rest of the portal already has:
 7. Fusion digest: the `debug-digest` artifact, `observed` versus `inferred` labelling, the
    knowledge ingest and the graph nodes. Effort M. **Shipped in part**: the transcript
    digest is ingested as a binary-scoped document and the graph links it through VA
-   mentions; a dedicated `debug-digest` artifact row and observed/inferred labelling stay
-   open.
+   mentions; a dedicated per-function `ai_artifacts` row is deliberately not built
+   (the digest is binary-scoped while that table is function-scoped, so a row per
+   function would duplicate one document N times), and observed/inferred labelling
+   stays open.
 8. `ret-sync`-shaped rename sync: push stored renames into the session, pull session labels
    back as proposals, never as silent overwrites. Effort S. **Shipped, pull half**:
    `session_proposals` joins frame names to stored functions by VA (person-authored
