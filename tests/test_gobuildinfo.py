@@ -12,6 +12,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
@@ -140,6 +141,29 @@ class TestRecover:
             pass
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("an unknown binary must raise KeyError")
+
+    def test_recover_of_an_unreadable_file_is_unreadable(
+        self,
+        conn: sqlite3.Connection,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ" + b"\x00" * 30)
+        binary_id = store.add_binary(
+            conn, sha256="ab" * 32, name="demo.exe", path=str(target), size=32
+        )
+
+        def boom(path: object, *args: object, **kwargs: object) -> object:
+            raise OSError("denied")
+
+        monkeypatch.setattr("builtins.open", boom)
+        try:
+            gobuildinfo.recover(conn, binary_id=binary_id)
+        except gobuildinfo.GobuildinfoError as exc:
+            assert exc.code == "unreadable"
+        else:  # pragma: no cover - the assertion is the point
+            raise AssertionError("an unreadable file must raise")
 
 
 class TestRoutes:
