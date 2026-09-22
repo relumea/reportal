@@ -117,6 +117,8 @@ import type {
   ProtocolsResult,
   RelatedResult,
   DebugCoverageResult,
+  DebugProposalRow,
+  DebugProposalsResult,
   DebugSession,
   DebugStatus,
   SandboxRun,
@@ -4582,6 +4584,7 @@ export function DebugPanel({ binaryId }: { binaryId: number }): ReactNode {
         <>
           <DebugReport session={session} />
           <DebugCoverage binaryId={binaryId} />
+          <DebugProposals binaryId={binaryId} />
         </>
       )}
     </Panel>
@@ -4615,6 +4618,64 @@ function DebugCoverage({ binaryId }: { binaryId: number }): ReactNode {
         ],
       ]}
     />
+  );
+}
+
+/** Rename proposals from the newest session's frame names, with per-row apply. */
+function DebugProposals({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "debug-proposals");
+  const path = `/binaries/${binaryId}/debug-proposals`;
+  const entry = usePanel(key, () => api<DebugProposalsResult>(path));
+  const [applied, setApplied] = useState<number[]>([]);
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+  if (entry?.state === "error") {
+    return null;
+  }
+  if (entry?.state !== "ready") {
+    return null;
+  }
+  const proposals = entry.data.proposals.filter((row) => !applied.includes(row.function_id));
+  const apply = (functionId: number): void => {
+    setActionError(null);
+    setBusy(`apply-${functionId}`);
+    void api(`/functions/${functionId}/debug-apply`, { method: "POST", json: {} })
+      .then(() => {
+        setApplied((ids) => (ids.includes(functionId) ? ids : [...ids, functionId]));
+        refreshPanel(key, () => api<DebugProposalsResult>(path));
+      })
+      .catch((failure: unknown) => setActionError(failure))
+      .finally(() => setBusy(""));
+  };
+  return (
+    <>
+      {actionError ? <ErrorNote error={actionError} /> : null}
+      {proposals.length === 0 ? (
+        <Muted>No session proposals: the debugger named nothing stored functions lack.</Muted>
+      ) : (
+        <DataTable<DebugProposalRow>
+          columns={[
+            { label: "VA", mono: true, render: (row) => hex(row.va) },
+            { label: "Current", key: "current_name", mono: true },
+            { label: "Proposed", key: "proposed_name", mono: true },
+            {
+              label: "",
+              render: (row) => (
+                <Button
+                  size="sm"
+                  pending={busy === `apply-${row.function_id}`}
+                  onClick={() => apply(row.function_id)}
+                >
+                  Apply
+                </Button>
+              ),
+            },
+          ]}
+          rows={proposals}
+          rowKey={(row) => row.function_id}
+        />
+      )}
+    </>
   );
 }
 

@@ -2481,6 +2481,27 @@ export interface DebugCoverageResult {
   note: string;
 }
 
+/** One session rename proposal, joined by address. */
+export interface DebugProposalRow {
+  function_id: number;
+  va: number;
+  current_name: string;
+  proposed_name: string;
+  address: number;
+  session_id: number;
+}
+
+/** `GET /api/binaries/<id>/debug-proposals`: session rename proposals. */
+export interface DebugProposalsResult {
+  binary_id: number;
+  analysis_id: number;
+  session_id: number;
+  backend: string;
+  proposals: DebugProposalRow[];
+  count: number;
+  note: string;
+}
+
 /** One stored read-only debug session. */
 export interface DebugSession {
   id: number;
