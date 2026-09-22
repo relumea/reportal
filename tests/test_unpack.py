@@ -453,3 +453,21 @@ def test_the_scan_kind_and_the_packer_vocabulary_agree() -> None:
     assert store.SCAN_KIND_UNPACK == unpack.SCAN_KIND
     assert set(unpack.PACKERS) == {"lzexe", "upx"}
     assert set(unpack.METHOD_NOTES) == set(unpack.PACKERS)
+
+
+class TestUnpackEdges:
+    def test_an_unrunnable_tool_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source = tmp_path / "packed.exe"
+        source.write_bytes(b"MZpayload")
+        monkeypatch.setattr(unpack, "_which", lambda _name: str(tmp_path / "missing-upx"))
+
+        def boom(*args: object, **kwargs: object) -> object:
+            raise OSError("denied")
+
+        monkeypatch.setattr("subprocess.run", boom)
+        with pytest.raises(unpack.UnpackError) as failure:
+            unpack.unpack_to(source, tmp_path / "out.exe", packer="upx")
+        assert failure.value.code == "unpack-failed"
+        assert "could not be run" in failure.value.detail
