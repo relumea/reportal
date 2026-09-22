@@ -36,7 +36,7 @@ Licenses verified with `gh api repos/RevEngAI/<repo>`.
 
 | Repo | License | Kind | Notes |
 |------|---------|------|-------|
-| `sdk-python` | MIT | OpenAPI-generated client | v4.20.0; ~179 ops, 566 models. Lags the live spec (v4.34.0). Safe to vendor. No algorithms. |
+| `sdk-python` | MIT | OpenAPI-generated client | v4.20.0; ~179 ops, 566 models. Lags the live spec (v4.51.0). Safe to vendor. No algorithms. |
 | `sdk-go` / `sdk-java` / `sdk-typescript` | MIT / MIT / none | OpenAPI-generated clients | Same surface, other languages. |
 | `plugin-ghidra` | GPL-3.0 | Ghidra plugin (Java) | Richest client-side sync logic; no local matching. |
 | `plugin-ida` | GPL-3.0 | IDA plugin (Python) | Persistent per-IDB cache (netnode KV). |
@@ -76,9 +76,9 @@ The published reference is a live OpenAPI 3.1 document, newer than the vendored 
 | Item | Value |
 |------|-------|
 | Full spec | `https://docs.reveng.ai/openapi.json` (626 KB) |
-| Server spec | `https://api.reveng.ai/openapi.json` (216 KB, 65 of the 158 paths) |
-| Version | v4.34.0 |
-| Paths / operations / tags | 158 / 190 / 24 |
+| Server spec | `https://api.reveng.ai/openapi.json` (v4.2.4, 69 paths) |
+| Version | v4.51.0 |
+| Paths / operations / tags | 181 / 216 / 24 |
 | Methods | 116 GET, 51 POST, 14 PATCH, 6 DELETE, 3 PUT |
 | Server | `https://api.reveng.ai` (Production) |
 | Security schemes | `APIKey` (header `Authorization`), `bearerAuth` |
@@ -87,12 +87,12 @@ Operations per tag, from the full spec:
 
 | Tag | Ops | Covers |
 |-----|-----|--------|
-| Agent | 35 | triage, capabilities, remediation, report-analysis, scan and explain agents |
-| Analyses - Core | 32 | upload, create, status, logs, bytes, dynamic execution |
+| Agent | 55 | triage, capabilities, protocols, secrets, remediation, report-analysis, scan and explain agents |
+| Analyses - Core | 33 | upload, create, status, logs, bytes, dynamic execution |
 | Functions - Core | 24 | list, details, blocks, callees/callers, strings, indirect call sites |
 | Functions - AI Decompilation | 18 | create/get/stream, summary, inline comments, type suggestions, line attributions |
 | Collections | 16 | collections, member binaries, tags |
-| Binaries | 11 | details, DIE info, related binaries, externals, downloads |
+| Binaries | 14 | details, DIE info, related binaries, externals, downloads |
 | Data Types | 11 | structs/unions/enums/signatures CRUD plus history |
 | Functions - Renaming & History | 8 | rename, batch rename, history, revert, rename-unnamed-functions agent |
 | Conversations | 7 | agent conversation runtime, SSE events, tool confirmation |
@@ -103,9 +103,9 @@ Operations per tag, from the full spec:
 | External Sources | 3 | VirusTotal, MalwareBazaar |
 | Reports | 3 | PDF generate, status, download |
 | Analyses - Bulk Actions | 2 | bulk tag, bulk delete |
-| IAM - Users | 2 | account management |
+| IAM - Users | 2 | account management, permissions |
 | Analyses - XRefs | 1 | xref lookup by vaddr |
-| Config | 1 | platform configuration |
+| Config | 3 | platform configuration, client config, models |
 | Models | 1 | available embedding models |
 
 Four tags are declared with **no operations in the public spec**: `Firmware`, `IAM - Organisations`,
@@ -203,7 +203,7 @@ Ranked by value-to-effort. Effort: S (hours), M (a day or two), L (a week or mor
 | 10 | Corpus-build harness: PATH-shadowing mock compiler, one `docker run` per repo batch build, content-addressed outputs, resumable DB | rebrew `tools/corpus_sweep.py`, relumea training data | M | `ghcc/ghcc/compile.py`, `ghcc/scripts/mock_path/`, `ghcc/ghcc/database.py` |
 | 11 | Straight-line PCODE/IR to Z3 equivalence as a `prove` fallback where angr path explosion fails | rebrew `prove.py` | M-L | `jingle` relational formulation (`reaches`, `upholds_postcondition`, `branch_comparison`) |
 | 12 | Capability manifest generated from code and checked for drift in CI | repo hygiene | S | `.revengai/features.json` + `features-drift.yml` in every plugin |
-| 13 | RevEng.AI API as an opt-in candidate source: read-only metadata and names, gated behind rebrew `verify`, never auto-applied | rebrew (opt-in), relumea | S | live spec v4.34.0; auth verified |
+| 13 | RevEng.AI API as an opt-in candidate source: read-only metadata and names, gated behind rebrew `verify`, never auto-applied | rebrew (opt-in), relumea | S | live spec v4.51.0; auth verified |
 | 14 | Hosted MCP server as a tool provider for agent workflows (36 tools) | relumea agents, rebrew agent skills | S-M | `https://api.reveng.ai/mcp/`; `initialize` + `tools/list` verified |
 
 Supporting patterns worth adopting alongside the above:
@@ -280,7 +280,7 @@ Commands run on 2026-09-12 (token read from the local secret, never printed):
 ```bash
 gh repo list RevEngAI --limit 200 --json ...
 gh api repos/RevEngAI/<repo> --jq '.license.spdx_id'
-curl -sS https://docs.reveng.ai/openapi.json         # OpenAPI 3.1, v4.34.0, 158 paths
+curl -sS https://docs.reveng.ai/openapi.json         # OpenAPI 3.1, v4.51.0, 181 paths
 curl -sS -K - <<'CFG'                                # header via config on stdin, not argv
 url = "https://api.reveng.ai/v2/iam/me"
 header = "Authorization: <token>"
