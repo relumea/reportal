@@ -1905,3 +1905,105 @@ class TestFunctionTriageParamValidation:
                 binary_id=_binary(conn, tmp_path),
                 params={"function_ids": 0x1000},
             )
+
+
+class TestRelatedLineageBenchmarkUnpackValidation:
+    def test_related_non_integer_limit_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="limit must be an integer"):
+            jobs.submit(
+                conn,
+                kind="related",
+                binary_id=_binary(conn, tmp_path),
+                params={"limit": "many"},
+            )
+
+    def test_related_non_positive_limit_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="limit must be positive"):
+            jobs.submit(
+                conn,
+                kind="related",
+                binary_id=_binary(conn, tmp_path),
+                params={"limit": 0},
+            )
+
+    def test_related_non_boolean_unrelated_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="include_unrelated must be a boolean"):
+            jobs.submit(
+                conn,
+                kind="related",
+                binary_id=_binary(conn, tmp_path),
+                params={"include_unrelated": "yes"},
+            )
+
+    def test_lineage_non_integer_other_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="other_binary_id must be an integer"):
+            jobs.submit(
+                conn,
+                kind="lineage",
+                binary_id=_binary(conn, tmp_path),
+                params={"other_binary_id": "abc"},
+            )
+
+    def test_lineage_self_comparison_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        with pytest.raises(ValueError, match="cannot be compared with itself"):
+            jobs.submit(
+                conn,
+                kind="lineage",
+                binary_id=binary_id,
+                params={"other_binary_id": binary_id},
+            )
+
+    def test_lineage_non_boolean_refine_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="refine must be a boolean"):
+            jobs.submit(
+                conn,
+                kind="lineage",
+                binary_id=_binary(conn, tmp_path),
+                params={"refine": "yes"},
+            )
+
+    def test_benchmark_missing_right_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="right_binary_id is required"):
+            jobs.submit(
+                conn,
+                kind="benchmark",
+                binary_id=_binary(conn, tmp_path),
+            )
+
+    def test_benchmark_self_comparison_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        with pytest.raises(ValueError, match="two different binaries"):
+            jobs.submit(
+                conn,
+                kind="benchmark",
+                binary_id=binary_id,
+                params={"right_binary_id": binary_id},
+            )
+
+    def test_unpack_unknown_packer_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="packer must be one of"):
+            jobs.submit(
+                conn,
+                kind="unpack",
+                binary_id=_binary(conn, tmp_path),
+                params={"packer": "mystery"},
+            )
