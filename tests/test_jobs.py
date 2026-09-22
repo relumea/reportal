@@ -1419,3 +1419,35 @@ class TestSubmitterAttribution:
         assert entries
         assert {entry["actor"] for entry in entries} == {"ana"}
         assert {entry["actor_user_id"] for entry in entries} == {int(user["id"])}
+
+
+class TestJobsSchemaAndRows:
+    def test_upgrade_adds_missing_columns(self, tmp_path: Path) -> None:
+        import sqlite3 as _sqlite
+
+        db = tmp_path / "old-jobs.db"
+        conn = _sqlite.connect(db)
+        conn.row_factory = _sqlite.Row
+        conn.execute(
+            f"CREATE TABLE {jobs.TABLE} ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " kind TEXT NOT NULL,"
+            " binary_id INTEGER,"
+            " status TEXT NOT NULL,"
+            " progress INTEGER NOT NULL DEFAULT 0,"
+            " steps_total INTEGER NOT NULL DEFAULT 1,"
+            " message TEXT NOT NULL DEFAULT '',"
+            " params_json TEXT NOT NULL DEFAULT '{}',"
+            " result_json TEXT NOT NULL DEFAULT '',"
+            " error TEXT NOT NULL DEFAULT '',"
+            " created_at TEXT NOT NULL,"
+            " started_at TEXT NOT NULL DEFAULT '',"
+            " finished_at TEXT NOT NULL DEFAULT '')"
+        )
+        conn.commit()
+        jobs.ensure_schema(conn)
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({jobs.TABLE})")}
+        assert "submitted_by" in columns
+        assert "submitted_by_user_id" in columns
+        assert "request_id" in columns
+        conn.close()
