@@ -835,3 +835,27 @@ class TestSdkPaths:
         client = llm.LlmClient(None)
         with pytest.raises(llm.LlmUnavailable):
             llm.with_model(client, "other")
+
+
+class TestLlmJsonParsing:
+    def test_non_json_is_an_error(self) -> None:
+        with pytest.raises(llm.LlmError, match="not valid JSON"):
+            llm._parse_json("not json at all {{{")
+
+    def test_scalar_json_is_an_error(self) -> None:
+        with pytest.raises(llm.LlmError, match="not a JSON object or list"):
+            llm._parse_json("42")
+
+    def test_named_list_missing_is_an_error(self) -> None:
+        with pytest.raises(llm.LlmError, match="no 'items' list"):
+            llm._entry_list({"other": 1}, keys=("items",), what="test")
+        with pytest.raises(llm.LlmError, match="non-list"):
+            llm._entry_list({"items": "nope"}, keys=("items",), what="test")
+        with pytest.raises(llm.LlmError, match="not a JSON object or list"):
+            llm._entry_list(42, keys=("items",), what="test")
+
+    def test_named_list_returns_the_list(self) -> None:
+        assert llm._entry_list({"items": [1, 2]}, keys=("items",), what="test") == [1, 2]
+        assert llm._entry_list([1, 2], keys=("items",), what="test") == [1, 2]
+        with pytest.raises(llm.LlmError, match="non-list 'a'"):
+            llm._entry_list({"a": 1, "items": [3]}, keys=("a", "items"), what="t")
