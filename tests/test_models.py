@@ -847,3 +847,22 @@ class TestModelHelpers:
         )
         with pytest.raises(plugins.RegistryError, match="must be callable"):
             models.register_model(model, origin="test")
+
+
+class TestRerunEdges:
+    def test_missing_decompilation_skips_the_function(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            _store_summary(conn, ids["functions"][0], SUMMARY)
+            conn.execute("DELETE FROM decompilations WHERE function_id = ?", (ids["functions"][0],))
+            conn.commit()
+        _install_llm(SUMMARY)
+        with _journaled(ids["db"]) as (conn, log):
+            result = models.upgrade_analysis(
+                conn, log, analysis_id=ids["analysis"], model="new-model"
+            )
+        assert result["candidates"] == 1
+        assert result["upgraded"] == 0
+        assert "no stored decompilation" in result["skipped"][0]["reason"]
