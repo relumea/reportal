@@ -842,6 +842,51 @@ class TestBillingPortal:
         with pytest.raises(billing.BillingError, match="no subscription"):
             billing.start_billing_portal(conn, 4242)
 
+    def test_stripe_portal_returns_the_url(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sqlite3 as _sqlite
+
+        from reportal import metering
+
+        conn = _sqlite.connect(":memory:")
+        conn.row_factory = _sqlite.Row
+        conn.execute(
+            f"CREATE TABLE {metering.SUBSCRIPTION_TABLE}"
+            " (organisation_id INTEGER PRIMARY KEY, customer_id TEXT NOT NULL DEFAULT '')"
+        )
+        conn.execute(
+            f"INSERT INTO {metering.SUBSCRIPTION_TABLE} (organisation_id, customer_id)"
+            " VALUES (7, 'cus_x')"
+        )
+        monkeypatch.setattr(
+            billing, "_stripe_request", lambda *a, **k: {"url": "https://portal.example/s"}
+        )
+        session = billing.start_billing_portal(conn, 7)
+        assert session.provider == billing.PROVIDER_STRIPE
+        assert session.url == "https://portal.example/s"
+
+    def test_stripe_portal_without_a_url_is_a_502(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sqlite3 as _sqlite
+
+        from reportal import metering
+
+        conn = _sqlite.connect(":memory:")
+        conn.row_factory = _sqlite.Row
+        conn.execute(
+            f"CREATE TABLE {metering.SUBSCRIPTION_TABLE}"
+            " (organisation_id INTEGER PRIMARY KEY, customer_id TEXT NOT NULL DEFAULT '')"
+        )
+        conn.execute(
+            f"INSERT INTO {metering.SUBSCRIPTION_TABLE} (organisation_id, customer_id)"
+            " VALUES (7, 'cus_x')"
+        )
+        monkeypatch.setattr(billing, "_stripe_request", lambda *a, **k: {})
+        with pytest.raises(billing.BillingError, match="no portal URL"):
+            billing.start_billing_portal(conn, 7)
+
 
 class TestReconcileAccount:
     def test_missing_subscription_is_a_409(
