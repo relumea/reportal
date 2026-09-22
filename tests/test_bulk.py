@@ -816,3 +816,22 @@ class TestSurfaceProjectContext:
             assert "400" in str(exc)
         else:
             raise AssertionError("missing context must raise")
+
+
+class TestSurfaceEngineUnavailable:
+    def test_unavailable_engine_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fail(status: int, error: str, detail: str = "") -> Exception:
+            return Exception(f"{status} {error} {detail}")
+
+        monkeypatch.setattr(surface.engines, "get_engine", lambda: _UnavailableEngine())
+        try:
+            surface.engine(fail=fail)
+        except Exception as exc:
+            assert "503" in str(exc)
+        else:
+            raise AssertionError("unavailable engine must raise")
+
+
+class _UnavailableEngine:
+    def available(self) -> bool:
+        return False
