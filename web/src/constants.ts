@@ -352,6 +352,7 @@ const NAME_SOURCE_MAP: Record<string, (typeof FUNCTION_NAME_SOURCES)[number]> = 
   rebrew: "System",
   symbol: "System",
   flirt: "System",
+  debug: "System",
   unstrip: "Auto Unstrip",
   renames: "AI Agent",
 };
@@ -373,6 +374,7 @@ export function nameSourceLabel(
 const TYPE_SOURCE_MAP: Record<string, string> = {
   scan: "System",
   symbol: "System",
+  debug: "System",
   manual: "User",
   unstrip: "Auto Unstrip",
   ai: "AI",
