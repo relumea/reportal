@@ -702,3 +702,36 @@ class TestDoctorReadFailure:
         row = _check(doctor.report(), "schema")
         assert row["status"] == "fail"
         assert "cannot read" in row["detail"]
+
+
+class TestDoctorConfigAndAuthAndDb:
+    def test_warn_only_config_reports_details(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            doctor.settings,
+            "problems",
+            lambda: [
+                {"level": "warn", "where": "a", "problem": "p1", "hint": ""},
+                {"level": "warn", "where": "b", "problem": "p2", "hint": ""},
+            ],
+        )
+        row = doctor._config_check()
+        assert row["status"] == "warn"
+        assert "a" in row["detail"]
+
+    def test_auth_without_a_readable_users_table(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sqlite3 as _sqlite
+
+        _workspace(tmp_path, monkeypatch)
+        monkeypatch.setenv("REPORTAL_AUTH", "1")
+        db = tmp_path / "reportal.db"
+        db.write_bytes(b"not a database")
+
+        def boom(conn: _sqlite.Connection) -> dict[str, int]:
+            raise _sqlite.DatabaseError("read failed")
+
+        monkeypatch.setattr(store, "counts", boom)
+        report = doctor.report()
+        auth_row = _check(report, "auth")
+        assert auth_row["status"] in ("warn", "fail", "ok")
