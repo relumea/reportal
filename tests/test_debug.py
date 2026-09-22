@@ -1951,3 +1951,35 @@ class TestQemuStubProbe:
         remote = next(e for e in report["transcript"] if e["request"] == "target-remote")
         assert remote["success"] is True
         assert killed == ["stub"]
+
+
+class TestDebugApplyAndReader:
+    def test_apply_with_a_vanished_analysis_is_a_key_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = _db(tmp_path, "gone-analysis.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            function_id, _ = store.upsert_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000,
+                name="sub_1000",
+                size=0x10,
+                status="STUB",
+            )
+            monkeypatch.setattr(store, "get_analysis", lambda _conn, _id: None)
+            with pytest.raises(KeyError, match="no analysis"):
+                debug.apply_session_proposal(conn, function_id=function_id)
+
+    def test_read_response_skips_stray_responses(self) -> None:
+        messages = [
+            {"type": "event", "event": "x"},
+            {"type": "response", "request_seq": 99, "command": "other"},
+            {"type": "response", "request_seq": 7, "command": "target"},
+        ]
+        reader = debug._DapReader(_FakePipe(b""), 65536, 5.0)
+        reader.read_message = lambda: messages.pop(0)  # type: ignore[method-assign]
+        assert reader.read_response(7)["command"] == "target"
