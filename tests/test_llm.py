@@ -702,3 +702,48 @@ class TestEmbeddings:
         client = LlmClient(LlmConfig(endpoint="http://llm.local/v1"), http=http)
         llm.set_client(client)
         assert llm.embeddings(["one"]) == [[0.5]]
+
+
+class TestLlmSinks:
+    def test_recording_usage_reports_tokens(self) -> None:
+        from types import SimpleNamespace
+
+        seen: list[tuple[int, int, str]] = []
+        completion = SimpleNamespace(usage=SimpleNamespace(prompt_tokens=3, completion_tokens=5))
+        with llm.recording_usage(lambda a, b, c: seen.append((a, b, c))):
+            llm._report_usage(completion, "m")
+        assert seen == [(3, 5, "m")]
+
+    def test_broken_usage_sink_warns_but_does_not_raise(self) -> None:
+        from types import SimpleNamespace
+
+        completion = SimpleNamespace(usage=SimpleNamespace(prompt_tokens=3, completion_tokens=5))
+
+        def boom(prompt: int, output: int, model: str) -> None:
+            raise RuntimeError("meter down")
+
+        with llm.recording_usage(boom):
+            llm._report_usage(completion, "m")
+
+    def test_no_sink_is_silent(self) -> None:
+        from types import SimpleNamespace
+
+        llm._report_usage(SimpleNamespace(usage=None), "m")
+        llm._report_usage(SimpleNamespace(), "m")
+        llm._report_charge("triage", [{"content": "hi"}])
+
+    def test_charging_reports_input_tokens(self) -> None:
+        seen: list[tuple[str, int]] = []
+        with llm.charging(lambda task, tokens: seen.append((task, tokens))):
+            llm._report_charge("triage", [{"content": "x" * 100}, {"content": 42}])
+        assert seen[0][0] == "triage"
+        assert seen[0][1] > 0
+
+    def test_broken_charge_sink_warns_but_does_not_raise(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        def boom(task: str, tokens: int) -> None:
+            raise RuntimeError("meter down")
+
+        with llm.charging(boom):
+            llm._report_charge("triage", [{"content": "hi"}])
