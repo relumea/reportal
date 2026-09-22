@@ -18,7 +18,18 @@ import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
-from reportal import _paths, auth, cli, doctor, external, graph_backends, llm, profiles, settings
+from reportal import (
+    _paths,
+    auth,
+    billing,
+    cli,
+    doctor,
+    external,
+    graph_backends,
+    llm,
+    profiles,
+    settings,
+)
 
 runner = CliRunner()
 
@@ -846,3 +857,15 @@ def test_the_report_is_one_read_of_the_workspace_file(
     monkeypatch.setattr(settings, "workspace_tables", counted)
     settings.report()
     assert calls["n"] == 1
+
+
+class TestProblemsEdges:
+    def test_unknown_billing_provider_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(billing, "configured_provider", lambda: "mystery")
+        problems = settings.problems()
+        assert any("mystery" in problem["problem"] for problem in problems)
+
+    def test_unknown_graph_backend_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(graph_backends, "configured_backend_name", lambda: "mystery")
+        problems = settings.problems()
+        assert any("mystery" in problem["problem"] for problem in problems)
