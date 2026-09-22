@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from reportal import flirt_sigs
+from reportal import flirt_sigs, store
 
 
 class _FakeMatch:
@@ -603,3 +603,56 @@ class TestCatalogEdges:
         result = flirt_sigs.refresh(conn, root)
         assert result["added"] == 1
         assert {row["rel_path"] for row in flirt_sigs.list_sigsets(conn)} == {"msvc/vc6/libc.sig"}
+
+
+class TestFlirtEdges:
+    def test_arch_from_filename_tokens(self) -> None:
+        assert flirt_sigs._arch_from_name("msvc/libc-x86_64.sig") == "x64"
+        assert flirt_sigs._arch_from_name("libc-aarch64.sig") == "arm64"
+        assert flirt_sigs._arch_from_name("libc-riscv64.sig") == "riscv64"
+        assert flirt_sigs._arch_from_name("libc-powerpc.sig") == "ppc"
+        assert flirt_sigs._arch_from_name("plain/libc.sig") == flirt_sigs.ARCH_UNKNOWN
+
+    def test_matcher_cache_evicts_the_oldest(
+        self, tmp_path: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import reportal.flirt_sigs as _flirt
+
+        monkeypatch.setattr(_flirt, "MATCHER_CACHE_MAX", 1)
+        _flirt._MATCHERS.clear()
+        root = _checkout(tmp_path)
+        flirt_sigs.refresh(conn, root)
+        monkeypatch.setattr(_flirt, "_build_matcher", lambda blobs: object())
+        first_key, _ = flirt_sigs.matcher_for(conn, "x86", root)
+        assert first_key
+        (root / "msvc" / "vc6" / "libc.sig").write_bytes(b"IDASGNchanged!")
+        flirt_sigs.refresh(conn, root)
+        second_key, _ = flirt_sigs.matcher_for(conn, "x86", root)
+        assert second_key != first_key
+        assert len(_flirt._MATCHERS) == 1
+        _flirt._MATCHERS.clear()
+
+    def test_empty_symbol_pairs_are_skipped(
+        self, tmp_path: Path, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import reportal.flirt_sigs as _flirt
+
+        class _EmptyMatch:
+            names = [("", "")]
+
+        class _EmptyMatcher:
+            def match(self, data: bytes) -> list[_EmptyMatch]:
+                assert data
+                return [_EmptyMatch()]
+
+        _flirt._MATCHERS.clear()
+        root = _checkout(tmp_path)
+        flirt_sigs.refresh(conn, root)
+        monkeypatch.setattr(_flirt, "_build_matcher", lambda blobs: _EmptyMatcher())
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ" + b"\x00" * 64)
+        payload = flirt_sigs.scan(
+            conn, binary_sha256="ab" * 32, arch="x86", data=target.read_bytes(), root=root
+        )
+        assert payload["matches"] == []
+        _flirt._MATCHERS.clear()
