@@ -2359,3 +2359,42 @@ class TestMiStartupFailure:
             debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"))
         assert caught.value.code == debug.ERROR_INVALID
         assert "gdb could not be started" in caught.value.detail
+
+
+class TestMiReadUntilPrompt:
+    def test_expired_deadline_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: b"x\n")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        with pytest.raises(debug.DebugError) as caught:
+            debug._mi_read_until_prompt(_FakePipe(b""), 65536, 0.0, command="startup")
+        assert "did not answer in time" in caught.value.detail
+
+    def test_silent_backend_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: ([], [], []))
+        with pytest.raises(debug.DebugError) as caught:
+            debug._mi_read_until_prompt(_FakePipe(b""), 65536, 1.0, command="startup")
+        assert "did not answer in time" in caught.value.detail
+
+    def test_closed_stream_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        with pytest.raises(debug.DebugError) as caught:
+            debug._mi_read_until_prompt(_FakePipe(b""), 65536, 1.0, command="startup")
+        assert "closed the connection" in caught.value.detail
+
+    def test_oversized_answer_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os as _os
+
+        chunks = [b"a\nb\n(gdb)\n"]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        with pytest.raises(debug.DebugError) as caught:
+            debug._mi_read_until_prompt(_FakePipe(b""), 2, 1.0, command="startup")
+        assert "cap" in caught.value.detail
