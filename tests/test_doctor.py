@@ -735,3 +735,17 @@ class TestDoctorConfigAndAuthAndDb:
         report = doctor.report()
         auth_row = _check(report, "auth")
         assert auth_row["status"] in ("warn", "fail", "ok")
+
+
+class TestDoctorConfigFail:
+    def test_fail_config_reports_the_first_problem(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            doctor.settings,
+            "problems",
+            lambda: [
+                {"level": "fail", "where": "x", "problem": "bad", "hint": "fix it"},
+            ],
+        )
+        row = doctor._config_check()
+        assert row["status"] == "fail"
+        assert row["detail"] == "bad"
