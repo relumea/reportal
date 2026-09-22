@@ -638,3 +638,36 @@ class TestSaasProfileCheck:
 
         assert optional["status"] == "warn"
         assert "saas profile" in optional["hint"]
+
+
+class TestDoctorEdges:
+    def test_packaged_deploy_dir_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(doctor.Path, "resolve", lambda self: Path("/no/such/checkout/x.py"))
+        assert doctor.deploy_units_dir() is None
+        assert doctor.deploy_unit_paths() is None
+
+    def test_unopenable_database_is_a_schema_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sqlite3 as _sqlite
+
+        _workspace(tmp_path, monkeypatch)
+        db = tmp_path / "reportal.db"
+        db.write_bytes(b"not a database")
+        real_connect = store.connect
+
+        def boom(path: Path) -> _sqlite.Connection:
+            raise _sqlite.DatabaseError("file is not a database")
+
+        monkeypatch.setattr(store, "connect", boom)
+        row = _check(doctor.report(), "schema")
+        assert row["status"] == "fail"
+        _ = real_connect
+
+    def test_no_backup_archives_warns(
+        self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        row = _check(doctor.report(), "backup")
+        assert row["status"] == "warn"
+        assert "archive" in row["detail"]
