@@ -4712,6 +4712,7 @@ function DebugReport({ session }: { session: DebugSession }): ReactNode {
         rows={[
           ["status", <Badge tone="ok">{session.status}</Badge>],
           ["backend", session.backend],
+          ...(session.image ? [["image", session.image] as [string, ReactNode] ] : []),
           ["thread", stopped?.threadId ?? NA],
           ["stop reason", stopped?.reason ?? NA],
           [

@@ -2510,6 +2510,7 @@ export interface DebugSession {
   sha256: string;
   status: string;
   backend: string;
+  image: string;
   argv: string[];
   caps: Record<string, string | number>;
   transcript: DebugTranscriptEntry[];
