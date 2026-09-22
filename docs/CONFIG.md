@@ -42,6 +42,7 @@ returned, only its presence and length.
 |---------|-------------|---------------|------|---------|------------|
 | `debug.backend` | `REPORTAL_DEBUG_BACKEND` | `[debug] backend` | text | `the first installed backend` | the debug backend a session uses |
 | `debug.enabled` | `REPORTAL_DEBUG` | `[debug] enabled` | flag | `off` | allow read-only debug sessions under an installed backend |
+| `debug.image` | `REPORTAL_DEBUG_IMAGE` | `[debug] image` | text | `unset, so sessions probe on the host` | the pinned guest image for VM-isolated sessions, empty means host backends |
 
 ## [deployment]
 

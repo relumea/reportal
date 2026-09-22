@@ -1383,3 +1383,30 @@ class TestSessionProposals:
             assert debug.session_proposals(conn, binary_id) is None
             with pytest.raises(KeyError):
                 debug.apply_session_proposal(conn, function_id=4242)
+
+
+class TestVmOverlay:
+    def test_image_config_prefers_the_environment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "reportal.toml").write_text('[debug]\nimage = "/img/base.qcow2"\n')
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv(debug.IMAGE_ENV, raising=False)
+        assert debug.configured_image() == "/img/base.qcow2"
+        monkeypatch.setenv(debug.IMAGE_ENV, "sha256:abc")
+        assert debug.configured_image() == "sha256:abc"
+
+    def test_overlay_argv_pins_the_base(self, tmp_path: Path) -> None:
+        base = tmp_path / "base.qcow2"
+        overlay = debug.vm_overlay_paths(base, 7)
+        assert overlay.name == "base-session-7.overlay.qcow2"
+        argv = debug.create_vm_overlay(base, overlay)
+        assert argv[-2:] == [str(base), str(overlay)]
+        assert "-b" in argv and "qcow2" in argv
+
+    def test_destroy_overlay_ignores_a_missing_file(self, tmp_path: Path) -> None:
+        debug.destroy_vm_overlay(tmp_path / "nope.qcow2")
+        target = tmp_path / "live.qcow2"
+        target.write_bytes(b"x")
+        debug.destroy_vm_overlay(target)
+        assert not target.exists()

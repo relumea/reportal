@@ -305,6 +305,16 @@ SETTINGS: tuple[Setting, ...] = (
         default="the first installed backend",
     ),
     Setting(
+        name="debug.image",
+        describe="the pinned guest image for VM-isolated sessions, empty means host backends",
+        kind=KIND_TEXT,
+        read=debug.configured_image,
+        env=debug.IMAGE_ENV,
+        table=debug.CONFIG_TABLE,
+        key=debug.CONFIG_IMAGE,
+        default="unset, so sessions probe on the host",
+    ),
+    Setting(
         name="knowledge.graph_backend",
         describe="the backend a graph sync defaults to",
         kind=KIND_TEXT,

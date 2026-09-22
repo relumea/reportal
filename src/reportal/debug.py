@@ -58,6 +58,8 @@ CONFIG_TABLE = "debug"
 CONFIG_ENABLED = "enabled"
 CONFIG_BACKEND = "backend"
 BACKEND_ENV = "REPORTAL_DEBUG_BACKEND"
+CONFIG_IMAGE = "image"
+IMAGE_ENV = "REPORTAL_DEBUG_IMAGE"
 
 # Entry-point group third-party debug backends register in.
 BACKEND_ENTRY_POINT_GROUP = "reportal.debug_backends"
@@ -73,6 +75,12 @@ MAX_TIMEOUT_SECONDS = 120
 MAX_BREAKPOINTS = 64
 MAX_READ_BYTES = 4096
 MAX_TRANSCRIPT_BYTES = 64 * 1024
+
+# VM overlay caps.  One overlay clone per session off the pinned base image;
+# the clone is qcow2 with the base as its backing file, so the base stays
+# immutable and two sessions never share a disk.
+VM_OVERLAY_SUFFIX = ".overlay.qcow2"
+MAX_VM_DISK_GB = 20
 
 
 class DebugError(Exception):
@@ -235,6 +243,41 @@ def configured_backend_name() -> str:
         return raw
     value = _workspace_config().get(CONFIG_BACKEND)
     return value.strip() if isinstance(value, str) else ""
+
+
+def configured_image() -> str:
+    """The pinned guest image digest or path, or "" when none is configured.
+
+    The value is a digest reference the operator pins (never a moving tag):
+    either a local image path or a ``sha256:<hex>`` reference the VM backend
+    resolves.  Empty means no VM tier: probes run on the host backends.
+    """
+    raw = os.environ.get(IMAGE_ENV, "").strip()
+    if raw:
+        return raw
+    value = _workspace_config().get(CONFIG_IMAGE)
+    return value.strip() if isinstance(value, str) else ""
+
+
+def vm_overlay_paths(base: Path, session_id: int) -> Path:
+    """The overlay clone path for one session off *base*."""
+    return base.parent / f"{base.stem}-session-{session_id}{VM_OVERLAY_SUFFIX}"
+
+
+def create_vm_overlay(base: Path, overlay: Path) -> list[str]:
+    """The qemu-img argv creating *overlay* as a qcow2 clone of *base*.
+
+    Pure argv builder like the sandbox runner: availability and execution are
+    the caller's guards, so this stays assertable without a hypervisor.
+    """
+    qemu_img = shutil.which("qemu-img") or "qemu-img"
+    return [qemu_img, "create", "-f", "qcow2", "-F", "qcow2", "-b", str(base), str(overlay)]
+
+
+def destroy_vm_overlay(overlay: Path) -> None:
+    """Remove one overlay clone, ignoring a missing file."""
+    with contextlib.suppress(OSError):
+        overlay.unlink(missing_ok=True)
 
 
 def available_backend() -> Backend | None:
