@@ -820,3 +820,12 @@ class TestPdfSectionGuards:
         pdf._triage_section(layout, conn, binary_id)
         pdf._protocols_section(layout, conn, binary_id)
         assert isinstance(layout.build(), bytes)
+
+
+class TestPdfUnknownBinary:
+    def test_unknown_binary_sections_render_nothing(self, conn: sqlite3.Connection) -> None:
+        layout = pdf.PdfLayout(header="report")
+        pdf._attack_surface_section(layout, conn, 424242)
+        pdf._exploitability_section(layout, conn, 424242)
+        pdf._renames_section(layout, conn, 424242)
+        assert isinstance(layout.build(), bytes)
