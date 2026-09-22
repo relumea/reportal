@@ -361,6 +361,12 @@ class TestStoreRoundTrip:
         _analysis(conn, target)
         assert composition.stored_composition(conn, target) is None
 
+    def test_stored_composition_is_none_without_an_analysis(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
+        assert composition.stored_composition(conn, target) is None
+
 
 class TestCompositionRoutes:
     def test_post_serves_and_get_round_trips(
@@ -582,3 +588,36 @@ class TestCompositionScopeSurfaces:
         result = runner.invoke(cli.app, ["composition", str(left), "--binary-id", "999", "--json"])
         assert result.exit_code == 1, result.output
         assert "unknown binary" in result.output
+
+
+class TestOpenMatchesEdges:
+    def test_first_candidate_wins_for_a_shared_source(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
+        analysis_id = _analysis(conn, target)
+        source = _function(conn, analysis_id, va=0x1000, name="sub_1000")
+        first_id, (first,) = _candidate_binary(
+            conn, tmp_path, name="one.dll", sha="bb" * 32, vases=[0x2000]
+        )
+        second_id, (second,) = _candidate_binary(
+            conn, tmp_path, name="two.dll", sha="cc" * 32, vases=[0x3000]
+        )
+        store.record_match(
+            conn,
+            function_id=source,
+            candidate_function_id=first,
+            similarity=99.0,
+            confidence=1.0,
+        )
+        store.record_match(
+            conn,
+            function_id=source,
+            candidate_function_id=second,
+            similarity=90.0,
+            confidence=0.5,
+        )
+        payload = composition.compute_composition(conn, binary_id=target)
+        rows = {int(row["function_id"]): row for row in payload["functions"]}
+        assert rows[source]["matched_binary_id"] == first_id
+        _ = second_id

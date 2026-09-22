@@ -256,3 +256,14 @@ class TestTheChargeSink:
             llm._report_charge("summary", [{"role": "user", "content": "x"}])
         assert calls == [("summary", 1)]
         assert any("llm charge sink failed" in record.message for record in caplog.records)
+
+
+class TestCreditsEdges:
+    def test_non_numeric_budget_buys_no_credits(self) -> None:
+        assert credits_mod.credits_for_budget("x") == 0
+        assert credits_mod.credits_for_budget(True) == 0
+        assert credits_mod.credits_for_budget(None) == 0
+
+    def test_token_count_rounds_up(self) -> None:
+        assert credits_mod.tokens_of("") == 0
+        assert credits_mod.tokens_of("x") == 1

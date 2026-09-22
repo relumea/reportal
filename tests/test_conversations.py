@@ -330,3 +330,28 @@ class TestChatCharges:
         text = conversations.prompt_text(messages)
         assert "hi" in text
         assert len(text) > len("hi")
+
+
+class TestConversationEdges:
+    def test_extra_system_appends_to_the_prompt(
+        self, conn: sqlite3.Connection, fake_llm: FakeLlmClient
+    ) -> None:
+        function_id = _seed_function(conn)
+        conversation_id = _new_conversation(conn, scope_id=function_id)
+        messages, _ = conversations.agent_messages(
+            conn,
+            conversation_id=conversation_id,
+            content="hi",
+            extra_system="Be terse.",
+        )
+        assert "Be terse." in messages[0]["content"]
+        plain, _ = conversations.agent_messages(conn, conversation_id=conversation_id, content="hi")
+        assert "Be terse." not in plain[0]["content"]
+
+    def test_triage_summary_of_a_non_dict_is_empty(self) -> None:
+        assert conversations._triage_summary(None) == {}
+        assert conversations._triage_summary("nope") == {}  # type: ignore[arg-type]
+
+    def test_unknown_conversation_is_a_key_error(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(KeyError, match="424242"):
+            conversations.send_message(conn, conversation_id=424242, content="hi")
