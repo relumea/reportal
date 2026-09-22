@@ -141,3 +141,17 @@ class TestStripAddresses:
 
     def test_blank_lines_survive(self) -> None:
         assert diffing.strip_addresses("bits 32\n\nret") == "bits 32\n\nret"
+
+
+class TestSummaryReplace:
+    def test_replace_op_counts_one_changed(self) -> None:
+        entries = [
+            {"op": diffing.OP_EQUAL, "left_no": 1, "right_no": 1, "left": "a", "right": "a"},
+            {"op": diffing.OP_REPLACE, "left_no": 2, "right_no": 2, "left": "b", "right": "x"},
+        ]
+        assert diffing.summary(entries) == {
+            "equal": 1,
+            "insert": 0,
+            "delete": 0,
+            "changed": 1,
+        }

@@ -213,3 +213,40 @@ class TestListings:
             )
         assert excinfo.value.status == 500
         assert excinfo.value.code == "engine-error"
+
+
+class TestDiffviewEdges:
+    def test_similarity_failure_reads_as_null(
+        self, conn: sqlite3.Connection, fake_engine: FakeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(conn, match=False, decomp=True)
+        monkeypatch.setattr(similarity, "available", lambda: True)
+
+        def boom(left: str, right: str) -> float:
+            raise similarity.SimilarityUnavailable("nope")
+
+        monkeypatch.setattr(similarity, "similarity", boom)
+        payload = diffview.function_diff(
+            conn, fake_engine, function_id=ids["left"], candidate_id=ids["right"]
+        )
+        assert payload["similarity"] is None
+
+    def test_engine_failure_is_a_diff_error(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import engines as _engines
+
+        ids = _seed(conn)
+
+        class _Boom(_engines.RebrewEngine):
+            def available(self) -> bool:
+                return True
+
+            def decompile(self, *args: object, **kwargs: object) -> dict[str, object]:
+                raise _engines.EngineError("down")
+
+        with pytest.raises(diffview.DiffError) as caught:
+            diffview.function_diff(
+                conn, _Boom(), function_id=ids["left"], candidate_id=ids["right"]
+            )
+        assert caught.value.code == "engine-error"
