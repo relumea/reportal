@@ -806,3 +806,17 @@ class TestMcpTools:
         assert generate is not None
         with pytest.raises(mcp_tools.ToolError):
             generate.handler({"binary_id": 999})
+
+
+class TestPdfSectionGuards:
+    def test_empty_sections_render_nothing(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="ab" * 32, name="demo.exe", path=str(target), size=2
+        )
+        layout = pdf.PdfLayout(header="report")
+        pdf._capabilities_section(layout, conn, binary_id)
+        pdf._triage_section(layout, conn, binary_id)
+        pdf._protocols_section(layout, conn, binary_id)
+        assert isinstance(layout.build(), bytes)
