@@ -420,3 +420,25 @@ class TestUpload:
         )
         assert result.exit_code == 1
         assert "file-too-large" in result.stdout
+
+
+class TestHelpers:
+    def test_version_flag(self) -> None:
+        result = CliRunner().invoke(customer_cli.app, ["--version"])
+        assert result.exit_code == 0
+        assert "reportal-customer" in result.stdout
+
+    def test_token_env_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(customer_cli.TOKEN_ENV, "env-token")
+        assert customer_cli._token(None) == "env-token"
+        assert customer_cli._token("explicit") == "explicit"
+
+    def test_resolve_server_env_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(customer_cli.SERVER_ENV, "https://portal.example.com/")
+        assert customer_cli._resolve_server("http://127.0.0.1:1") == "https://portal.example.com/"
+
+    def test_fail_human_mode(self, capsys: pytest.CaptureFixture[str]) -> None:
+        import typer as _typer
+
+        with pytest.raises(_typer.Exit):
+            customer_cli._fail("boom", False)
