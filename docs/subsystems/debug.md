@@ -23,13 +23,17 @@ Nothing is stepped, continued or written.
 - The transcript is stored as the `debug-session` scan (`SCAN_KIND_DEBUG_SESSION`).
 - `observed_coverage` joins the newest session's addresses to the stored functions by VA
   containment; untouched functions are `unobserved`, never absent.
+- `session_proposals` joins frame names to stored functions by VA (source `debug`);
+  person-authored names are never proposed and `apply_session_proposal` renames explicitly.
 
 ## Wiring
 
 - Routes: `POST`/`GET /api/binaries/{binary_id}/debug-session` (body `qemu_arch` selects the
-  stub), `GET .../debug-session/status`, `GET .../debug-coverage` (stored-only).
-- CLI: `debug-session` (`--coverage`, `--qemu`). MCP: `run_debug_session`, `get_debug_session`,
-  `get_debug_status`, `get_debug_coverage`. Jobs: the `debug` kind.
+  stub), `GET .../debug-session/status`, `GET .../debug-coverage` and
+  `GET .../debug-proposals` (both stored-only), `POST /api/functions/<id>/debug-apply`.
+- CLI: `debug-session` (`--coverage`, `--qemu`), `debug-proposals`, `debug-apply`. MCP:
+  `run_debug_session`, `get_debug_session`, `get_debug_status`, `get_debug_coverage`,
+  `get_debug_proposals`, `apply_debug_proposal`. Jobs: the `debug` kind.
 - Settings: `REPORTAL_DEBUG` or `[debug] enabled`, `REPORTAL_DEBUG_BACKEND` or `[debug] backend`.
   A third party registers through the `reportal.debug_backends` entry-point group.
 - `run_session` is the shared orchestration the route, CLI, MCP tool and job call, so the
