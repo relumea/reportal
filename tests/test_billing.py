@@ -841,3 +841,59 @@ class TestBillingPortal:
         )
         with pytest.raises(billing.BillingError, match="no subscription"):
             billing.start_billing_portal(conn, 4242)
+
+
+class TestReconcileAccount:
+    def test_missing_subscription_is_a_409(
+        self, conn: sqlite3.Connection, stripe_env: None
+    ) -> None:
+        from reportal import metering
+
+        metering.ensure_schema(conn)
+        with pytest.raises(billing.BillingError, match="no subscription"):
+            billing.reconcile_account(conn, 424242)
+
+    def test_changed_status_is_mirrored(
+        self, conn: sqlite3.Connection, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal import metering
+
+        metering.ensure_schema(conn)
+        conn.execute(
+            f"INSERT INTO {metering.SUBSCRIPTION_TABLE} (organisation_id, provider,"
+            " customer_id, subscription_id, status, updated_at)"
+            " VALUES (7, 'stripe', 'cus_x', 'sub_x', 'active', '')"
+        )
+        conn.commit()
+
+        class _Response:
+            status_code = 200
+
+            @staticmethod
+            def json() -> dict[str, object]:
+                return {
+                    "id": "sub_x",
+                    "status": "past_due",
+                    "customer": "cus_x",
+                    "cancel_at_period_end": False,
+                    "items": {"data": [{"price": {"id": "price_analyst"}}]},
+                }
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                del args
+
+            def get(self, url: str, headers: dict[str, str]) -> _Response:
+                del url, headers
+                return _Response()
+
+        monkeypatch.setattr(billing.httpx, "Client", _Client)
+        result = billing.reconcile_account(conn, 7)
+        assert result.status == "past_due"
+        assert result.changed is True
