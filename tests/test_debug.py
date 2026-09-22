@@ -1850,3 +1850,104 @@ class TestRefreshFailure:
             for name in (kept.name, clash.name):
                 with contextlib.suppress(_RegistryError):
                     debug.unregister_backend(name)
+
+
+class TestQemuStubProbe:
+    def test_mi_probe_under_a_remote_stub(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        monkeypatch.setattr(debug.shutil, "which", lambda name: "/usr/bin/qemu-x86_64")
+        monkeypatch.setattr(debug, "_free_tcp_port", lambda: 4444)
+
+        killed: list[str] = []
+
+        class FakeStub:
+            def kill(self) -> None:
+                killed.append("stub")
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeStdout:
+            def __init__(self, lines: list[bytes]) -> None:
+                self._chunks = lines
+
+            def fileno(self) -> int:
+                return -1
+
+        script_lines = [
+            b"(gdb)\n",
+            b"^done\n",
+            b"(gdb)\n",
+            b"^done\n",
+            b"(gdb)\n",
+            b'^done,bkpt={number="1"}\n',
+            b"(gdb)\n",
+            b"^running\n",
+            b'*stopped,reason="breakpoint-hit",thread-id="1"\n',
+            b"(gdb)\n",
+            b'^done,threads=[{id="1",name="t"}]\n',
+            b"(gdb)\n",
+            b'^done,stack=[frame={func="main",addr="0x1000"}]\n',
+            b"(gdb)\n",
+            b'^done,register-names=["rax","rbx"]\n',
+            b"(gdb)\n",
+            b'^done,memory=[{contents="ff"}]\n',
+            b"(gdb)\n",
+            b"^done\n",
+            b"(gdb)\n",
+        ]
+
+        import os as _os
+
+        holder: dict[str, FakeStdout] = {}
+
+        def fake_read(_fd: int, _n: int) -> bytes:
+            pipe = holder.get("pipe")
+            if pipe is not None and pipe._chunks:
+                return pipe._chunks.pop(0)
+            return b""
+
+        monkeypatch.setattr(_os, "read", fake_read)
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: FakeStdout = FakeStdout(script_lines)
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                killed.append("gdb")
+
+        holder["pipe"] = FakeProcess.stdout
+
+        calls = {"n": 0}
+
+        def popen(*_args: object, **_kwargs: object) -> object:
+            calls["n"] += 1
+            return FakeStub() if calls["n"] == 1 else FakeProcess()
+
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/gdb")
+        monkeypatch.setattr("subprocess.Popen", popen)
+        report = debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"), qemu_arch="x86_64")
+        kinds = [entry["request"] for entry in report["transcript"]]
+        assert "target-remote" in kinds
+        assert "exec-continue" in kinds
+        assert "exec-run" not in kinds
+        remote = next(e for e in report["transcript"] if e["request"] == "target-remote")
+        assert remote["success"] is True
+        assert killed == ["stub"]
