@@ -433,3 +433,23 @@ class TestRegistry:
         effects.register_effect_handler("probe", _custom_handler)
         assert "probe" in effects.effect_handlers()
         assert "probe" not in effects.refresh_effect_handlers()
+
+
+class TestDescribe:
+    def test_every_kind_has_a_description(self) -> None:
+        cases = [
+            (effects.EFFECT_AI_ARTIFACT, "artifact"),
+            (effects.EFFECT_FILE_WRITE, "wrote"),
+            (effects.EFFECT_STATUS_CHANGE, "status of function"),
+            (effects.EFFECT_ROW_RESTORE, "row(s) of"),
+            (effects.EFFECT_ROW_DELETE, "row of"),
+            (effects.EFFECT_FILE_DELETE, "file"),
+            (effects.EFFECT_FILE_RESTORE, "file"),
+            (effects.EFFECT_CONTEXT_CHANGE, ""),
+        ]
+        for kind, needle in cases:
+            text = effects.describe({"kind": kind, "function_id": 7})
+            assert needle in text, kind
+
+    def test_unknown_kind_falls_back(self) -> None:
+        assert "mystery" in effects.describe({"kind": "mystery", "function_id": 3})
