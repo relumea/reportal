@@ -50,7 +50,7 @@ class TestDbPath:
 
     def test_env_override_wins(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         override = tmp_path / "elsewhere" / "custom.db"
-        monkeypatch.setenv(DB_ENV, str(override))
+        monkeypatch.setenv(_paths.DB_ENV, str(override))
         monkeypatch.chdir(tmp_path)
         assert db_path() == override.resolve()
 
@@ -124,3 +124,31 @@ class TestAtomicWriters:
         with pytest.raises(OSError):
             _paths.write_text_atomic(tmp_path / "f.txt", "x")
         assert list(tmp_path.glob("*.tmp")) == []
+
+
+class TestPathValidation:
+    def test_stored_binary_path_checks_under_binaries(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "reportal.toml").write_text("[portal]\n")
+        monkeypatch.chdir(tmp_path)
+        binaries = tmp_path / "binaries"
+        binaries.mkdir()
+        inside = binaries / "a.bin"
+        inside.write_bytes(b"x")
+        assert _paths.stored_binary_path(inside) is True
+        assert _paths.stored_binary_path(tmp_path / "outside.bin") is False
+
+    def test_workspace_root_uses_db_env(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(_paths.DB_ENV, str(tmp_path / "sub" / "reportal.db"))
+        assert _paths.workspace_root() == (tmp_path / "sub").resolve()
+
+    def test_under_workspace_checks_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(_paths.DB_ENV, str(tmp_path / "reportal.db"))
+        inside = tmp_path / "reports" / "x.pdf"
+        assert _paths.under_workspace(inside) is True
+        assert _paths.under_workspace("/etc/passwd") is False
