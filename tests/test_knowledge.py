@@ -412,3 +412,20 @@ class TestKnowledgeHelpers:
         left = {"a": 1.0, "b": 1.0, "c": 1.0}
         right = {"a": 1.0}
         assert knowledge._sparse_cosine(left, right) == knowledge._sparse_cosine(right, left)
+
+
+class TestKnowledgeSearchEdges:
+    def test_blank_query_answers_empty(self, conn: sqlite3.Connection) -> None:
+        assert knowledge.retrieve(conn, query="  ") == []
+        assert knowledge.retrieve(conn, query="x", limit=0) == []
+
+    def test_snippet_truncates_long_text(self) -> None:
+        long = "word " * 500
+        snippet = knowledge._snippet(long)
+        assert len(snippet) <= knowledge.RETRIEVAL_SNIPPET_CHARS
+        assert snippet.endswith("…")
+        assert knowledge._snippet("short") == "short"
+
+    def test_hit_field_collapses_spaces(self) -> None:
+        assert knowledge._hit_field({"title": "a  b\nc"}, "title") == "a b c"
+        assert knowledge._hit_field({}, "missing") == ""
