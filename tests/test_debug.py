@@ -2316,3 +2316,46 @@ class TestMiCleanupPaths:
         assert report["status"] == debug.STATUS_FINISHED
         assert killed == ["gdb"]
         assert any("truncated" in note for note in report["notes"])
+
+
+class TestMiStartupFailure:
+    def test_oserror_during_the_probe_is_an_invalid_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os as _os
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                raise OSError("pipe gone")
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeStdout:
+            def fileno(self) -> int:
+                return -1
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = FakeStdout()
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                return None
+
+        chunks = [b"(gdb)\n"]
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/gdb")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"))
+        assert caught.value.code == debug.ERROR_INVALID
+        assert "gdb could not be started" in caught.value.detail
