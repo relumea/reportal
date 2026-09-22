@@ -8,6 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from conftest import json_body, wsgi_request
 from typer.testing import CliRunner
 
@@ -284,3 +285,15 @@ class TestReads:
 
         with contextlib.closing(store.connect(portal_db)) as probe:
             assert journal.list_entries(probe) == [], "the read never journals a write"
+
+
+class TestAttackSurfaceEdges:
+    def test_non_dict_entries_are_skipped(self) -> None:
+        assert attack_surface._capability_rows({"findings": ["nope"]}, frozenset()) == []
+        assert attack_surface._protocol_rows({"protocols": ["nope"]}) == []
+        assert attack_surface._finding_rows({"findings": ["nope"]}, "s") == []
+        assert attack_surface._ioc_rows({"iocs": ["nope"]}) == []
+
+    def test_unknown_binary_raises_key_error(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(KeyError, match="424242"):
+            attack_surface.attack_surface(conn, 424242)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -248,3 +249,20 @@ class TestSeriesCliAndMcp:
         bad, failed = mcp_server.call_tool("get_stats_series", {"days": 0})
         assert failed
         assert bad["error"] == "invalid days"
+
+
+class TestAnalyticsEdges:
+    def test_missing_table_counts_as_empty(self, conn: sqlite3.Connection) -> None:
+        assert analytics._counts(conn, "SELECT n FROM no_such_table", since="x") == {}
+
+    def test_series_cap_is_noted(self, conn: sqlite3.Connection) -> None:
+        notes: list[str] = []
+        cap = analytics.MAX_SERIES_ANALYSES
+        for _ in range(cap + 2):
+            binary_id = store.add_binary(
+                conn, sha256=f"{_ + 1:064d}"[-64:], name=f"b{_}.exe", path="", size=1
+            )
+            store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+        series = analytics._software_types(conn, "2000-01-01", notes)
+        assert any("at most" in note for note in notes)
+        _ = series
