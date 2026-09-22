@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from reportal import flirt_sigs, store
+from reportal import flirt_sigs
 
 
 class _FakeMatch:
