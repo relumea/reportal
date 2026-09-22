@@ -1484,6 +1484,14 @@ class _StubEngine(engines.RebrewEngine):
         self.calls.append("crypto_scan")
         return {"findings": [], "count": 0}
 
+    def security_scan(self, project_dir: Any, min_severity: str = "") -> dict[str, Any]:
+        self.calls.append("security_scan")
+        return {"findings": [], "count": 0, "min_severity": min_severity}
+
+    def structs(self, project_dir: Any, *, decompiler: str = "", limit: int = 0) -> dict[str, Any]:
+        self.calls.append("structs")
+        return {"structs": [], "count": 0, "decompiler": decompiler, "limit": limit}
+
 
 class TestPerformPeInfo:
     def test_pe_info_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
@@ -1536,6 +1544,38 @@ class TestPerformPeInfo:
             engines.set_engine(engines.RebrewEngine(enabled=False))
         assert result["count"] == 0
         assert stub.calls == ["crypto_scan"]
+
+    def test_security_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="56" * 32, name="demo.exe", path=str(target), size=2
+        )
+        store.set_rebrew_context(conn, binary_id, str(tmp_path))
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            result = jobs._perform_security(conn, binary_id, {})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert result["count"] == 0
+        assert stub.calls == ["security_scan"]
+
+    def test_structs_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="78" * 32, name="demo.exe", path=str(target), size=2
+        )
+        store.set_rebrew_context(conn, binary_id, str(tmp_path))
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            result = jobs._perform_structs(conn, binary_id, {"limit": 5})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert result["limit"] == 5
+        assert stub.calls == ["structs"]
 
 
 class TestMorePerforms:
