@@ -1536,3 +1536,31 @@ class TestPerformPeInfo:
             engines.set_engine(engines.RebrewEngine(enabled=False))
         assert result["count"] == 0
         assert stub.calls == ["crypto_scan"]
+
+
+class TestMorePerforms:
+    def test_firmware_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.bin"
+        target.write_bytes(b"\x00" * 128)
+        binary_id = store.add_binary(
+            conn, sha256="12" * 32, name="demo.bin", path=str(target), size=128
+        )
+        result = jobs._perform_firmware(conn, binary_id, {})
+        assert result["regions"] == []
+        stored = store.get_scan(
+            conn,
+            store.latest_analysis_for_binary(conn, binary_id) or 0,
+            store.SCAN_KIND_FIRMWARE,
+        )
+        assert stored is not None
+
+    def test_library_rejects_a_non_numeric_confidence(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="34" * 32, name="demo.exe", path=str(target), size=2
+        )
+        with pytest.raises(ValueError):
+            jobs._run_library(conn, binary_id, {"min_confidence": "high"})
