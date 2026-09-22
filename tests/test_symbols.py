@@ -1109,3 +1109,22 @@ class TestSymbolMcp:
         assert escaped["error"] == "invalid path"
         assert "workspace" in escaped["detail"]
         assert not outside.exists()
+
+
+class TestElfRefusals:
+    def test_an_elf_without_section_headers_is_refused(self) -> None:
+        import struct as _struct
+
+        elf = bytearray(build_elf([(".strtab", b"\x00", SHT_STRTAB, 0)]))
+        _struct.pack_into("<Q", elf, 0x28, 0)
+        _struct.pack_into("<H", elf, 0x3C, 0)
+        with pytest.raises(symbols.UnreadableSymbolError, match="no section headers"):
+            symbols.parse(bytes(elf))
+
+    def test_an_absurd_section_count_is_refused(self) -> None:
+        import struct as _struct
+
+        elf = bytearray(build_elf([(".strtab", b"\x00", SHT_STRTAB, 0)]))
+        _struct.pack_into("<H", elf, 0x3C, 0xFFFF)
+        with pytest.raises(symbols.UnreadableSymbolError):
+            symbols.parse(bytes(elf))
