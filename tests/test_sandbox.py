@@ -179,6 +179,64 @@ class TestGuards:
         assert "bwrap" in registered
         assert sandbox.RUNNER_ENTRY_POINT_GROUP == "reportal.sandbox_runners"
 
+    def test_a_bad_registration_is_refused(self) -> None:
+        from reportal.plugins import RegistryError
+
+        with pytest.raises(RegistryError):
+            sandbox.register_runner(object(), origin="test")  # type: ignore[arg-type]
+        with pytest.raises(RegistryError):
+            sandbox.register_runner(sandbox.Runner("  ", "sh"), origin="test")
+
+    def test_a_foreign_origin_cannot_claim_a_registered_name(self) -> None:
+        from reportal.plugins import RegistryError
+
+        runner = sandbox.Runner("claim-runner", "sh")
+        sandbox.register_runner(runner)
+        try:
+            with pytest.raises(RegistryError) as caught:
+                sandbox.register_runner(
+                    sandbox.Runner("claim-runner", "sh"),
+                    origin="entry point 'claim-runner' (plug:runner)",
+                )
+            assert "single-source discipline" in str(caught.value)
+            assert sandbox.get_runner("claim-runner") is runner
+        finally:
+            sandbox.unregister_runner("claim-runner")
+
+    def test_a_rescan_from_one_origin_replaces_the_declaration(self) -> None:
+        first, second = sandbox.Runner("rescan-runner", "sh"), sandbox.Runner("rescan-runner", "sh")
+        origin = "entry point 'rescan-runner' (plug:runner)"
+        sandbox.register_runner(first, origin=origin)
+        try:
+            sandbox.register_runner(second, origin=origin)
+            assert sandbox.get_runner("rescan-runner") is second
+            registered = [entry.name for entry in sandbox.registered_runners()]
+            assert registered.count("rescan-runner") == 1
+        finally:
+            sandbox.unregister_runner("rescan-runner")
+
+    def test_a_plugin_cannot_take_the_builtin_runner_name(self) -> None:
+        from reportal.plugins import RegistryError
+
+        with pytest.raises(RegistryError):
+            sandbox.register_runner(
+                sandbox.Runner(sandbox.BUILTIN_RUNNER, "sh"),
+                origin="entry point 'bwrap' (plug:runner)",
+            )
+        assert sandbox.get_runner(sandbox.BUILTIN_RUNNER) is sandbox.RUNNERS[0]
+
+    def test_refresh_withdraws_a_vanished_entry_point(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = sandbox.Runner("vanish-runner", "sh")
+        monkeypatch.setattr(
+            sandbox.plugins, "load", lambda *_args, **_kwargs: [("vanish", "plug:runner", runner)]
+        )
+        assert "vanish-runner" in sandbox.refresh_runners()
+        monkeypatch.setattr(sandbox.plugins, "load", lambda *_args, **_kwargs: [])
+        assert "vanish-runner" not in sandbox.refresh_runners()
+        assert sandbox.get_runner("vanish-runner") is None
+
     def test_a_run_table_row_is_not_written_by_a_disabled_route(
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

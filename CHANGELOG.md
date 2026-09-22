@@ -17,6 +17,10 @@ view renders it from here.
 - Repeat unstrip runs short-circuit when the candidate set is unchanged.
 - `REPORTAL_SERVER` and `REPORTAL_TOKEN` registered as `client.*` settings.
 - Debug backends listed as the ninth integrations seam.
+- Sandbox runners and debug backends hold one writer per name: `register_runner` and
+  `register_backend` refuse a registration another origin already holds, so a plugin cannot take
+  over the shipped `bwrap`, `lldb-dap` or `gdb` name and leave it unremovable, and
+  `refresh_runners` and `refresh_backends` withdraw a name whose entry point is gone.
 
 ## 3.0.0
 

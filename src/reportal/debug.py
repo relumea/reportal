@@ -32,8 +32,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from reportal import journal, observability, store
+from reportal import journal, observability, plugins, store
 from reportal._paths import MARKER, WorkspaceNotFound, project_root
+from reportal.plugins import RegistryError
 
 _log = logging.getLogger(__name__)
 
@@ -200,25 +201,49 @@ _BACKENDS_LOCK = threading.RLock()
 
 BUILTIN_BACKEND = BACKENDS[0].name
 
+# Which origin claimed each registered name, and which names the last refresh
+# discovered.  One writer per name is what the component, effect, worker, tool,
+# model, source and graph-backend registries hold too: a second origin claiming
+# a live name is a composition error rather than a silent replacement, so a
+# plugin cannot take over the built-in backend's name and leave it unremovable.
+_BACKEND_ORIGINS: dict[str, str] = {backend.name: plugins.BUILTIN_ORIGIN for backend in BACKENDS}
+_DISCOVERED_BACKENDS: set[str] = set()
 
-def register_backend(backend: Backend) -> Backend:
-    """Register *backend*; a duplicate name replaces the earlier declaration."""
+
+def register_backend(backend: Backend, *, origin: str = plugins.BUILTIN_ORIGIN) -> Backend:
+    """Register *backend* under its own name, from *origin*.
+
+    A name another origin already holds is refused with :class:`RegistryError`.
+    Re-registering from the same origin, which is what a rescan of one entry
+    point does, replaces the declaration in place.
+    """
+    if not isinstance(backend, Backend) or not isinstance(backend.name, str):
+        raise RegistryError(f"bad debug backend registration from {origin}: expected a Backend")
+    if not backend.name.strip():
+        raise RegistryError(f"bad debug backend registration from {origin}: empty name")
     with _BACKENDS_LOCK:
+        held = _BACKEND_ORIGINS.get(backend.name)
+        if held is not None and held != origin:
+            raise RegistryError(
+                f"duplicate debug backend registration {backend.name!r}: {origin} conflicts"
+                f" with {held} (single-source discipline)"
+            )
         BACKENDS[:] = [existing for existing in BACKENDS if existing.name != backend.name]
         BACKENDS.append(backend)
+        _BACKEND_ORIGINS[backend.name] = origin
         return backend
 
 
 def unregister_backend(name: str) -> None:
-    """Withdraw the backend registered as *name*."""
-    from reportal.plugins import RegistryError
-
+    """Withdraw the backend registered as *name*, the inverse of a registration."""
     with _BACKENDS_LOCK:
         if name not in [backend.name for backend in BACKENDS]:
             raise RegistryError(f"no debug backend registration {name!r} to withdraw")
         if name == BUILTIN_BACKEND:
             raise RegistryError(f"cannot withdraw the built-in backend {name!r}")
         BACKENDS[:] = [backend for backend in BACKENDS if backend.name != name]
+        _BACKEND_ORIGINS.pop(name, None)
+        _DISCOVERED_BACKENDS.discard(name)
 
 
 def registered_backends() -> list[Backend]:
@@ -315,12 +340,24 @@ def require_backend() -> Backend:
 
 
 def refresh_backends() -> list[str]:
-    """Re-discover the ``reportal.debug_backends`` group; returns the names."""
-    from reportal import plugins
+    """Re-discover the ``reportal.debug_backends`` group; returns the names.
 
-    for _name, _value, plugin in plugins.load(BACKEND_ENTRY_POINT_GROUP, Backend, "Backend"):
-        register_backend(plugin)
+    A second origin claiming a live name is refused rather than replacing it,
+    and the inverse of a discovery is applied first: a name an earlier refresh
+    discovered whose entry point is gone is withdrawn, while the backends
+    reportal ships and any in-process registration stay.
+    """
+    scan = list(plugins.load(BACKEND_ENTRY_POINT_GROUP, Backend, "Backend"))
+    discovered = {plugin.name for _name, _value, plugin in scan}
     with _BACKENDS_LOCK:
+        vanished = sorted(_DISCOVERED_BACKENDS - discovered)
+    for name in vanished:
+        unregister_backend(name)
+    for name, value, plugin in scan:
+        register_backend(plugin, origin=plugins.origin(name, value))
+    with _BACKENDS_LOCK:
+        _DISCOVERED_BACKENDS.clear()
+        _DISCOVERED_BACKENDS.update(discovered)
         return [backend.name for backend in BACKENDS]
 
 

@@ -52,8 +52,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from reportal import journal, observability, store
+from reportal import journal, observability, plugins, store
 from reportal._paths import MARKER, WorkspaceNotFound, binaries_dir, project_root
+from reportal.plugins import RegistryError
 
 _log = logging.getLogger(__name__)
 
@@ -353,34 +354,55 @@ _RUNNERS_LOCK = threading.RLock()
 # plugin still needs a runner, and the refresh path documents it as unremovable.
 BUILTIN_RUNNER = RUNNERS[0].name
 
+# Which origin claimed each registered name, and which names the last refresh
+# discovered.  One writer per name is what the other registries hold too: a
+# second origin claiming a live name is a composition error rather than a
+# silent replacement, and only the names a refresh discovered are withdrawn
+# when that entry point disappears.
+_RUNNER_ORIGINS: dict[str, str] = {BUILTIN_RUNNER: plugins.BUILTIN_ORIGIN}
+_DISCOVERED_RUNNERS: set[str] = set()
 
-def register_runner(runner: Runner) -> Runner:
-    """Register *runner*; a duplicate name replaces the earlier declaration.
 
-    Replacement (rather than the :class:`RegistryError` the other registries
-    raise) keeps :func:`refresh_runners` idempotent across re-scans.
+def register_runner(runner: Runner, *, origin: str = plugins.BUILTIN_ORIGIN) -> Runner:
+    """Register *runner* under its own name, from *origin*.
+
+    A name another origin already holds is refused with :class:`RegistryError`,
+    so a plugin cannot take over the built-in runner (or another plugin's) name
+    and leave it unremovable.  Re-registering from the same origin, which is what
+    a rescan of one entry point does, replaces the declaration in place.
     """
+    if not isinstance(runner, Runner) or not isinstance(runner.name, str):
+        raise RegistryError(f"bad runner registration from {origin}: expected a Runner")
+    if not runner.name.strip():
+        raise RegistryError(f"bad runner registration from {origin}: empty name")
     with _RUNNERS_LOCK:
+        held = _RUNNER_ORIGINS.get(runner.name)
+        if held is not None and held != origin:
+            raise RegistryError(
+                f"duplicate runner registration {runner.name!r}: {origin} conflicts"
+                f" with {held} (single-source discipline)"
+            )
         RUNNERS[:] = [existing for existing in RUNNERS if existing.name != runner.name]
         RUNNERS.append(runner)
+        _RUNNER_ORIGINS[runner.name] = origin
         return runner
 
 
 def unregister_runner(name: str) -> None:
-    """Withdraw the runner registered as *name*.
+    """Withdraw the runner registered as *name*, the inverse of a registration.
 
     Raises :class:`RegistryError` for a name nothing holds and for the
     built-in runner, which the refresh path documents as unremovable: a
     workspace with no plugin still has `bwrap`.
     """
-    from reportal.plugins import RegistryError
-
     with _RUNNERS_LOCK:
         if name not in [runner.name for runner in RUNNERS]:
             raise RegistryError(f"no runner registration {name!r} to withdraw")
         if name == BUILTIN_RUNNER:
             raise RegistryError(f"cannot withdraw the built-in runner {name!r}")
         RUNNERS[:] = [runner for runner in RUNNERS if runner.name != name]
+        _RUNNER_ORIGINS.pop(name, None)
+        _DISCOVERED_RUNNERS.discard(name)
 
 
 def registered_runners() -> list[Runner]:
@@ -867,15 +889,22 @@ def refresh_runners() -> list[str]:
     The group is read through the one entry-point reader
     (:mod:`reportal.plugins`), whose value is a :class:`Runner` or a
     zero-argument factory returning one.  A broken registration is skipped with
-    a warning there and a duplicate name replaces the earlier declaration here.
-    The runner reportal ships cannot be removed: a workspace with no plugin
-    still has `bwrap`.
+    a warning there, and a second origin claiming a live name is refused here
+    rather than replacing it.  The inverse of a discovery is applied first: a
+    name an earlier refresh discovered whose entry point is gone is withdrawn,
+    while the runner reportal ships and any in-process registration stay.
     """
-    from reportal import plugins
-
-    for _name, _value, plugin in plugins.load(RUNNER_ENTRY_POINT_GROUP, Runner, "Runner"):
-        register_runner(plugin)
+    scan = list(plugins.load(RUNNER_ENTRY_POINT_GROUP, Runner, "Runner"))
+    discovered = {plugin.name for _name, _value, plugin in scan}
     with _RUNNERS_LOCK:
+        vanished = sorted(_DISCOVERED_RUNNERS - discovered)
+    for name in vanished:
+        unregister_runner(name)
+    for name, value, plugin in scan:
+        register_runner(plugin, origin=plugins.origin(name, value))
+    with _RUNNERS_LOCK:
+        _DISCOVERED_RUNNERS.clear()
+        _DISCOVERED_RUNNERS.update(discovered)
         return [runner.name for runner in RUNNERS]
 
 

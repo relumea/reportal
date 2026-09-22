@@ -48,8 +48,9 @@ status, the duration, bounded output tails and the files the sample left behind.
 - `BwrapRunner.argv` is a pure list carrying `--unshare-all`, `--die-with-parent`,
   `--new-session`, `--clearenv`, a read-only host root and one writable bind
   (`tests/test_sandbox.py`).
-- `unregister_runner` refuses an unknown name and the built-in runner, and `register_runner`
-  replaces a same-named entry while keeping the earliest origin (`tests/test_sandbox.py`).
+- `unregister_runner` refuses an unknown name and the built-in; `register_runner` refuses another
+  origin's claim, so a plugin cannot take the shipped `bwrap` name; `refresh_runners` withdraws a
+  vanished entry point (`tests/test_sandbox.py`).
 - Output tails and the work-directory file list are capped, and the file list reports whether it
   was truncated (`tests/test_sandbox.py`).
 

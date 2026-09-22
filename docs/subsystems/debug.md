@@ -48,7 +48,9 @@ Nothing is stepped, continued or written.
   silently (`tests/test_debug.py`).
 - The session row is written before the probe starts, and a second session while one is still
   `running` reuses that row without starting another probe (`tests/test_debug.py`).
-- `unregister_backend` refuses an unknown name and the built-in backend (`tests/test_debug.py`).
+- `unregister_backend` refuses an unknown name and the built-in backend; `register_backend`
+  refuses a foreign claim, and `refresh_backends` withdraws a vanished entry point
+  (`tests/test_debug.py`).
 
 ## See also
 
