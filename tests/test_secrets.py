@@ -450,3 +450,12 @@ class TestRunSecrets:
         stub = _StubEngine(error=engines.EngineError("rebrew strings exited with code 3"))
         with pytest.raises(engines.EngineError, match="exited with code 3"):
             secrets.run_secrets(conn, binary_id=binary_id, engine=stub)
+
+
+class TestSecretsHelpers:
+    def test_empty_match_value_is_skipped(self) -> None:
+        import re
+
+        match = re.search(r"(?P<value>x*)", "")
+        assert match is not None
+        assert secrets._matched_value(match) == ""
