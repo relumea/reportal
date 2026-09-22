@@ -314,3 +314,48 @@ class TestContainerRefusals:
             data[at] = 0xFF
         with pytest.raises(pdb.PdbError):
             pdb.read_symbols(bytes(data))
+
+
+class TestSectionMapRefusals:
+    def test_short_substream_is_refused(self) -> None:
+        with pytest.raises(pdb.PdbError):
+            pdb._sections(b"\x00", [])
+
+    def test_overlong_declaration_is_refused(self) -> None:
+        with pytest.raises(pdb.PdbError):
+            pdb._sections(struct.pack("<HH", 0xFFFF, 1), [])
+
+    def test_entries_running_past_the_substream_are_refused(self) -> None:
+        body = struct.pack("<HH", 4 + 2 * 40, 2) + b"\x00" * 40
+        with pytest.raises(pdb.PdbError):
+            pdb._sections(body, [])
+
+    def test_unterminated_name_is_refused(self) -> None:
+        with pytest.raises(pdb.PdbError):
+            pdb._cstring(b"no-nul-here", 0, "public")
+
+    def test_short_dbi_is_refused(self) -> None:
+        with pytest.raises(pdb.PdbError):
+            pdb._read_dbi(b"\x00" * 10)
+
+
+class TestSymbolStreamRefusals:
+    def test_short_record_length_is_refused(self) -> None:
+        stream = struct.pack("<HH", 1, 0x100)
+        with pytest.raises(pdb.PdbError):
+            pdb._symbols(stream, {}, [])
+
+    def test_record_running_past_the_stream_is_refused(self) -> None:
+        stream = struct.pack("<HH", 100, 0x100) + b"\x00" * 10
+        with pytest.raises(pdb.PdbError):
+            pdb._symbols(stream, {}, [])
+
+    def test_short_info_stream_is_refused(self) -> None:
+        with pytest.raises(pdb.PdbError):
+            pdb._info_note(b"\x00", [])
+
+    def test_struct_truncation_is_unreadable(self) -> None:
+        data = bytearray(_synthetic())
+        data[2 * BLOCK_SIZE + 2] = 0xFF
+        with pytest.raises(pdb.PdbError):
+            pdb.read_symbols(bytes(data[: len(data) - 100]))
