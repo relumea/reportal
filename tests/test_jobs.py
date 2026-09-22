@@ -1492,6 +1492,18 @@ class _StubEngine(engines.RebrewEngine):
         self.calls.append("structs")
         return {"structs": [], "count": 0, "decompiler": decompiler, "limit": limit}
 
+    def strings(self, binary: Any) -> dict[str, Any]:
+        self.calls.append("strings")
+        return {"strings": [{"text": "http://c2.example/beacon", "kind": "ascii", "va": 0}]}
+
+    def imports(self, binary: Any) -> dict[str, Any]:
+        self.calls.append("imports")
+        return {"imports": [{"dll": "KERNEL32.dll", "name": "CreateFileW", "iat_va": "0x0"}]}
+
+    def fingerprint(self, binary: Any) -> dict[str, Any]:
+        self.calls.append("fingerprint")
+        return {"sha256": "ab" * 32, "imphash": "27abfd9cfda7519d5efb3f08a2a4f3ce"}
+
 
 class TestPerformPeInfo:
     def test_pe_info_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
@@ -1576,6 +1588,21 @@ class TestPerformPeInfo:
             engines.set_engine(engines.RebrewEngine(enabled=False))
         assert result["limit"] == 5
         assert stub.calls == ["structs"]
+
+    def test_remediation_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="9a" * 32, name="demo.exe", path=str(target), size=2
+        )
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            result = jobs._run_remediation(conn, binary_id, {})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert result["rule"]
+        assert "strings" in stub.calls
 
 
 class TestMorePerforms:
