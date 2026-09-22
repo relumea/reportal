@@ -427,3 +427,13 @@ class TestTypedefEdges:
     def test_not_a_typedef_is_rejected(self) -> None:
         with pytest.raises(data_types.DefinitionError, match="not a typedef"):
             data_types.parse_definition("int x;")
+
+
+class TestMoreDefinitionEdges:
+    def test_double_dimensioned_member_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="unsupported member"):
+            data_types.parse_definition("typedef struct T_s {\n\tint[2] a[3];\n} T;\n")
+
+    def test_empty_function_parameter_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="empty function-type"):
+            data_types.parse_definition("typedef void (*cb)(int,, char);")
