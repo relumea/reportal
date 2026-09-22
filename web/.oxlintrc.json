@@ -1,0 +1,151 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": {
+    "typeAware": true
+  },
+  "extends": [
+    "./tools/oxlint/rikalabs-strict.json"
+  ],
+  "jsPlugins": [
+    {
+      "name": "anti-slop",
+      "specifier": "./tools/oxlint/anti-slop/index.ts"
+    },
+    "./node_modules/@rikalabs/oxlint-standards/dist/plugin/index.js",
+    "@shadcn/lint"
+  ],
+  "ignorePatterns": [
+    "dist/**",
+    "node_modules/**",
+    "tools/oxlint/anti-slop/**"
+  ],
+  "rules": {
+    "unicorn/no-new-buffer": "warn",
+    "oxc/no-accumulating-spread": "warn",
+    "anti-slop/no-array-filter-map": "warn",
+    "anti-slop/no-reduce-accumulator-copy": "warn",
+    "anti-slop/no-chained-type-assertions": "warn",
+    "anti-slop/no-conditional-empty-object-spread": "warn",
+    "anti-slop/no-known-value-widening": "warn",
+    "anti-slop/no-module-mocking": "warn",
+    "anti-slop/no-object-parameters": "warn",
+    "anti-slop/no-reflect-apply": "warn",
+    "anti-slop/no-reflect-get": "warn",
+    "anti-slop/no-runtime-typeof": "warn",
+    "anti-slop/no-shape-in-symbol-names": "warn",
+    "anti-slop/no-unknown-parameters": "warn",
+    "anti-slop/no-unknown-returns": "warn",
+    "anti-slop/no-unknown-type-aliases": "warn",
+    "anti-slop/no-unsafe-dictionary-type": "warn",
+    "anti-slop/no-widen-then-assert": "warn",
+    "anti-slop/require-readable-spacing": "warn",
+    "anti-slop/require-safety-comment-for-type-assertion": "warn",
+    "eslint/one-var": [
+      "warn",
+      "never"
+    ],
+    "eslint/curly": [
+      "warn",
+      "multi-line"
+    ],
+    "eslint/capitalized-comments": "off",
+    "eslint/no-inline-comments": "off",
+    "eslint/func-style": "off",
+    "eslint/sort-vars": "off",
+    "typescript/consistent-type-definitions": [
+      "warn",
+      "interface"
+    ],
+    "typescript/array-type": [
+      "warn",
+      {
+        "default": "array-simple"
+      }
+    ],
+    "unicorn/prefer-global-this": "off",
+    "unicorn/catch-error-name": "off",
+    "eslint/no-use-before-define": "off",
+    "eslint/max-lines-per-function": "off",
+    "eslint/no-duplicate-imports": "off",
+    "import/no-duplicates": "off",
+    "react/todo": "off",
+    "@rikalabs/no-placeholder-implementation": "off",
+    "@rikalabs/no-copy-paste-exports": "off",
+    "import/no-unassigned-import": "off",
+    "@rikalabs/no-trivial-runtime-guard-helpers": "off",
+    "react/jsx-no-literals": "off",
+    "@rikalabs/no-silent-catch-fallback": "off",
+    "react-perf/jsx-no-new-array-as-prop": "off",
+    "react-perf/jsx-no-jsx-as-prop": "off",
+    "jsx-a11y/prefer-tag-over-role": "off"
+  },
+  "overrides": [
+    {
+      "files": [
+        "tests/**",
+        "playwright.config.ts"
+      ],
+      "rules": {
+        "vitest/no-conditional-tests": "off",
+        "vitest/no-import-node-test": "off",
+        "vitest/prefer-called-once": "off",
+        "vitest/consistent-test-filename": "off",
+        "vitest/prefer-called-times": "off",
+        "vitest/prefer-to-be-falsy": "off",
+        "vitest/prefer-to-be-truthy": "off",
+        "vitest/prefer-to-be-object": "off",
+        "vitest/require-hook": "off",
+        "vitest/prefer-importing-vitest-globals": "off",
+        "vitest/no-conditional-in-test": "off",
+        "@rikalabs/no-mock-only-tests": "off",
+        "@rikalabs/no-placeholder-tests": "off",
+        "anti-slop/no-unknown-parameters": "off",
+        "anti-slop/no-runtime-typeof": "off",
+        "anti-slop/require-safety-comment-for-type-assertion": "off",
+        "eslint/require-unicode-regexp": "off",
+        "eslint/no-undef": "off",
+        "react-hooks/rules-of-hooks": "off"
+      }
+    },
+    {
+      "files": [
+        "vite.config.ts",
+        "tools/**/*.ts"
+      ],
+      "rules": {
+        "eslint/no-console": "off",
+        "import/no-nodejs-modules": "off",
+        "import/unambiguous": "off",
+        "jsdoc/check-tag-names": "off",
+        "unicorn/no-process-exit": "off",
+        "unicorn/import-style": "off",
+        "unicorn/prefer-import-meta-properties": "off",
+        "node/no-process-env": "off",
+        "node/no-sync": "off",
+        "node/no-top-level-await": "off",
+        "vitest/require-hook": "off",
+        "typescript/prefer-nullish-coalescing": "off",
+        "no-console": "off"
+      }
+    }
+  ],
+  "settings": {
+    "shadcn": {
+      "note": "See docs/SPA.md for the design system. This SPA uses hand-written CSS in src/styles.css, not Tailwind utilities, so the Tailwind class rules are off; no-inline-styles is the rule that applies here."
+    }
+  },
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "categories": {
+    "correctness": "warn",
+    "suspicious": "warn",
+    "pedantic": "warn",
+    "perf": "warn",
+    "style": "warn",
+    "restriction": "warn",
+    "nursery": "warn"
+  }
+}
