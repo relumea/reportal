@@ -262,3 +262,24 @@ class TestPreparedCache:
         uncached = [similarity.similarity(left, right) for left, right in pairs]
         assert uncached == cached
         assert any(score > 0.0 for score in cached)
+
+
+class TestSimilarityEdges:
+    def test_broken_spec_check_is_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.util as _util
+
+        def boom(name: str) -> None:
+            raise ValueError("bad name")
+
+        monkeypatch.setattr(_util, "find_spec", boom)
+        assert similarity.available() is False
+
+    def test_missing_spec_is_unavailable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import importlib.util as _util
+
+        monkeypatch.setattr(_util, "find_spec", lambda name: None)
+        assert similarity.available() is False
+
+    def test_all_zero_weights_stay_zero(self) -> None:
+        assert similarity.confidence_scores([]) == []
+        assert similarity.confidence_scores([-float("inf"), -float("inf")]) == [0.0, 0.0]
