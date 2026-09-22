@@ -529,3 +529,21 @@ class TestFindRelated:
     ) -> None:
         target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
         assert related.stored_related(conn, target) is None
+
+
+class TestRelatedHelpers:
+    def test_string_set_ignores_non_sequences(self) -> None:
+        assert related._string_set("nope") == set()
+        assert related._string_set(b"nope") == set()
+        assert related._string_set(["a", 1, "b"]) == {"a", "b"}
+        assert related._string_set(None) == set()
+
+    def test_size_window_needs_two_sizes(self) -> None:
+        base = {"format": "PE", "arch": "x64", "size": 100}
+        assert related._size_window(base, {"format": "PE", "arch": "x64"}) is None
+        assert related._size_window(base, {"format": "PE", "arch": "x64", "size": "x"}) is None
+
+    def test_entries_ignore_non_list_shapes(self) -> None:
+        assert related._entries({}, "functions") == []
+        assert related._entries({"functions": "nope"}, "functions") == []
+        assert related._entries({"functions": ["nope", {"va": 1}]}, "functions") == [{"va": 1}]

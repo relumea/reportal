@@ -276,3 +276,18 @@ class TestCliAndMcp:
         missing, failed = mcp_server.call_tool("list_artifact_ratings", {"binary_id": 999})
         assert failed
         assert missing["error"] == "binary not found"
+
+
+class TestRatingsEdges:
+    def test_schema_upgrade_adds_actor_user_id(self, tmp_path: Path) -> None:
+        import sqlite3 as _sqlite
+
+        db = tmp_path / "old.db"
+        conn = _sqlite.connect(db)
+        conn.row_factory = _sqlite.Row
+        conn.execute("CREATE TABLE artifact_ratings (id INTEGER PRIMARY KEY, score INTEGER)")
+        conn.commit()
+        ratings.ensure_schema(conn)
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(artifact_ratings)")}
+        assert "actor_user_id" in columns
+        conn.close()
