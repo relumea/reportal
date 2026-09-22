@@ -304,3 +304,13 @@ class TestApplyProposal:
         )
         with pytest.raises(unstrip.NoProposalError):
             unstrip.apply_proposal(conn, function_id=ids["fn0"])
+
+
+class TestUnstripHelpers:
+    def test_candidate_va_coercions(self) -> None:
+        assert unstrip._candidate_va(True) is None
+        assert unstrip._candidate_va(0x1000) == 0x1000
+        assert unstrip._candidate_va("1000") == 0x1000
+        assert unstrip._candidate_va("0x1000") == 0x1000
+        assert unstrip._candidate_va("nope") is None
+        assert unstrip._candidate_va(None) is None
