@@ -420,3 +420,23 @@ class TestTaskRecords:
 )
 def test_run_status_constants(status: str, expected: str) -> None:
     assert status == expected
+
+
+class TestJsonColumnParsers:
+    def test_corrupt_json_reads_empty(self) -> None:
+        assert auto_store._json_object("not json{") == {}
+        assert auto_store._json_list("not json{") == []
+
+    def test_wrong_shape_reads_empty(self) -> None:
+        assert auto_store._json_object("[1, 2]") == {}
+        assert auto_store._json_list('{"a": 1}') == []
+
+    def test_empty_columns_read_empty(self) -> None:
+        assert auto_store._json_object("") == {}
+        assert auto_store._json_list("") == []
+        assert auto_store._json_object("{}") == {}
+        assert auto_store._json_list("[]") == []
+
+    def test_good_json_reads_through(self) -> None:
+        assert auto_store._json_object('{"a": 1}') == {"a": 1}
+        assert auto_store._json_list("[1, 2]") == [1, 2]
