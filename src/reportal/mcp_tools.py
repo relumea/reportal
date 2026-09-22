@@ -4438,6 +4438,32 @@ def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
             )
 
 
+def _tool_export_binary(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Write a stored binary with its current names rewritten in at the caller's path."""
+    binary_id = _arg_int(arguments, "binary_id")
+    path = _arg_str(arguments, "path")
+    if not under_workspace(path):
+        raise ToolError("invalid path", "export path must be under the workspace")
+    with contextlib.closing(_open()) as conn:
+        binary = _require_binary(conn, binary_id)
+        if not Path(str(binary["path"])).is_file():
+            raise ToolError(
+                "binary not on disk", f"binary {binary_id} has no file at {binary['path']!r}"
+            )
+        try:
+            payload, report = symbols.export_binary(conn, binary_id)
+        except symbols.SymbolError as exc:
+            raise ToolError(exc.code, exc.detail) from None
+        target = Path(path).expanduser()
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            previous = journal.read_bounded(target) if target.is_file() else None
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(payload)
+            journal.journaled_file(log, target, previous=previous)
+            return log.attach({**report, "path": str(target), "bytes": len(payload)})
+
+
 def _tool_get_die_info(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -8297,6 +8323,20 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_export_zipped_binary,
+        ),
+        Tool(
+            "export_binary",
+            "Write a stored binary with its current names rewritten into its own symbol"
+            " tables; a slot that cannot hold a name is reported, never guessed.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "path": _str("Target path for the exported file."),
+                },
+                ("binary_id", "path"),
+            ),
+            _WRITE,
+            _tool_export_binary,
         ),
         Tool(
             "get_die_info",

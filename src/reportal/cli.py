@@ -6249,6 +6249,70 @@ def download(
         console.print(f"[green]Wrote[/green] {written} bytes to {target}")
 
 
+@app.command("binary-export")
+def binary_export_command(
+    binary_id: int = typer.Argument(..., help="Binary id to export with its names rewritten in"),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Target path (default: the export's own name in the current directory)",
+    ),
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing target"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Write the stored binary with its current names rewritten into its tables.
+
+    A non-placeholder function name is written over the file's own symbol at
+    its address when the existing slot has room: an ELF name in its
+    `.symtab`/`.dynsym` string table, a PE name in the export table's.  A
+    longer name, a stripped image and a file that is neither ELF nor PE are
+    reported rather than guessed, and the report says which.  ``--json`` is
+    that report beside the path written.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
+            _fail(f"no binary with id {binary_id}", json_output)
+        source = Path(str(binary["path"]))
+        if not source.is_file():
+            _fail(f"binary {binary_id} has no file at {binary['path']!r}", json_output)
+        try:
+            payload, report = symbols.export_binary(conn, binary_id)
+        except symbols.SymbolError as exc:
+            _fail(exc.detail, json_output)
+    target = (output if output is not None else Path(str(report["file_name"]))).expanduser()
+    if target.exists() and not force:
+        _fail(f"refusing to overwrite {target} without --force", json_output)
+    try:
+        target.write_bytes(payload)
+    except OSError as exc:
+        _fail(f"cannot write {target}: {exc}", json_output)
+    result = {**report, "path": str(target), "bytes": len(payload)}
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    console.print(f"[green]Wrote[/green] {len(payload)} bytes to {target}")
+    console.print(
+        f"{report['applied_count']} name(s) rewritten, "
+        f"{report['skipped_count']} refused, "
+        f"{report['without_symbol']} without a symbol"
+    )
+    if report["skipped"]:
+        table = Table(title="refused rewrites")
+        table.add_column("VA", justify="right", style="magenta")
+        table.add_column("In file", style="cyan")
+        table.add_column("Requested")
+        table.add_column("Reason")
+        for row in report["skipped"]:
+            table.add_row(str(row["va"]), str(row["old"]), str(row["new"]), str(row["reason"]))
+        console.print(table)
+    console.print(f"[dim]{report['note']}[/dim]")
+
+
 # ── firmware ───────────────────────────────────────────────────────
 
 

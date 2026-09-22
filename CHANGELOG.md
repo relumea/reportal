@@ -7,6 +7,11 @@ view renders it from here.
 
 ## Unreleased
 
+- Binary export with symbols rewritten in (`GET`/`POST /api/binaries/<id>/binary-export`,
+  `reportal binary-export`, the destructive `export_binary` MCP tool and the binary detail Export
+  link): the stored ELF's `.symtab`/`.dynsym` or the PE's export table has each non-placeholder
+  store name written over its own slot when the new name fits, with the applied, the refused and
+  the renames no symbol carried reported exactly; the stored file is never touched.
 - Per-function explain agents as a deterministic text match (`GET
   /api/functions/<id>/explain/<domain>`, `reportal function-explain`, the read-only
   `explain_function` MCP tool and the function detail Explain panel): one of `crypto`,

@@ -517,6 +517,13 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/download`}>
           Download
         </a>
+        <a
+          className="btn btn-ghost"
+          href={`/api/binaries/${binary.id}/binary-export`}
+          title="Download the stored binary with its current names rewritten into its symbol tables"
+        >
+          Export
+        </a>
         <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/report/pdf`}>
           PDF
         </a>

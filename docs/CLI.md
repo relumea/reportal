@@ -20,6 +20,10 @@ reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--
                                            #   'infected', a shared convention, not a secret);
                                            #   --analysis reads the id as an analysis id and
                                            #   writes that analysis's binary
+reportal binary-export <binary-id> [--output PATH] [--force] [--json]
+                                           # write the stored binary with its current names
+                                           #   rewritten into its symbol tables: a slot that
+                                           #   cannot hold a name is reported, never guessed
 reportal binaries [--search TEXT] [--tag NAME] [--format FMT] [--language LANG] [--compiler NAME] [--order ORDER] [--json]
                                            # list the register with function and comment
                                            #   counts; --search matches the name, the

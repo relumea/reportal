@@ -13,7 +13,9 @@ records the state it replaced.
 - `symbols`: `TABLE` (`symbol_files`), sources `elf`, `dwarf`, `pdb`, and `SYMBOL_NAME_SOURCE`
   (`symbol`). `parse` dispatches on the file magic; `parse_elf`, `parse_dwarf` and
   `pdb.read_symbols` are the readers. Bounds: `MAX_SYMBOLS`, `MAX_TYPES`, `MAX_MEMBERS`,
-  `MAX_TYPE_DEPTH`.
+  `MAX_TYPE_DEPTH`. `export_binary` rewrites the store's non-placeholder names into the file's own
+  tables: `MAX_EXPORT_ROWS` caps both report lists, `EXPORT_NOTE` states the ceiling,
+  `export_file_name` is `<stem>.sym<suffix>`, and `ExportFormatError` is `unsupported-format`.
 - `pdb.CONTAINER_MAGIC` is the MSF 7.0 superblock. Only public and procedure symbols are read, so
   `types` is always empty and an unmapped segment answers `va: None`.
 - `signatures`: `function_signatures` and `signature_history`. A parameter carries `index`, `type`,
@@ -30,16 +32,19 @@ records the state it replaced.
 
 ## Wiring
 
-- Routes: `POST`/`GET /api/binaries/<id>/symbols`, `GET .../symbols/export`; `GET .../data-types`,
+- Routes: `POST`/`GET /api/binaries/<id>/symbols`, `GET .../symbols/export`,
+  `GET`/`POST .../binary-export`; `GET .../data-types`,
   `POST .../data-types/import`, `POST .../data-types/export`, `PATCH`/`DELETE /api/data-types/<id>`,
   its member, value and history routes; `GET /api/binaries/<id>/signatures`,
   `POST .../signatures/import`, `POST .../signatures/export`,
   `GET`/`PATCH /api/functions/<id>/signature` and
   its parameter and history routes.
-- CLI: `symbols`, `symbols-status`, `symbols-export`, `data-types-import`, `data-type-functions`,
+- CLI: `symbols`, `symbols-status`, `symbols-export`, `binary-export`, `data-types-import`,
+  `data-type-functions`,
   `signatures`, `signatures-import`, `signatures-export`, `signature`, `signature-set`,
   `signature-param*`, `signature-history`, `signature-revert`.
-- MCP: `import_symbols`, `get_symbols`, `export_symbols`, `list_data_types`, `import_data_types`,
+- MCP: `import_symbols`, `get_symbols`, `export_symbols`, `export_binary`, `list_data_types`,
+  `import_data_types`,
   `edit_data_type`, `export_data_types`, `get_data_type_history`, `get_signature`,
   `list_signatures`, `run_signature_import`, `edit_signature`, `export_signatures`.
 
@@ -56,6 +61,9 @@ records the state it replaced.
 - `export_prototypes` orders by name then function id, so the same model renders the same bytes.
   `tests/test_signatures.py`.
 - A DWARF form the reader cannot size ends the unit with a note instead of desyncing the stream.
+  `tests/test_symbols.py`.
+- An export rewrites only a name that fits its existing slot, never grows one and never touches
+  the stored file, and a placeholder store name never replaces a real symbol.
   `tests/test_symbols.py`.
 
 ## See also

@@ -1142,3 +1142,394 @@ class TestSymbolsEdges:
     def test_truncated_leb128_is_unreadable(self) -> None:
         with pytest.raises(symbols.UnreadableSymbolError):
             symbols._uleb(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80", 0)
+
+
+# ── The binary export ───────────────────────────────────────────────
+
+
+def build_pe(export_names: list[tuple[str, int]], *, export_table: bool = True) -> bytes:
+    """A PE32 image whose export table carries (name, function rva) pairs.
+
+    One section (``.edata``: RVA 0x1000, raw bytes at file offset 0x200) holds
+    the export directory, its three arrays and the name strings, so the writer
+    meets the layout it rewrites.  ``export_table=False`` builds the same image
+    without an export directory, which is what a stripped PE carries.
+    """
+    pe_offset = 0x80
+    optional_size = 0xE0
+    section_rva = 0x1000
+    section_raw = 0x200
+    count = len(export_names)
+    functions_off = 0x28
+    names_off = functions_off + 4 * count
+    ordinals_off = names_off + 4 * count
+    strings_off = ordinals_off + 2 * count
+
+    raw = bytearray(section_raw)
+    name_rvas: list[int] = []
+    cursor = strings_off
+    for export_name, _rva in export_names:
+        name_rvas.append(section_rva + cursor)
+        raw[cursor : cursor + len(export_name) + 1] = export_name.encode() + b"\x00"
+        cursor += len(export_name) + 1
+    struct.pack_into("<I", raw, 0x10, 1)  # Base
+    struct.pack_into("<I", raw, 0x14, count)  # NumberOfFunctions
+    struct.pack_into("<I", raw, 0x18, count)  # NumberOfNames
+    if export_table:
+        struct.pack_into("<I", raw, 0x1C, section_rva + functions_off)
+        struct.pack_into("<I", raw, 0x20, section_rva + names_off)
+        struct.pack_into("<I", raw, 0x24, section_rva + ordinals_off)
+    for index, (_export_name, function_rva) in enumerate(export_names):
+        struct.pack_into("<I", raw, functions_off + 4 * index, function_rva)
+        struct.pack_into("<I", raw, names_off + 4 * index, name_rvas[index])
+        struct.pack_into("<H", raw, ordinals_off + 2 * index, index)
+
+    header = bytearray(section_raw)
+    header[0:2] = b"MZ"
+    struct.pack_into("<I", header, 0x3C, pe_offset)
+    header[pe_offset : pe_offset + 4] = b"PE\0\0"
+    coff = pe_offset + 4
+    struct.pack_into("<H", header, coff, 0x014C)
+    struct.pack_into("<H", header, coff + 2, 1)
+    struct.pack_into("<H", header, coff + 16, optional_size)
+    struct.pack_into("<H", header, coff + 18, 0x0102)
+    optional = coff + 20
+    struct.pack_into("<H", header, optional, 0x10B)
+    struct.pack_into("<I", header, optional + 28, 0x400000)
+    struct.pack_into("<I", header, optional + 92, 16)
+    if export_table:
+        struct.pack_into("<I", header, optional + 96, section_rva)
+        struct.pack_into("<I", header, optional + 100, 0x100)
+    section = optional + optional_size
+    header[section : section + 8] = b".edata\0\0"
+    struct.pack_into("<I", header, section + 8, section_raw)
+    struct.pack_into("<I", header, section + 12, section_rva)
+    struct.pack_into("<I", header, section + 16, section_raw)
+    struct.pack_into("<I", header, section + 20, section_raw)
+    return bytes(header) + bytes(raw)
+
+
+def _export_elf(symbol_rows: list[tuple[str, int]]) -> bytes:
+    """An ELF whose ``.symtab``/``.strtab`` carry each (name, va) pair."""
+    text, names = _strtab(*[name for name, _va in symbol_rows])
+    entries = [(name, va, "function", 8, 1) for name, va in symbol_rows]
+    return build_elf(
+        [
+            (".symtab", _symtab(names, entries), SHT_SYMTAB, 2),
+            (".strtab", text, SHT_STRTAB, 0),
+        ]
+    )
+
+
+def _seed_export(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    data: bytes | None,
+    functions: list[tuple[int, str]],
+    *,
+    name: str = "demo.elf",
+) -> dict[str, Any]:
+    """A portal DB whose binary points at a file holding *data* (None: no file)."""
+    db = tmp_path / "portal.db"
+    monkeypatch.setenv(DB_ENV, str(db))
+    store.init_db(db)
+    path = tmp_path / name
+    if data is not None:
+        path.write_bytes(data)
+    with contextlib.closing(store.connect(db)) as conn:
+        binary_id = store.add_binary(conn, sha256="cc" * 32, name=name, path=str(path))
+        analysis_id = store.create_analysis(conn, binary_id=binary_id, engine="manual")
+        for va, function_name in functions:
+            store.add_function(conn, analysis_id=analysis_id, va=va, name=function_name)
+    return {"binary": binary_id, "db": db, "path": path}
+
+
+class TestBinaryExport:
+    def test_an_elf_name_is_rewritten_when_the_slot_fits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elf = _export_elf([("main", 0x401000)])
+        ids = _seed_export(tmp_path, monkeypatch, elf, [(0x401000, "cfg")])
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            payload, report = symbols.export_binary(conn, ids["binary"])
+
+        assert report["format"] == "elf"
+        assert report["file_name"] == "demo.sym.elf"
+        assert report["applied_count"] == 1
+        assert report["applied"] == [{"va": "0x401000", "old": "main", "new": "cfg"}]
+        assert report["skipped_count"] == 0
+        assert report["without_symbol"] == 0
+        assert symbols.EXPORT_NOTE in report["note"]
+        assert b"cfg\x00" in payload
+        assert len(payload) == len(elf)
+        parsed = symbols.parse_elf(payload)
+        assert [entry["name"] for entry in parsed["symbols"]] == ["cfg"]
+        # The stored file is read, never rewritten in place.
+        assert ids["path"].read_bytes() == elf
+
+    def test_a_longer_name_is_refused_not_guessed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elf = _export_elf([("main", 0x401000)])
+        ids = _seed_export(tmp_path, monkeypatch, elf, [(0x401000, "parse_config")])
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            payload, report = symbols.export_binary(conn, ids["binary"])
+
+        assert report["applied_count"] == 0
+        assert report["skipped_count"] == 1
+        assert report["skipped"][0]["reason"] == "name-too-long"
+        assert report["skipped"][0]["old"] == "main"
+        # The symbol exists, so it is not counted as having no symbol.
+        assert report["without_symbol"] == 0
+        assert payload == elf
+
+    def test_a_placeholder_name_is_never_written(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elf = _export_elf([("main", 0x401000)])
+        ids = _seed_export(tmp_path, monkeypatch, elf, [(0x401000, "sub_401000")])
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            payload, report = symbols.export_binary(conn, ids["binary"])
+
+        assert report["applied_count"] == 0
+        assert report["skipped_count"] == 0
+        assert report["without_symbol"] == 0
+        assert payload == elf
+
+    def test_a_rename_with_no_symbol_counts_as_without_symbol(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        elf = _export_elf([("main", 0x401000)])
+        ids = _seed_export(tmp_path, monkeypatch, elf, [(0x401000, "cfg"), (0x409000, "helper")])
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            _payload, report = symbols.export_binary(conn, ids["binary"])
+
+        assert report["applied_count"] == 1
+        assert report["without_symbol"] == 1
+
+    def test_the_report_rows_cap_while_the_counts_stay_exact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        rows = [(f"func_{index:03d}", 0x500000 + index * 0x10) for index in range(150)]
+        renames = [(0x500000 + index * 0x10, f"f{index:03d}") for index in range(150)]
+        ids = _seed_export(tmp_path, monkeypatch, _export_elf(rows), renames)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            _payload, report = symbols.export_binary(conn, ids["binary"])
+
+        assert report["applied_count"] == 150
+        assert len(report["applied"]) == symbols.MAX_EXPORT_ROWS
+
+    def test_a_pe_export_name_is_rewritten(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(
+            tmp_path,
+            monkeypatch,
+            build_pe([("main", 0x1100)]),
+            [(0x401100, "cfg")],
+            name="demo.exe",
+        )
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            payload, report = symbols.export_binary(conn, ids["binary"])
+
+        assert report["format"] == "pe"
+        assert report["file_name"] == "demo.sym.exe"
+        assert report["applied_count"] == 1
+        assert b"cfg\x00" in payload
+
+    def test_a_pe_without_an_export_table_states_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(
+            tmp_path,
+            monkeypatch,
+            build_pe([], export_table=False),
+            [(0x401100, "cfg")],
+            name="demo.exe",
+        )
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            payload, report = symbols.export_binary(conn, ids["binary"])
+
+        assert report["applied_count"] == 0
+        assert report["without_symbol"] == 1
+        assert "the PE carries no export table" in report["note"]
+        assert payload[:2] == b"MZ"
+
+    def test_a_file_that_is_neither_format_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(tmp_path, monkeypatch, b"GIF89a" * 8, [(0x401000, "cfg")])
+        with (
+            contextlib.closing(store.connect(ids["db"])) as conn,
+            pytest.raises(symbols.ExportFormatError, match="neither an ELF nor a PE"),
+        ):
+            symbols.export_binary(conn, ids["binary"])
+
+        error = symbols.ExportFormatError("x")
+        assert error.code == "unsupported-format"
+
+    def test_an_unknown_binary_and_a_missing_file_are_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(tmp_path, monkeypatch, _export_elf([("main", 0x401000)]), [])
+        with (
+            contextlib.closing(store.connect(ids["db"])) as conn,
+            pytest.raises(KeyError, match="no binary with id"),
+        ):
+            symbols.export_binary(conn, 999)
+        ids["path"].unlink()
+        with (
+            contextlib.closing(store.connect(ids["db"])) as conn,
+            pytest.raises(FileNotFoundError),
+        ):
+            symbols.export_binary(conn, ids["binary"])
+
+
+class TestExportRoutes:
+    def test_the_get_streams_the_export_and_the_post_reports_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(
+            tmp_path, monkeypatch, _export_elf([("main", 0x401000)]), [(0x401000, "cfg")]
+        )
+        url = f"/api/binaries/{ids['binary']}/binary-export"
+
+        status, headers, body = wsgi_request("GET", url)
+        assert status.startswith("200"), body
+        assert headers["Content-Disposition"] == 'attachment; filename="demo.sym.elf"'
+        assert headers["X-Reportal-Export-Applied"] == "1"
+        assert headers["X-Reportal-Export-Skipped"] == "0"
+        assert headers["Cache-Control"] == "no-store"
+        assert b"cfg\x00" in body
+
+        status, post_headers, post_body = wsgi_request("POST", url)
+        assert status.startswith("200"), post_body
+        report = json_body(post_body, post_headers)
+        assert report["applied_count"] == 1
+        assert report["format"] == "elf"
+        assert report["file_name"] == "demo.sym.elf"
+
+    def test_an_unknown_id_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for method in ("GET", "POST"):
+            status, headers, body = wsgi_request(method, "/api/binaries/999/binary-export")
+            assert status.startswith("404")
+            assert json_body(body, headers)["error"] == "binary not found"
+
+    def test_a_missing_file_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gone = _seed_export(tmp_path, monkeypatch, None, [(0x401000, "cfg")])
+        url = f"/api/binaries/{gone['binary']}/binary-export"
+        for method in ("GET", "POST"):
+            status, headers, body = wsgi_request(method, url)
+            assert status.startswith("404")
+            assert json_body(body, headers)["error"] == "binary not on disk"
+
+    def test_a_file_that_is_neither_format_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bad = _seed_export(tmp_path, monkeypatch, b"GIF89a" * 4, [(0x401000, "cfg")])
+        url = f"/api/binaries/{bad['binary']}/binary-export"
+        for method in ("GET", "POST"):
+            status, headers, body = wsgi_request(method, url)
+            assert status.startswith("400")
+            assert json_body(body, headers)["error"] == "unsupported-format"
+
+
+class TestExportCli:
+    def test_the_command_writes_the_file_and_reports(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(
+            tmp_path, monkeypatch, _export_elf([("main", 0x401000)]), [(0x401000, "cfg")]
+        )
+        target = tmp_path / "out.elf"
+
+        exported = runner.invoke(
+            cli.app,
+            ["binary-export", str(ids["binary"]), "--output", str(target), "--json"],
+        )
+        assert exported.exit_code == 0, exported.output
+        report = json.loads(exported.output)
+        assert report["path"] == str(target)
+        assert report["applied_count"] == 1
+        assert report["bytes"] == target.stat().st_size
+        assert b"cfg\x00" in target.read_bytes()
+
+        plain_target = tmp_path / "plain.elf"
+        plain = runner.invoke(
+            cli.app, ["binary-export", str(ids["binary"]), "--output", str(plain_target)]
+        )
+        assert plain.exit_code == 0, plain.output
+        assert "1 name(s) rewritten" in plain.output
+
+        again = runner.invoke(
+            cli.app, ["binary-export", str(ids["binary"]), "--output", str(target)]
+        )
+        assert again.exit_code == 1
+        assert "refusing to overwrite" in again.output
+
+        forced = runner.invoke(
+            cli.app,
+            ["binary-export", str(ids["binary"]), "--output", str(target), "--force"],
+        )
+        assert forced.exit_code == 0, forced.output
+
+        unknown = runner.invoke(cli.app, ["binary-export", "999"])
+        assert unknown.exit_code == 1
+        assert "no binary with id 999" in unknown.output
+
+    def test_an_unsupported_file_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(tmp_path, monkeypatch, b"GIF89a" * 4, [(0x401000, "cfg")])
+        refused = runner.invoke(cli.app, ["binary-export", str(ids["binary"])])
+        assert refused.exit_code == 1
+        assert "neither an ELF nor a PE" in refused.output
+
+    def test_the_command_fails_without_a_database(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(DB_ENV, str(tmp_path / "missing" / "portal.db"))
+        result = runner.invoke(cli.app, ["binary-export", "1"])
+        assert result.exit_code == 1
+        assert "no reportal database" in result.output
+
+
+class TestExportMcp:
+    def test_the_tool_writes_the_file_and_journals_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(
+            tmp_path, monkeypatch, _export_elf([("main", 0x401000)]), [(0x401000, "cfg")]
+        )
+        target = tmp_path / "tool.elf"
+
+        exported, failed = mcp_server.call_tool(
+            "export_binary", {"binary_id": ids["binary"], "path": str(target)}
+        )
+        assert not failed, exported
+        assert exported["applied_count"] == 1
+        assert exported["bytes"] == target.stat().st_size
+        assert exported["journal_action"]
+        assert b"cfg\x00" in target.read_bytes()
+
+    def test_an_unknown_binary_and_a_path_outside_the_workspace_are_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed_export(
+            tmp_path, monkeypatch, _export_elf([("main", 0x401000)]), [(0x401000, "cfg")]
+        )
+
+        unknown, failed = mcp_server.call_tool(
+            "export_binary", {"binary_id": 999, "path": str(tmp_path / "x.elf")}
+        )
+        assert failed
+
+        outside, failed = mcp_server.call_tool(
+            "export_binary", {"binary_id": ids["binary"], "path": "/etc/reportal-export.elf"}
+        )
+        assert failed
+        assert "invalid path" in str(outside)

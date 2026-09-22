@@ -181,7 +181,7 @@ def _result(
 class _Elf:
     """One parsed ELF container: its sections and its symbol table."""
 
-    def __init__(self, data: bytes) -> None:
+    def __init__(self, data: bytes | bytearray) -> None:
         self.data = data
         if data[:4] != ELF_MAGIC:
             raise UnreadableSymbolError("not an ELF file")
@@ -249,7 +249,7 @@ class _Elf:
         size = int(section["size"])
         if start < 0 or size < 0 or start + size > len(self.data):
             raise UnreadableSymbolError("a section range is outside the file")
-        return self.data[start : start + size]
+        return bytes(self.data[start : start + size])
 
     def section_by_name(self, name: str) -> dict[str, Any] | None:
         """The first section with *name*, or None."""
@@ -328,7 +328,7 @@ class _Elf:
         return rows
 
 
-def _string_at(table: bytes, offset: int) -> str:
+def _string_at(table: bytes | bytearray, offset: int) -> str:
     """One NUL-terminated string of *table*, or "" when the offset is outside it."""
     if offset < 0 or offset >= len(table):
         return ""
@@ -1263,3 +1263,288 @@ def render_symbols(parsed: Mapping[str, Any], *, kind: str = "json") -> str:
     safe = str.maketrans({"*": "x", "/": "|"})
     lines.extend(f"/* {name.translate(safe)} */" for name in functions)
     return "\n".join(lines) + "\n"
+
+
+# ── The binary export ───────────────────────────────────────────────
+
+
+# Rows the export report lists before it caps; the counts stay exact.
+MAX_EXPORT_ROWS = 100
+
+# What every export report says, so a caller cannot mistake a bounded rewrite
+# for a rebuilt symbol table.
+EXPORT_NOTE = (
+    "a rewrite lands only where the binary's own symbol table carries a name at"
+    " that address and the new name fits the existing slot; a stripped image"
+    " reports its renames under without_symbol and an over-long name under"
+    " skipped, never a guessed write"
+)
+
+
+class ExportFormatError(SymbolError, ValueError):
+    """The stored file carries no symbol table this writer can reach; the API
+    answers 400 `unsupported-format`."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__("unsupported-format", detail)
+
+
+def export_file_name(stored_name: str) -> str:
+    """``notepad.exe`` becomes ``notepad.sym.exe``, the hosted export's name shape."""
+    from reportal.binary_actions import download_filename as _sanitize
+
+    safe = _sanitize({"name": stored_name})
+    path = Path(safe)
+    stem = path.stem.strip() or "binary"
+    return f"{stem}.sym{path.suffix}"
+
+
+def _u16(data: bytes | bytearray, offset: int) -> int:
+    """One little-endian u16, refusing a read outside the file."""
+    if offset < 0 or offset + 2 > len(data):
+        raise UnreadableSymbolError("the file is truncated")
+    return int.from_bytes(data[offset : offset + 2], "little")
+
+
+def _u32(data: bytes | bytearray, offset: int) -> int:
+    """One little-endian u32, refusing a read outside the file."""
+    if offset < 0 or offset + 4 > len(data):
+        raise UnreadableSymbolError("the file is truncated")
+    return int.from_bytes(data[offset : offset + 4], "little")
+
+
+def _u64(data: bytes | bytearray, offset: int) -> int:
+    """One little-endian u64, refusing a read outside the file."""
+    if offset < 0 or offset + 8 > len(data):
+        raise UnreadableSymbolError("the file is truncated")
+    return int.from_bytes(data[offset : offset + 8], "little")
+
+
+def _slot_name(data: bytearray, slot: int, limit: int) -> str:
+    """The NUL-terminated name at *slot*, bounded by *limit*."""
+    if not 0 <= slot < limit <= len(data):
+        raise UnreadableSymbolError("a symbol name sits outside the file")
+    end = data.find(b"\x00", slot, limit)
+    if end < 0:
+        raise UnreadableSymbolError("a symbol name is not terminated")
+    return bytes(data[slot:end]).decode("utf-8", "replace")
+
+
+def _rewrite_slot(data: bytearray, slot: int, limit: int, new: str) -> bool:
+    """Write *new* over the name at *slot*; False when it does not fit.
+
+    A string-table entry is NUL-terminated in place, so a shorter name leaves
+    its old tail as unreachable bytes and a longer one has nowhere to go: that
+    is a refusal, not a relink, because an export never moves sections.
+    """
+    end = data.find(b"\x00", slot, limit)
+    if end < 0:
+        raise UnreadableSymbolError("a symbol name is not terminated")
+    encoded = new.encode("utf-8")
+    if len(encoded) > end - slot:
+        return False
+    data[slot : slot + len(encoded)] = encoded
+    data[slot + len(encoded)] = 0
+    return True
+
+
+def _export_renames(conn: sqlite3.Connection, binary_id: int) -> dict[int, str]:
+    """The stored names worth writing in, keyed by address.
+
+    A placeholder name (`sub_*`, `fcn_*`, `FUN_*`, `FUNC_`) is what the store
+    holds when nothing named the function yet, so writing one over the file's
+    own symbol would trade a real name for a guess.
+    """
+    from reportal.lineage import is_placeholder_name
+
+    renames: dict[int, str] = {}
+    for function in store.list_functions(conn, binary_id=binary_id, limit=None):
+        name = str(function.get("name") or "").strip()
+        va = int(function.get("va") or 0)
+        if not name or not va or is_placeholder_name(name):
+            continue
+        renames[va] = name
+    return renames
+
+
+def _patch_elf(
+    data: bytearray, renames: Mapping[int, str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[int]]:
+    """Rewrite matching names in ``.symtab``/``.dynsym``; (applied, skipped, matched)."""
+    elf = _Elf(data)
+    applied: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    matched: set[int] = set()
+    seen: set[tuple[int, int]] = set()
+    for section in elf.sections:
+        if int(section["type"]) not in (_SHT_SYMTAB, _SHT_DYNSYM):
+            continue
+        link = int(section["link"])
+        if not 0 <= link < len(elf.sections):
+            continue
+        strtab = elf.sections[link]
+        base = int(strtab["offset"])
+        limit = base + int(strtab["size"])
+        if limit > len(data):
+            raise UnreadableSymbolError("a string table sits outside the file")
+        entry_size = int(section.get("entsize") or 0) or (24 if elf.is64 else 16)
+        blob = int(section["offset"])
+        blob_end = blob + int(section["size"])
+        if blob_end > len(data):
+            raise UnreadableSymbolError("a symbol table sits outside the file")
+        for offset in range(blob, blob_end - entry_size + 1, entry_size):
+            if elf.is64:
+                st_name, _info, _other, shndx, st_value, _size = struct.unpack_from(
+                    f"{elf.endian}IBBHQQ", data, offset
+                )
+            else:
+                st_name, st_value, _size, _info, _other, shndx = struct.unpack_from(
+                    f"{elf.endian}IIIBBH", data, offset
+                )
+            va = int(st_value)
+            new = renames.get(va)
+            if not new or int(shndx) == 0:
+                continue
+            key = (link, int(st_name))
+            if key in seen:
+                continue
+            seen.add(key)
+            slot = base + int(st_name)
+            old = _slot_name(data, slot, limit)
+            if old == new:
+                matched.add(va)
+                continue
+            if not _rewrite_slot(data, slot, limit, new):
+                matched.add(va)
+                skipped.append(
+                    {"va": f"0x{va:x}", "old": old, "new": new, "reason": "name-too-long"}
+                )
+                continue
+            matched.add(va)
+            applied.append({"va": f"0x{va:x}", "old": old, "new": new})
+    return applied, skipped, matched
+
+
+def _patch_pe(
+    data: bytearray, renames: Mapping[int, str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[int], str]:
+    """Rewrite matching export names; (applied, skipped, matched, note).
+
+    A PE keeps its exported names in the export table's own string area, so the
+    same slot rule applies: an import table carries no names to rewrite and a
+    stripped image has no export table at all, which the note states.
+    """
+    if data[:2] != b"MZ":
+        raise ExportFormatError("not a PE image")
+    pe = _u32(data, 0x3C)
+    if bytes(data[pe : pe + 4]) != b"PE\0\0":
+        raise ExportFormatError("the PE signature is missing")
+    coff = pe + 4
+    section_count = _u16(data, coff + 2)
+    optional_size = _u16(data, coff + 16)
+    optional = coff + 20
+    magic = _u16(data, optional)
+    if magic == 0x10B:
+        image_base = _u32(data, optional + 28)
+        directories = optional + 96
+    elif magic == 0x20B:
+        image_base = _u64(data, optional + 24)
+        directories = optional + 112
+    else:
+        raise ExportFormatError("the PE optional header is unknown")
+    export_rva = _u32(data, directories)
+    export_size = _u32(data, directories + 4)
+    if export_rva == 0 or export_size == 0:
+        return [], [], set(), "the PE carries no export table"
+    raw_sections: list[tuple[int, int, int]] = []
+    table = optional + optional_size
+    for index in range(section_count):
+        entry = table + index * 40
+        raw_sections.append(
+            (_u32(data, entry + 12), _u32(data, entry + 16), _u32(data, entry + 20))
+        )
+
+    def to_offset(rva: int) -> int:
+        for virtual, raw_size, raw_pointer in raw_sections:
+            if virtual <= rva < virtual + raw_size:
+                return raw_pointer + (rva - virtual)
+        raise UnreadableSymbolError("an export table entry sits outside the sections")
+
+    directory = to_offset(export_rva)
+    count = _u32(data, directory + 24)
+    if count > 65_536:
+        raise UnreadableSymbolError("the PE export name count is out of range")
+    functions = to_offset(_u32(data, directory + 28))
+    names = to_offset(_u32(data, directory + 32))
+    ordinals = to_offset(_u32(data, directory + 36))
+    applied: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    matched: set[int] = set()
+    for index in range(count):
+        name_rva = _u32(data, names + 4 * index)
+        ordinal = _u16(data, ordinals + 2 * index)
+        va = image_base + _u32(data, functions + 4 * ordinal)
+        new = renames.get(va)
+        if not new:
+            continue
+        slot = to_offset(name_rva)
+        old = _slot_name(data, slot, len(data))
+        if old == new:
+            matched.add(va)
+            continue
+        if not _rewrite_slot(data, slot, len(data), new):
+            matched.add(va)
+            skipped.append({"va": f"0x{va:x}", "old": old, "new": new, "reason": "name-too-long"})
+            continue
+        matched.add(va)
+        applied.append({"va": f"0x{va:x}", "old": old, "new": new})
+    return applied, skipped, matched, ""
+
+
+def export_binary(conn: sqlite3.Connection, binary_id: int) -> tuple[bytes, dict[str, Any]]:
+    """The stored binary with its current names rewritten into its own tables.
+
+    The report the second element carries names the format, the file name the
+    download should use, every rewrite (``applied``), every refusal with its
+    reason (``skipped``), the exact counts and ``without_symbol``: the renames
+    the file's tables had no entry for, which is everything on a stripped
+    image.  Both lists cap at :data:`MAX_EXPORT_ROWS` while the counts stay
+    exact.
+
+    Raises :class:`KeyError` for an unknown binary, :class:`FileNotFoundError`
+    when its row has no file on disk, :class:`ExportFormatError` for a file
+    that is neither ELF nor PE, and :class:`UnreadableSymbolError` when a
+    table the rewrite would reach is malformed.
+    """
+    binary = store.get_binary(conn, binary_id)
+    if binary is None:
+        raise KeyError(f"no binary with id {binary_id}")
+    path = Path(str(binary["path"]))
+    if not path.is_file():
+        raise FileNotFoundError(f"binary {binary_id} has no file at {binary['path']!r}")
+    data = bytearray(path.read_bytes())
+    renames = _export_renames(conn, binary_id)
+    note = EXPORT_NOTE
+    if data[:4] == ELF_MAGIC:
+        fmt = "elf"
+        applied, skipped, matched = _patch_elf(data, renames)
+    elif data[:2] == b"MZ":
+        fmt = "pe"
+        applied, skipped, matched, format_note = _patch_pe(data, renames)
+        if format_note:
+            note = f"{note}; {format_note}"
+    else:
+        raise ExportFormatError(f"{path.name} is neither an ELF nor a PE image")
+    by_va = lambda rows: sorted(rows, key=lambda row: int(str(row["va"]), 16))  # noqa: E731
+    report = {
+        "binary_id": binary_id,
+        "file_name": export_file_name(str(binary["name"])),
+        "format": fmt,
+        "applied": by_va(applied)[:MAX_EXPORT_ROWS],
+        "skipped": by_va(skipped)[:MAX_EXPORT_ROWS],
+        "applied_count": len(applied),
+        "skipped_count": len(skipped),
+        "without_symbol": max(0, len(renames) - len(matched)),
+        "note": note,
+    }
+    return bytes(data), report

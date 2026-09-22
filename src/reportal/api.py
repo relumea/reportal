@@ -6212,15 +6212,24 @@ MAX_BACKGROUND_AUTO_RUNS = 4
 _auto_run_slots = threading.BoundedSemaphore(MAX_BACKGROUND_AUTO_RUNS)
 
 
-def _execute_auto_run(run_id: int, params: auto_mode.AutoParams, *, request_id: str = "") -> None:
+def _execute_auto_run(
+    run_id: int,
+    params: auto_mode.AutoParams,
+    *,
+    request_id: str = "",
+    slots: threading.BoundedSemaphore | None = None,
+) -> None:
     """Run a planned auto run on its own connection in a background thread.
 
     A failure must not leave the run `running` forever: it is closed as failed
     so the polling client sees a terminal state instead of an eternal spinner.
     The background slot is released in ``finally`` so a crashed or finished run
-    always frees capacity for the next start.  When the submit request carried
-    a ``request_id``, it is rebound here so a failure line still greps back to
-    the POST that queued the run (the thread has no HTTP ContextVar otherwise).
+    always frees capacity for the next start; *slots* is the semaphore the
+    submit route acquired, and the release binds to it so a module-global swap
+    mid-run cannot send the release to an instance this run never took.  When
+    the submit request carried a ``request_id``, it is rebound here so a
+    failure line still greps back to the POST that queued the run (the thread
+    has no HTTP ContextVar otherwise).
     """
     request_id_token: Any | None = None
     if request_id and not observability.current_request_id():
@@ -6260,7 +6269,7 @@ def _execute_auto_run(run_id: int, params: auto_mode.AutoParams, *, request_id: 
     finally:
         if request_id_token is not None:
             observability.reset_request_id(request_id_token)
-        _auto_run_slots.release()
+        (slots if slots is not None else _auto_run_slots).release()
 
 
 def _request_organisation_id(conn: sqlite3.Connection, request: Request) -> int:
@@ -6428,7 +6437,8 @@ def start_auto_run(
                 },
                 status=202,
             )
-    if not _auto_run_slots.acquire(blocking=False):
+    slots = _auto_run_slots
+    if not slots.acquire(blocking=False):
         return json_error(
             503,
             error="auto-busy",
@@ -6461,7 +6471,7 @@ def start_auto_run(
         thread = threading.Thread(
             target=_execute_auto_run,
             args=(run_id, params),
-            kwargs={"request_id": observability.current_request_id()},
+            kwargs={"request_id": observability.current_request_id(), "slots": slots},
             name=f"reportal-auto-{run_id}",
             daemon=True,
         )
@@ -6470,7 +6480,7 @@ def start_auto_run(
         raise
     finally:
         if acquired:
-            _auto_run_slots.release()
+            slots.release()
     return json_response(
         {"run_id": run_id, "binary_id": binary_id, "status": auto_store.AUTO_RUN_RUNNING},
         status=202,
@@ -9126,6 +9136,82 @@ def download_binary(binary_id: int) -> Response:
     if binary is None:
         return json_error(404, error="binary not found", detail=f"no binary with id {binary_id}")
     return _streamed_binary(binary)
+
+
+# ── Binary export (symbols rewritten in) ────────────────────────────
+
+
+def _export_report(binary_id: int) -> tuple[dict[str, Any], bytes] | Response:
+    """Run the export for *binary_id*; an error response, or (report, bytes).
+
+    The binary checks are the download route's own, so a caller that can
+    download the file can export it: 404 `binary not found` for an unknown id
+    and 404 `binary not on disk` for a row whose file is gone.  A file the
+    rewrite cannot reach is 400 with the symbol reader's own code.
+    """
+    with contextlib.closing(db()) as conn:
+        binary = store.get_binary(conn, binary_id)
+        if binary is None:
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        path = Path(str(binary["path"]))
+        if not path.is_file():
+            return json_error(
+                404,
+                error="binary not on disk",
+                detail=f"binary {binary_id} has no file at {binary['path']!r}",
+            )
+        try:
+            payload, report = symbols.export_binary(conn, binary_id)
+        except symbols.SymbolError as exc:
+            return json_error(400, error=exc.code, detail=exc.detail)
+    return report, payload
+
+
+@router.get("/api/binaries/{binary_id}/binary-export")
+def download_binary_export(binary_id: int) -> Response:
+    """Stream the stored binary with its current names rewritten into its tables.
+
+    The names are the store's non-placeholder function names matched to the
+    file's own symbol table by address: an ELF name is rewritten in its
+    `.symtab`/`.dynsym` string table, a PE name in the export table's, and only
+    where the existing slot has room, so the file's layout never moves.  The
+    two `X-Reportal-Export-*` headers report how many rewrites landed and how
+    many were refused; the full report comes from the POST on the same path.
+    `Cache-Control: no-store` because the bytes depend on names that change.
+    """
+    result = _export_report(binary_id)
+    if isinstance(result, Response):
+        return result
+    report, payload = result
+    return Response(
+        content=payload,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{report["file_name"]}"',
+            "X-Reportal-Export-Applied": str(report["applied_count"]),
+            "X-Reportal-Export-Skipped": str(report["skipped_count"]),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@router.post("/api/binaries/{binary_id}/binary-export")
+def run_binary_export(binary_id: int) -> Response:
+    """The export report without the bytes: what is rewritten, and why not.
+
+    This is the hosted `POST .../binary-export` read as a synchronous local
+    operation: nothing is queued, because a name rewrite over an in-memory
+    copy is sub-second, and nothing is stored, because the bytes are a
+    function of the file and the current names.  `applied` and `skipped` cap
+    at `symbols.MAX_EXPORT_ROWS` while the counts stay exact.
+    """
+    result = _export_report(binary_id)
+    if isinstance(result, Response):
+        return result
+    report, _payload = result
+    return json_response(report)
 
 
 # ── Comments ───────────────────────────────────────────────────────

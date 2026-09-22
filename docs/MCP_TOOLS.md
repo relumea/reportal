@@ -2,7 +2,7 @@
 
 # MCP tool catalog
 
-The 274 tools the MCP registry exposes (129 read-only, 145 destructive).
+The 275 tools the MCP registry exposes (129 read-only, 146 destructive).
 `reportal mcp` serves them over stdio JSON-RPC; `POST /mcp` and `GET /mcp`
 serve the same registry over HTTP. A read-only tool runs at once; a
 destructive tool pauses an agent run for confirmation. Names must be unique
@@ -197,6 +197,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `delete_user` | Delete one user; journaled, so a revert puts the row back. |
 | `edit_data_type` | Edit a data type: set its name, kind, namespace or declared size; add, edit, reposition or remove a member; convert a member to explicit padding and back; add, rename, revalue or remove an enum constant; or delete the type. |
 | `edit_signature` | Set a signature's return type or convention, edit, add, move or remove a parameter, or delete it. |
+| `export_binary` | Write a stored binary with its current names rewritten into its own symbol tables; a slot that cannot hold a name is reported, never guessed. |
 | `export_data_types` | Render the type model as one C header at an explicit path. |
 | `export_signatures` | Render the signature model as one C prototype header at an explicit path. |
 | `export_symbols` | Write one ingested parse to a path as a C header (reusing the type model's renderer) or as JSON. |

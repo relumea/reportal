@@ -370,7 +370,9 @@ the effective `format`/`arch` (the hand-set override first, badged as asserted
 by hand, else detection), recovered `language` and `compiler`, and
 `created_at`, Format/ISA override selects with Save writing
 `PATCH /api/binaries/<id>`, Download serves
-`GET /api/binaries/<id>/download`, PDF serves
+`GET /api/binaries/<id>/download`, Export serves
+`GET /api/binaries/<id>/binary-export` (the stored bytes with the current names
+rewritten into their slots), PDF serves
 `GET /api/binaries/<id>/report/pdf`, Symbols serves
 `GET /api/binaries/<id>/symbols/export`, Logs and Tags jump to those panels,
 and Scope writes `PATCH /api/binaries/<id>/scope`; binary details (auto-loads the
