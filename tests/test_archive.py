@@ -510,3 +510,29 @@ def test_zipcrypto_helper_round_trips_through_zipfile(tmp_path: Path) -> None:
     _write_encrypted_zip(source, "secret.bin", BODY, PASSWORD.encode())
     with zipfile.ZipFile(source) as zf:
         assert zf.read("secret.bin", pwd=PASSWORD.encode()) == BODY
+
+
+class TestRefusalHelpers:
+    def test_refuse_name_rejects_hostile_names(self, tmp_path: Path) -> None:
+        assert archive._refuse_name("", tmp_path)[0] is None
+        assert archive._refuse_name("a\x00b", tmp_path)[0] is None
+        assert archive._refuse_name("a\\b", tmp_path)[0] is None
+        assert archive._refuse_name("/abs", tmp_path)[0] is None
+        assert archive._refuse_name("../up", tmp_path)[0] is None
+        target, reason = archive._refuse_name("sub/ok.txt", tmp_path)
+        assert target is not None and reason == ""
+
+    def test_refuse_mode_rejects_special_files(self) -> None:
+        import stat as _stat
+
+        assert archive._refuse_mode(0o100644) == ""
+        assert "symlink" in archive._refuse_mode(_stat.S_IFLNK | 0o777)
+        assert "device" in archive._refuse_mode(_stat.S_IFCHR | 0o666)
+        assert "device" in archive._refuse_mode(_stat.S_IFBLK | 0o666)
+        assert "FIFO" in archive._refuse_mode(_stat.S_IFIFO | 0o666)
+        assert "socket" in archive._refuse_mode(_stat.S_IFSOCK | 0o666)
+
+    def test_ratio_refusal_flags_bombs(self) -> None:
+        assert archive._ratio_refusal(10, 0) == ""
+        assert archive._ratio_refusal(10, 10) == ""
+        assert "ratio" in archive._ratio_refusal(10**9, 10)
