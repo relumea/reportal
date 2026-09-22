@@ -806,3 +806,22 @@ class TestFunctionTriageMcpTools:
         payload, is_error = _mcp_call("get_function_triage", {"binary_id": 4242})
         assert is_error is True
         assert payload["error"] == "binary not found"
+
+
+class TestTriageEdges:
+    def test_empty_decompilation_names_its_reason(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _seed_binary(conn, tmp_path)
+        function_ids = _seed_functions(
+            conn, binary_id=binary_id, rows=[(0x1000, "sub_1000", 512, "STUB")]
+        )
+        store.set_decompilation(conn, function_ids[0], "   ", "kuna")
+        result = function_triage.summarize_functions(
+            conn,
+            binary_id=binary_id,
+            client=llm.LlmClient(None),
+            engine=engines.RebrewEngine(enabled=False),
+        )
+        assert result["functions"] == []
+        assert result["skipped"][0]["reason"] == function_triage.EMPTY_DECOMPILATION_REASON
