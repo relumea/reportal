@@ -1748,3 +1748,23 @@ class TestSubmitRace:
         first = jobs.submit(conn, kind="pe-info", binary_id=binary_id)
         second = jobs.submit(conn, kind="pe-info", binary_id=binary_id)
         assert int(second["id"]) == int(first["id"])
+
+
+class TestRequestIdRestore:
+    def test_stored_request_id_is_restored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        from reportal import observability
+
+        token = observability.set_request_id("req-abc")
+        try:
+            job = jobs.submit(conn, kind="pe-info", binary_id=_binary(conn, tmp_path))
+        finally:
+            observability.reset_request_id(token)
+        assert job["request_id"] == "req-abc"
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            stored = jobs.execute(conn, jobs.get_job(conn, int(job["id"])) or {})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert stored["status"] == jobs.STATUS_DONE
+        assert observability.current_request_id() in (None, "")
