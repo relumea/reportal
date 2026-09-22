@@ -386,7 +386,7 @@ class TestUpload:
         assert result.exit_code == 0, result.output
         assert seen["method"] == "POST"
         assert seen["path"] == "/api/binaries"
-        assert b"MZ" in bytes(seen["body"])  # type: ignore[arg-type]
+        assert b"MZ" in bytes(seen["body"])  # type: ignore[call-overload]
         assert json.loads(result.stdout) == {"id": 9}
 
     def test_upload_server_error_names_the_problem(

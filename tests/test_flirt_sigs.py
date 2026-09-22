@@ -610,7 +610,7 @@ class TestCatalogEdges:
         root = _checkout(tmp_path)
         real_resolve = Path.resolve
 
-        def boom(self: Path, *args: object, **kwargs: object) -> Path:
+        def boom(self: Path, *args: Any, **kwargs: Any) -> Path:
             if self.name == "libc.sig":
                 raise OSError("denied")
             return real_resolve(self, *args, **kwargs)

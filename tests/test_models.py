@@ -843,7 +843,7 @@ class TestModelHelpers:
             name="bad",
             kind="engine",
             available=True,  # type: ignore[arg-type]
-            unavailable_reason="",
+            unavailable_reason="",  # type: ignore[arg-type]
         )
         with pytest.raises(plugins.RegistryError, match="must be callable"):
             models.register_model(model, origin="test")

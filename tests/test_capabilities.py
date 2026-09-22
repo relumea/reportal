@@ -253,7 +253,7 @@ class TestRunCapabilities:
 
 class TestCapabilitiesEdges:
     def test_unknown_match_mode_raises(self) -> None:
-        rule = capabilities.ImportRule("mystery", "x")
+        rule = capabilities.ImportRule("mystery", "x")  # type: ignore[arg-type]
         with pytest.raises(ValueError, match="unknown import match mode"):
             capabilities._import_matches(rule, "CreateFileW")
 
@@ -279,7 +279,7 @@ class TestCapabilitiesEdges:
             _Source(),
             imports=[],
             strings=strings,
-            max_strings=3,  # type: ignore[arg-type]
+            max_strings=3,
         )
         assert len(resolved) == 3
 
@@ -293,6 +293,6 @@ class TestLoadStrings:
         resolved = capabilities.load_strings(
             Path("/nope"),
             _Source(),
-            max_strings=2,  # type: ignore[arg-type]
+            max_strings=2,
         )
         assert [entry["text"] for entry in resolved] == ["a", "b"]

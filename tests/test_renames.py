@@ -783,7 +783,7 @@ class TestHandScanner:
 
         real_import = _builtins.__import__
 
-        def boom(name: str, *args: object, **kwargs: object) -> object:
+        def boom(name: str, *args: Any, **kwargs: Any) -> object:
             if name == "rebrew.c_parser":
                 raise ImportError("no parser")
             return real_import(name, *args, **kwargs)

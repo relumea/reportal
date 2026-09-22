@@ -260,9 +260,9 @@ class TestTheChargeSink:
 
 class TestCreditsEdges:
     def test_non_numeric_budget_buys_no_credits(self) -> None:
-        assert credits_mod.credits_for_budget("x") == 0
+        assert credits_mod.credits_for_budget("x") == 0  # type: ignore[arg-type]
         assert credits_mod.credits_for_budget(True) == 0
-        assert credits_mod.credits_for_budget(None) == 0
+        assert credits_mod.credits_for_budget(None) == 0  # type: ignore[arg-type]
 
     def test_token_count_rounds_up(self) -> None:
         assert credits_mod.tokens_of("") == 0
@@ -282,7 +282,7 @@ class TestModelRates:
     def test_bad_budgets_buy_no_tokens(self) -> None:
         from reportal import model_rates
 
-        assert model_rates.tokens_for_budget("x") == 0
+        assert model_rates.tokens_for_budget("x") == 0  # type: ignore[arg-type]
         assert model_rates.tokens_for_budget(True) == 0
         assert model_rates.tokens_for_budget(float("nan")) == 0
         assert model_rates.tokens_for_budget(-5.0) == 0

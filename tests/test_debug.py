@@ -1976,7 +1976,7 @@ class TestDebugApplyAndReader:
                 debug.apply_session_proposal(conn, function_id=function_id)
 
     def test_read_response_skips_stray_responses(self) -> None:
-        messages = [
+        messages: list[dict[str, Any]] = [
             {"type": "event", "event": "x"},
             {"type": "response", "request_seq": 99, "command": "other"},
             {"type": "response", "request_seq": 7, "command": "target"},
@@ -2017,7 +2017,7 @@ class TestRenderAndRace:
             debug.ensure_schema(conn)
             binary_id = _seed(conn, tmp_path)
             analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
-            kwargs = {
+            kwargs: dict[str, Any] = {
                 "analysis_id": analysis_id,
                 "binary_id": binary_id,
                 "sha256": "c" * 64,
@@ -2102,15 +2102,6 @@ class TestDebugInvalidMessages:
         monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
         monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
 
-        class FakeProcess:
-            stdin: object = FakeStdin()
-
-            def wait(self, timeout: float | None = None) -> int:
-                return 0
-
-            def kill(self) -> None:
-                return None
-
         class FakeStdout:
             def __init__(self) -> None:
                 self._buf = b""
@@ -2118,7 +2109,16 @@ class TestDebugInvalidMessages:
             def fileno(self) -> int:
                 return -1
 
-        FakeProcess.stdout = FakeStdout()
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: FakeStdout = FakeStdout()
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                return None
+
         monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
         monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
         with pytest.raises(debug.DebugError) as caught:
