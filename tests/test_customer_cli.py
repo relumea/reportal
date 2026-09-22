@@ -91,7 +91,9 @@ class _FakeResponse:
 
 
 def _raises_http(url: str, code: int, body: bytes) -> Any:
-    raise urllib.error.HTTPError(url, code, "err", {}, io.BytesIO(body))
+    from email.message import Message
+
+    raise urllib.error.HTTPError(url, code, "err", Message(), io.BytesIO(body))
 
 
 class TestCallErrors:

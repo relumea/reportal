@@ -807,3 +807,37 @@ class TestStripeRequestErrors:
         self._client(monkeypatch, "unreachable")
         with pytest.raises(billing.BillingError, match="unreachable"):
             billing._stripe_request("/x", {}, idempotency_key="k")
+
+
+class TestBillingPortal:
+    def test_disabled_install_refuses(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(billing.PROVIDER_ENV, raising=False)
+        monkeypatch.delenv(billing.STRIPE_SECRET_ENV, raising=False)
+        import sqlite3 as _sqlite
+
+        with pytest.raises(billing.BillingError, match="not enabled"):
+            billing.start_billing_portal(_sqlite.connect(":memory:"), 1)
+
+    def test_manual_provider_returns_a_local_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sqlite3 as _sqlite
+
+        monkeypatch.setenv(billing.PROVIDER_ENV, billing.PROVIDER_MANUAL)
+        session = billing.start_billing_portal(_sqlite.connect(":memory:"), 7)
+        assert session.provider == billing.PROVIDER_MANUAL
+        assert "organisation=7" in session.url
+
+    def test_stripe_without_a_customer_is_a_409(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sqlite3 as _sqlite
+
+        from reportal import metering
+
+        conn = _sqlite.connect(":memory:")
+        conn.row_factory = _sqlite.Row
+        conn.execute(
+            f"CREATE TABLE {metering.SUBSCRIPTION_TABLE}"
+            " (organisation_id INTEGER PRIMARY KEY, customer_id TEXT NOT NULL DEFAULT '')"
+        )
+        with pytest.raises(billing.BillingError, match="no subscription"):
+            billing.start_billing_portal(conn, 4242)
