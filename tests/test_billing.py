@@ -734,3 +734,76 @@ class TestPeriodEndShapes:
             int(billing._wall_time()) + 900
         )
         assert billing.normalize_stripe_event(raw).current_period_end
+
+
+class TestStripeRequestErrors:
+    def test_unknown_provider_disables_billing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(billing.PROVIDER_ENV, "mystery")
+        assert billing.provider_name() == billing.PROVIDER_DISABLED
+        assert billing.billing_enabled() is False
+
+    def _client(self, monkeypatch: pytest.MonkeyPatch, behavior: str) -> list[dict[str, str]]:
+        _httpx = billing.httpx
+        seen: list[dict[str, str]] = []
+
+        class _Response:
+            status_code = 200 if behavior != "reject" else 402
+
+            @staticmethod
+            def json() -> dict[str, object]:
+                if behavior == "nonjson":
+                    raise ValueError("nope")
+                if behavior == "reject":
+                    return {"error": {"message": "card declined"}}
+                return {"ok": True}
+
+        class _Client:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def __enter__(self) -> object:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                del args
+
+            def post(self, url: str, data: object, headers: dict[str, str]) -> _Response:
+                del url, data
+                seen.append(headers)
+                if behavior == "timeout":
+                    raise _httpx.TimeoutException("slow")
+                if behavior == "unreachable":
+                    raise _httpx.ConnectError("down")
+                return _Response()
+
+        monkeypatch.setattr(billing.httpx, "Client", _Client)
+        return seen
+
+    def test_non_json_body_is_a_502(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._client(monkeypatch, "nonjson")
+        with pytest.raises(billing.BillingError) as caught:
+            billing._stripe_request("/x", {}, idempotency_key="k")
+        assert caught.value.status == 502
+
+    def test_provider_rejection_names_the_reason(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._client(monkeypatch, "reject")
+        with pytest.raises(billing.BillingError, match="card declined"):
+            billing._stripe_request("/x", {}, idempotency_key="k")
+
+    def test_transient_timeouts_exhaust_to_unreachable(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._client(monkeypatch, "timeout")
+        with pytest.raises(billing.BillingError, match="unreachable"):
+            billing._stripe_request("/x", {}, idempotency_key="k")
+
+    def test_connect_error_is_unreachable(
+        self, stripe_env: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._client(monkeypatch, "unreachable")
+        with pytest.raises(billing.BillingError, match="unreachable"):
+            billing._stripe_request("/x", {}, idempotency_key="k")
