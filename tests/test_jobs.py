@@ -1476,6 +1476,14 @@ class _StubEngine(engines.RebrewEngine):
         self.calls.append("pe_info")
         return {"machine": 0x14C, "sections": []}
 
+    def analyze(self, path: Any) -> dict[str, Any]:
+        self.calls.append("analyze")
+        return {"meta": {}, "findings": []}
+
+    def crypto_scan(self, path: Any) -> dict[str, Any]:
+        self.calls.append("crypto_scan")
+        return {"findings": [], "count": 0}
+
 
 class TestPerformPeInfo:
     def test_pe_info_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
@@ -1498,3 +1506,33 @@ class TestPerformPeInfo:
             store.SCAN_KIND_PE_INFO,
         )
         assert stored is not None
+
+    def test_triage_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="cd" * 32, name="demo.exe", path=str(target), size=2
+        )
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            result = jobs._perform_triage(conn, binary_id, {})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert result["meta"] == {}
+        assert stub.calls == ["analyze"]
+
+    def test_crypto_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="ef" * 32, name="demo.exe", path=str(target), size=2
+        )
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            result = jobs._perform_crypto(conn, binary_id, {})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert result["count"] == 0
+        assert stub.calls == ["crypto_scan"]
