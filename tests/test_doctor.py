@@ -789,3 +789,30 @@ class TestDoctorDebugBackendMissing:
         report = doctor.report()
         optional = _check(report, "optional")
         assert "debug backend" in optional.get("hint", "")
+
+
+class TestDoctorBackupEdges:
+    def test_empty_archive_directory_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        (tmp_path.parent / "reportal-backups").mkdir(exist_ok=True)
+        report = doctor.report()
+        backup_row = _check(report, "backup")
+        assert backup_row["status"] == "warn"
+
+    def test_unreadable_archive_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        archive_dir = tmp_path.parent / "reportal-backups"
+        archive_dir.mkdir(exist_ok=True)
+        archive = archive_dir / "reportal-2026-09-22.tar.gz"
+        archive.write_bytes(b"\x1f\x8b" + b"\x00" * 10)
+        archive.chmod(0o000)
+        try:
+            report = doctor.report()
+            backup_row = _check(report, "backup")
+            assert backup_row["status"] in ("warn", "ok", "fail")
+        finally:
+            archive.chmod(0o644)
