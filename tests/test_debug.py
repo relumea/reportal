@@ -406,15 +406,63 @@ class TestRegistryAndLedger:
             assert debug.get_backend("probe-backend") is backend
             assert backend in debug.registered_backends()
         finally:
-            from reportal.plugins import RegistryError
-
-            debug.BACKENDS[:] = [b for b in debug.BACKENDS if b.name != "probe-backend"]
-            with pytest.raises(RegistryError):
-                debug.unregister_backend("probe-backend")
+            debug.unregister_backend("probe-backend")
+        assert debug.get_backend("probe-backend") is None
 
     def test_refresh_backends_returns_names(self) -> None:
         names = debug.refresh_backends()
         assert "lldb-dap" in names
+
+    def test_a_foreign_origin_cannot_claim_a_registered_name(self) -> None:
+        from reportal.plugins import RegistryError
+
+        backend = debug.Backend("claim-backend", "claim-backend")
+        debug.register_backend(backend)
+        try:
+            with pytest.raises(RegistryError) as caught:
+                debug.register_backend(
+                    debug.Backend("claim-backend", "claim-backend"),
+                    origin="entry point 'claim-backend' (plug:backend)",
+                )
+            assert "single-source discipline" in str(caught.value)
+            assert debug.get_backend("claim-backend") is backend
+        finally:
+            debug.unregister_backend("claim-backend")
+
+    def test_a_rescan_from_one_origin_replaces_the_declaration(self) -> None:
+        first = debug.Backend("rescan-backend", "rescan-backend")
+        second = debug.Backend("rescan-backend", "rescan-backend")
+        origin = "entry point 'rescan-backend' (plug:backend)"
+        debug.register_backend(first, origin=origin)
+        try:
+            debug.register_backend(second, origin=origin)
+            assert debug.get_backend("rescan-backend") is second
+            names = [entry.name for entry in debug.registered_backends()]
+            assert names.count("rescan-backend") == 1
+        finally:
+            debug.unregister_backend("rescan-backend")
+
+    def test_a_plugin_cannot_take_the_builtin_backend_name(self) -> None:
+        from reportal.plugins import RegistryError
+
+        with pytest.raises(RegistryError):
+            debug.register_backend(
+                debug.Backend(debug.BUILTIN_BACKEND, "lldb-dap"),
+                origin="entry point 'lldb-dap' (plug:backend)",
+            )
+        assert debug.get_backend(debug.BUILTIN_BACKEND) is debug.BACKENDS[0]
+
+    def test_refresh_withdraws_a_vanished_entry_point(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        backend = debug.Backend("vanish-backend", "vanish-backend")
+        monkeypatch.setattr(
+            debug.plugins, "load", lambda *_args, **_kwargs: [("vanish", "plug:backend", backend)]
+        )
+        assert "vanish-backend" in debug.refresh_backends()
+        monkeypatch.setattr(debug.plugins, "load", lambda *_args, **_kwargs: [])
+        assert "vanish-backend" not in debug.refresh_backends()
+        assert debug.get_backend("vanish-backend") is None
 
     def test_unavailable_detail_names_the_missing_backend(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1452,3 +1500,319 @@ class TestSessionImage:
             debug.ensure_schema(conn)
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(debug_sessions)")}
             assert "image" in columns
+
+
+class TestDebugRemainingBranches:
+    def test_check_plugin_rejects_bad_registrations(self) -> None:
+        from reportal.plugins import RegistryError
+
+        with pytest.raises(RegistryError):
+            debug.register_backend(object(), origin="test")  # type: ignore[arg-type]
+        with pytest.raises(RegistryError):
+            debug.register_backend(debug.Backend("  ", "x"), origin="test")
+
+    def test_coverage_needs_functions_and_session(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "covedge.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            assert debug.observed_coverage(conn, binary_id) is None
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            assert debug.observed_coverage(conn, binary_id) is None
+            _ = analysis_id
+
+    def test_session_frames_skips_non_dicts(self) -> None:
+        assert debug._session_frames({}) == []
+        assert debug._session_frames({"transcript": "nope"}) == []
+        assert debug._session_frames({"transcript": ["nope", {"frames": ["nope"]}]}) == []
+        assert (
+            debug._session_frames(
+                {"transcript": [{"frames": [{"name": "", "instructionPointerReference": "0x1"}]}]}
+            )
+            == []
+        )
+        assert (
+            debug._session_frames(
+                {
+                    "transcript": [
+                        {"frames": [{"name": "_start", "instructionPointerReference": "0x1"}]}
+                    ]
+                }
+            )
+            == []
+        )
+
+    def test_proposals_skip_current_name_and_sized_containment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "gdb"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "gdb",
+                "argv": ["gdb"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [
+                    {
+                        "request": "stackTrace",
+                        "success": True,
+                        "frames": [
+                            {"name": "main", "instructionPointerReference": "0x1010"},
+                            {"name": "other", "instructionPointerReference": "0x9999"},
+                        ],
+                    },
+                ],
+                "notes": [],
+            },
+        )
+        db = _db(tmp_path, "propedge.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            store.upsert_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000,
+                name="main",
+                size=0x100,
+                status="STUB",
+            )
+            debug.run_session(conn, binary_id)
+            proposals = debug.session_proposals(conn, binary_id)
+            assert proposals is not None
+            assert proposals["count"] == 0
+
+    def test_apply_rejects_blank_and_missing_analysis(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        db = _db(tmp_path, "applyedge.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            function_id, _ = store.upsert_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000,
+                name="sub_1000",
+                size=0x10,
+                status="STUB",
+            )
+            with pytest.raises(ValueError):
+                debug.apply_session_proposal(conn, function_id=function_id, new_name="  ")
+            conn.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
+            conn.commit()
+            with pytest.raises(KeyError):
+                debug.apply_session_proposal(conn, function_id=function_id)
+
+
+class TestDebugProbeEdgePaths:
+    def test_dap_registers_without_a_group_uses_top_level(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os as _os
+
+        def frame(payload: dict[str, object]) -> bytes:
+            import json as _json
+
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        responses: list[dict[str, object]] = [
+            {"type": "response", "request_seq": 1, "command": "initialize", "success": True},
+            {"type": "event", "event": "initialized", "seq": 21},
+            {"type": "response", "request_seq": 3, "command": "configurationDone", "success": True},
+            {"type": "response", "request_seq": 2, "command": "launch", "success": True},
+            {
+                "type": "event",
+                "event": "stopped",
+                "seq": 22,
+                "body": {"threadId": 1, "reason": "entry"},
+            },
+            {
+                "type": "response",
+                "request_seq": 4,
+                "command": "threads",
+                "success": True,
+                "body": {"threads": []},
+            },
+            {
+                "type": "response",
+                "request_seq": 5,
+                "command": "stackTrace",
+                "success": True,
+                "body": {
+                    "stackFrames": [
+                        {"id": 9, "name": "main", "instructionPointerReference": "0x1000"}
+                    ]
+                },
+            },
+            {
+                "type": "response",
+                "request_seq": 6,
+                "command": "scopes",
+                "success": True,
+                "body": {"scopes": [{"name": "Locals", "variablesReference": 0}]},
+            },
+            {
+                "type": "response",
+                "request_seq": 7,
+                "command": "readMemory",
+                "success": True,
+                "body": {"data": ""},
+            },
+            {"type": "response", "request_seq": 8, "command": "disconnect", "success": True},
+        ]
+        blob = b"".join(frame(payload) for payload in responses)
+        chunks = [blob]
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = _FakePipe(b"")
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+            def kill(self) -> None:
+                return None
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        report = debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        assert "disconnect" in [e["request"] for e in report["transcript"]]
+
+    def test_qemu_stub_spawn_failure_is_invalid(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(debug.shutil, "which", lambda name: "/usr/bin/qemu-x86_64")
+
+        def boom(*args: object, **kwargs: object) -> object:
+            raise OSError("nope")
+
+        monkeypatch.setattr("subprocess.Popen", boom)
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"), qemu_arch="x86_64")
+        assert caught.value.code == debug.ERROR_INVALID
+
+    def test_gdb_spawn_failure_kills_a_live_stub(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(debug.shutil, "which", lambda name: "/usr/bin/qemu-x86_64")
+        killed: list[str] = []
+
+        class FakeStub:
+            def kill(self) -> None:
+                killed.append("stub")
+
+            def wait(self, timeout: float | None = None) -> int:
+                return 0
+
+        calls = {"n": 0}
+
+        def popen(*args: object, **kwargs: object) -> object:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return FakeStub()
+            raise OSError("nope")
+
+        monkeypatch.setattr("subprocess.Popen", popen)
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        with pytest.raises(debug.DebugError) as caught:
+            debug.probe_binary(sample, backend=debug.Backend("gdb", "gdb"), qemu_arch="x86_64")
+        assert caught.value.code == debug.ERROR_INVALID
+        assert killed == ["stub"]
+
+    def test_hung_backend_is_killed_on_timeout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os as _os
+        import subprocess as _subprocess
+
+        def frame(payload: dict[str, object]) -> bytes:
+            import json as _json
+
+            body = _json.dumps(payload).encode()
+            return b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body
+
+        responses: list[dict[str, object]] = [
+            {"type": "response", "request_seq": 1, "command": "initialize", "success": True},
+            {"type": "event", "event": "initialized", "seq": 21},
+            {"type": "response", "request_seq": 3, "command": "configurationDone", "success": True},
+            {"type": "response", "request_seq": 2, "command": "launch", "success": True},
+            {
+                "type": "event",
+                "event": "stopped",
+                "seq": 22,
+                "body": {"threadId": 1, "reason": "entry"},
+            },
+            {
+                "type": "response",
+                "request_seq": 4,
+                "command": "threads",
+                "success": True,
+                "body": {"threads": []},
+            },
+            {
+                "type": "response",
+                "request_seq": 5,
+                "command": "stackTrace",
+                "success": True,
+                "body": {"stackFrames": []},
+            },
+            {"type": "response", "request_seq": 6, "command": "disconnect", "success": True},
+        ]
+        blob = b"".join(frame(payload) for payload in responses)
+        chunks = [blob]
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                raise OSError("closed")
+
+        killed: list[str] = []
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = _FakePipe(b"")
+
+            def wait(self, timeout: float | None = None) -> int:
+                raise _subprocess.TimeoutExpired("lldb-dap", timeout or 0)
+
+            def kill(self) -> None:
+                killed.append("dap")
+
+        monkeypatch.setattr(_os, "read", lambda _f, _n: chunks.pop(0) if chunks else b"")
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/lldb-dap")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        report = debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
+        assert killed == ["dap"]
+        assert report["status"] == debug.STATUS_FINISHED
