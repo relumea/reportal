@@ -284,3 +284,38 @@ class TestWriteCommands:
         )
         assert result.exit_code == 0, result.output
         assert json.loads(result.stdout) == {"collections": [{"id": 1}]}
+
+
+class TestListAndEmit:
+    def test_functions_list_with_name_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_call(
+            method: str, path: str, *, server: str, token: str | None, body: object = None
+        ) -> object:
+            seen["path"] = path
+            return {"functions": []}
+
+        monkeypatch.setattr(customer_cli, "_call", fake_call)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            [
+                "functions",
+                "5",
+                "--name",
+                "main",
+                "--server",
+                "http://127.0.0.1:1",
+                "--token",
+                "x",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert seen["path"] == "/api/binaries/5/functions?name=main"
+
+    def test_emit_renders_tables_and_scalars(self, capsys: pytest.CaptureFixture[str]) -> None:
+        customer_cli._emit([{"id": 1}], False)
+        customer_cli._emit("plain", False)
+        out = capsys.readouterr().out
+        assert "plain" in out
