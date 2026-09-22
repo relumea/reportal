@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import sqlite3
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -512,3 +513,79 @@ class TestDerivedAndFunctionRead:
                 visible_to=ana,
             )
             assert member_analysis == []
+
+
+class TestDecodedHelpers:
+    def test_imm_rejects_non_bytes(self) -> None:
+        assert user_strings._imm("xyz") is None
+        assert user_strings._imm("0x100") is None
+        assert user_strings._imm("65") == 65
+
+    def test_slot_rejects_plain_registers(self) -> None:
+        assert user_strings._slot("rax") is None
+        assert user_strings._slot("rbp-0x20") == ("rbp", -0x20)
+        assert user_strings._slot("rsp+8") == ("rsp", 8)
+        assert user_strings._slot("rbp-zz") is None
+
+    def test_emit_run_skips_short_and_duplicate(self) -> None:
+        found: list[dict[str, str]] = []
+        seen = {"dup"}
+        user_strings._emit_run(found, seen, {0: ord("a")}, source="s", limit=10)
+        assert found == []
+        user_strings._emit_run(
+            found,
+            seen,
+            {0: ord("h"), 1: ord("i"), 2: ord("!"), 3: ord("!")},
+            source="s",
+            limit=10,
+        )
+        assert [entry["value"] for entry in found] == ["hi!!"]
+        user_strings._emit_run(
+            found,
+            seen,
+            {0: ord("h"), 1: ord("i"), 2: ord("!"), 3: ord("!")},
+            source="s",
+            limit=10,
+        )
+        assert len(found) == 1
+
+    def test_emit_run_stops_at_nul_and_non_printable(self) -> None:
+        found: list[dict[str, str]] = []
+        user_strings._emit_run(found, set(), {0: ord("a"), 1: 0, 2: ord("b")}, source="s", limit=10)
+        assert found == []
+        user_strings._emit_run(
+            found, set(), {0: 0x01, 1: 0x02, 2: 0x03, 3: 0x04}, source="s", limit=10
+        )
+        assert found == []
+
+    def test_xor_chain_decodes(self) -> None:
+        listing = textwrap.dedent(
+            """\
+            mov byte [rbp-0x1], 0x10
+            xor byte [rbp-0x1], 0x71
+            mov byte [rbp-0x2], 0x19
+            xor byte [rbp-0x2], 0x71
+            mov byte [rbp-0x3], 0x0c
+            xor byte [rbp-0x3], 0x71
+            mov byte [rbp-0x4], 0x0c
+            xor byte [rbp-0x4], 0x71
+            mov byte [rbp-0x5], 0x1e
+            xor byte [rbp-0x5], 0x71
+            """
+        ).strip()
+        decoded = user_strings.decoded_strings(listing)
+        assert any(entry["source"] == "xor" for entry in decoded)
+
+    def test_register_key_decodes(self) -> None:
+        listing = textwrap.dedent(
+            """\
+            mov al, 0x41
+            xor al, 0x20
+            mov byte [rbp-0x1], al
+            mov byte [rbp-0x2], al
+            mov byte [rbp-0x3], al
+            mov byte [rbp-0x4], al
+            """
+        ).strip()
+        decoded = user_strings.decoded_strings(listing)
+        assert decoded
