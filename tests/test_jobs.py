@@ -1795,3 +1795,27 @@ class TestSlowJobCallSite:
         finally:
             engines.set_engine(engines.RebrewEngine(enabled=False))
         assert any("job slow" in record.message for record in caplog.records)
+
+
+class TestSubmitParamValidation:
+    def test_non_numeric_min_confidence_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="min_confidence must be a number"):
+            jobs.submit(
+                conn,
+                kind="library",
+                binary_id=_binary(conn, tmp_path),
+                params={"min_confidence": "high"},
+            )
+
+    def test_out_of_range_min_confidence_is_rejected(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        with pytest.raises(ValueError, match="min_confidence must be between"):
+            jobs.submit(
+                conn,
+                kind="library",
+                binary_id=_binary(conn, tmp_path),
+                params={"min_confidence": 1.5},
+            )
