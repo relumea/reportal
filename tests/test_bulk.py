@@ -775,3 +775,31 @@ class TestSurfaceErrorPaths:
                     create=False,
                 )
         assert result["skipped"]
+
+
+class TestSurfaceHelpers:
+    def test_require_binary_unknown_id(self, conn: sqlite3.Connection) -> None:
+        def fail(status: int, error: str, detail: str = "") -> Exception:
+            return Exception(f"{status} {error} {detail}")
+
+        try:
+            surface.require_binary(conn, 424242, fail=fail)
+        except Exception as exc:
+            assert "404" in str(exc)
+        else:
+            raise AssertionError("unknown binary must raise")
+
+    def test_binary_file_missing_file(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        def fail(status: int, error: str, detail: str = "") -> Exception:
+            return Exception(f"{status} {error} {detail}")
+
+        target = tmp_path / "gone.exe"
+        binary_id = store.add_binary(
+            conn, sha256="ab" * 32, name="gone.exe", path=str(target), size=1
+        )
+        try:
+            surface.binary_file(conn, binary_id, fail=fail)
+        except Exception as exc:
+            assert "400" in str(exc)
+        else:
+            raise AssertionError("missing file must raise")
