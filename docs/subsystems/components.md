@@ -11,9 +11,12 @@ registration but refuses a duplicate name.
 
 - `Component` (frozen dataclass): `name`, `requires`, `provides`, `effect`, optional `revert`.
 - `Context`: `provide`, `revoke`, `require`, `get`, `has`, `seed`, `record`, `effects`,
-  `undo_plan`, `revert`, `subscribe`, `take_binding_change`. `RequirementError` is an absent
-  required name.
+  `undo_plan`, `revert`, `subscribe`, `take_binding_change`, `derive`, `drop`, `intercept`,
+  `load`, `spawn`. `RequirementError` is an absent required name.
 - `Effect`: `description`, `inverse`, optional `undo` descriptor, `kind`, `name`.
+- `EffectStep`: one load step (`context`, `effect`, `inverse`, `rest`); a None `rest` ends it.
+- `Fiber` (parent, context, retiring flag, states `FIBER_PENDING`/`ACTIVE`/`RETIRED`/`DISPOSED`,
+  committed view), `Inertia` (retirement handle), `FiberStateError`.
 - `Registration` (`component`, `origin`, `module_name`, `reloadable`, `entry_point`);
   `NotReloadableError`, `ComponentMissingError`.
 - `EffectHandler` (`conn`, `descriptor`) to entry dict. Kinds: `EFFECT_DISASM`,
@@ -44,6 +47,10 @@ registration but refuses a duplicate name.
   (`tests/test_components.py`).
 - `Context.revert` consumes the journal, walks inverses newest-first, keeps seeded names, and
   reports one failing inverse without stranding the rest (`tests/test_components.py`).
+- `derive` reads the parent and journals only the child's effects; `drop` detaches the realm;
+  `intercept` is a journaled effect a revert uninstalls (`tests/test_components.py`).
+- `Fiber.retire` deactivates children newest-first and settles one `Inertia`; a withdrawal reports
+  it (`tests/test_components.py`, `tests/test_pipeline.py`).
 - `journaled` flushes on a clean exit and writes nothing when the request raises
   (`tests/test_journal.py`).
 - `row-restore` updates an existing row and inserts a missing one, never `INSERT OR REPLACE`; a

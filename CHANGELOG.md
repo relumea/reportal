@@ -7,6 +7,11 @@ view renders it from here.
 
 ## Unreleased
 
+- The component model carries the paper's remaining mechanisms: derived realms
+  (`Context.derive`/`Context.drop`), dependency interception (`Context.intercept`), the reified
+  load (`Context.load`, `EffectStep`), fibers (`Fiber`, `Context.spawn`, `ComponentHost.fibers`)
+  and the retirement handle (`Inertia`). The gaps table in `docs/COMPONENTS.md` now holds only the
+  unchecked witness.
 - Read-only live-debug sessions (`debug.py`): opt-in probes over `lldb-dap`
   (DAP) and `gdb` (MI, or `qemu-<arch>` stubs via `--qemu`), stored as the
   `debug-session` scan with observed-function coverage, session rename

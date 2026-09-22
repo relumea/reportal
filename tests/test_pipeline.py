@@ -1647,3 +1647,46 @@ class TestWithdrawComponent:
         with pytest.raises(pipeline.NotWithdrawableError) as excinfo:
             pipeline.withdraw_component(conn, "bare")
         assert excinfo.value.reason == pipeline.REASON_NOTHING_TO_WITHDRAW
+
+
+class TestHostFibers:
+    def test_activation_hangs_one_fiber_off_the_root(self, conn: sqlite3.Connection) -> None:
+        components.register_component(_component("fibered", provides={"fibered-out"}))
+        host = pipeline.ComponentHost({})
+        host.activate("fibered")
+
+        fibers = host.fibers()
+        assert [fiber.component.name for fiber in fibers] == ["fibered"]
+        assert fibers[0].parent is not None
+        assert fibers[0].state == components.FIBER_ACTIVE
+        assert fibers[0].owner("fibered-out") is fibers[0]
+        assert not host.fibers()[0].owns_context
+
+    def test_a_failed_component_leaves_no_fiber(self, conn: sqlite3.Connection) -> None:
+        def boom(_ctx: Context) -> None:
+            raise RuntimeError("no")
+
+        components.register_component(_component("boom", provides={"boom-out"}, effect=boom))
+        host = pipeline.ComponentHost({})
+        host.activate("boom")
+        assert host.fibers() == ()
+        assert host.decisions()["boom"] == pipeline.STEP_FAILED
+
+    def test_withdrawal_returns_a_settled_retirement_handle(self, conn: sqlite3.Connection) -> None:
+        components.register_component(_component("fibered", provides={"fibered-out"}))
+        host = pipeline.ComponentHost({})
+        host.activate("fibered")
+        host.deactivate("fibered")
+
+        handle = host.last_retirement()
+        assert handle is not None
+        assert handle.wait(0)
+        assert handle.result()["status"] == components.FIBER_DISPOSED
+        assert host.fibers() == ()
+
+    def test_the_withdrawal_payload_carries_the_retirement(self, conn: sqlite3.Connection) -> None:
+        components.register_component(_component("pure", provides={"pure-out"}))
+        pipeline.live_host().activate("pure")
+        payload = pipeline.withdraw_component(conn, "pure")
+        assert payload["retirement"]["name"] == "pure"
+        assert payload["retirement"]["status"] == components.FIBER_DISPOSED

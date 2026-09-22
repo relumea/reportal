@@ -16,6 +16,14 @@ pipeline follows are implemented here:
   records its inverse through :meth:`Context.record`; one
   :meth:`Context.revert` applies them all newest-first, so a revert undoes
   both what a run bound and what it wrote.
+* **Realms, interception and fibers**: :meth:`Context.derive` gives a child
+  context that reads its parent and journals only its own effects, so one name
+  resolves differently in two contexts, and :meth:`Context.intercept` wraps the
+  reads of one name.  :class:`Fiber` is one instantiation of a component
+  (Definition 49) with its parent, its own coeffect table and its committed
+  view; :meth:`Fiber.retire` withdraws it and returns an :class:`Inertia`
+  handle.  :meth:`Context.load` exposes the journal as the paper's reified
+  effect iterator.
 
 Built-in components live in :mod:`reportal.pipeline`.  Third parties declare an
 entry point in the :data:`COMPONENT_ENTRY_POINT_GROUP` group whose value is
@@ -64,6 +72,16 @@ BUILTIN_ORIGIN = plugins.BUILTIN_ORIGIN
 CHANGE_PROVIDE = "provide"
 CHANGE_REVOKE = "revoke"
 CHANGE_RECORD = "record"
+CHANGE_INTERCEPT = "intercept"
+
+# The four lifecycle states of a fiber (Definition 49): created, providing its
+# declared names, withdrawing, and withdrawn.  ``retiring`` is the retirement
+# flag that rides beside the state, so a second withdrawal finds the first one
+# in flight instead of starting a new one.
+FIBER_PENDING = "pending"
+FIBER_ACTIVE = "active"
+FIBER_RETIRED = "retired"
+FIBER_DISPOSED = "disposed"
 
 # Status a revert reports for one applied inverse.
 EFFECT_REVERTED = "reverted"
@@ -83,6 +101,16 @@ _NO_DECLARATION = object()
 
 class RequirementError(LookupError):
     """A context value a component required is absent."""
+
+
+class FiberStateError(RuntimeError):
+    """A fiber was activated or spawned in a state that forbids it."""
+
+    def __init__(self, name: str, state: str, action: str) -> None:
+        self.name = name
+        self.state = state
+        self.action = action
+        super().__init__(f"cannot {action} fiber {name!r} in state {state!r}")
 
 
 class NotReloadableError(RuntimeError):
@@ -131,6 +159,27 @@ class Effect:
     name: str | None = None
 
 
+@dataclass(frozen=True)
+class EffectStep:
+    """One step of a load as a value (Definitions 17 and 18).
+
+    A step carries the context the step produced, the effect it performed, that
+    effect's own inverse, and the rest of the load, whose end is ``None`` (the
+    paper's ``Nothing``).  The rest is the continuation: a caller walks the load
+    by taking ``rest`` until it is None, and the inverse of a whole load is the
+    reverse-order pass the chain describes.
+    """
+
+    context: Context
+    effect: Effect
+    inverse: Callable[[], Any]
+    rest: EffectStep | None
+
+    def end(self) -> bool:
+        """True when this is the last step of the load."""
+        return self.rest is None
+
+
 class Context:
     """Named values plus the reversible journal of one pipeline run.
 
@@ -139,12 +188,60 @@ class Context:
     and written by components through :meth:`provide`; :meth:`revoke` withdraws
     one.  Every transformation journals its inverse, and every persistent write
     a component performs records its inverse through :meth:`record`.
+
+    A context may be derived from another (:meth:`derive`): the child reads the
+    parent's bindings, writes only into its own table, and journals only its own
+    effects, so the same name resolves to different values in two contexts.  That
+    is the paper's derived realization (Definition 23) and its realm isolation
+    (Definition 24); the derivation itself installs nothing on the parent and its
+    inverse is the identity, so :meth:`drop` discards it.  A read may also carry
+    cross-cutting behavior installed with :meth:`intercept` (Definition 28).
     """
 
-    def __init__(self, values: Mapping[str, Any] | None = None) -> None:
+    def __init__(
+        self, values: Mapping[str, Any] | None = None, *, parent: Context | None = None
+    ) -> None:
+        self._parent: Context | None = parent
         self._values: dict[str, Any] = dict(values or {})
         self._effects: list[Effect] = []
         self._subscribers: list[ChangeCallback] = []
+        self._interceptors: dict[str, list[Callable[[Any], Any]]] = {}
+        self._dropped = False
+
+    @property
+    def parent(self) -> Context | None:
+        """The context this one derives from, or None for a root context."""
+        return self._parent
+
+    def derive(self, values: Mapping[str, Any] | None = None) -> Context:
+        """A fresh context derived from this one (Definition 23).
+
+        The child reads every name this context binds, writes into a table of
+        its own, and notifies this context's subscribers of what it changes, so a
+        loader watching the parent still sees the child's bindings.  Deriving
+        installs nothing on the parent: the derivation's inverse is the identity,
+        which is what makes :meth:`drop` able to discard it without a trace.
+        """
+        return Context(values, parent=self)
+
+    def dropped(self) -> bool:
+        """True when this derived context has been discarded."""
+        return self._dropped
+
+    def drop(self) -> list[dict[str, Any]]:
+        """Discard a derived context: revert its own journal and detach it.
+
+        The revert applies this context's inverses newest-first, so the parent
+        never sees them as reversible effects of its own; detaching it means a
+        later read finds neither its values nor the parent's.  Returns the
+        revert report.  Dropping twice is a no-op.
+        """
+        if self._dropped:
+            return []
+        report = self.revert()
+        self._parent = None
+        self._dropped = True
+        return report
 
     def subscribe(self, callback: ChangeCallback) -> Callable[[], None]:
         """Register *callback*, called with ``(name, kind)`` on every change.
@@ -167,13 +264,64 @@ class Context:
         return unsubscribe
 
     def names(self) -> frozenset[str]:
-        """Every name currently bound, which is what a requirement is checked against."""
-        return frozenset(self._values)
+        """Every name currently bound, which is what a requirement is checked against.
+
+        A derived context reports its own bindings together with the ones it
+        reads through its parent, and a provider in either still satisfies a
+        requirement.
+        """
+        inherited = self._parent.names() if self._parent is not None else frozenset()
+        return inherited | frozenset(self._values)
 
     def _notify(self, name: str, kind: str) -> None:
-        """Tell every subscriber that *name* changed in the *kind* direction."""
+        """Tell every subscriber that *name* changed in the *kind* direction.
+
+        A derived context forwards to its parent, so a loader subscribed to the
+        context a run reads from sees a child's binding as a change of its own.
+        """
         for callback in tuple(self._subscribers):
             callback(name, kind)
+        if self._parent is not None:
+            self._parent._notify(name, kind)
+
+    def intercept(self, name: str, hook: Callable[[Any], Any]) -> Callable[[], None]:
+        """Wrap every read of *name* through this context (Definition 28).
+
+        *hook* receives the resolved value and returns what the reader sees, so
+        dependency access carries cross-cutting behavior without the component
+        that requires the name knowing about it.  Hooks apply in the order they
+        were installed, after the parent's own hooks for a name the parent binds.
+
+        Installing an interception is an effect: it is journaled, so
+        :meth:`revert` uninstalls it, and the returned inverse removes it early.
+        Removing a hook twice is a no-op.
+        """
+        self._interceptors.setdefault(name, []).append(hook)
+
+        def remove() -> None:
+            hooks = self._interceptors.get(name)
+            if hooks is None or hook not in hooks:
+                return
+            hooks.remove(hook)
+            if not hooks:
+                self._interceptors.pop(name, None)
+
+        self.record(f"intercept {name}", remove, kind=CHANGE_INTERCEPT)
+        return remove
+
+    def _intercepted(self, name: str, value: Any) -> Any:
+        """The value a read of *name* sees, after this context's own hooks."""
+        for hook in self._interceptors.get(name, ()):
+            value = hook(value)
+        return value
+
+    def _resolve(self, name: str) -> Any:
+        """The value bound to *name* here or in a parent, or the no-binding sentinel."""
+        if name in self._values:
+            return self._intercepted(name, self._values[name])
+        if self._parent is not None:
+            return self._parent._resolve(name)
+        return _NO_BINDING
 
     def _restore(self, name: str, previous: Any) -> None:
         """Put the binding of *name* back the way *previous* recorded it."""
@@ -221,22 +369,24 @@ class Context:
         self._notify(name, CHANGE_REVOKE)
 
     def require(self, name: str) -> Any:
-        """Return the value bound to *name*.
+        """Return the value bound to *name*, this context's or a parent's.
 
         Raises :class:`RequirementError` when nothing bound it, which is what a
         component sees when a dependency it needs did not produce its value.
         """
-        if name not in self._values:
+        value = self._resolve(name)
+        if value is _NO_BINDING:
             raise RequirementError(f"context has no value {name!r}")
-        return self._values[name]
+        return value
 
     def get(self, name: str, default: Any = None) -> Any:
         """Return the value bound to *name*, or *default* when there is none."""
-        return self._values.get(name, default)
+        value = self._resolve(name)
+        return default if value is _NO_BINDING else value
 
     def has(self, name: str) -> bool:
-        """True when a value is bound to *name*."""
-        return name in self._values
+        """True when a value is bound to *name*, here or in a parent."""
+        return self._resolve(name) is not _NO_BINDING
 
     def seed(self, name: str, value: Any) -> None:
         """Bind *name* outside the journal, the way the runner seeds a value.
@@ -268,6 +418,36 @@ class Context:
     def effects(self) -> tuple[Effect, ...]:
         """The journaled transformations in the order they happened."""
         return tuple(self._effects)
+
+    def load(self) -> EffectStep | None:
+        """The journal as a reified load: one step per effect, oldest first.
+
+        Each step names the context it produced (this one, since realization is
+        in place), the effect, that effect's inverse and the rest of the load.
+        Returns None when nothing was journaled, which is the paper's ``Nothing``
+        and the end of every chain.  Walking the chain and applying each
+        ``inverse`` in reverse order is what :meth:`revert` does.
+        """
+        step: EffectStep | None = None
+        for effect in reversed(self._effects):
+            step = EffectStep(context=self, effect=effect, inverse=effect.inverse, rest=step)
+        return step
+
+    def spawn(
+        self,
+        component: Component,
+        *,
+        parent: Fiber | None = None,
+        values: Mapping[str, Any] | None = None,
+    ) -> Fiber:
+        """Instantiate *component* once, over a context derived from this one.
+
+        This is one fiber of a component (Definition 49): its own coeffect table
+        is the derived realm, so two fibers of one component resolve a name to
+        different values.  *parent* is the fiber this one belongs to, whose
+        committed view and context it inherits.
+        """
+        return Fiber(component, parent=parent, context=self.derive(values))
 
     def undo_plan(self) -> list[dict[str, Any]]:
         """The JSON-serializable undo descriptors, in journal order."""
@@ -355,6 +535,153 @@ class Component:
     provides: frozenset[str]
     effect: Callable[[Context], None]
     revert: Callable[[Context], None] | None = None
+
+
+class Inertia:
+    """A handle on one fiber's retirement in flight (Section 4.4).
+
+    A withdrawal is a transition, not an instant: :meth:`Fiber.retire` records
+    the retirement before it deactivates anything, so a caller holding this
+    handle can wait for the deactivations the withdrawal causes instead of
+    assuming they already ran.  The transition runs in the process that asked
+    for it, so the handle is settled by the time ``retire`` returns; ``wait``
+    reports that fact rather than inventing an asynchronous gap.
+    """
+
+    def __init__(self, fiber: Fiber) -> None:
+        self.fiber = fiber
+        self._done = threading.Event()
+        self._payload: dict[str, Any] | None = None
+
+    def settle(self, payload: dict[str, Any]) -> None:
+        """Record the transition's outcome and release every waiter."""
+        self._payload = payload
+        self._done.set()
+
+    def done(self) -> bool:
+        """True when the retirement finished."""
+        return self._done.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Block until the retirement finishes; False when *timeout* expires."""
+        return self._done.wait(timeout)
+
+    def result(self) -> dict[str, Any]:
+        """The retirement's outcome; raises while the transition is in flight."""
+        if self._payload is None:
+            raise RuntimeError(f"fiber {self.fiber.component.name!r} is still retiring")
+        return dict(self._payload)
+
+
+class Fiber:
+    """One instantiation of a component (Definition 49).
+
+    A fiber carries its parent fiber, its own coeffect table (the context it was
+    given, derived by default), a retirement flag and the four lifecycle states
+    :data:`FIBER_PENDING`, :data:`FIBER_ACTIVE`, :data:`FIBER_RETIRED` and
+    :data:`FIBER_DISPOSED`.  Its committed view (the paper's omega) records which
+    fiber provided each declared name, so a name resolves to the fiber that
+    committed it rather than to whichever fiber wrote last elsewhere.
+
+    A fiber created with no context derives its own realm and reverts it when it
+    retires; one created over a shared context (the live composition does this)
+    leaves the bindings to its owner and only deactivates its children, its
+    component's ``revert`` and its own committed view.
+    """
+
+    def __init__(
+        self,
+        component: Component,
+        *,
+        parent: Fiber | None = None,
+        context: Context | None = None,
+    ) -> None:
+        self.component = component
+        self.parent = parent
+        self.owns_context = context is None
+        if context is not None:
+            self.context = context
+        elif parent is not None:
+            self.context = parent.context.derive()
+        else:
+            self.context = Context()
+        self.state = FIBER_PENDING
+        self.retiring = False
+        self.children: list[Fiber] = []
+        self._omega: dict[str, Fiber] = {}
+        self._retirement: Inertia | None = None
+
+    def activate(self) -> None:
+        """Run the component's effect and commit the names it provided."""
+        if self.state != FIBER_PENDING:
+            raise FiberStateError(self.component.name, self.state, "activate")
+        self.component.effect(self.context)
+        self.state = FIBER_ACTIVE
+        for name in sorted(self.component.provides):
+            self._omega[name] = self
+
+    def spawn(self, component: Component) -> Fiber:
+        """A child fiber of this one, over a realm derived from this fiber's."""
+        if self.state in (FIBER_RETIRED, FIBER_DISPOSED):
+            raise FiberStateError(self.component.name, self.state, "spawn")
+        child = Fiber(component, parent=self)
+        self.children.append(child)
+        return child
+
+    def owner(self, name: str) -> Fiber | None:
+        """The fiber whose committed view holds *name*, this one or an ancestor."""
+        if name in self._omega:
+            return self._omega[name]
+        return self.parent.owner(name) if self.parent is not None else None
+
+    def provided(self) -> dict[str, Fiber]:
+        """This fiber's committed view: every declared name and its owner."""
+        view = self.parent.provided() if self.parent is not None else {}
+        view.update(self._omega)
+        return view
+
+    def retire(self) -> Inertia:
+        """Withdraw this fiber and its children newest-first; return its handle.
+
+        The retirement flag is set before anything is deactivated, so a second
+        call finds the transition already in flight and returns the same handle.
+        Children retire in reverse spawn order, then the component's ``revert``
+        runs where it declares one, then an owned realm is dropped (which reverts
+        the fiber's own journal).  A fiber that never activated retires without
+        running anything.
+        """
+        if self._retirement is not None:
+            return self._retirement
+        handle = Inertia(self)
+        self._retirement = handle
+        self.retiring = True
+        self.state = FIBER_RETIRED
+        for child in reversed(list(self.children)):
+            child.retire()
+        reverted: bool | None = None
+        detail = ""
+        if self.component.revert is not None:
+            reverted = True
+            try:
+                self.component.revert(self.context)
+            except Exception as exc:  # the withdrawal still happens
+                reverted = False
+                detail = f"{type(exc).__name__}: {exc}"
+        self._omega.clear()
+        if self.owns_context:
+            self.context.drop()
+        self.children.clear()
+        self.retiring = False
+        self.state = FIBER_DISPOSED
+        handle.settle(
+            {
+                "name": self.component.name,
+                "status": FIBER_DISPOSED,
+                "reverted": reverted,
+                "detail": detail,
+            }
+        )
+        return handle
 
 
 @dataclass(frozen=True)

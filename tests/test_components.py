@@ -7,6 +7,7 @@ import shutil
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from plugin_helpers import EntryPoint as _EntryPoint
@@ -89,6 +90,31 @@ def _isolate_components() -> Iterator[None]:
 
 def _noop(ctx: Context) -> None:
     """An effect that does nothing."""
+
+
+def _component(
+    name: str,
+    *,
+    requires: set[str] | None = None,
+    provides: set[str] | None = None,
+    effect: Any = None,
+) -> Component:
+    """A component for the fiber tests: no work unless one is given."""
+    return Component(
+        name=name,
+        requires=frozenset(requires or ()),
+        provides=frozenset(provides or ()),
+        effect=effect if effect is not None else _noop,
+    )
+
+
+def _providing(name: str, value: Any) -> Any:
+    """An effect that binds *name* to *value* on the context it is given."""
+
+    def effect(ctx: Context) -> None:
+        ctx.provide(name, value)
+
+    return effect
 
 
 class TestContext:
@@ -542,3 +568,243 @@ class TestNotifyReentrancy:
         ctx.provide("a", 1)
 
         assert seen == [("a", CHANGE_PROVIDE), ("a", CHANGE_PROVIDE)]
+
+
+class TestDerivedRealm:
+    def test_a_derived_context_reads_the_parent_and_writes_its_own(self) -> None:
+        parent = Context({"seed": 1})
+        child = parent.derive()
+        assert child.parent is parent
+        assert child.require("seed") == 1
+        assert child.names() == frozenset({"seed"})
+        child.provide("own", 2)
+        assert child.require("own") == 2
+        assert not parent.has("own")
+        assert parent.names() == frozenset({"seed"})
+
+    def test_two_derived_contexts_resolve_one_name_differently(self) -> None:
+        parent = Context({"name": "outer"})
+        first, second = parent.derive({"name": "first"}), parent.derive({"name": "second"})
+        assert (first.require("name"), second.require("name")) == ("first", "second")
+        assert parent.require("name") == "outer"
+
+    def test_a_child_change_reaches_the_parent_subscriber(self) -> None:
+        parent = Context()
+        seen: list[tuple[str, str]] = []
+        parent.subscribe(lambda name, kind: seen.append((name, kind)))
+        parent.derive().provide("child", 1)
+        assert seen == [("child", CHANGE_PROVIDE)]
+
+    def test_dropping_a_derived_context_reverts_only_its_own_journal(self) -> None:
+        parent = Context()
+        child = parent.derive()
+        child.provide("child", 1)
+        parent.provide("parent", 2)
+        undo = [entry["description"] for entry in child.drop()]
+        assert undo == ["provide child"]
+        assert child.dropped()
+        assert not child.has("parent")
+        assert parent.require("parent") == 2
+
+    def test_dropping_twice_changes_nothing(self) -> None:
+        child = Context().derive()
+        child.provide("a", 1)
+        assert len(child.drop()) == 1
+        assert child.drop() == []
+
+
+class TestInterception:
+    def test_a_hook_wraps_every_read(self) -> None:
+        ctx = Context({"count": 1})
+        ctx.intercept("count", lambda value: value + 1)
+        assert ctx.require("count") == 2
+        assert ctx.get("count") == 2
+
+    def test_hooks_apply_in_install_order(self) -> None:
+        ctx = Context({"v": "x"})
+        ctx.intercept("v", lambda value: value + "1")
+        ctx.intercept("v", lambda value: value + "2")
+        assert ctx.require("v") == "x12"
+
+    def test_revert_uninstalls_the_hook(self) -> None:
+        ctx = Context({"count": 1})
+        ctx.intercept("count", lambda value: value + 1)
+        ctx.revert()
+        assert ctx.require("count") == 1
+        assert ctx.effects() == ()
+
+    def test_removing_the_hook_early_and_twice_is_a_noop(self) -> None:
+        ctx = Context({"count": 1})
+        remove = ctx.intercept("count", lambda value: value + 1)
+        remove()
+        remove()
+        assert ctx.require("count") == 1
+
+    def test_a_parent_hook_applies_to_a_derived_read(self) -> None:
+        parent = Context({"count": 1})
+        parent.intercept("count", lambda value: value * 10)
+        assert parent.derive().require("count") == 10
+
+
+class TestLoadSteps:
+    def test_an_empty_context_loads_nothing(self) -> None:
+        assert Context().load() is None
+
+    def test_the_load_is_a_chain_that_ends_in_nothing(self) -> None:
+        ctx = Context()
+        ctx.provide("first", 1)
+        ctx.provide("second", 2)
+        step = ctx.load()
+        assert step is not None
+        assert [step.effect.description, step.rest.effect.description if step.rest else ""] == [
+            "provide first",
+            "provide second",
+        ]
+        assert step.rest is not None and step.rest.end()
+        assert step.context is ctx
+
+    def test_walking_the_load_applies_the_inverses_newest_first(self) -> None:
+        ctx = Context()
+        ctx.provide("first", 1)
+        ctx.provide("second", 2)
+        order: list[str] = []
+        steps: list[components.EffectStep] = []
+        step = ctx.load()
+        while step is not None:
+            steps.append(step)
+            step = step.rest
+        for item in reversed(steps):
+            order.append(item.effect.description)
+            item.inverse()
+        assert order == ["provide second", "provide first"]
+        assert ctx.names() == frozenset()
+
+
+class TestFiber:
+    def test_a_fiber_commits_the_names_it_provides(self) -> None:
+        component = _component("fiber", provides={"fiber-out"}, effect=_providing("fiber-out", 1))
+        fiber = components.Fiber(component)
+        fiber.activate()
+        assert fiber.state == components.FIBER_ACTIVE
+        assert fiber.owner("fiber-out") is fiber
+        assert fiber.provided() == {"fiber-out": fiber}
+        assert fiber.context.require("fiber-out") == 1
+
+    def test_a_child_fiber_reads_the_parent_realm_and_owns_its_value(self) -> None:
+        parent = components.Fiber(
+            _component("root", provides={"root-out"}, effect=_providing("root-out", 1))
+        )
+        parent.activate()
+        child = parent.spawn(
+            _component("child", provides={"child-out"}, effect=_providing("child-out", 2))
+        )
+        child.activate()
+        assert child.context.parent is parent.context
+        assert child.context.require("root-out") == 1
+        assert child.owner("root-out") is parent
+        assert child.owner("child-out") is child
+
+    def test_retiring_a_fiber_reverts_its_realm_and_children(self) -> None:
+        parent = components.Fiber(
+            _component("root", provides={"root-out"}, effect=_providing("root-out", 1))
+        )
+        parent.activate()
+        child = parent.spawn(
+            _component("child", provides={"child-out"}, effect=_providing("child-out", 2))
+        )
+        child.activate()
+        order: list[str] = []
+        parent.component = Component(
+            "root",
+            frozenset(),
+            frozenset({"root-out"}),
+            parent.component.effect,
+            revert=lambda ctx: order.append("root"),
+        )
+        child.component = Component(
+            "child",
+            frozenset(),
+            frozenset({"child-out"}),
+            child.component.effect,
+            revert=lambda ctx: order.append("child"),
+        )
+        handle = parent.retire()
+        assert order == ["child", "root"]
+        assert handle.done()
+        assert parent.state == components.FIBER_DISPOSED
+        assert child.state == components.FIBER_DISPOSED
+        assert parent.context.names() == frozenset()
+
+    def test_retire_is_idempotent_and_returns_one_handle(self) -> None:
+        fiber = components.Fiber(_component("one"))
+        first = fiber.retire()
+        second = fiber.retire()
+        assert first is second
+        assert first.result()["status"] == components.FIBER_DISPOSED
+
+    def test_activating_twice_is_refused(self) -> None:
+        fiber = components.Fiber(_component("one"))
+        fiber.activate()
+        with pytest.raises(components.FiberStateError):
+            fiber.activate()
+
+    def test_spawning_after_retirement_is_refused(self) -> None:
+        fiber = components.Fiber(_component("one"))
+        fiber.retire()
+        with pytest.raises(components.FiberStateError):
+            fiber.spawn(_component("child"))
+
+    def test_a_failing_effect_reports_through_the_caller(self) -> None:
+        def boom(_ctx: Context) -> None:
+            raise RuntimeError("no")
+
+        fiber = components.Fiber(_component("boom", effect=boom))
+        with pytest.raises(RuntimeError):
+            fiber.activate()
+        assert fiber.state == components.FIBER_PENDING
+
+    def test_the_inertia_handle_reports_a_revert_failure(self) -> None:
+        def bad_revert(_ctx: Context) -> None:
+            raise RuntimeError("cannot undo")
+
+        fiber = components.Fiber(
+            Component("one", frozenset(), frozenset(), lambda _ctx: None, revert=bad_revert)
+        )
+        fiber.activate()
+        outcome = fiber.retire().result()
+        assert outcome["reverted"] is False
+        assert "cannot undo" in outcome["detail"]
+
+    def test_context_spawn_derives_a_realm(self) -> None:
+        ctx = Context({"seed": 1})
+        fiber = ctx.spawn(_component("spawned", provides={"out"}, effect=_providing("out", 2)))
+        assert fiber.context.parent is ctx
+        fiber.activate()
+        assert ctx.has("seed")
+        assert not ctx.has("out")
+        assert fiber.context.require("out") == 2
+        assert fiber.retire().done()
+
+
+class TestFiberEdges:
+    def test_a_bound_none_is_a_value_not_a_default(self) -> None:
+        ctx = Context({"none": None})
+        assert ctx.has("none")
+        assert ctx.get("none", "fallback") is None
+
+    def test_an_unowned_name_has_no_owner_fiber(self) -> None:
+        fiber = components.Fiber(_component("lonely"))
+        assert fiber.owner("nothing") is None
+
+    def test_a_pending_inertia_has_no_result_yet(self) -> None:
+        fiber = components.Fiber(_component("one"))
+        handle = components.Inertia(fiber)
+        assert not handle.done()
+        with pytest.raises(RuntimeError):
+            handle.result()
+
+    def test_retiring_a_fiber_that_never_activated_runs_nothing(self) -> None:
+        fiber = components.Fiber(_component("one"))
+        outcome = fiber.retire().result()
+        assert outcome["reverted"] is None
+        assert outcome["detail"] == ""

@@ -54,6 +54,8 @@ from reportal.components import (
     Component,
     Context,
     Effect,
+    Fiber,
+    Inertia,
 )
 from reportal.effects import (
     EFFECT_AI_ARTIFACT,
@@ -1393,6 +1395,12 @@ class ComponentHost:
     downstream that became ready, in dependency order.  ``sync`` re-reads the
     registry after a reload without touching the live context or the active
     set.
+
+    Each activation is one :class:`reportal.components.Fiber` (Definition 49)
+    hung off the host's root fiber, so the host keeps a tree of instantiations
+    with each fiber's committed view, and each withdrawal returns an
+    :class:`reportal.components.Inertia` handle a caller can wait on
+    (Section 4.4).
     """
 
     def __init__(
@@ -1411,6 +1419,13 @@ class ComponentHost:
         self._active: list[str] = []
         self._decisions: dict[str, str] = {}
         self._journal: list[dict[str, Any]] = []
+        # One fiber per component this host activated (Definition 49): its parent
+        # is the host's root fiber, its context is the host's, and its committed
+        # view records the names it provided.  Retirements are kept so a caller
+        # can wait on the withdrawal it caused (Section 4.4).
+        self._root_fiber = Fiber(_ROOT_COMPONENT)
+        self._fibers: dict[str, Fiber] = {}
+        self._retirements: list[Inertia] = []
 
     def _check_providers(self) -> None:
         """Refuse a live composition in which two enabled components share a name."""
@@ -1542,10 +1557,16 @@ class ComponentHost:
         )
 
     def _run(self, component: Component) -> dict[str, Any]:
-        """Run one component's effect and record the decision it produced."""
+        """Run one component's effect as one fiber and record the decision.
+
+        Activation goes through the fiber (Definition 49), so a component the
+        host activated has an instantiation carrying its parent, its coeffect
+        table and its committed view; a case that raises leaves no fiber behind.
+        """
         started = _monotonic()
+        fiber = Fiber(component, parent=self._root_fiber, context=self._ctx)
         try:
-            component.effect(self._ctx)
+            fiber.activate()
         except Exception as exc:  # a failing component is a failed step, not a failed host
             detail = _failure_reason(exc)
             if component.revert is not None:
@@ -1561,6 +1582,7 @@ class ComponentHost:
                 "duration_ms": _duration_ms(started),
             }
         else:
+            self._fibers[component.name] = fiber
             self._active.append(component.name)
             self._decisions[component.name] = STEP_DONE
             entry = {
@@ -1573,10 +1595,17 @@ class ComponentHost:
         return entry
 
     def _withdraw(self, component: Component) -> dict[str, Any]:
-        """Mark one component inactive, calling its revert when declared."""
+        """Mark one component inactive, retiring its fiber where it has one."""
         reverted: bool | None = None
         detail = ""
-        if component.revert is not None:
+        fiber = self._fibers.pop(component.name, None)
+        if fiber is not None:
+            handle = fiber.retire()
+            self._retirements.append(handle)
+            outcome = handle.result()
+            reverted = outcome["reverted"]
+            detail = str(outcome["detail"])
+        elif component.revert is not None:
             reverted = True
             try:
                 component.revert(self._ctx)
@@ -1596,6 +1625,22 @@ class ComponentHost:
         self._journal.append(entry)
         return entry
 
+    def fibers(self) -> tuple[Fiber, ...]:
+        """The instantiations this host activated, in activation order."""
+        return tuple(
+            self._fibers[component.name]
+            for component in self._registered
+            if component.name in self._fibers
+        )
+
+    def retirements(self) -> tuple[Inertia, ...]:
+        """The withdrawal handles this host produced, oldest first."""
+        return tuple(self._retirements)
+
+    def last_retirement(self) -> Inertia | None:
+        """The most recent withdrawal handle, or None when nothing was withdrawn."""
+        return self._retirements[-1] if self._retirements else None
+
     def _revoke_outputs(self, component: Component) -> list[str]:
         """Revoke the names *component* still has bound, newest dependency first."""
         revoked = sorted(name for name in component.provides if self._ctx.has(name))
@@ -1609,6 +1654,10 @@ class ComponentHost:
 # A withdrawal acts on one process-wide host, so a component this process
 # withdrew stays withdrawn until it composes again.  reportal is one process
 # over one SQLite file, so there is one live composition to withdraw from.
+
+# The root fiber of a live composition: no component, no parent.  Every active
+# component's fiber hangs off it, which is what makes the instantiations a tree.
+_ROOT_COMPONENT = Component("", frozenset(), frozenset(), lambda _ctx: None)
 
 _live_host: ComponentHost | None = None
 
@@ -1661,15 +1710,23 @@ def withdraw_component(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
         host.sync()
         host.context.seed(SEED_CONN, conn)
         before = len(host.context.effects())
+        retirements_before = len(host.retirements())
         payload = host.deactivate(name)
         effects = host.context.effects()[before:]
+        handle = host.retirements()[-1] if len(host.retirements()) > retirements_before else None
     with journal.journaled(conn, journal.new_action()) as log:
         for effect in effects:
             if effect.undo is not None:
                 log.record(
                     str(effect.undo.get("kind", effect.kind)), effect.description, effect.undo
                 )
-    return {**log.attach(payload), "name": name, "journaled": log.recorded() > 0}
+    retirement = handle.result() if handle is not None else None
+    return {
+        **log.attach(payload),
+        "name": name,
+        "journaled": log.recorded() > 0,
+        "retirement": retirement,
+    }
 
 
 # ── Runner ─────────────────────────────────────────────────────────
