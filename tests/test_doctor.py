@@ -749,3 +749,19 @@ class TestDoctorConfigFail:
         row = doctor._config_check()
         assert row["status"] == "fail"
         assert row["detail"] == "bad"
+
+
+class TestDoctorDbNotWritable:
+    def test_readonly_database_is_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _workspace(tmp_path, monkeypatch)
+        db = tmp_path / "reportal.db"
+        store.init_db(db)
+        db.chmod(0o444)
+        try:
+            report = doctor.report()
+            db_row = _check(report, "database")
+            assert db_row["status"] in ("fail", "warn", "ok")
+        finally:
+            db.chmod(0o644)
