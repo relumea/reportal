@@ -935,3 +935,39 @@ class TestCommentsAndTriage:
         fake_llm.response = "[1, 2]"
         with pytest.raises(llm.LlmError, match="not a JSON object"):
             llm.function_triage(self.CODE)
+
+
+class TestLlmGuards:
+    def test_usage_without_counts_records_nothing(self) -> None:
+        from types import SimpleNamespace
+
+        seen: list[tuple[int, int, str]] = []
+        partial = SimpleNamespace(usage=SimpleNamespace(prompt_tokens="x"))
+        with llm.recording_usage(lambda a, b, c: seen.append((a, b, c))):
+            llm._report_usage(partial, "m")
+        assert seen == []
+
+    def test_finish_reason_defaults_to_empty(self) -> None:
+        assert llm._finish_reason({}) == ""
+        assert llm._finish_reason({"choices": "nope"}) == ""
+        assert llm._finish_reason({"choices": [{"finish_reason": 42}]}) == ""
+        assert llm._finish_reason({"choices": [{"finish_reason": "stop"}]}) == "stop"
+
+    def test_sdk_transport_error_is_an_llm_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from openai import OpenAIError
+
+        client = llm.LlmClient(llm.LlmConfig(endpoint="http://llm.local/v1", model="m"))
+
+        class _Completions:
+            def create(self, **kwargs: object) -> object:
+                raise OpenAIError("down")
+
+        class _Chat:
+            completions = _Completions()
+
+        class _Sdk:
+            chat = _Chat()
+
+        monkeypatch.setattr(client, "_sdk", lambda: _Sdk())
+        with pytest.raises(llm.LlmError):
+            client.chat([{"role": "user", "content": "hi"}])
