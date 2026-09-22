@@ -181,6 +181,8 @@ class TestOptional:
         monkeypatch.setenv(debug.IMAGE_ENV, "/no/such/image.qcow2")
         row = _check(doctor.report(), "optional")
         assert "debug_image=set" in row["detail"]
+        assert row["status"] == "warn"
+        assert "is not a file" in row["hint"]
 
     def test_remote_sources_without_a_key_warn(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
