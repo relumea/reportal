@@ -1128,3 +1128,17 @@ class TestElfRefusals:
         _struct.pack_into("<H", elf, 0x3C, 0xFFFF)
         with pytest.raises(symbols.UnreadableSymbolError):
             symbols.parse(bytes(elf))
+
+
+class TestSymbolsEdges:
+    def test_bad_link_reads_no_symbols(self) -> None:
+        elf = build_elf([(".symtab", b"\x00" * 24, SHT_SYMTAB, 99)])
+        result = symbols.parse(elf)
+        assert result["symbols"] == []
+
+    def test_zero_length_dwarf_unit_ends_the_scan(self) -> None:
+        assert symbols._units(b"\x00\x00\x00\x00rest", byteorder="little") == []
+
+    def test_truncated_leb128_is_unreadable(self) -> None:
+        with pytest.raises(symbols.UnreadableSymbolError):
+            symbols._uleb(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80", 0)
