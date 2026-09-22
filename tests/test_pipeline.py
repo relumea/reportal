@@ -1690,3 +1690,27 @@ class TestHostFibers:
         payload = pipeline.withdraw_component(conn, "pure")
         assert payload["retirement"]["name"] == "pure"
         assert payload["retirement"]["status"] == components.FIBER_DISPOSED
+
+    def test_sync_retires_a_fiber_whose_declaration_left_the_registry(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        components.register_component(
+            _component(
+                "fibered",
+                provides={"fibered-out"},
+                effect=lambda ctx: ctx.provide("fibered-out", 1),
+            )
+        )
+        host = pipeline.ComponentHost({})
+        host.activate("fibered")
+        assert host.context.has("fibered-out")
+
+        components.unregister_component("fibered")
+        host.sync()
+
+        assert host.fibers() == ()
+        assert host.active() == ()
+        assert not host.context.has("fibered-out")
+        assert host.decisions()["fibered"] == pipeline.STEP_DEACTIVATED
+        handle = host.last_retirement()
+        assert handle is not None and handle.done()

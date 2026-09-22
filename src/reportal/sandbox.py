@@ -892,7 +892,9 @@ def refresh_runners() -> list[str]:
     a warning there, and a second origin claiming a live name is refused here
     rather than replacing it.  The inverse of a discovery is applied first: a
     name an earlier refresh discovered whose entry point is gone is withdrawn,
-    while the runner reportal ships and any in-process registration stay.
+    while the runner reportal ships and any in-process registration stay.  A
+    scan that fails part-way still records what it registered, so the next
+    refresh can withdraw those names rather than leaving them untracked.
     """
     scan = list(plugins.load(RUNNER_ENTRY_POINT_GROUP, Runner, "Runner"))
     discovered = {plugin.name for _name, _value, plugin in scan}
@@ -900,11 +902,16 @@ def refresh_runners() -> list[str]:
         vanished = sorted(_DISCOVERED_RUNNERS - discovered)
     for name in vanished:
         unregister_runner(name)
-    for name, value, plugin in scan:
-        register_runner(plugin, origin=plugins.origin(name, value))
+    registered: set[str] = set()
+    try:
+        for name, value, plugin in scan:
+            register_runner(plugin, origin=plugins.origin(name, value))
+            registered.add(plugin.name)
+    finally:
+        with _RUNNERS_LOCK:
+            _DISCOVERED_RUNNERS.clear()
+            _DISCOVERED_RUNNERS.update(registered)
     with _RUNNERS_LOCK:
-        _DISCOVERED_RUNNERS.clear()
-        _DISCOVERED_RUNNERS.update(discovered)
         return [runner.name for runner in RUNNERS]
 
 

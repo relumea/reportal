@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from pathlib import Path
@@ -1816,3 +1817,36 @@ class TestDebugProbeEdgePaths:
         report = debug.probe_binary(sample, backend=debug.Backend("lldb-dap", "lldb-dap"))
         assert killed == ["dap"]
         assert report["status"] == debug.STATUS_FINISHED
+
+
+class TestRefreshFailure:
+    def test_a_failed_rescan_still_tracks_what_it_registered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal.plugins import RegistryError
+
+        kept = debug.Backend("kept-backend", "kept-backend")
+        clash = debug.Backend("clash-backend", "clash-backend")
+        debug.register_backend(clash)
+        try:
+            monkeypatch.setattr(
+                debug.plugins,
+                "load",
+                lambda *_args, **_kwargs: [
+                    ("keep", "plug:backend", kept),
+                    ("clash", "plug:backend", clash),
+                ],
+            )
+            with pytest.raises(RegistryError):
+                debug.refresh_backends()
+            assert debug.get_backend("kept-backend") is kept
+
+            monkeypatch.setattr(debug.plugins, "load", lambda *_args, **_kwargs: [])
+            debug.unregister_backend("clash-backend")
+            assert "kept-backend" not in debug.refresh_backends()
+        finally:
+            from reportal.plugins import RegistryError as _RegistryError
+
+            for name in (kept.name, clash.name):
+                with contextlib.suppress(_RegistryError):
+                    debug.unregister_backend(name)

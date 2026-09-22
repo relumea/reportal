@@ -777,3 +777,31 @@ class TestMcp:
             assert exc.error == sandbox.ERROR_DISABLED
         else:  # pragma: no cover - the assertion is the point
             raise AssertionError("a disabled install must be a tool error")
+
+    def test_a_failed_rescan_still_tracks_what_it_registered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reportal.plugins import RegistryError
+
+        kept, clash = sandbox.Runner("kept-runner", "sh"), sandbox.Runner("clash-runner", "sh")
+        sandbox.register_runner(clash)
+        try:
+            monkeypatch.setattr(
+                sandbox.plugins,
+                "load",
+                lambda *_args, **_kwargs: [
+                    ("keep", "plug:runner", kept),
+                    ("clash", "plug:runner", clash),
+                ],
+            )
+            with pytest.raises(RegistryError):
+                sandbox.refresh_runners()
+            assert sandbox.get_runner("kept-runner") is kept
+
+            monkeypatch.setattr(sandbox.plugins, "load", lambda *_args, **_kwargs: [])
+            sandbox.unregister_runner("clash-runner")
+            assert "kept-runner" not in sandbox.refresh_runners()
+        finally:
+            for name in (kept.name, clash.name):
+                with contextlib.suppress(Exception):
+                    sandbox.unregister_runner(name)

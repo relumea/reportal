@@ -214,6 +214,10 @@ export function DataTypesPanel({
   useEffect(() => {
     setDraftSearch(search);
   }, [search]);
+  // The panel is the only writer of the published type-edit restore, so its
+  // unmount withdraws it: a focused field that unmounts fires no blur, and the
+  // stale closure would otherwise stay on the global Escape handler.
+  useEffect(() => () => setTypeEditRestore(null), []);
   useEffect(() => {
     if (draftSearch === search) return undefined;
     const handle = window.setTimeout(() => apply({ search: draftSearch }), SEARCH_DEBOUNCE_MS);

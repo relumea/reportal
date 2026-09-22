@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- A live composition retires the fiber of a component whose declaration left the registry
+  (`ComponentHost.sync`), and a plugin rescan that fails part-way still tracks what it registered,
+  so the next refresh can withdraw those names.
+- The data-types panel withdraws its published type-edit restore on unmount, so a focused field
+  that unmounts without a blur leaves no stale closure on the global Escape handler.
+
 - The component model carries the paper's remaining mechanisms: derived realms
   (`Context.derive`/`Context.drop`), dependency interception (`Context.intercept`), the reified
   load (`Context.load`, `EffectStep`), fibers (`Fiber`, `Context.spawn`, `ComponentHost.fibers`)

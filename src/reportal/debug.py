@@ -345,7 +345,9 @@ def refresh_backends() -> list[str]:
     A second origin claiming a live name is refused rather than replacing it,
     and the inverse of a discovery is applied first: a name an earlier refresh
     discovered whose entry point is gone is withdrawn, while the backends
-    reportal ships and any in-process registration stay.
+    reportal ships and any in-process registration stay.  A scan that fails
+    part-way still records what it registered, so the next refresh can withdraw
+    those names rather than leaving them untracked.
     """
     scan = list(plugins.load(BACKEND_ENTRY_POINT_GROUP, Backend, "Backend"))
     discovered = {plugin.name for _name, _value, plugin in scan}
@@ -353,11 +355,16 @@ def refresh_backends() -> list[str]:
         vanished = sorted(_DISCOVERED_BACKENDS - discovered)
     for name in vanished:
         unregister_backend(name)
-    for name, value, plugin in scan:
-        register_backend(plugin, origin=plugins.origin(name, value))
+    registered: set[str] = set()
+    try:
+        for name, value, plugin in scan:
+            register_backend(plugin, origin=plugins.origin(name, value))
+            registered.add(plugin.name)
+    finally:
+        with _BACKENDS_LOCK:
+            _DISCOVERED_BACKENDS.clear()
+            _DISCOVERED_BACKENDS.update(registered)
     with _BACKENDS_LOCK:
-        _DISCOVERED_BACKENDS.clear()
-        _DISCOVERED_BACKENDS.update(discovered)
         return [backend.name for backend in BACKENDS]
 
 

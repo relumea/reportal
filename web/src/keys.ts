@@ -392,7 +392,8 @@ export function clickFocusedSave(): boolean {
 
 let typeEditRestore: (() => boolean) | null = null;
 
-/** Publish the focused type field's restore; DataTypesPanel is the only writer. */
+/** Publish the focused type field's restore; DataTypesPanel is the only writer,
+ * and it publishes null on blur and again when the panel unmounts. */
 export function setTypeEditRestore(handler: (() => boolean) | null): void {
   typeEditRestore = handler;
 }

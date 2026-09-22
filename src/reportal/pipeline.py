@@ -1459,14 +1459,39 @@ class ComponentHost:
 
         The re-read composition is checked the way the constructor checks it: a
         reloaded declaration that claims a name another component provides is
-        refused here rather than running beside it.
+        refused here rather than running beside it.  An instantiation whose
+        declaration has left the registry is retired: no later call can name it
+        (``deactivate`` resolves through the registry), so leaving its fiber
+        active would be a contribution with no reachable inverse.
         """
         candidate = list(components.components())
         components.assert_unique_providers(
             [component for component in candidate if component.name not in self._disabled]
         )
         self._registered = candidate
+        self._retire_unregistered()
         return tuple(self._registered)
+
+    def _retire_unregistered(self) -> None:
+        """Retire every active fiber the re-read registry no longer declares."""
+        declared = {component.name for component in self._registered}
+        for name in [name for name in self._fibers if name not in declared]:
+            fiber = self._fibers.pop(name)
+            handle = fiber.retire()
+            self._retirements.append(handle)
+            self._revoke_outputs(fiber.component)
+            if name in self._active:
+                self._active.remove(name)
+            self._decisions[name] = STEP_DEACTIVATED
+            self._journal.append(
+                {
+                    "name": name,
+                    "status": STEP_DEACTIVATED,
+                    "reason": REASON_WITHDRAWN,
+                    "reverted": handle.result()["reverted"],
+                    "detail": str(handle.result()["detail"]),
+                }
+            )
 
     def activate(self, name: str) -> dict[str, Any]:
         """Run *name* and every downstream component that is ready.
