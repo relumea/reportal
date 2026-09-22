@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 from pathlib import Path
@@ -766,7 +767,8 @@ class TestYaraCommand:
         target = tmp_path / "out" / "demo.yar"
         result = runner.invoke(cli.app, ["yara", str(binary_id), "--output", str(target)])
         assert result.exit_code == 0, result.output
-        assert str(target) in result.stderr.replace("\n", "")
+        compact = re.sub(r"\s+", "", result.stderr)
+        assert re.sub(r"\s+", "", str(target)) in compact
         assert result.stdout == ""
         assert target.is_file()
         text = target.read_text(encoding="utf-8")
@@ -1332,7 +1334,8 @@ class TestSnortStixCommands:
         target = tmp_path / "out" / "demo.rules"
         result = runner.invoke(cli.app, ["snort", str(binary_id), "--output", str(target)])
         assert result.exit_code == 0, result.output
-        assert str(target) in result.stderr.replace("\n", "")
+        compact = re.sub(r"\s+", "", result.stderr)
+        assert re.sub(r"\s+", "", str(target)) in compact
         assert result.stdout == ""
         assert target.is_file()
         assert target.read_text(encoding="utf-8").startswith("alert tcp ")
@@ -1354,7 +1357,8 @@ class TestSnortStixCommands:
         target = tmp_path / "out" / "demo.json"
         result = runner.invoke(cli.app, ["stix", str(binary_id), "--output", str(target)])
         assert result.exit_code == 0, result.output
-        assert str(target) in result.stderr.replace("\n", "")
+        compact = re.sub(r"\s+", "", result.stderr)
+        assert re.sub(r"\s+", "", str(target)) in compact
         assert result.stdout == ""
         bundle = json.loads(target.read_text(encoding="utf-8"))
         assert bundle["type"] == "bundle"
