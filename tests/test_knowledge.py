@@ -387,3 +387,28 @@ class TestStoreChunks:
         conn.commit()
         rows = store.iter_chunks_with_embeddings(conn)
         assert rows[0]["embedding"] is None
+
+
+class TestKnowledgeHelpers:
+    def test_unusable_vectors_are_none(self) -> None:
+        assert knowledge._usable_vector([]) is None
+        assert knowledge._usable_vector([0.0] * (knowledge.EMBEDDING_DIM_SANITY + 1)) is None
+        assert knowledge._usable_vector([0.1, 0.2]) == [0.1, 0.2]
+        assert knowledge._usable_vectors(None, 1) is None
+        assert knowledge._usable_vectors([[0.1]], 2) is None
+        assert knowledge._usable_vectors([[0.1], []], 2) is None
+        assert knowledge._usable_vectors([[0.1], [0.2]], 2) == [[0.1], [0.2]]
+
+    def test_zero_norm_cosine_is_zero(self) -> None:
+        assert knowledge._cosine_similarity([0.0, 0.0], [1.0, 2.0]) == 0.0
+        assert knowledge._cosine_similarity([1.0], [1.0]) == 1.0
+
+    def test_empty_query_ranks_nothing(self) -> None:
+        chunks = [{"id": 1, "text": "hello world"}]
+        assert knowledge._tfidf_scores(chunks, "") == []
+        assert knowledge._tfidf_scores(chunks, "!!!") == []
+
+    def test_sparse_cosine_swaps_to_the_shorter_side(self) -> None:
+        left = {"a": 1.0, "b": 1.0, "c": 1.0}
+        right = {"a": 1.0}
+        assert knowledge._sparse_cosine(left, right) == knowledge._sparse_cosine(right, left)
