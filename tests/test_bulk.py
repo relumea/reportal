@@ -740,3 +740,38 @@ class TestMcp:
         )
         assert failed
         assert missing["error"] == "data type not found"
+
+
+class TestSurfaceErrorPaths:
+    def test_bad_definitions_are_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                result = surface.bulk_data_type_definitions(
+                    conn,
+                    log,
+                    binary_id=ids["binary"],
+                    definitions=["not a valid definition"],
+                )
+        assert result["skipped"]
+
+    def test_update_of_missing_type_is_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ids = _seed(tmp_path, monkeypatch)
+        with contextlib.closing(store.connect(ids["db"])) as conn:
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                result = surface.bulk_data_type_definitions(
+                    conn,
+                    log,
+                    binary_id=ids["binary"],
+                    definitions=[
+                        {"name": "Ghost", "definition": "typedef struct Ghost_s { int a; } Ghost;"}
+                    ],
+                    create=False,
+                )
+        assert result["skipped"]
