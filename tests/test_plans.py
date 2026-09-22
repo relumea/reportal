@@ -209,3 +209,13 @@ class TestStripePriceIds:
         assert plans.stripe_price_id("analyst") == ""
         assert plans.plan_for_price_id("") is None
         assert plans.plan_for_price_id("price_nobody_configured") is None
+
+
+class TestPlanEdges:
+    def test_free_tier_cogs_share(self) -> None:
+        import dataclasses as _dataclasses
+
+        free = plans.get_plan("free")
+        assert free.cogs_share() == float("inf")
+        empty = plans.Plan(**{**_dataclasses.asdict(free), "monthly_credits": 0})
+        assert empty.cogs_share() == 0.0
