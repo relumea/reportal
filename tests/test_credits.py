@@ -267,3 +267,30 @@ class TestCreditsEdges:
     def test_token_count_rounds_up(self) -> None:
         assert credits_mod.tokens_of("") == 0
         assert credits_mod.tokens_of("x") == 1
+
+
+class TestModelRates:
+    def test_unknown_model_uses_the_ceiling(self) -> None:
+        from reportal import model_rates
+
+        ceiling = max(model_rates.MODEL_RATES.values(), key=lambda pair: pair[1])
+        assert model_rates.blended_usd_per_mtok("mystery") == model_rates.blended_usd_per_mtok(
+            max(model_rates.MODEL_RATES, key=lambda name: model_rates.MODEL_RATES[name][1])
+        )
+        _ = ceiling
+
+    def test_bad_budgets_buy_no_tokens(self) -> None:
+        from reportal import model_rates
+
+        assert model_rates.tokens_for_budget("x") == 0
+        assert model_rates.tokens_for_budget(True) == 0
+        assert model_rates.tokens_for_budget(float("nan")) == 0
+        assert model_rates.tokens_for_budget(-5.0) == 0
+        assert model_rates.tokens_for_budget(10.0) > 0
+        assert model_rates.micro_usd_for_tokens(True) == 0
+        assert model_rates.micro_usd_for_tokens(0) == 0
+        assert model_rates.micro_usd_for_tokens(1000) > 0
+        assert model_rates.usd_for_tokens(1_000_000) > 0
+        assert model_rates.rates_for("mystery") == max(
+            model_rates.MODEL_RATES.values(), key=lambda pair: pair[1]
+        )
