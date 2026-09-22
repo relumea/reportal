@@ -261,3 +261,21 @@ class TestPeriodLifecycle:
         metering.quota_check(conn, organisation_id, metering.KIND_CREDITS, 1)
         assert metering.period_started_at(conn, organisation_id) == start
         assert metering.period_usage(conn, organisation_id, metering.KIND_CREDITS) == 50
+
+
+class TestMeteringEdges:
+    def test_charge_without_a_tenant_charges_nothing(self, conn: sqlite3.Connection) -> None:
+        assert metering.charge_task(conn, metering.NO_ORG, "triage") == 0
+
+    def test_bad_stamp_reopens_the_period(self, conn: sqlite3.Connection) -> None:
+        from reportal import auth as _auth
+
+        _auth.ensure_schema(conn)
+        org_id = int(_auth.create_organisation(conn, name="acme")["id"])
+        conn.execute(
+            f"UPDATE {_auth.ORG_TABLE} SET period_started_at = ? WHERE id = ?",
+            ("not-a-stamp", org_id),
+        )
+        conn.commit()
+        metering.ensure_open_period(conn, org_id)
+        assert metering.period_started_at(conn, org_id) != "not-a-stamp"
