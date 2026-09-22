@@ -548,3 +548,39 @@ class TestStoreRoundTrip:
     ) -> None:
         binary_id = _binary(conn, tmp_path)
         assert families.stored_detection(conn, binary_id) is None
+
+
+class TestFamilyReads:
+    def test_unknown_id_answers_none(self, conn: sqlite3.Connection) -> None:
+        assert families.get_family(conn, 424242) is None
+        assert families.delete_family(conn, 424242) is False
+
+    def test_list_is_case_insensitive_by_name(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        stub = _StubEngine(
+            imports={"imports": [_import("WSAStartup")]},
+            strings={"strings": [_string("https://c2.example/beacon")]},
+        )
+        families.register_family(conn, name="beta", reference_binary_id=binary_id, engine=stub)
+        other = _binary(conn, tmp_path, name="other.exe", sha="ef" * 32)
+        families.register_family(conn, name="Alpha", reference_binary_id=other, engine=stub)
+        names = [row["name"] for row in families.list_families(conn)]
+        assert names == ["Alpha", "beta"]
+
+    def test_vanished_row_after_insert_is_an_error(
+        self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        binary_id = _binary(conn, tmp_path)
+        stub = _StubEngine(
+            imports={"imports": [_import("WSAStartup")]},
+            strings={"strings": [_string("https://c2.example/beacon")]},
+        )
+
+        def gone(conn: sqlite3.Connection, family_id: int) -> None:
+            return None
+
+        monkeypatch.setattr(store, "get_family", gone)
+        with pytest.raises(families.FamilyError, match="vanished"):
+            families.register_family(conn, name="Ghost", reference_binary_id=binary_id, engine=stub)
