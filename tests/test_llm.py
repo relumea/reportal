@@ -788,3 +788,50 @@ class TestLlmParsing:
         assert calls[1]["arguments"] == "--all"
         assert llm._tool_calls({}) == []
         assert llm._tool_calls({"choices": "nope"}) == []
+
+
+class TestSdkPaths:
+    def _client(self, monkeypatch: pytest.MonkeyPatch, completion: object) -> llm.LlmClient:
+        client = llm.LlmClient(llm.LlmConfig(endpoint="http://llm.local/v1", model="m"))
+        calls: list[dict[str, object]] = []
+
+        class _Completions:
+            def create(self, **kwargs: object) -> object:
+                calls.append(kwargs)
+                return completion
+
+        class _Chat:
+            completions = _Completions()
+
+        class _Sdk:
+            chat = _Chat()
+
+        monkeypatch.setattr(client, "_sdk", lambda: _Sdk())
+        return client
+
+    def test_tools_completion_returns_calls(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        completion = {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {"id": "1", "function": {"name": "lookup", "arguments": "{}"}}
+                        ],
+                    }
+                }
+            ]
+        }
+        client = self._client(monkeypatch, completion)
+        result = client.chat([{"role": "user", "content": "hi"}])
+        assert result["tool_calls"][0]["name"] == "lookup"
+
+    def test_neither_text_nor_calls_is_an_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = self._client(monkeypatch, {"choices": [{"message": {}}]})
+        with pytest.raises(llm.LlmError, match="neither text nor a tool call"):
+            client.chat([{"role": "user", "content": "hi"}])
+
+    def test_with_model_rejects_an_unconfigured_client(self) -> None:
+        client = llm.LlmClient(None)
+        with pytest.raises(llm.LlmUnavailable):
+            llm.with_model(client, "other")
