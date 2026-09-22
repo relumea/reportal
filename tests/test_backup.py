@@ -638,3 +638,66 @@ class TestCli:
         assert payload["keep_min"] == backup.DEFAULT_KEEP_MIN
         assert stale.exists()
         assert newer.exists()
+
+
+class TestManifestRefusals:
+    def _base(self, tmp_path: Path) -> Path:
+        return Path(
+            backup.create(workspace=_workspace(tmp_path / "one"), output=tmp_path / "m.tar.gz")[
+                "path"
+            ]
+        )
+
+    def test_an_archive_without_a_manifest_is_refused(self, tmp_path: Path) -> None:
+        archive = self._base(tmp_path)
+
+        def drop(member: tarfile.TarInfo, payload: bytes | None) -> tuple[str, bytes | None] | None:
+            if member.name == backup.MANIFEST_NAME:
+                return None
+            return (member.name, payload)
+
+        with pytest.raises(backup.BackupError) as failure:
+            backup.read_manifest(_rewrite(archive, drop))
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
+    def test_a_foreign_format_is_refused(self, tmp_path: Path) -> None:
+        archive = self._base(tmp_path)
+
+        def foreign(member: tarfile.TarInfo, payload: bytes | None) -> tuple[str, bytes | None]:
+            if member.name != backup.MANIFEST_NAME or payload is None:
+                return (member.name, payload)
+            manifest = json.loads(payload.decode("utf-8"))
+            manifest["format"] = "other-tool"
+            return (member.name, json.dumps(manifest).encode("utf-8"))
+
+        with pytest.raises(backup.BackupError) as failure:
+            backup.read_manifest(_rewrite(archive, foreign))
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
+    def test_a_member_list_of_the_wrong_shape_is_refused(self, tmp_path: Path) -> None:
+        archive = self._base(tmp_path)
+
+        def shapeless(member: tarfile.TarInfo, payload: bytes | None) -> tuple[str, bytes | None]:
+            if member.name != backup.MANIFEST_NAME or payload is None:
+                return (member.name, payload)
+            manifest = json.loads(payload.decode("utf-8"))
+            manifest["members"] = {"not": "a list"}
+            return (member.name, json.dumps(manifest).encode("utf-8"))
+
+        with pytest.raises(backup.BackupError) as failure:
+            backup.read_manifest(_rewrite(archive, shapeless))
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
+
+    def test_a_manifest_naming_a_missing_member_is_refused(self, tmp_path: Path) -> None:
+        archive = self._base(tmp_path)
+
+        def ghost(member: tarfile.TarInfo, payload: bytes | None) -> tuple[str, bytes | None]:
+            if member.name != backup.MANIFEST_NAME or payload is None:
+                return (member.name, payload)
+            manifest = json.loads(payload.decode("utf-8"))
+            manifest["members"] = [*manifest["members"], "binaries/ghost"]
+            return (member.name, json.dumps(manifest).encode("utf-8"))
+
+        with pytest.raises(backup.BackupError) as failure:
+            backup.read_manifest(_rewrite(archive, ghost))
+        assert failure.value.code == backup.ERROR_INVALID_ARCHIVE
