@@ -896,3 +896,42 @@ class TestRewriteBranches:
         fake_llm.response = '{"code": "   "}'
         with pytest.raises(llm.LlmError, match="code"):
             llm.rewrite_decompilation(self.CODE)
+
+
+class TestCommentsAndTriage:
+    CODE = "int f() { return 1; }"
+
+    def test_bad_comment_entries_are_dropped_with_reason(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = (
+            '{"comments": ['
+            '{"line": "nope", "comment": "x"}, '
+            '{"line": 3, "comment": "  "}, '
+            '"nope", '
+            '{"line": 10, "comment": "checks bounds"}'
+            "]}"
+        )
+        result = llm.inline_comments(self.CODE)
+        assert result == {"comments": [{"line": 10, "comment": "checks bounds"}]}
+
+    def test_triage_dedupes_and_caps_capabilities(self, fake_llm: FakeLlmClient) -> None:
+        caps = ["net", 42, "net", "", "crypto", "packer", "debug", "vm", "extra"]
+        fake_llm.response = (
+            f'{{"summary": "suspicious loader", "score": 0.9, "capabilities": {caps!r}}}'.replace(
+                "'", '"'
+            )
+        )
+        result = llm.function_triage(self.CODE)
+        assert result["summary"] == "suspicious loader"
+        assert result["score"] == 0.9
+        assert "net" in result["capabilities"]
+        assert len(result["capabilities"]) <= llm.TRIAGE_CAPABILITY_LIMIT
+
+    def test_triage_without_summary_is_rejected(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = '{"score": 0.5}'
+        with pytest.raises(llm.LlmError, match="summary"):
+            llm.function_triage(self.CODE)
+
+    def test_triage_non_object_is_rejected(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = "[1, 2]"
+        with pytest.raises(llm.LlmError, match="not a JSON object"):
+            llm.function_triage(self.CODE)
