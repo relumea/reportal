@@ -429,3 +429,16 @@ class TestKnowledgeSearchEdges:
     def test_hit_field_collapses_spaces(self) -> None:
         assert knowledge._hit_field({"title": "a  b\nc"}, "title") == "a b c"
         assert knowledge._hit_field({}, "missing") == ""
+
+
+class TestAsContext:
+    def test_empty_hits_render_empty(self) -> None:
+        assert knowledge.as_context([]) == ""
+
+    def test_budget_drops_long_hits(self) -> None:
+        hits = [
+            {"title": "a", "source": "s", "text": "x" * 500},
+            {"title": "b", "source": "s", "text": "short"},
+        ]
+        rendered = knowledge.as_context(hits, max_chars=60)
+        assert rendered == "[1] b (s): short"
