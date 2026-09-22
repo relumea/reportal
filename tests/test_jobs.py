@@ -1674,3 +1674,26 @@ class TestRenderPdf:
 
         written = _paths.reports_dir(binary_id) / "report.pdf"
         assert written.is_file()
+
+
+class TestLatestJob:
+    def test_unknown_kind_is_rejected(self, conn: sqlite3.Connection) -> None:
+        with pytest.raises(ValueError, match="unknown job kind"):
+            jobs.latest_job(conn, kind="mystery")
+
+    def test_newest_of_kind_is_returned(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        binary_id = _binary(conn, tmp_path)
+        jobs.submit(conn, kind="pe-info", binary_id=binary_id)
+        job = jobs.submit(conn, kind="pe-info", binary_id=binary_id)
+        latest = jobs.latest_job(conn, kind="pe-info")
+        assert latest is not None
+        assert int(latest["id"]) == int(job["id"])
+
+    def test_binary_filter_narrows(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        first = _binary(conn, tmp_path, name="a.exe")
+        second = _binary(conn, tmp_path, name="b.exe")
+        jobs.submit(conn, kind="pe-info", binary_id=first)
+        jobs.submit(conn, kind="pe-info", binary_id=second)
+        latest = jobs.latest_job(conn, kind="pe-info", binary_id=first)
+        assert latest is not None
+        assert int(latest["binary_id"]) == first
