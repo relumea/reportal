@@ -375,3 +375,33 @@ class TestExportHeader:
             data_types.export_header(conn, binary_id=binary_id, path=target)
         assert list(tmp_path.glob(".types-*")) == []
         assert not target.exists()
+
+
+class TestDefinitionEdges:
+    def test_bad_width_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="unsupported member"):
+            data_types.parse_definition("typedef struct T_s {\n\tint:xx a;\n} T;\n")
+
+    def test_bad_member_name_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="unsupported member"):
+            data_types.parse_definition("typedef struct T_s {\n\tint 9lives;\n} T;\n")
+
+    def test_bad_member_type_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="unsupported member"):
+            data_types.parse_definition("typedef struct T_s {\n\tint! a;\n} T;\n")
+
+    def test_double_array_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="unsupported member"):
+            data_types.parse_definition("typedef struct T_s {\n\tint a[4][4];\n} T;\n")
+
+    def test_bad_integer_literal_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="not an integer"):
+            data_types.parse_definition("typedef enum E {\n\tA = xyz,\n} E;\n")
+
+    def test_bad_enum_name_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="unsupported enum"):
+            data_types.parse_definition("typedef enum E {\n\t9lives = 1,\n} E;\n")
+
+    def test_duplicate_enum_name_is_rejected(self) -> None:
+        with pytest.raises(data_types.DefinitionError, match="duplicate enum"):
+            data_types.parse_definition("typedef enum E {\n\tA = 1,\n\tA = 2,\n} E;\n")
