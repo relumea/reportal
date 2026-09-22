@@ -645,6 +645,20 @@ class TestInterception:
         parent.intercept("count", lambda value: value * 10)
         assert parent.derive().require("count") == 10
 
+    def test_a_derived_hook_applies_to_a_parent_bound_name(self) -> None:
+        parent = Context({"count": 1})
+        parent.intercept("count", lambda value: value + 1)
+        child = parent.derive()
+        child.intercept("count", lambda value: value * 10)
+        assert child.require("count") == 20
+        assert parent.require("count") == 2
+
+    def test_a_hook_does_not_run_for_an_unbound_name(self) -> None:
+        child = Context().derive()
+        child.intercept("count", lambda value: value + 1)
+        assert not child.has("count")
+        assert child.get("count", "fallback") == "fallback"
+
 
 class TestLoadSteps:
     def test_an_empty_context_loads_nothing(self) -> None:

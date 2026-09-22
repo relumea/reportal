@@ -201,6 +201,78 @@ host.deactivate("prepare")   # dependents first, revert called where declared
 host.activate("prepare")     # the reloaded effect, then its dependents
 ```
 
+`sync()` also retires the fiber of a component the registry no longer declares:
+`deactivate` resolves a name through the registry, so a deregistered component's
+instantiation would otherwise stay active with no reachable inverse.
+
+### Realms, interception and fibers
+
+A component that must not read the run's whole context derives a realm:
+`ctx.derive()` returns a child that reads every name the parent binds, writes
+into a table of its own and journals only its own effects, so `drop()` reverts
+exactly what the child did and detaches it.  Deriving installs nothing on the
+parent, which is what makes its inverse the identity.  Two realms therefore
+resolve one name to different values, the isolation Definition 24 asks for.
+
+`ctx.intercept(name, hook)` wraps every read of one name through that context;
+the hook receives the resolved value and returns what the reader sees.  A name
+this context binds runs its hooks; a name a parent binds runs the parent's hooks
+first and then this context's, because interception belongs to the context a
+read goes through.  Installing an interception is a journaled effect of kind
+`intercept`, so `revert()` uninstalls it, and the returned callable removes it
+early (twice is a no-op).
+
+`ctx.load()` returns the journal as the paper's reified load: one `EffectStep`
+per effect, oldest first, carrying the context the step produced, the effect,
+that effect's `inverse` and the `rest` of the load.  `None` ends the chain and
+`EffectStep.end()` reports that.
+
+A `Fiber` is one instantiation of a component.  `ctx.spawn(component)` or
+`Fiber(component, parent=...)` runs it over a realm derived from the owner's,
+and `provides` commits each declared name to the fiber's committed view, where
+`owner(name)` finds the fiber that committed it.  `retire()` deactivates
+children newest-first, calls the component's `revert` where it declares one,
+drops a realm the fiber owns and returns an `Inertia` handle (`done`, `wait`,
+`result`); a second `retire()` returns the same handle, and `result()` raises
+until the transition settles.  `FiberStateError` refuses activating a fiber
+that is not pending and spawning from a retired one.  The live `ComponentHost`
+hangs one fiber per activation off its root fiber, exposed by `fibers()`,
+`retirements()` and `last_retirement()`, and reports the handle of a withdrawal
+as `retirement` in the response.
+
+```python
+from reportal import components, pipeline
+
+
+def count_words(ctx: components.Context) -> None:
+    code = str(ctx.require("decompilation")["code"])
+    ctx.provide("word_count", len(code.split()))
+
+
+WORD_COUNT = components.Component(
+    name="word-count",
+    requires=frozenset({"decompilation"}),
+    provides=frozenset({"word_count"}),
+    effect=count_words,
+)
+
+host = pipeline.ComponentHost({"decompilation": {"code": "int main(void) {}"}})
+components.register_component(WORD_COUNT)
+host.sync()
+host.activate("word-count")
+fiber = host.fibers()[0]
+assert fiber.owner("word_count") is fiber
+
+host.deactivate("word-count")
+handle = host.last_retirement()
+assert handle is not None and handle.wait(0)
+assert handle.result()["status"] == components.FIBER_DISPOSED
+```
+
+Verify with
+`.venv/bin/python -m pytest tests/test_components.py -q -k "Fiber or Derived or Interception or Load"`
+and `.venv/bin/python -m pytest tests/test_pipeline.py -q -k TestHostFibers`.
+
 ## Gaps
 
 What the implementation does **not** do, stated plainly so nothing below is

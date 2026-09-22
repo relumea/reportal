@@ -51,6 +51,8 @@ which cannot run is recorded with a reason instead of failing the run.
 - `revert_run` walks the stored plan newest-first and reports a binding a later process cannot
   resolve as `applied: false` (`tests/test_pipeline.py`).
 - `run_pipeline` raises `KeyError` for an unknown function (`tests/test_pipeline.py`).
+- `ComponentHost.sync` retires a fiber whose declaration left the registry
+  (`tests/test_pipeline.py`).
 
 ## See also
 

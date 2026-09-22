@@ -290,7 +290,8 @@ class Context:
         *hook* receives the resolved value and returns what the reader sees, so
         dependency access carries cross-cutting behavior without the component
         that requires the name knowing about it.  Hooks apply in the order they
-        were installed, after the parent's own hooks for a name the parent binds.
+        were installed, and a name a parent binds runs that parent's hooks first,
+        then this context's.
 
         Installing an interception is an effect: it is journaled, so
         :meth:`revert` uninstalls it, and the returned inverse removes it early.
@@ -316,12 +317,23 @@ class Context:
         return value
 
     def _resolve(self, name: str) -> Any:
-        """The value bound to *name* here or in a parent, or the no-binding sentinel."""
+        """The value bound to *name* here or in a parent, or the no-binding sentinel.
+
+        A name this context binds runs this context's hooks.  A name a parent
+        binds is resolved there first, so the parent's hooks apply, and then this
+        context's hooks apply on the way back: interception belongs to the
+        context a read goes through, not only to the context that bound the
+        value.
+        """
         if name in self._values:
-            return self._intercepted(name, self._values[name])
-        if self._parent is not None:
-            return self._parent._resolve(name)
-        return _NO_BINDING
+            value = self._values[name]
+        elif self._parent is not None:
+            value = self._parent._resolve(name)
+            if value is _NO_BINDING:
+                return _NO_BINDING
+        else:
+            return _NO_BINDING
+        return self._intercepted(name, value)
 
     def _restore(self, name: str, previous: Any) -> None:
         """Put the binding of *name* back the way *previous* recorded it."""
