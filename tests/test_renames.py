@@ -751,3 +751,42 @@ class TestRenamesTools:
         payload, is_error = _mcp_call("revert_renames", {"function_id": ids["first"]})
         assert is_error is True
         assert payload["error"] == "no-artifact"
+
+
+class TestHandScanner:
+    def test_scan_replaces_outside_strings(self) -> None:
+        text, count = renames._replace_identifier_scan('int foo = "foo";', "foo", "bar")
+        assert count == 1
+        assert text == 'int bar = "foo";'
+
+    def test_scan_handles_escapes_and_char_literals(self) -> None:
+        text, count = renames._replace_identifier_scan(
+            'char c = \'f\'; int foo = 1; char *s = "a\\"foo";', "foo", "bar"
+        )
+        assert count == 1
+        assert "int bar = 1" in text
+        assert "'f'" in text
+
+    def test_scan_skips_line_and_block_comments(self) -> None:
+        text, count = renames._replace_identifier_scan(
+            "int foo; // foo\n/* foo */ int bar;", "foo", "baz"
+        )
+        assert count == 3
+        assert "int baz;" in text
+
+    def test_engine_spans_used_when_ascii(self) -> None:
+        assert renames._engine_protected_spans("plain ascii") == []
+        assert renames._engine_protected_spans("café") is None
+
+    def test_missing_parser_falls_back_to_the_scan(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import builtins as _builtins
+
+        real_import = _builtins.__import__
+
+        def boom(name: str, *args: object, **kwargs: object) -> object:
+            if name == "rebrew.c_parser":
+                raise ImportError("no parser")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(_builtins, "__import__", boom)
+        assert renames._engine_protected_spans("plain ascii") is None
