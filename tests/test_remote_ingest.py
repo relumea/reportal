@@ -773,3 +773,36 @@ class TestCli:
         result = runner.invoke(cli.app, ["ingest-url", "404", "http://example.com/notes.md"])
         assert result.exit_code == 1
         assert "no binary with id 404" in result.output
+
+
+class TestValidateEdges:
+    def test_unparseable_url_is_rejected(self) -> None:
+        with pytest.raises(remote_ingest.RemoteIngestError) as excinfo:
+            remote_ingest.validate_target("http://[::1/named")
+        assert excinfo.value.code == remote_ingest.ERROR_INVALID_URL
+
+    def test_empty_sockaddr_resolves_to_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_getaddrinfo(host: str, port: int, *args: Any, **kwargs: Any) -> list[Any]:
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ())]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+        with pytest.raises(remote_ingest.RemoteIngestError) as excinfo:
+            remote_ingest.validate_target("http://empty.example/notes.md")
+        assert excinfo.value.code == remote_ingest.ERROR_UNRESOLVABLE
+
+    def test_non_ip_answer_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_getaddrinfo(host: str, port: int, *args: Any, **kwargs: Any) -> list[Any]:
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("not-an-ip", port))
+            ]
+
+        monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+        with pytest.raises(remote_ingest.RemoteIngestError) as excinfo:
+            remote_ingest.validate_target("http://weird.example/notes.md")
+        assert excinfo.value.code == remote_ingest.ERROR_UNRESOLVABLE
+
+    def test_mapped_address_is_blocked(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _static_resolver(monkeypatch, "::ffff:127.0.0.1")
+        with pytest.raises(remote_ingest.RemoteIngestError) as excinfo:
+            remote_ingest.validate_target("http://mapped.example/notes.md")
+        assert excinfo.value.code == remote_ingest.ERROR_BLOCKED_TARGET
