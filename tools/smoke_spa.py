@@ -149,7 +149,7 @@ CFG_LOOP_FUNCTION_VA = 0x01001AE3
 # Markers the control-flow view carries once the Disassembly / Control flow
 # toggle is switched to the graph: the panel title, the summary line's noun and
 # the labelled back edge CFG_LOOP_FUNCTION_VA graphs.
-CFG_MARKERS: tuple[str, ...] = ("Control flow", "basic blocks", "back edge")
+CFG_MARKERS: tuple[str, ...] = ("Control Flow", "basic blocks", "back edge")
 
 # Proposed name the seeded unstrip scan carries.  The Auto-unstrip panel
 # auto-loads the stored proposals through its stored-only GET, so pre-seeding
@@ -675,14 +675,14 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         (
             ("notepad.exe",),
             ("Binary #",),
-            ("Binary details",),
+            ("Binary Details",),
             # Identity card: the seeded PE type and resource count.
             ("number of resources",),
             # Hashes card: a raw-file digest the engine bundle carries.
             ("Hashes",),
             (PE_INFO_HASH_ROW,),
             # Security card: the checklist readout, a labeled item and its raw flag.
-            ("Security mitigations",),
+            ("DllCharacteristics",),
             ("Mitigations enabled",),
             (PE_INFO_FLAG,),
             # Exports card: a named export and a forwarded one.
@@ -698,14 +698,14 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Coverage map",),
             ("cells carry a stored function",),
             # Code signature card.
-            ("Code signature",),
+            ("Code Signature",),
             ("not signed",),
             # Packer card: verdict, entropy meter and the file-type signal.
-            ("Packer detection",),
+            ("Packer Detection",),
             (PACKER_VERDICT,),
             ("Peak section entropy",),
             (FILETYPE_SIGNAL,),
-            ("Data types",),
+            ("Data Types",),
             (SMOKE_TYPE_NAME,),
             # The editable type's bitfield member, its explicit gap member and
             # the size-vs-members warning the panel renders.
@@ -734,7 +734,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Identify libraries",),
             # Unpacked files panel: its rebuild control and the packer select
             # that leaves the packer to the file's own stub.
-            ("Unpacked files",),
+            ("Unpacked Files",),
             ("Run unpack",),
             ("Auto",),
             # The benchmark panel: its partner select and run control.  The
@@ -748,8 +748,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Rename proposals",),
             ("reportal symbols",),
             # Analyst feedback on the stored agent artifacts.
-            ("Agent feedback",),
-            ("Function triage",),
+            ("Agent Feedback",),
+            ("Function Triage",),
             (FUNCTION_TRIAGE_SUMMARY,),
             ("Crypto",),
             ("Security",),
@@ -765,7 +765,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("reachable",),
             ("Secrets",),
             ("Protocols",),
-            ("Threat report",),
+            ("Threat Report",),
             (THREAT_IOC_URL,),
             # The seeded IPv6 literal renders in its own IOC group.
             ("ipv6",),
@@ -799,10 +799,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Related binaries",),
             # Composition panel: the computed rollup against the registered copy
             # and the name source and quality meters.
-            ("Composition analysis",),
-            ("Match quality",),
+            ("Composition Analysis",),
+            ("Match Quality",),
             ("Strong Match",),
-            ("Function name sources",),
+            ("Function Name Sources",),
             (UNSTRIP_PROPOSED_NAME,),
             ("Download PDF",),
             ("Chat about this",),
@@ -877,9 +877,9 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         "#/matches",
         (
             ("Match / Diff",),
-            ("Match settings",),
-            ("Run match",),
-            ("Bulk transfer",),
+            ("Settings",),
+            ("Match",),
+            ("Bulk Transfer",),
             ("Enter a function id to open its binary's match view.",),
         ),
     ),
@@ -1768,6 +1768,19 @@ def markers_missing(dom: str, groups: tuple[tuple[str, ...], ...]) -> list[tuple
     return [group for group in groups if not any(marker in dom for marker in group)]
 
 
+# Collapsible panels start folded, so their body text is not in the DOM until
+# the heading is clicked.  The marker checks assert card content, not only
+# titles, so the render loop unfolds every panel before it looks.
+_EXPAND_ALL_FOLDS = """(() => {
+  let clicked = 0;
+  document.querySelectorAll('button.panel-fold[aria-expanded="false"]').forEach((button) => {
+    button.click();
+    clicked += 1;
+  });
+  return clicked;
+})()"""
+
+
 def render_markers(
     browser: str, url: str, groups: tuple[tuple[str, ...], ...]
 ) -> tuple[str, list[str]]:
@@ -1789,8 +1802,10 @@ def render_markers(
     ):
         cdp.render(session_pipe, session_id, url, RENDER_WIDTH, RENDER_HEIGHT)
         deadline = time.monotonic() + MARKER_DEADLINE_SECONDS
+        cdp.evaluate(session_pipe, session_id, _EXPAND_ALL_FOLDS)
         dom = cdp.document_html(session_pipe, session_id)
         while markers_missing(dom, groups) and time.monotonic() < deadline:
+            cdp.evaluate(session_pipe, session_id, _EXPAND_ALL_FOLDS)
             time.sleep(MARKER_POLL_SECONDS)
             dom = cdp.document_html(session_pipe, session_id)
         return dom, cdp.page_errors(session_pipe, session_id)
@@ -1874,7 +1889,7 @@ def check_search_modal(browser: str, port: int) -> bool:
 # then activate the first edge's jump control and report where the focus landed.
 _SWITCH_TO_CFG_SCRIPT = """(() => {
   const buttons = Array.from(document.querySelectorAll('.code-view-toggle button'));
-  const target = buttons.find((button) => button.textContent.trim() === 'Control flow');
+  const target = buttons.find((button) => button.textContent.trim() === 'Control Flow');
   if (!target) return false;
   target.click();
   return true;

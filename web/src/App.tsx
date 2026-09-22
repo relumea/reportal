@@ -444,7 +444,7 @@ export function App(): ReactNode {
         combo: "o",
         scope: "view",
         description: "Jump to Overview",
-        handler: () => focusPanel("Binary details"),
+        handler: () => focusPanel("Binary Details"),
       }),
       registerShortcut({
         combo: "f",
