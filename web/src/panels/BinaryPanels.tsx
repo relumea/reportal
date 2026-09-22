@@ -4564,6 +4564,7 @@ export function DebugPanel({ binaryId }: { binaryId: number }): ReactNode {
             ["opt-in", current.enabled ? <Badge tone="warn">enabled</Badge> : <Badge>off</Badge>],
             ["backend", current.backend ?? "none installed"],
             ["backends", current.backends.map((entry) => `${entry.name}${entry.available ? "" : " (missing)"}`).join(", ") || NA],
+            ...(current.image ? [["image", current.image] as [string, ReactNode]] : []),
             ["sessions", current.sessions],
             ["last", current.last ? `${current.last.status} (#${current.last.id})` : NA],
           ]}

@@ -684,6 +684,7 @@ def status_payload(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any]
         "enabled": enabled(),
         "available": backend is not None,
         "backend": None if backend is None else backend.name,
+        "image": configured_image(),
         "backends": [
             {"name": entry.name, "available": entry.available(), "describe": entry.describe}
             for entry in registered_backends()
@@ -700,6 +701,7 @@ def status_payload(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any]
         else {
             "id": last["id"],
             "status": last["status"],
+            "image": last["image"],
             "created_at": last["created_at"],
         },
         "note": (

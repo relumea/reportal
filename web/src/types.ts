@@ -2436,6 +2436,7 @@ export interface DebugStatus {
   enabled: boolean;
   available: boolean;
   backend: string | null;
+  image: string;
   backends: DebugBackendInfo[];
   caps: {
     timeout_seconds: number;
@@ -2447,6 +2448,7 @@ export interface DebugStatus {
   last: {
     id: number;
     status: string;
+    image: string;
     created_at: string;
   } | null;
   note: string;
