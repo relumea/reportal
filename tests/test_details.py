@@ -455,3 +455,28 @@ class TestReads:
 
         with contextlib.closing(store.connect(portal_db)) as probe:
             assert journal.list_entries(probe) == [], "the detail reads never journal a write"
+
+
+class TestDetailsEdges:
+    def test_overlay_of_an_unknown_binary_is_absent(self, conn: Any) -> None:
+        assert details._overlay(conn, 424242, {}) == {
+            "present": False,
+            "bytes": 0,
+            "offset": None,
+        }
+
+    def test_overlay_skips_non_dict_sections(
+        self, portal_db: Path, conn: Any, tmp_path: Path
+    ) -> None:
+        binary_id = _seed(conn, tmp_path)
+        payload = details.additional_details(conn, binary_id)
+        assert payload["overlay"]["offset"] == 29184
+
+    def test_non_dict_sections_do_not_move_the_end(
+        self, portal_db: Path, conn: Any, tmp_path: Path
+    ) -> None:
+        binary_id = _seed(conn, tmp_path)
+        pe_info = dict(PE_INFO)
+        pe_info["sections"] = ["nope", {"raw_offset": 100, "raw_size": 50}]
+        overlay = details._overlay(conn, binary_id, pe_info)
+        assert overlay["offset"] == 150
