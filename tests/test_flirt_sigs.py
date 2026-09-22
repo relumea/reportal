@@ -14,6 +14,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from reportal import flirt_sigs
 
 
@@ -549,3 +551,55 @@ class TestQueued:
 
         assert job is not None and job["status"] == "done"
         assert job["result"]["match_count"] == 1
+
+
+class TestCatalogEdges:
+    def test_arch_aliases_fold(self) -> None:
+        assert flirt_sigs.normalize_arch("AMD64") == "x64"
+        assert flirt_sigs.normalize_arch("aarch64") == "arm64"
+        assert flirt_sigs.normalize_arch("weird") == "weird"
+        assert flirt_sigs.normalize_arch(None) == ""
+
+    def test_broken_index_is_an_empty_catalog(self, tmp_path: Path) -> None:
+        root = tmp_path / "sigs"
+        root.mkdir()
+        (root / "index.json").write_text("not json{")
+        assert flirt_sigs._load_index(root) == {}
+        assert flirt_sigs._load_index(tmp_path / "missing") == {}
+
+    def test_prune_removes_deleted_files(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        root = _checkout(tmp_path)
+        first = flirt_sigs.refresh(conn, root)
+        assert first["added"] == 1
+        (root / "msvc" / "vc6" / "libc.sig").unlink()
+        second = flirt_sigs.refresh(conn, root, prune=True)
+        assert second["pruned"] == 1
+        assert flirt_sigs.list_sigsets(conn) == []
+
+    def test_list_filters_by_arch_and_enabled(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        root = _checkout(tmp_path)
+        flirt_sigs.refresh(conn, root)
+        assert len(flirt_sigs.list_sigsets(conn, arch="x86")) == 1
+        assert flirt_sigs.list_sigsets(conn, arch="arm64") == []
+        row = flirt_sigs.list_sigsets(conn)[0]
+        assert flirt_sigs.set_enabled(conn, int(row["id"]), False) is True
+        assert flirt_sigs.list_sigsets(conn, enabled_only=True) == []
+        assert flirt_sigs.set_enabled(conn, 424242, True) is False
+
+    def test_blob_paths_skip_a_symlink_escape(
+        self, tmp_path: Path, conn: sqlite3.Connection
+    ) -> None:
+        root = _checkout(tmp_path)
+        outside = tmp_path / "outside.sig"
+        outside.write_bytes(b"IDASGNfake")
+        link = root / "msvc" / "evil.sig"
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            pytest.skip("symlinks are not permitted here")
+
+        result = flirt_sigs.refresh(conn, root)
+        assert result["added"] == 1
+        assert {row["rel_path"] for row in flirt_sigs.list_sigsets(conn)} == {"msvc/vc6/libc.sig"}
