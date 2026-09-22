@@ -747,3 +747,34 @@ class TestRunFiletype:
         engine.pe_info_payload = without
         bare = filetypes.run_filetype(conn, binary_id=binary_id, engine=engine)
         assert ENTRY_BYTES_NOTE in bare["notes"]
+
+
+class TestFiletypeHelpers:
+    def test_entropies_skip_non_numbers(self) -> None:
+        assert filetypes._entropy_map(
+            {
+                "section_entropies": [
+                    {"name": "a", "entropy": True},
+                    {"name": "b", "entropy": "high"},
+                    {"name": "", "entropy": 1.0},
+                    {"name": "c", "entropy": 7.5},
+                    "nope",
+                ]
+            }
+        ) == {"c": 7.5}
+        assert filetypes._entropy_map({}) == {}
+
+    def test_entry_hex_accepts_bytes_and_hex(self) -> None:
+        assert filetypes._entry_hex({"entry_bytes": b"\x90\x90"}) == "9090"
+        assert filetypes._entry_hex({"entry_bytes": "90 90"}) == "9090"
+        assert filetypes._entry_hex({"entry_bytes": 42}) is None
+        assert filetypes._entry_hex({"entry_bytes": "zz"}) is None
+        assert filetypes._entry_hex({}) is None
+
+    def test_section_bytes_skips_bad_entries(self, tmp_path: Path) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"0123456789abcdef")
+        good = [{"raw_offset": "xx", "raw_size": 4}]
+        assert filetypes.read_section_bytes(target, good) == b""
+        missing: list[dict[str, object]] = [{"raw_offset": 100, "raw_size": 0}]
+        assert filetypes.read_section_bytes(target, missing) == b""
