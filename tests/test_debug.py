@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -2244,3 +2245,74 @@ class TestProposalAndFrameGuards:
         assert debug._session_frames({"transcript": "not-a-list"}) == []
         assert debug._session_frames({"transcript": ["not-a-dict"]}) == []
         assert debug._session_frames({"transcript": [{"frames": ["not-a-dict"]}]}) == []
+
+
+class TestMiCleanupPaths:
+    def _script(self) -> list[bytes]:
+        return [
+            b"(gdb)\n",
+            b'^done,bkpt={number="1"}\n',
+            b"(gdb)\n",
+            b"^running\n",
+            b'*stopped,reason="breakpoint-hit",thread-id="1"\n',
+            b"(gdb)\n",
+            b'^done,threads=[{id="1",name="t"}]\n',
+            b"(gdb)\n",
+            b'^done,stack=[frame={func="main",addr="0x1000"}]\n',
+            b"(gdb)\n",
+            b'^done,register-names=["rax"]\n',
+            b"(gdb)\n",
+            b'^done,memory=[{contents="ff"}]\n',
+            b"(gdb)\n",
+            b"^done\n",
+            b"(gdb)\n",
+        ]
+
+    def test_cleanup_survives_close_and_wait_failures(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import os as _os
+
+        killed: list[str] = []
+        chunks = self._script()
+
+        class FakeStdin:
+            def write(self, _data: bytes) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                raise OSError("already closed")
+
+        class FakeStdout:
+            def fileno(self) -> int:
+                return -1
+
+        class FakeProcess:
+            stdin: object = FakeStdin()
+            stdout: object = FakeStdout()
+
+            def wait(self, timeout: float | None = None) -> int:
+                raise subprocess.TimeoutExpired("gdb", timeout or 0)
+
+            def kill(self) -> None:
+                killed.append("gdb")
+
+        def fake_read(_fd: int, _n: int) -> bytes:
+            return chunks.pop(0) if chunks else b""
+
+        monkeypatch.setattr(_os, "read", fake_read)
+        monkeypatch.setattr("select.select", lambda r, _w, _x, _t=None: (r, [], []))
+        monkeypatch.setattr(debug.Backend, "path", lambda self: "/usr/bin/gdb")
+        monkeypatch.setattr("subprocess.Popen", lambda *a, **k: FakeProcess())
+        monkeypatch.setattr(debug, "MAX_BREAKPOINTS", 1)
+        sample = tmp_path / "s.bin"
+        sample.write_bytes(b"x")
+        report = debug.probe_binary(
+            sample, backend=debug.Backend("gdb", "gdb"), breakpoints=[0x1000]
+        )
+        assert report["status"] == debug.STATUS_FINISHED
+        assert killed == ["gdb"]
+        assert any("truncated" in note for note in report["notes"])
