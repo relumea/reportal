@@ -728,3 +728,22 @@ def test_the_environment_override_points_at_the_seeded_database(
 ) -> None:
     """The routes and the CLI read the same database the fixtures seeded."""
     assert os.environ[DB_ENV]
+
+
+class TestSecretStoreEdges:
+    def test_forbidden_secret_names_its_code(self) -> None:
+        error = secret_store.ForbiddenSecretError("nope")
+        assert error.code == secret_store.ERROR_FORBIDDEN
+
+    def test_broken_workspace_store_reads_as_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import sqlite3 as _sqlite
+
+        def boom(path: object) -> object:
+            raise _sqlite.DatabaseError("bad file")
+
+        from pathlib import Path as _Path
+
+        monkeypatch.setattr(secret_store.store, "connect", boom)
+        monkeypatch.setattr(secret_store, "db_path", lambda: _Path("/x.db"))
+        monkeypatch.setattr("pathlib.Path.exists", lambda self: True)
+        assert secret_store.resolve_from_workspace("k") is None
