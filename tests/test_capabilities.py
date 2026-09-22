@@ -249,3 +249,50 @@ class TestRunCapabilities:
         stub = _StubEngine(error=engines.EngineError("rebrew imports exited with code 3"))
         with pytest.raises(engines.EngineError, match="exited with code 3"):
             capabilities.run_capabilities(conn, binary_id=binary_id, io=stub)
+
+
+class TestCapabilitiesEdges:
+    def test_unknown_match_mode_raises(self) -> None:
+        rule = capabilities.ImportRule("mystery", "x")
+        with pytest.raises(ValueError, match="unknown import match mode"):
+            capabilities._import_matches(rule, "CreateFileW")
+
+    def test_entries_ignore_non_list_shapes(self) -> None:
+        assert capabilities._entries({}, "imports") == []
+        assert capabilities._entries({"imports": "nope"}, "imports") == []
+        assert capabilities._entries({"imports": ["nope", {"name": "x"}]}, "imports") == [
+            {"name": "x"}
+        ]
+
+    def test_string_cap_respects_max(self) -> None:
+        strings = [{"text": f"s{i}"} for i in range(10)]
+
+        class _Source:
+            def imports(self, binary: object) -> dict[str, object]:
+                raise AssertionError("override wins")
+
+            def strings(self, binary: object) -> dict[str, object]:
+                raise AssertionError("override wins")
+
+        _, resolved = capabilities.load_imports_and_strings(
+            Path("/nope"),
+            _Source(),
+            imports=[],
+            strings=strings,
+            max_strings=3,  # type: ignore[arg-type]
+        )
+        assert len(resolved) == 3
+
+
+class TestLoadStrings:
+    def test_engine_strings_are_parsed_and_capped(self) -> None:
+        class _Source:
+            def strings(self, binary: object) -> dict[str, object]:
+                return {"strings": [{"text": "a"}, "nope", {"text": "b"}, {"text": "c"}]}
+
+        resolved = capabilities.load_strings(
+            Path("/nope"),
+            _Source(),
+            max_strings=2,  # type: ignore[arg-type]
+        )
+        assert [entry["text"] for entry in resolved] == ["a", "b"]
