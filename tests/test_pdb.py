@@ -271,3 +271,46 @@ class TestReadSymbols:
         struct.pack_into("<I", data, 2 * BLOCK_SIZE + 4 + 4 * STREAM_COUNT, 0xFFFF)
         with pytest.raises(pdb.PdbError):
             pdb.read_symbols(bytes(data))
+
+
+class TestContainerRefusals:
+    def test_a_non_multiple_block_size_is_refused(self) -> None:
+        data = bytearray(_synthetic())
+        struct.pack_into("<I", data, len(pdb.CONTAINER_MAGIC), 1000)
+        with pytest.raises(pdb.PdbError) as exc:
+            pdb.read_symbols(bytes(data))
+        assert exc.value.code == "symbols-unreadable"
+
+    def test_a_short_block_count_is_refused(self) -> None:
+        data = bytearray(_synthetic())
+        struct.pack_into("<I", data, len(pdb.CONTAINER_MAGIC) + 8, 0xFFFF)
+        with pytest.raises(pdb.PdbError):
+            pdb.read_symbols(bytes(data))
+
+    def test_an_inconsistent_directory_byte_count_is_refused(self) -> None:
+        data = bytearray(_synthetic())
+        struct.pack_into("<I", data, len(pdb.CONTAINER_MAGIC) + 12, 0xFFFFFF)
+        with pytest.raises(pdb.PdbError):
+            pdb.read_symbols(bytes(data))
+
+    def test_an_out_of_range_block_map_is_refused(self) -> None:
+        data = bytearray(_synthetic())
+        struct.pack_into("<I", data, len(pdb.CONTAINER_MAGIC) + 20, 0xFFFF)
+        with pytest.raises(pdb.PdbError):
+            pdb.read_symbols(bytes(data))
+
+    def test_a_stream_count_the_directory_cannot_hold_is_refused(self) -> None:
+        data = bytearray(_synthetic())
+        struct.pack_into("<I", data, 2 * BLOCK_SIZE, 0xFFFF)
+        with pytest.raises(pdb.PdbError):
+            pdb.read_symbols(bytes(data))
+
+    def test_a_truncated_block_list_is_refused(self) -> None:
+        data = bytearray(_synthetic())
+        # The first stream's block list starts after the count, the sizes and
+        # the size prefix; zeroing the directory tail truncates it.
+        start = 2 * BLOCK_SIZE + 4 + 4 * STREAM_COUNT
+        for at in range(start, start + 16):
+            data[at] = 0xFF
+        with pytest.raises(pdb.PdbError):
+            pdb.read_symbols(bytes(data))
