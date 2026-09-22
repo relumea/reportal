@@ -1451,3 +1451,14 @@ class TestJobsSchemaAndRows:
         assert "submitted_by_user_id" in columns
         assert "request_id" in columns
         conn.close()
+
+
+class TestJobsRowParsing:
+    def test_non_object_params_read_empty(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        job = jobs.submit(conn, kind="match", binary_id=_binary(conn, tmp_path))
+        job_id = int(job["id"])
+        conn.execute(f"UPDATE {jobs.TABLE} SET params_json = ? WHERE id = ?", ("[]", job_id))
+        conn.commit()
+        row = jobs.get_job(conn, job_id)
+        assert row is not None
+        assert row["params"] == {}
