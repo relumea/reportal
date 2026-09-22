@@ -2,7 +2,7 @@
 
 # MCP tool catalog
 
-The 271 tools the MCP registry exposes (127 read-only, 144 destructive).
+The 273 tools the MCP registry exposes (128 read-only, 145 destructive).
 `reportal mcp` serves them over stdio JSON-RPC; `POST /mcp` and `GET /mcp`
 serve the same registry over HTTP. A read-only tool runs at once; a
 destructive tool pauses an agent run for confirmation. Names must be unique
@@ -44,6 +44,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `get_data_type_functions` | The functions that use one data type of an analysis's binary, from the stored reference index. |
 | `get_data_type_history` | List a data type's edit history, newest first, with each entry's per-field diff; a deleted type's history stays listed. |
 | `get_debug_coverage` | Which stored functions the newest debug session observed, joined by address; unobserved is not absent. Read-only. |
+| `get_debug_proposals` | Rename proposals from the newest session's frame names, joined by address; a person-authored name is never proposed. Read-only. |
 | `get_debug_session` | The newest read-only debug transcript of a binary's newest analysis. Read-only. |
 | `get_debug_status` | Whether this install can run a read-only debug session (the opt-in and the installed backend) and when it last did. Read-only. |
 | `get_decompilation` | Return a function's stored decompilation, else compute one live through rebrew without storing it. |
@@ -157,6 +158,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `add_team_member` | Add a user to a team; journaled and revertible. |
 | `add_user` | Create a user and return its bearer token once; only the token's digest is stored. Journaled and revertible. |
 | `append_analysis_log` | Append one log entry to an analysis; journaled and revertible. |
+| `apply_debug_proposal` | Rename one function to its session proposal, recorded with source `debug` and journaled, so a revert restores the previous name. |
 | `apply_flirt` | Rename a function to a symbol the signatures matched, recording the change in name history. The name is the caller's: the matcher reports symbols, not addresses. A function a person named by hand is refused. |
 | `apply_match` | Copy a recorded match candidate's name, signature, or both onto a function. A signature transfer refuses a differing non-empty calling convention (signature-conflict) and reports a referenced local type it cannot resolve. |
 | `apply_renames` | Apply rename suggestions to a function's stored decompilation, journaling the previous text so the apply can be reverted; optionally renames the function. |

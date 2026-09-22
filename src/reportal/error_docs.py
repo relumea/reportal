@@ -183,6 +183,7 @@ ERROR_DOC_ANCHORS: dict[str, str] = {
     "debug-unavailable": "debug-unavailable",
     "invalid-debug": "invalid-debug",
     "no-debug-session": "no-debug-session",
+    "no-session-proposal": "no-session-proposal",
     "scope-forbidden": "scope-forbidden",
     "short-hash": "short-hash",
     "signature not found": "signature-not-found",

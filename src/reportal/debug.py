@@ -500,6 +500,130 @@ def observed_coverage(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any
     }
 
 
+# Name sources a session may overwrite: engine-produced names and placeholders.
+# A hand rename, an applied match or a revert is a person's decision, so a
+# session label never touches it.  Mirrors unstrip.AUTO_NAME_SOURCES.
+SESSION_AUTO_SOURCES = frozenset({"rebrew", "unstrip", "debug"})
+
+# Rename source a session proposal apply records in the function's history.
+SESSION_SOURCE = "debug"
+
+
+def _session_frames(session: Mapping[str, Any]) -> list[tuple[str, int]]:
+    """Every named frame a session transcript carries, as (name, address)."""
+    found: list[tuple[str, int]] = []
+    transcript = session.get("transcript")
+    if not isinstance(transcript, list):
+        return found
+    for entry in transcript:
+        if not isinstance(entry, dict):
+            continue
+        for frame in entry.get("frames") or []:
+            if not isinstance(frame, dict):
+                continue
+            name = str(frame.get("name") or "").strip()
+            address = _parse_address(frame.get("instructionPointerReference"))
+            if name and address is not None and not name.startswith("_"):
+                found.append((name, address))
+    return found
+
+
+def session_proposals(conn: sqlite3.Connection, binary_id: int) -> dict[str, Any] | None:
+    """Propose renames from the newest session's frame names, joined by VA.
+
+    A frame names the symbol the debugger resolved at that address; when a
+    stored function contains the address and carries a placeholder or an
+    engine-produced name, the frame name is proposed with source `debug`.
+    A person-authored name is never proposed for overwrite, and a function
+    already carrying the name is not proposed.  Proposals only: nothing is
+    renamed.  Returns None before the first session.
+    """
+    from reportal import unstrip as _unstrip
+
+    analysis_id = store.latest_analysis_for_binary(conn, binary_id)
+    if analysis_id is None:
+        return None
+    session = latest_session(conn, analysis_id)
+    if session is None:
+        return None
+    frames = _session_frames(session)
+    functions = store.list_functions(conn, binary_id=binary_id)
+    proposals: list[dict[str, Any]] = []
+    for name, address in frames:
+        for function in functions:
+            va = int(function["va"])
+            size = int(function.get("size") or 0)
+            if not (address == va or (size > 0 and va <= address < va + size)):
+                continue
+            current = str(function.get("name") or "")
+            if current == name:
+                continue
+            source = str(function.get("name_source") or "")
+            if not _unstrip._is_unnamed(current) and source not in SESSION_AUTO_SOURCES:
+                continue
+            proposals.append(
+                {
+                    "function_id": int(function["id"]),
+                    "va": va,
+                    "current_name": current,
+                    "proposed_name": name,
+                    "address": address,
+                    "session_id": int(session["id"]),
+                }
+            )
+    seen: set[int] = set()
+    unique: list[dict[str, Any]] = []
+    for proposal in proposals:
+        if proposal["function_id"] not in seen:
+            seen.add(proposal["function_id"])
+            unique.append(proposal)
+    unique.sort(key=lambda row: row["va"])
+    return {
+        "binary_id": binary_id,
+        "analysis_id": analysis_id,
+        "session_id": int(session["id"]),
+        "backend": str(session["backend"]),
+        "proposals": unique,
+        "count": len(unique),
+        "note": "proposals only: apply renames explicitly, never silently",
+    }
+
+
+def apply_session_proposal(
+    conn: sqlite3.Connection, *, function_id: int, new_name: str | None = None
+) -> dict[str, Any]:
+    """Rename *function_id* to its session proposal, recording source `debug`.
+
+    Without *new_name* the name comes from the binary's newest session
+    proposals.  Raises KeyError for an unknown function and ValueError when
+    the session holds no proposal for it.
+    """
+    function = store.get_function(conn, function_id)
+    if function is None:
+        raise KeyError(f"no function with id {function_id}")
+    resolved = new_name
+    if resolved is None:
+        analysis_id = int(function["analysis_id"])
+        analysis = store.get_analysis(conn, analysis_id)
+        if analysis is None:
+            raise KeyError(f"no analysis {analysis_id} for function {function_id}")
+        binary_id = int(analysis["binary_id"])
+        proposals = session_proposals(conn, binary_id)
+        match = (
+            None
+            if proposals is None
+            else next((p for p in proposals["proposals"] if p["function_id"] == function_id), None)
+        )
+        if match is None:
+            raise ValueError(f"no session proposal for function {function_id}")
+        resolved = str(match["proposed_name"])
+    if not resolved.strip():
+        raise ValueError("name must not be empty")
+    return store.rename_function(
+        conn, function_id, new_name=resolved, actor=SESSION_SOURCE, source=SESSION_SOURCE
+    )
+
+
 def status_payload(conn: sqlite3.Connection, analysis_id: int) -> dict[str, Any]:
     """The debug status of one analysis: whether it can run and its last session."""
     backend = available_backend()

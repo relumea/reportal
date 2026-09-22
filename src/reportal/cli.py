@@ -1056,6 +1056,89 @@ def debug_session_command(
         console.print(f"  [yellow]{note}[/yellow]")
 
 
+@app.command("debug-proposals")
+def debug_proposals_command(
+    binary_id: int = typer.Argument(..., help="Binary whose session proposals to list"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """List rename proposals from the binary's newest debug session; proposes only."""
+    from reportal import debug
+
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        _cli_require_binary(conn, binary_id, json_output)
+        proposals = debug.session_proposals(conn, binary_id)
+        if proposals is None:
+            _fail(f"binary {binary_id} has no debug session", json_output)
+        payload = proposals
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(f"{payload['count']} session proposals from session {payload['session_id']}")
+    for entry in payload["proposals"]:
+        console.print(
+            f"  function {entry['function_id']}:"
+            f" {entry['current_name']} -> {entry['proposed_name']}"
+        )
+    console.print(f"  [yellow]{payload['note']}[/yellow]")
+
+
+@app.command("debug-apply")
+def debug_apply_command(
+    function_id: int = typer.Argument(..., help="Function to rename to its session proposal"),
+    name: str | None = typer.Option(None, "--name", help="Override the proposed name"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rename one function to its debug session proposal (source `debug`)."""
+    from reportal import debug
+
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            try:
+                resolved = name
+                if resolved is None:
+                    function = store.get_function(conn, function_id)
+                    if function is None:
+                        _fail(f"no function with id {function_id}", json_output)
+                    analysis = store.get_analysis(conn, int(function["analysis_id"]))
+                    if analysis is None:
+                        _fail(f"no session proposal for function {function_id}", json_output)
+                    found = debug.session_proposals(conn, int(analysis["binary_id"]))
+                    match = (
+                        None
+                        if found is None
+                        else next(
+                            (p for p in found["proposals"] if p["function_id"] == function_id),
+                            None,
+                        )
+                    )
+                    if match is None:
+                        _fail(f"no session proposal for function {function_id}", json_output)
+                    resolved = str(match["proposed_name"])
+                payload = journal.journaled_rename(
+                    conn,
+                    log,
+                    function_id,
+                    new_name=resolved,
+                    actor=journal.LOCAL_ACTOR,
+                    source=debug.SESSION_SOURCE,
+                )
+            except KeyError:
+                _fail(f"no function with id {function_id}", json_output)
+            except ValueError as exc:
+                _fail(str(exc), json_output)
+    if json_output:
+        typer.echo(json.dumps(log.attach(payload)))
+        return
+    console.print(f"renamed to {payload['new_name']} (source debug)")
+
+
 # ── activity and feedback ──────────────────────────────────────────
 
 

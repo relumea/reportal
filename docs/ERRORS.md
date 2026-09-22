@@ -44,7 +44,7 @@ under the hyphenated heading.
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
 - Sandbox: [sandbox-disabled](#sandbox-disabled), [sandbox-unavailable](#sandbox-unavailable), [invalid-sandbox](#invalid-sandbox)
-- Debug: [debug-disabled](#debug-disabled), [debug-unavailable](#debug-unavailable), [invalid-debug](#invalid-debug), [no-debug-session](#no-debug-session)
+- Debug: [debug-disabled](#debug-disabled), [debug-unavailable](#debug-unavailable), [invalid-debug](#invalid-debug), [no-debug-session](#no-debug-session), [no-session-proposal](#no-session-proposal)
 - Identity: [invalid-feedback](#invalid-feedback), [invalid-team](#invalid-team), [team-exists](#team-exists), [team-not-found](#team-not-found), [not-a-team-member](#not-a-team-member), [invite-not-found](#invite-not-found), [invite-used](#invite-used), [invite-expired](#invite-expired), [signup-disabled](#signup-disabled), [quota-exceeded](#quota-exceeded), [scope-forbidden](#scope-forbidden), [invalid-api-key](#invalid-api-key), [api-key-not-found](#api-key-not-found), [api-key-limit](#api-key-limit)
 - Conversations and jobs: [run-not-found](#run-not-found), [run-not-cancellable](#run-not-cancellable), [no-pending-confirmation](#no-pending-confirmation), [auto-busy](#auto-busy), [invalid-notification-query](#invalid-notification-query)
 - Server: [ui-not-built](#ui-not-built), [unexpected-host-header](#unexpected-host-header), [provide-a-name-or-all-not-both](#provide-a-name-or-all-not-both), [provide-a-component-name-or-all](#provide-a-component-name-or-all)
@@ -939,6 +939,12 @@ be integers.
 
 `404`. A binary has no stored debug session yet. Run one first with
 `POST /api/binaries/<id>/debug-session` (or `reportal debug-session`).
+
+### no-session-proposal
+
+`400`. A function has no rename proposal from the binary's newest debug
+session: either the session never observed it or its name is person-authored.
+Run a probe first, or pass an explicit `--name`.
 
 ### invalid-team
 

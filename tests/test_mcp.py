@@ -189,6 +189,7 @@ _READ_ONLY_TOOLS = frozenset(
         "get_debug_status",
         "get_debug_session",
         "get_debug_coverage",
+        "get_debug_proposals",
         "list_users",
         "list_api_keys",
         "list_teams",
@@ -339,6 +340,7 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "add_feedback",
         "run_sandbox_detonation",
         "run_debug_session",
+        "apply_debug_proposal",
         "ingest_document",
         "ingest_url",
         "delete_document",
@@ -487,9 +489,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 271
-        assert len(_READ_ONLY_TOOLS) == 127
-        assert len(_DESTRUCTIVE_TOOLS) == 144
+        assert len(names) == 273
+        assert len(_READ_ONLY_TOOLS) == 128
+        assert len(_DESTRUCTIVE_TOOLS) == 145
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():

@@ -12569,6 +12569,77 @@ def get_binary_debug_coverage(binary_id: int) -> Response:
     return json_response(coverage)
 
 
+@router.get("/api/binaries/{binary_id}/debug-proposals")
+def get_binary_debug_proposals(binary_id: int) -> Response:
+    """Rename proposals from the newest session's frame names, joined by VA.
+
+    Stored-only and proposals-only: a person-authored name is never proposed,
+    and nothing is renamed.  404 `no-debug-session` before the first session.
+    """
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        proposals = debug.session_proposals(conn, binary_id)
+    if proposals is None:
+        return json_error(
+            404,
+            error=debug.ERROR_NO_SESSION,
+            detail=f"binary {binary_id} has no debug session",
+        )
+    return json_response(proposals)
+
+
+@router.post("/api/functions/{function_id}/debug-apply")
+def apply_binary_debug_proposal(
+    request: Request, function_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Rename one function to its session proposal, recorded with source `debug`."""
+    raw_name = body.get("name")
+    new_name: str | None = None
+    if raw_name is not None:
+        if not isinstance(raw_name, str):
+            return json_error(400, error="invalid name", detail="name must be a string")
+        new_name = raw_name
+    actor = _request_actor(request, body)
+    with contextlib.closing(_open()) as conn:
+        try:
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                result = journal.journaled_rename(
+                    conn,
+                    log,
+                    function_id,
+                    new_name=new_name or _debug_proposal_name(conn, function_id),
+                    actor=actor,
+                    source=debug.SESSION_SOURCE,
+                )
+        except KeyError:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        except ValueError as exc:
+            return json_error(400, error="no-session-proposal", detail=str(exc))
+    return json_response(log.attach(result), status=201)
+
+
+def _debug_proposal_name(conn: Any, function_id: int) -> str:
+    """The session proposal name for *function_id*, or "" when none exists."""
+    function = store.get_function(conn, function_id)
+    if function is None:
+        raise KeyError(function_id)
+    analysis = store.get_analysis(conn, int(function["analysis_id"]))
+    if analysis is None:
+        raise ValueError(f"no session proposal for function {function_id}")
+    proposals = debug.session_proposals(conn, int(analysis["binary_id"]))
+    match = (
+        None
+        if proposals is None
+        else next((p for p in proposals["proposals"] if p["function_id"] == function_id), None)
+    )
+    if match is None:
+        raise ValueError(f"no session proposal for function {function_id}")
+    return str(match["proposed_name"])
+
+
 # ── FLIRT signatures ───────────────────────────────────────────────
 #
 # The catalog is global: a signature set is a fact about a toolchain, not a

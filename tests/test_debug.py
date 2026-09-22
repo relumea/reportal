@@ -1280,3 +1280,106 @@ class TestQemuStub:
     def test_free_tcp_port_is_loopback(self) -> None:
         port = debug._free_tcp_port()
         assert 1 <= port <= 65535
+
+
+class TestSessionProposals:
+    def test_frames_become_proposals_for_placeholder_names(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "gdb"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "gdb",
+                "argv": ["gdb"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [
+                    {
+                        "request": "stackTrace",
+                        "success": True,
+                        "frames": [{"name": "main", "instructionPointerReference": "0x1010"}],
+                    },
+                ],
+                "notes": [],
+            },
+        )
+        db = _db(tmp_path, "props.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            function_id, _ = store.upsert_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000,
+                name="sub_1000",
+                size=0x100,
+                status="STUB",
+            )
+            debug.run_session(conn, binary_id)
+            proposals = debug.session_proposals(conn, binary_id)
+            assert proposals is not None
+            assert proposals["count"] == 1
+            row = proposals["proposals"][0]
+            assert row["function_id"] == function_id
+            assert row["proposed_name"] == "main"
+            applied = debug.apply_session_proposal(conn, function_id=function_id)
+            assert applied["new_name"] == "main"
+            function = store.get_function(conn, function_id)
+            assert function is not None and function["name_source"] == debug.SESSION_SOURCE
+
+    def test_person_authored_names_are_never_proposed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "gdb"))
+        monkeypatch.setattr(
+            debug,
+            "probe_binary",
+            lambda sample, **kwargs: {
+                "status": debug.STATUS_FINISHED,
+                "backend": "gdb",
+                "argv": ["gdb"],
+                "caps": debug.requested_caps().as_payload(),
+                "transcript": [
+                    {
+                        "request": "stackTrace",
+                        "success": True,
+                        "frames": [{"name": "main", "instructionPointerReference": "0x1010"}],
+                    },
+                ],
+                "notes": [],
+            },
+        )
+        db = _db(tmp_path, "guard.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            function_id, _ = store.upsert_function(
+                conn,
+                analysis_id=analysis_id,
+                va=0x1000,
+                name="mine",
+                size=0x100,
+                status="STUB",
+                name_source="manual",
+            )
+            debug.run_session(conn, binary_id)
+            proposals = debug.session_proposals(conn, binary_id)
+            assert proposals is not None
+            assert proposals["count"] == 0
+            with pytest.raises(ValueError):
+                debug.apply_session_proposal(conn, function_id=function_id)
+
+    def test_proposals_need_a_session(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "nop.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            assert debug.session_proposals(conn, binary_id) is None
+            with pytest.raises(KeyError):
+                debug.apply_session_proposal(conn, function_id=4242)

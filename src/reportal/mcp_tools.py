@@ -5546,6 +5546,63 @@ def _tool_get_debug_coverage(arguments: dict[str, Any]) -> dict[str, Any]:
     return coverage
 
 
+def _tool_get_debug_proposals(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    with contextlib.closing(_open()) as conn:
+        _require_binary(conn, binary_id)
+        proposals = debug.session_proposals(conn, binary_id)
+    if proposals is None:
+        raise ToolError(debug.ERROR_NO_SESSION, f"binary {binary_id} has no debug session")
+    return proposals
+
+
+def _tool_apply_debug_proposal(arguments: dict[str, Any]) -> dict[str, Any]:
+    function_id = _arg_int(arguments, "function_id")
+    raw_name = arguments.get("name")
+    new_name: str | None = None
+    if raw_name is not None:
+        if not isinstance(raw_name, str):
+            raise ToolError("invalid name", "name must be a string")
+        new_name = raw_name
+    with contextlib.closing(_open()) as conn:
+        try:
+            action = journal.new_action()
+            with journal.journaled(conn, action) as log:
+                resolved = new_name
+                if resolved is None:
+                    function = store.get_function(conn, function_id)
+                    if function is None:
+                        raise KeyError(function_id)
+                    analysis = store.get_analysis(conn, int(function["analysis_id"]))
+                    if analysis is None:
+                        raise ValueError(f"no session proposal for function {function_id}")
+                    found = debug.session_proposals(conn, int(analysis["binary_id"]))
+                    match = (
+                        None
+                        if found is None
+                        else next(
+                            (p for p in found["proposals"] if p["function_id"] == function_id),
+                            None,
+                        )
+                    )
+                    if match is None:
+                        raise ValueError(f"no session proposal for function {function_id}")
+                    resolved = str(match["proposed_name"])
+                change = journal.journaled_rename(
+                    conn,
+                    log,
+                    function_id,
+                    new_name=resolved,
+                    actor=journal.current_actor() or journal.LOCAL_ACTOR,
+                    source=debug.SESSION_SOURCE,
+                )
+                return log.attach(change)
+        except KeyError:
+            raise ToolError("function not found", f"no function with id {function_id}") from None
+        except ValueError as exc:
+            raise ToolError("no-session-proposal", str(exc)) from exc
+
+
 def _tool_build_graph(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -8728,6 +8785,28 @@ def builtin_tools() -> tuple[Tool, ...]:
             _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
             _READ,
             _tool_get_debug_coverage,
+        ),
+        Tool(
+            "get_debug_proposals",
+            "Rename proposals from the newest session's frame names, joined by"
+            " address; a person-authored name is never proposed.  Read-only.",
+            _object({"binary_id": _int("Binary id.")}, ("binary_id",)),
+            _READ,
+            _tool_get_debug_proposals,
+        ),
+        Tool(
+            "apply_debug_proposal",
+            "Rename one function to its session proposal, recorded with source"
+            " `debug` and journaled, so a revert restores the previous name.",
+            _object(
+                {
+                    "function_id": _int("Function id."),
+                    "name": _str("Override the proposed name."),
+                },
+                ("function_id",),
+            ),
+            _WRITE,
+            _tool_apply_debug_proposal,
         ),
         Tool(
             "run_debug_session",

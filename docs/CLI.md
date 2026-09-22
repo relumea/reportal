@@ -57,6 +57,13 @@ reportal debug-session <binary-id> [--timeout N] [--breakpoint VA]... [--qemu AR
                                            #   prints the stored one, --status says whether
                                            #   a session is possible here, --coverage prints
                                            #   which stored functions the last session saw
+reportal debug-proposals <binary-id> [--json]
+                                           # list rename proposals from the binary's newest
+                                           #   debug session; proposes only, renames nothing
+reportal debug-apply <function-id> [--name TEXT] [--json]
+                                           # rename one function to its session proposal
+                                           #   (source `debug`, journaled); --name overrides
+                                           #   the proposed name
 reportal firmware <binary-id> [--json]       # carve a stored firmware image: its embedded
                                            #   regions, their entropy and confidence;
                                            #   offline byte work, nothing executed
