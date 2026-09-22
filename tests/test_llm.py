@@ -859,3 +859,40 @@ class TestLlmJsonParsing:
         assert llm._entry_list([1, 2], keys=("items",), what="test") == [1, 2]
         with pytest.raises(llm.LlmError, match="non-list 'a'"):
             llm._entry_list({"a": 1, "items": [3]}, keys=("a", "items"), what="t")
+
+
+class TestLlmCoercions:
+    def test_line_number_coercions(self) -> None:
+        assert llm._line_number(True) is None
+        assert llm._line_number(42) == 42
+        assert llm._line_number(" 17 ") == 17
+        assert llm._line_number("nope") is None
+        assert llm._line_number(None) is None
+        assert llm._line_number(4.5) is None
+
+    def test_confidence_clamps(self) -> None:
+        assert llm.confidence(True) == llm.DEFAULT_TYPE_CONFIDENCE
+        assert llm.confidence("nope") == llm.DEFAULT_TYPE_CONFIDENCE
+        assert llm.confidence(float("nan")) == llm.DEFAULT_TYPE_CONFIDENCE
+        assert llm.confidence(float("inf")) == llm.DEFAULT_TYPE_CONFIDENCE
+        assert llm.confidence(2.0) == 1.0
+        assert llm.confidence(-1.0) == 0.0
+        assert llm.confidence("0.5") == 0.5
+
+
+class TestRewriteBranches:
+    CODE = "int f() { return 1; }"
+
+    def test_object_rewrite_is_accepted(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = '{"code": "int g() { return 2; }"}'
+        assert llm.rewrite_decompilation(self.CODE) == {"code": "int g() { return 2; }"}
+
+    def test_non_object_rewrite_is_rejected(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = "[1, 2]"
+        with pytest.raises(llm.LlmError, match="not a JSON object"):
+            llm.rewrite_decompilation(self.CODE)
+
+    def test_empty_code_rewrite_is_rejected(self, fake_llm: FakeLlmClient) -> None:
+        fake_llm.response = '{"code": "   "}'
+        with pytest.raises(llm.LlmError, match="code"):
+            llm.rewrite_decompilation(self.CODE)
