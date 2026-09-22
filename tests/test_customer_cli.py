@@ -319,3 +319,104 @@ class TestListAndEmit:
         customer_cli._emit("plain", False)
         out = capsys.readouterr().out
         assert "plain" in out
+
+
+class TestUpload:
+    def test_missing_file_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            customer_cli, "_call", lambda *a, **k: (_ for _ in ()).throw(AssertionError())
+        )
+        result = CliRunner().invoke(
+            customer_cli.app,
+            [
+                "upload",
+                str(tmp_path / "gone.bin"),
+                "--server",
+                "http://127.0.0.1:1",
+                "--token",
+                "x",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "not a file" in result.stdout
+
+    def test_upload_posts_multipart(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import http.client as _http
+
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        seen: dict[str, object] = {}
+
+        class FakeResponse:
+            status = 200
+
+            def read(self) -> bytes:
+                return b'{"id": 9}'
+
+        class FakeConn:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def request(
+                self,
+                method: str,
+                path: str,
+                body: bytes | None = None,
+                headers: dict[str, str] | None = None,
+            ) -> None:
+                seen.update(method=method, path=path, body=body, headers=headers)
+
+            def getresponse(self) -> FakeResponse:
+                return FakeResponse()
+
+        monkeypatch.setattr(_http, "HTTPConnection", FakeConn)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            [
+                "upload",
+                str(target),
+                "--server",
+                "http://127.0.0.1:1",
+                "--token",
+                "sekret",
+                "--json",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert seen["method"] == "POST"
+        assert seen["path"] == "/api/binaries"
+        assert b"MZ" in bytes(seen["body"])  # type: ignore[arg-type]
+        assert json.loads(result.stdout) == {"id": 9}
+
+    def test_upload_server_error_names_the_problem(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import http.client as _http
+
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+
+        class FakeResponse:
+            status = 413
+
+            def read(self) -> bytes:
+                return b'{"error": "file-too-large", "detail": "big"}'
+
+        class FakeConn:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def request(self, *args: object, **kwargs: object) -> None:
+                del args, kwargs
+
+            def getresponse(self) -> FakeResponse:
+                return FakeResponse()
+
+        monkeypatch.setattr(_http, "HTTPConnection", FakeConn)
+        result = CliRunner().invoke(
+            customer_cli.app,
+            ["upload", str(target), "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        )
+        assert result.exit_code == 1
+        assert "file-too-large" in result.stdout
