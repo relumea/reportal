@@ -1983,3 +1983,82 @@ class TestDebugApplyAndReader:
         reader = debug._DapReader(_FakePipe(b""), 65536, 5.0)
         reader.read_message = lambda: messages.pop(0)  # type: ignore[method-assign]
         assert reader.read_response(7)["command"] == "target"
+
+
+class TestRenderAndRace:
+    def test_render_transcript_rich_entries(self) -> None:
+        entry = {
+            "request": "registers",
+            "success": False,
+            "threadId": 3,
+            "reason": "entry",
+            "threads": [{"id": 1, "name": "t"}],
+            "frames": [{"name": "main", "instructionPointerReference": "0x1000"}],
+            "registers": [{"name": "rax", "value": "1"}],
+            "register_count": 33,
+            "address": "0x2000",
+            "data": "ff",
+            "note": "capped",
+        }
+        text = debug.render_transcript([entry], backend="gdb")
+        assert "registers (failed)" in text
+        assert "thread: 3" in text
+        assert "thread 1: t" in text
+        assert "frame main @ 0x1000" in text
+        assert "rax = 1" in text
+        assert "1 more registers" in text
+        assert "memory [0x2000]: ff" in text
+        assert "capped" in text
+
+    def test_start_session_is_claimed_once(self, tmp_path: Path) -> None:
+        db = _db(tmp_path, "race.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            kwargs = {
+                "analysis_id": analysis_id,
+                "binary_id": binary_id,
+                "sha256": "c" * 64,
+                "backend": "gdb",
+                "argv": ["gdb"],
+                "caps": debug.requested_caps(),
+            }
+            first_id, first_created = debug.start_session(conn, **kwargs)
+            second_id, second_created = debug.start_session(conn, **kwargs)
+            assert first_created is True
+            assert second_created is False
+            assert second_id == first_id
+
+
+class TestRunSessionRace:
+    def test_a_second_run_reads_the_live_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(debug.ENABLED_ENV, "enabled")
+        monkeypatch.setattr(debug, "require_backend", lambda: debug.Backend("gdb", "gdb"))
+        db = _db(tmp_path, "run-race.db")
+        with store.connect(db) as conn:
+            debug.ensure_schema(conn)
+            binary_id = _seed(conn, tmp_path)
+            analysis_id = store.ensure_analysis_for_binary(conn, binary_id, engine="test")
+            debug.start_session(
+                conn,
+                analysis_id=analysis_id,
+                binary_id=binary_id,
+                sha256="d" * 64,
+                backend="gdb",
+                argv=["gdb"],
+                caps=debug.requested_caps(),
+            )
+            real_find = debug.find_live_session
+            calls = {"n": 0}
+
+            def find_once(conn_arg: Any, binary_arg: int) -> Any:
+                calls["n"] += 1
+                return None if calls["n"] == 1 else real_find(conn_arg, binary_arg)
+
+            monkeypatch.setattr(debug, "find_live_session", find_once)
+            result = debug.run_session(conn, binary_id)
+            assert result["status"] == debug.STATUS_RUNNING
+            assert result["binary_id"] == binary_id
