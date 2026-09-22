@@ -860,7 +860,8 @@ from the process-wide live host: it calls the component's `revert(ctx)` where it
 declares one and revokes the names it provided, and the response carries the
 `deactivated` entries plus a `journal_action` when the withdrawal recorded a
 durable write (a withdrawal whose effect is a process-local binding reports
-`journaled: false`).  An unknown name answers 404 `component not found`; a
+`journaled: false`), and a `retirement` block naming the fiber that was disposed
+and whether its `revert` ran.  An unknown name answers 404 `component not found`; a
 component that provides nothing and declares no revert, and a component this
 process already withdrew, answer 409 `not-withdrawable` with the reason in
 `detail`.
