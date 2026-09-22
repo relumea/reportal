@@ -153,6 +153,10 @@ SOURCE_SYMBOL = "symbol"
 SOURCE_UNSTRIP = "unstrip"
 SOURCE_AI = "ai"
 
+# Source a live-debug session would record; sessions rename functions today,
+# never types, but a debugger-resolved type is system evidence like a symbol.
+SOURCE_DEBUG = "debug"
+
 # The four provenance labels the hosted portal shows, and the one explicit table
 # mapping a stored source onto them.  A source nobody declared falls to ``User``
 # (a person's decision is the safest reading), and the ``ai`` prefix covers the
@@ -170,6 +174,7 @@ SOURCE_LABELS: tuple[str, ...] = (
 SOURCE_MAP: dict[str, str] = {
     SOURCE_SCAN: SOURCE_SYSTEM,
     SOURCE_SYMBOL: SOURCE_SYSTEM,
+    SOURCE_DEBUG: SOURCE_SYSTEM,
     SOURCE_MANUAL: SOURCE_USER,
     SOURCE_UNSTRIP: SOURCE_AUTO_UNSTRIP,
     SOURCE_AI: SOURCE_AI_AGENT,

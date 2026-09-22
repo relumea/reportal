@@ -573,6 +573,7 @@ class TestProvenance:
     def test_the_labels_map_every_stored_source(self) -> None:
         assert data_types.source_label(data_types.SOURCE_SCAN) == data_types.SOURCE_SYSTEM
         assert data_types.source_label(data_types.SOURCE_SYMBOL) == data_types.SOURCE_SYSTEM
+        assert data_types.source_label(data_types.SOURCE_DEBUG) == data_types.SOURCE_SYSTEM
         assert data_types.source_label(data_types.SOURCE_MANUAL) == data_types.SOURCE_USER
         assert data_types.source_label(data_types.SOURCE_UNSTRIP) == data_types.SOURCE_AUTO_UNSTRIP
         assert data_types.source_label(data_types.SOURCE_AI) == data_types.SOURCE_AI_AGENT
