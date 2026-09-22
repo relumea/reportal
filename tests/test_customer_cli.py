@@ -514,3 +514,44 @@ class TestHumanRenders:
     def test_emit_dict_renders_json(self, capsys: pytest.CaptureFixture[str]) -> None:
         customer_cli._emit({"id": 1}, False)
         assert json.loads(capsys.readouterr().out) == {"id": 1}
+
+
+class TestAllCommandErrorPaths:
+    def test_every_command_reports_a_transport_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def boom(*_a: object, **_k: object) -> object:
+            raise customer_cli.CustomerError("down")
+
+        monkeypatch.setattr(customer_cli, "_call", boom)
+        cases = [
+            ["binaries", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+            ["binary", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+            ["functions", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+            ["function", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+            ["matches", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+            ["scans", "1", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+            [
+                "rename",
+                "1",
+                "main",
+                "--server",
+                "http://127.0.0.1:1",
+                "--token",
+                "x",
+                "--json",
+            ],
+            [
+                "comment-add",
+                "1",
+                "note",
+                "--server",
+                "http://127.0.0.1:1",
+                "--token",
+                "x",
+                "--json",
+            ],
+            ["collections", "--server", "http://127.0.0.1:1", "--token", "x", "--json"],
+        ]
+        for args in cases:
+            result = CliRunner().invoke(customer_cli.app, args)
+            assert result.exit_code == 1, args[0]
+            assert json.loads(result.stdout)["error"] == "down", args[0]
