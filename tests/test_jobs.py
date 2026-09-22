@@ -1462,3 +1462,39 @@ class TestJobsRowParsing:
         row = jobs.get_job(conn, job_id)
         assert row is not None
         assert row["params"] == {}
+
+
+class _StubEngine(engines.RebrewEngine):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls: list[str] = []
+
+    def available(self) -> bool:
+        return True
+
+    def pe_info(self, path: Any) -> dict[str, Any]:
+        self.calls.append("pe_info")
+        return {"machine": 0x14C, "sections": []}
+
+
+class TestPerformPeInfo:
+    def test_pe_info_scan_is_stored(self, tmp_path: Path, conn: sqlite3.Connection) -> None:
+        target = tmp_path / "demo.exe"
+        target.write_bytes(b"MZ")
+        binary_id = store.add_binary(
+            conn, sha256="ab" * 32, name="demo.exe", path=str(target), size=2
+        )
+        stub = _StubEngine()
+        engines.set_engine(stub)
+        try:
+            result = jobs._perform_pe_info(conn, binary_id, {})
+        finally:
+            engines.set_engine(engines.RebrewEngine(enabled=False))
+        assert result["machine"] == 0x14C
+        assert stub.calls == ["pe_info"]
+        stored = store.get_scan(
+            conn,
+            store.latest_analysis_for_binary(conn, binary_id) or 0,
+            store.SCAN_KIND_PE_INFO,
+        )
+        assert stored is not None
