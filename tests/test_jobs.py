@@ -1768,3 +1768,9 @@ class TestRequestIdRestore:
             engines.set_engine(engines.RebrewEngine(enabled=False))
         assert stored["status"] == jobs.STATUS_DONE
         assert observability.current_request_id() in (None, "")
+
+
+class TestLogSlow:
+    def test_slow_job_logs_a_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        jobs._log_job_slow(job_id=1, kind="pe-info", binary_id=2, duration_ms=5000)
+        assert any("job slow" in record.message for record in caplog.records)
