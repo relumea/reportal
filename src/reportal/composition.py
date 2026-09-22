@@ -38,7 +38,7 @@ import sqlite3
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from reportal import flirt_sigs, lineage, matching, renames, store, unstrip
+from reportal import debug, flirt_sigs, lineage, matching, renames, store, unstrip
 
 # The five function-name-source labels the portal's breakdown carries, in the
 # order the panel renders them.  ``No Debug Info`` is defined by the name (empty
@@ -67,6 +67,7 @@ NAME_SOURCE_MAP: dict[str, str] = {
     "import": NAME_SOURCE_SYSTEM,
     "rebrew": NAME_SOURCE_SYSTEM,
     "symbol": NAME_SOURCE_SYSTEM,
+    debug.SESSION_SOURCE: NAME_SOURCE_SYSTEM,
     flirt_sigs.PROPOSAL_SOURCE: NAME_SOURCE_SYSTEM,
     unstrip.UNSTRIP_SOURCE: NAME_SOURCE_AUTO_UNSTRIP,
     renames.RENAME_SOURCE: NAME_SOURCE_AI_AGENT,
