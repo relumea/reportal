@@ -18,6 +18,8 @@ view renders it from here.
 - `REPORTAL_SERVER` and `REPORTAL_TOKEN` registered as `client.*` settings.
 - Debug backends listed as the ninth integrations seam.
 
+## 3.0.0
+
 Hosted parity for the analysis workflow: match scoping by name source,
 hand-asserted binary identity with provenance, hourly remote refresh limits,
 per-version history attribution, and the hardening queued since 2.1.0.
