@@ -765,3 +765,18 @@ class TestDoctorDbNotWritable:
             assert db_row["status"] in ("fail", "warn", "ok")
         finally:
             db.chmod(0o644)
+
+
+class TestDoctorBrokenChecks:
+    def test_debug_image_not_a_file_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("REPORTAL_DEBUG", "1")
+        monkeypatch.setenv("REPORTAL_DEBUG_IMAGE", "/no/such/image.bin")
+        report = doctor.report()
+        optional = _check(report, "optional")
+        assert "debug image" in optional.get("hint", "")
+
+    def test_unregistered_graph_backend_is_reported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("REPORTAL_GRAPH_BACKEND", "mystery-backend")
+        report = doctor.report()
+        optional = _check(report, "optional")
+        assert "graph backend" in optional.get("hint", "")
