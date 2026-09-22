@@ -828,3 +828,22 @@ def test_the_environment_db_constant_is_set(
     """The helpers above rely on DB_ENV; a missing one would silently use the real DB."""
     ids = _seed(tmp_path, monkeypatch)
     assert os.environ[DB_ENV] == str(ids["db"])
+
+
+class TestModelHelpers:
+    def test_always_available_trivials(self) -> None:
+        assert models._always_available() is True
+        assert models._no_reason() == ""
+
+    def test_missing_distribution_is_unknown(self) -> None:
+        assert models._distribution_version("no-such-package-xyz") == models.UNKNOWN_VERSION
+
+    def test_non_callable_availability_is_rejected(self) -> None:
+        model = models.Model(
+            name="bad",
+            kind="engine",
+            available=True,  # type: ignore[arg-type]
+            unavailable_reason="",
+        )
+        with pytest.raises(plugins.RegistryError, match="must be callable"):
+            models.register_model(model, origin="test")
