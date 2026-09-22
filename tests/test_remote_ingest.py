@@ -806,3 +806,24 @@ class TestValidateEdges:
         with pytest.raises(remote_ingest.RemoteIngestError) as excinfo:
             remote_ingest.validate_target("http://mapped.example/notes.md")
         assert excinfo.value.code == remote_ingest.ERROR_BLOCKED_TARGET
+
+
+class TestWorkspaceAllowEdges:
+    def test_outside_a_workspace_is_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(remote_ingest.ALLOW_REMOTE_ENV, raising=False)
+        monkeypatch.chdir(tmp_path)
+        assert remote_ingest._workspace_allow_remote() is False
+
+    def test_broken_toml_is_off(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / MARKER).write_text("not toml [[[\n", encoding="utf-8")
+        monkeypatch.delenv(remote_ingest.ALLOW_REMOTE_ENV, raising=False)
+        monkeypatch.chdir(tmp_path)
+        assert remote_ingest._workspace_allow_remote() is False
+
+    def test_non_dict_table_is_off(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        (tmp_path / MARKER).write_text("knowledge = 42\n", encoding="utf-8")
+        monkeypatch.delenv(remote_ingest.ALLOW_REMOTE_ENV, raising=False)
+        monkeypatch.chdir(tmp_path)
+        assert remote_ingest._workspace_allow_remote() is False
