@@ -459,3 +459,14 @@ def test_project_scoped_documents_stay_out_of_the_binary_graph(
         node for node in store.list_graph_nodes(conn, ids["binary"]) if node["kind"] == "document"
     ]
     assert [node["label"] for node in documents] == [DOCUMENT_TITLE]
+
+
+class TestGraphHelpers:
+    def test_as_int_coercions(self) -> None:
+        assert graph._as_int(True) is None
+        assert graph._as_int(None) is None
+        assert graph._as_int(42) == 42
+        assert graph._as_int(4.9) == 4
+        assert graph._as_int("0x10") == 16
+        assert graph._as_int(" 20 ") == 20
+        assert graph._as_int("nope") is None

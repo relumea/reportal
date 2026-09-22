@@ -660,3 +660,24 @@ class TestScanHardening:
             strings=[],
         )
         assert "sparse-imports" in _categories(result["findings"])
+
+
+class TestHardeningHelpers:
+    def test_entropy_rejects_non_numbers(self) -> None:
+        assert hardening._section_entropy({"entropy": True}) is None
+        assert hardening._section_entropy({"entropy": "high"}) is None
+        assert hardening._section_entropy({"entropy": 7.5}) == 7.5
+
+    def test_weight_defaults_to_one(self) -> None:
+        assert hardening._section_weight({"raw_size": 0}) == 1
+        assert hardening._section_weight({"raw_size": -5}) == 1
+        assert hardening._section_weight({"raw_size": 100}) == 100
+
+    def test_no_graded_sections_has_no_mean(self) -> None:
+        assert hardening._weighted_mean_entropy([{"entropy": True}]) is None
+
+    def test_triage_without_sections_is_empty(self) -> None:
+        assert hardening._triage_section_names(None) == []
+        assert hardening._triage_section_names({}) == []
+        assert hardening._triage_section_names({"meta": "nope"}) == []
+        assert hardening._triage_section_names({"meta": {}}) == []
