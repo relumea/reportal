@@ -747,3 +747,44 @@ class TestLlmSinks:
 
         with llm.charging(boom):
             llm._report_charge("triage", [{"content": "hi"}])
+
+
+class TestLlmParsing:
+    def test_embedding_vectors_reject_bad_shapes(self) -> None:
+        with pytest.raises(llm.LlmError):
+            llm._embedding_vectors({"data": [{"embedding": "nope"}]}, expected=1)
+        with pytest.raises(llm.LlmError):
+            llm._embedding_vectors({"data": [{"embedding": [True]}]}, expected=1)
+        vectors = llm._embedding_vectors({"data": [{"embedding": [1, 2.5]}]}, expected=1)
+        assert vectors == [[1.0, 2.5]]
+
+    def test_content_text_joins_parts(self) -> None:
+        assert (
+            llm._content_text(
+                {"choices": [{"message": {"content": [{"text": "a"}, {"text": "b"}]}}]}
+            )
+            == "ab"
+        )
+        with pytest.raises(llm.LlmError):
+            llm._content_text({"choices": [{"message": {"content": []}}]})
+
+    def test_tool_calls_skip_nameless_entries(self) -> None:
+        data = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {"id": "1", "function": {"name": "", "arguments": "{}"}},
+                            {"id": "2", "function": {"name": "lookup", "arguments": {"a": 1}}},
+                            {"id": "3", "function": {"name": "run", "arguments": "--all"}},
+                        ]
+                    }
+                }
+            ]
+        }
+        calls = llm._tool_calls(data)
+        assert [call["name"] for call in calls] == ["lookup", "run"]
+        assert calls[0]["arguments"] == ""
+        assert calls[1]["arguments"] == "--all"
+        assert llm._tool_calls({}) == []
+        assert llm._tool_calls({"choices": "nope"}) == []
