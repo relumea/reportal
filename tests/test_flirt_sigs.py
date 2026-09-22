@@ -656,3 +656,13 @@ class TestFlirtEdges:
         )
         assert payload["matches"] == []
         _flirt._MATCHERS.clear()
+
+
+class TestSigsDirText:
+    def test_unset_is_blank(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(flirt_sigs.SIGS_DIR_ENV, raising=False)
+        assert flirt_sigs.sigs_dir_text() == ""
+
+    def test_set_is_text(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv(flirt_sigs.SIGS_DIR_ENV, str(tmp_path))
+        assert flirt_sigs.sigs_dir_text() == str(tmp_path)
