@@ -50,3 +50,30 @@ class TestResolveUnder:
             pytest.skip("symlinks are not permitted here")
         with pytest.raises(JsonError):
             ui._resolve_under(link, "evil.html")
+
+
+class TestGzipAndPrecompressed:
+    def test_gzip_cached_compresses(self, tmp_path: Path) -> None:
+        target = tmp_path / "app.js"
+        target.write_bytes(b"console.log(1);\n" * 20)
+        packed = ui._gzip_cached(str(target), target.stat().st_mtime_ns, target.stat().st_size)
+        assert packed[:2] == b"\x1f\x8b"
+
+    def test_precompressed_sibling_fresh(self, tmp_path: Path) -> None:
+        target = tmp_path / "app.js"
+        target.write_bytes(b"x" * 10)
+        sibling = tmp_path / "app.js.gz"
+        sibling.write_bytes(b"\x1f\x8b" * 5)
+        assert ui._precompressed_sibling(target, ".gz") == sibling
+
+    def test_precompressed_sibling_missing(self, tmp_path: Path) -> None:
+        target = tmp_path / "app.js"
+        target.write_bytes(b"x" * 10)
+        assert ui._precompressed_sibling(target, ".gz") is None
+
+    def test_precompressed_sibling_empty(self, tmp_path: Path) -> None:
+        target = tmp_path / "app.js"
+        target.write_bytes(b"x" * 10)
+        sibling = tmp_path / "app.js.gz"
+        sibling.write_bytes(b"")
+        assert ui._precompressed_sibling(target, ".gz") is None
