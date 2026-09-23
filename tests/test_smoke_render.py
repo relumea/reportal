@@ -55,6 +55,9 @@ def _install(monkeypatch: pytest.MonkeyPatch, doms: list[str]) -> tuple[_Clock, 
     monkeypatch.setattr(smoke_spa.cdp, "browser_session", _session)
     monkeypatch.setattr(smoke_spa.cdp, "document_html", html)
     monkeypatch.setattr(smoke_spa.cdp, "page_errors", lambda _pipe, _session_id: [])
+    # The marker wait unfolds every collapsed panel before each read, so the
+    # seam needs an expression evaluator even with no browser behind it.
+    monkeypatch.setattr(smoke_spa.cdp, "evaluate", lambda _pipe, _session, _expr: 0)
     monkeypatch.setattr(smoke_spa.time, "monotonic", clock.monotonic)
     monkeypatch.setattr(smoke_spa.time, "sleep", clock.sleep)
     return clock, reads
