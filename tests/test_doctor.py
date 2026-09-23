@@ -48,6 +48,22 @@ def _check(payload: dict[str, Any], name: str) -> dict[str, Any]:
     raise AssertionError(f"no check named {name} in {[row['name'] for row in payload['checks']]}")
 
 
+def _free_port() -> int:
+    """A loopback port nothing holds, so a readiness report is the test's own.
+
+    An operator's `reportal serve` legitimately holds the default port, and a
+    test that only cares about the other checks must not inherit that state:
+    a busy default port is asserted by `test_a_busy_port_is_a_failure`, which
+    chooses its own socket.
+    """
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        holder.bind(("127.0.0.1", 0))
+        return int(holder.getsockname()[1])
+    finally:
+        holder.close()
+
+
 class TestChecks:
     def test_a_healthy_workspace_reports_ready(
         self,
@@ -57,7 +73,7 @@ class TestChecks:
         fake_engine: Any,
     ) -> None:
         _workspace(tmp_path, monkeypatch)
-        payload = doctor.report()
+        payload = doctor.report(port=_free_port())
         assert payload["status"] == "ok"
         assert payload["failures"] == []
         assert payload["workspace"] == str(tmp_path)
@@ -82,7 +98,7 @@ class TestChecks:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.chdir(tmp_path)
-        payload = doctor.report()
+        payload = doctor.report(port=0)
         assert payload["status"] == "degraded"
         assert payload["failures"] == ["workspace", "database", "schema"]
         assert "reportal init" in _check(payload, "workspace")["hint"]
@@ -265,7 +281,7 @@ class TestCli:
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
     ) -> None:
         _workspace(tmp_path, monkeypatch)
-        result = runner.invoke(cli.app, ["doctor"])
+        result = runner.invoke(cli.app, ["doctor", "--port", "0"])
         assert result.exit_code == 0, result.output
         assert "workspace" in result.output
         assert "ready" in result.output
@@ -274,11 +290,11 @@ class TestCli:
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: Any
     ) -> None:
         _workspace(tmp_path, monkeypatch)
-        result = runner.invoke(cli.app, ["doctor", "--json"])
+        result = runner.invoke(cli.app, ["doctor", "--json", "--port", "0"])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
         assert payload["status"] == "ok"
-        assert payload["port"] == doctor.DEFAULT_PORT
+        assert payload["port"] == 0
         assert {row["name"] for row in payload["checks"]} == {
             "workspace",
             "database",
@@ -346,7 +362,7 @@ class TestHealthRouteAgrees:
         status, headers, body = wsgi_request("GET", "/api/health")
         assert status.startswith("200")
         health = json_body(body, headers)
-        report = doctor.report()
+        report = doctor.report(port=0)
         assert health["status"] == "ok"
         assert report["status"] == "ok"
         assert health["db"] == f"{tmp_path / 'reportal.db'}"
@@ -536,7 +552,7 @@ class TestUnit:
         archive_dir.mkdir()
         archive = archive_dir / "reportal-backup-fresh.tar.gz"
         archive.write_bytes(b"not a real archive")
-        payload = doctor.report()
+        payload = doctor.report(port=0)
         assert payload["status"] == "ok"
         assert payload["failures"] == []
         row = _check(payload, "backup")
@@ -566,7 +582,7 @@ class TestUnit:
         ws.mkdir()
         _workspace(ws, monkeypatch)
         assert not (tmp_path / "reportal-backups").exists()
-        payload = doctor.report()
+        payload = doctor.report(port=0)
         assert payload["status"] == "ok"
         assert payload["failures"] == []
         row = _check(payload, "backup")

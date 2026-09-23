@@ -762,7 +762,9 @@ class TestDoctor:
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _workspace(tmp_path, monkeypatch, '[llm]\nendpoind = "http://x"\n')
-        payload = doctor.report()
+        # The report is read for its config verdict; a serve holding the
+        # default port is a port failure of its own and not this test's subject.
+        payload = doctor.report(port=0)
         row = next(check for check in payload["checks"] if check["name"] == "config")
         assert row["status"] == "warn"
         assert "[llm] endpoind" in row["detail"]
