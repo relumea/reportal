@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Button, EmptyState, ErrorNote, Field, Loading, Muted, Panel, Toolbar } from "../components";
+import { Button, EmptyState, ErrorNote, Field, Loading, Muted, Panel, Toolbar, countOf } from "../components";
 import type { KnowledgeHit, KnowledgeSearch } from "../types";
 import { useAsync } from "../useAsync";
 
@@ -74,7 +74,7 @@ export function FunctionKnowledgePanel({ functionId }: { functionId: number }): 
       ) : (
         <>
           <Muted>
-            {search.data.count} chunk(s) for &quot;{search.data.query}&quot;.
+            {countOf(search.data.count, "chunk")} for &quot;{search.data.query}&quot;.
           </Muted>
           <KnowledgeResults hits={search.data.results} />
         </>

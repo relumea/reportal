@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -89,3 +91,46 @@ def test_the_seeded_scan_reaches_the_stored_only_route(tmp_path: Path) -> None:
     assert stored is not None
     assert stored["count"] == len(stored["findings"])
     assert stored["count"] > 0
+
+
+def test_seed_names_never_carry_a_declaration_word(tmp_path: Path) -> None:
+    """The inventory's ``__declspec`` names give way to the coverage.db's real ones."""
+    project = tmp_path / "np"
+    inventory = project / "src" / smoke_spa.TARGET_SUBDIR / smoke_spa.FUNCTION_JSON_NAME
+    inventory.parent.mkdir(parents=True)
+    inventory.write_text(
+        json.dumps(
+            [
+                {"va": 0x1000, "size": 16, "name": "FreePrintSetup"},
+                {"va": 0x1010, "size": 16, "name": "__declspec"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert smoke_spa.function_seed_file(project) == inventory
+    assert smoke_spa.read_functions(inventory, 6) == [
+        (0x1000, "FreePrintSetup", 16),
+        (0x1010, "sub_1010", 16),
+    ]
+
+    (project / "db").mkdir()
+    with contextlib.closing(sqlite3.connect(project / "db" / "coverage.db")) as coverage:
+        coverage.execute(
+            "CREATE TABLE functions (target TEXT, va INTEGER, name TEXT, size INTEGER,"
+            " status TEXT, symbol TEXT)"
+        )
+        coverage.executemany(
+            "INSERT INTO functions VALUES (?, ?, ?, 16, 'STUB', ?)",
+            [
+                (smoke_spa.TARGET_SUBDIR, 0x1010, "__declspec", "_InitializeLocaleSettings"),
+                (smoke_spa.TARGET_SUBDIR, 0x1000, "FreePrintSetup", "_FreePrintSetup@0"),
+                ("OTHER", 0x2000, "Elsewhere", ""),
+            ],
+        )
+        coverage.commit()
+    seed = smoke_spa.function_seed_file(project)
+    assert seed == project / "db" / "coverage.db"
+    assert smoke_spa.read_functions(seed, 6) == [
+        (0x1000, "FreePrintSetup", 16),
+        (0x1010, "InitializeLocaleSettings", 16),
+    ]

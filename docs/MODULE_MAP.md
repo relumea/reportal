@@ -43,11 +43,12 @@ the reading order across these modules; the
 | `components.py` | [components](subsystems/components.md) | reportal's component framework: everything in a pipeline run is a component. |
 | `composition.py` | [binary-detail](subsystems/binary-detail.md) | Composition analysis of one stored binary against its stored matches. |
 | `conversations.py` | [conversation](subsystems/conversation.md) | Conversations over stored local data and the optional LLM bridge. |
+| `corpus.py` | [corpus](subsystems/corpus.md) | Portable match corpora: named functions and their listings, carried between workspaces. |
 | `credits.py` | [tenancy-billing](subsystems/tenancy-billing.md) | What each AI task costs a tenant, in credits. |
 | `customer_cli.py` | [cli](subsystems/cli.md) | Customer CLI: the platform surface of reportal, over HTTP only. |
 | `data_types.py` | [symbols-and-types](subsystems/symbols-and-types.md) | Editable data types: the local type model, its C rendering and its indices. |
 | `debug.py` | [debug](subsystems/debug.md) | Read-only live-debug sessions, off by default. |
-| `decompiler_scripts.py` | [ai-artifacts](subsystems/ai-artifacts.md) | Decompiler round-trip scripts: stored renames as runnable tool scripts. |
+| `decompiler_scripts.py` | [ai-artifacts](subsystems/ai-artifacts.md) | Decompiler round-trip scripts: stored analysis as runnable tool scripts. |
 | `details.py` | [binary-detail](subsystems/binary-detail.md) | The binary-detail reads the hosted portal derives from a scan. |
 | `diffing.py` | [diff-and-lineage](subsystems/diff-and-lineage.md) | Line-level alignment of two listings for the portal's Match / Diff surface. |
 | `diffview.py` | [diff-and-lineage](subsystems/diff-and-lineage.md) | Resolve a match pair to two listings and align them for the diff view. |
@@ -78,6 +79,7 @@ the reading order across these modules; the
 | `library.py` | [matching](subsystems/matching.md) | Library identification and the software bill of materials it feeds. |
 | `lineage.py` | [diff-and-lineage](subsystems/diff-and-lineage.md) | Deterministic pairwise function lineage between two binaries. |
 | `llm.py` | [llm-bridge](subsystems/llm-bridge.md) | Optional OpenAI-compatible LLM bridge for reportal. |
+| `match_index.py` | [matching](subsystems/matching.md) | The persisted LSH candidate index over function fingerprints. |
 | `matching.py` | [matching](subsystems/matching.md) | Local function matching over the whole portal corpus. |
 | `mcp_server.py` | [mcp](subsystems/mcp.md) | MCP server for reportal. |
 | `mcp_tools.py` | [mcp](subsystems/mcp.md) | MCP tool registry for reportal. |
@@ -94,10 +96,12 @@ the reading order across these modules; the
 | `profiles.py` | [configuration](subsystems/configuration.md) | Deployment profiles: which product this install is. |
 | `protocols.py` | [static-scans](subsystems/static-scans.md) | Deterministic protocol inference over a binary's imports and strings. |
 | `ratings.py` | [ai-artifacts](subsystems/ai-artifacts.md) | Analyst feedback on a stored agent artifact. |
+| `rebrew_import.py` | [engines](subsystems/engines.md) | Rebrew projects into the portal: import an existing one, or generate one. |
 | `related.py` | [binary-detail](subsystems/binary-detail.md) | Deterministic relationship ranking of the stored binaries around one target. |
 | `remediation.py` | [static-scans](subsystems/static-scans.md) | Remediation artifacts for a binary: YARA, Snort and STIX. |
 | `remote_ingest.py` | [knowledge](subsystems/knowledge.md) | Guarded remote (URL) document ingestion for reportal. |
 | `renames.py` | [ai-artifacts](subsystems/ai-artifacts.md) | LLM identifier renaming over a function's stored decompilation. |
+| `repos.py` | [repos](subsystems/repos.md) | Workspace git checkouts the agent reads and edits. |
 | `sandbox.py` | [sandbox](subsystems/sandbox.md) | Guarded sandbox detonation: run a stored sample, off by default, and record it. |
 | `secret_store.py` | [configuration](subsystems/configuration.md) | The local secret store: named credentials, written once and read redacted. |
 | `secrets.py` | [static-scans](subsystems/static-scans.md) | Deterministic secrets scan: credential patterns plus entropy. |
@@ -107,6 +111,7 @@ the reading order across these modules; the
 | `similarity.py` | [matching](subsystems/matching.md) | Structural assembly similarity, backed by the optional ``similarity`` extra. |
 | `store.py` | [store](subsystems/store.md) | SQLite schema and typed CRUD for the reportal portal. |
 | `surface.py` | [binary-actions](subsystems/binary-actions.md) | The checks and journal helpers the HTTP, CLI and MCP surfaces share. |
+| `symbol_library.py` | [symbols-and-types](subsystems/symbols-and-types.md) | A workspace library of debug symbol files, matched to binaries by identity. |
 | `symbols.py` | [symbols-and-types](subsystems/symbols-and-types.md) | Debug-symbol ingestion: function names and types from a symbol file. |
 | `threat.py` | [static-scans](subsystems/static-scans.md) | Local threat report: IOC extraction and a curated ATT&CK mapping. |
 | `ui.py` | [web-ui](subsystems/web-ui.md) | SPA, static asset and generated report routes for reportal. |

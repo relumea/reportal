@@ -8,7 +8,7 @@ import { expect, test } from "./fixtures";
 const state = e2eState();
 
 test("the library panel reads empty, runs and exports", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=provenance`);
   const panel = panelByTitle(page, "Library identification");
   await expect(panel).toBeVisible();
 

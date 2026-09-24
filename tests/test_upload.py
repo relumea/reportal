@@ -16,6 +16,7 @@ BOUNDARY = "----reportal-upload-test"
 
 # Keys every upload response carries, duplicate or not.
 RESPONSE_KEYS = {
+    "analysis_job",
     "id",
     "sha256",
     "name",

@@ -1,0 +1,177 @@
+/* Disassembly listing (DisasmListing.tsx): address, bytes, mnemonic and
+   operand columns in the disassembler convention.  Token hues alias the
+   palette, so every theme block already defines them. */
+
+.listing {
+  --asm-addr: var(--text-faint);
+  --asm-bytes: var(--text-faint);
+  --asm-mnem: var(--text);
+  --asm-call: var(--accent);
+  --asm-jump: var(--warn);
+  --asm-ret: var(--danger);
+  --asm-stack: var(--hue-thunk);
+  --asm-reg: var(--info);
+  --asm-imm: var(--ok);
+  --asm-label: var(--warn);
+
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  overflow: hidden;
+}
+
+.listing-rows {
+  max-height: 640px;
+  overflow: auto;
+  padding: var(--space-2) 0;
+  font: var(--text-sm) / 1.55 var(--font-mono);
+}
+
+.listing-row {
+  display: grid;
+  grid-template-columns: max-content 25ch minmax(7ch, max-content) minmax(0, 1fr);
+  column-gap: 2ch;
+  padding: 0 var(--space-3);
+  white-space: pre;
+}
+
+.listing-row:hover {
+  background: var(--row-stripe);
+}
+
+.asm-label {
+  padding: var(--space-1) var(--space-3) 0;
+  color: var(--asm-label);
+}
+
+.asm-addr {
+  color: var(--asm-addr);
+}
+
+.asm-bytes {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--asm-bytes);
+}
+
+.asm-mnem {
+  color: var(--asm-mnem);
+}
+
+.asm-call .asm-mnem {
+  color: var(--asm-call);
+}
+
+.asm-jump .asm-mnem {
+  color: var(--asm-jump);
+}
+
+.asm-ret .asm-mnem {
+  color: var(--asm-ret);
+}
+
+.asm-stack .asm-mnem {
+  color: var(--asm-stack);
+}
+
+.asm-nop {
+  opacity: 0.6;
+}
+
+.asm-ops {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.asm-tok,
+.asm-target {
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.asm-reg {
+  color: var(--asm-reg);
+}
+
+.asm-imm {
+  color: var(--asm-imm);
+}
+
+.asm-size {
+  color: var(--text-muted);
+}
+
+.asm-hl {
+  outline: 1px solid currentcolor;
+  background: var(--accent-soft);
+}
+
+.asm-target {
+  color: var(--asm-call);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.asm-jump .asm-target {
+  color: var(--asm-label);
+}
+
+.listing-raw {
+  margin: 0;
+}
+
+/* Function detail: the listing and the decompilation side by side once the
+   pane fits two readable code columns, stacked below that. */
+.code-split {
+  display: grid;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (min-width: 1600px) {
+  .code-split {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+
+/* Decompiled C (CSource.tsx): highlight.js scopes on the listing's hues. */
+.c-source {
+  max-height: 640px;
+  cursor: text;
+}
+
+.c-source .hljs-keyword {
+  color: var(--asm-stack);
+}
+
+.c-source .hljs-type {
+  color: var(--asm-reg);
+}
+
+.c-source .hljs-string {
+  color: var(--asm-jump);
+}
+
+.c-source .hljs-number,
+.c-source .hljs-literal {
+  color: var(--asm-imm);
+}
+
+.c-source .hljs-title.function_,
+.c-source .hljs-built_in {
+  color: var(--asm-call);
+}
+
+.c-source .hljs-meta {
+  color: var(--text-muted);
+}
+
+.c-source .hljs-comment,
+.asm-comment {
+  color: var(--text-faint);
+  font-style: italic;
+}

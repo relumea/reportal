@@ -26,6 +26,7 @@ comparison per pair and a re-run refreshes just that pair.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -68,6 +69,65 @@ MAX_ROWS = 500
 # another.
 PLACEHOLDER_PREFIXES = ("sub_", "fcn_", "FUN_", "FUNC_")
 
+# C declaration words a prototype carries before its declarator: MSVC calling
+# conventions and their Windows macros, ``__declspec`` and ``__attribute__``,
+# storage classes, qualifiers and the builtin types.  A parser that takes the
+# first word of ``int __declspec(naked) __stdcall Foo(void)`` stores one of
+# these as the function's name; the rebrew import and the decompiler script
+# exporters refuse them as names.
+DECLARATION_KEYWORDS = frozenset(
+    {
+        "__declspec",
+        "_declspec",
+        "__attribute__",
+        "__cdecl",
+        "_cdecl",
+        "cdecl",
+        "__stdcall",
+        "_stdcall",
+        "__fastcall",
+        "_fastcall",
+        "__thiscall",
+        "__vectorcall",
+        "__clrcall",
+        "__pascal",
+        "pascal",
+        "PASCAL",
+        "WINAPI",
+        "WINAPIV",
+        "APIENTRY",
+        "CALLBACK",
+        "static",
+        "extern",
+        "inline",
+        "__inline",
+        "__forceinline",
+        "register",
+        "auto",
+        "const",
+        "volatile",
+        "signed",
+        "unsigned",
+        "void",
+        "char",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "struct",
+        "union",
+        "enum",
+        "__near",
+        "__far",
+    }
+)
+
+# Characters no stored function name carries: whitespace and control
+# characters, and the C punctuation a prototype fragment holds.  Mangled C++
+# names (``?Bar@CFoo@@QAEXXZ``) and scoped ones (``CFoo::Bar``) pass.
+_NOT_IN_A_NAME = re.compile(r"[\s\x00-\x1f\x7f(),;{}\[\]\"'\\]")
+
 # Decimals `matched_percent` and `confidence` are rounded to.
 METRIC_DECIMALS = 1
 
@@ -92,6 +152,15 @@ class SameBinaryError(LineageError):
 # A structural scorer over two function rows: the similarity (0-100), or None
 # when the pair cannot be scored (a missing listing, an unavailable engine).
 FunctionScorer = Callable[[dict[str, Any], dict[str, Any]], float | None]
+
+
+def is_function_name(name: str) -> bool:
+    """True when *name* is a name, not a declaration word or a prototype fragment.
+
+    Placeholders (``sub_*``) are names here: whether one is worth carrying is
+    the caller's decision.
+    """
+    return bool(name) and name not in DECLARATION_KEYWORDS and not _NOT_IN_A_NAME.search(name)
 
 
 def is_placeholder_name(name: str) -> bool:

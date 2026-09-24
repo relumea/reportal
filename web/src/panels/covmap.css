@@ -63,38 +63,39 @@ a.covmap-cell:focus-visible {
   outline: 2px solid var(--accent);
 }
 
-/* Cell ink per status entity: the same tokens the badges use, so a status
-   keeps one colour across the map, the legend and the tables. */
+/* Cell fill per verdict: the `--cell-*` family, one fill shared by the map and
+   its legend.  Badges and table cells use the `--st-*` inks instead: a fill is
+   tuned to be seen as an area, an ink to be read as text. */
 .covmap-cell[data-state="exact"] {
-  background: var(--st-exact);
+  background: var(--cell-exact);
 }
 
 .covmap-cell[data-state="reloc"] {
-  background: var(--st-reloc);
+  background: var(--cell-reloc);
 }
 
 .covmap-cell[data-state="proven"] {
-  background: var(--st-proven);
+  background: var(--cell-proven);
 }
 
 .covmap-cell[data-state="thunk"] {
-  background: var(--st-thunk);
+  background: var(--cell-thunk);
 }
 
 .covmap-cell[data-state="near"] {
-  background: var(--st-near);
+  background: var(--cell-near);
 }
 
 .covmap-cell[data-state="stub"] {
-  background: var(--st-stub);
+  background: var(--cell-stub);
 }
 
 .covmap-cell[data-state="idle"] {
-  background: var(--st-idle);
+  background: var(--cell-idle);
 }
 
 .covmap-cell[data-state="fail"] {
-  background: var(--st-fail);
+  background: var(--cell-fail);
 }
 
 .entropy-strip {

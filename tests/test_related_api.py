@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from conftest import FakeEngine, json_body, wsgi_request
 
-from reportal import engines, store
+from reportal import engines, related, store
 
 SHA = "aa" * 32
 
@@ -162,13 +162,15 @@ class TestRelatedRoutes:
         assert payload["count"] == 1
         assert payload["related"][0]["classification"] == "unrelated"
 
-    def test_post_engine_error_500(
+    def test_post_engine_refusal_compares_on_stored_data(
         self,
         conn: sqlite3.Connection,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         fake_engine: FakeEngine,
     ) -> None:
+        # An engine that cannot read the binaries degrades the ranking to their
+        # stored data, and the notes say which it hit.
         target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
         _binary(conn, tmp_path, name="other.exe", sha="bb" * 32)
 
@@ -177,5 +179,7 @@ class TestRelatedRoutes:
 
         monkeypatch.setattr(fake_engine, "fingerprint", boom)
         status, headers, body = _post(f"/api/binaries/{target}/related", {})
-        assert status.startswith("500")
-        assert json_body(body, headers)["error"] == "engine-error"
+        assert status.startswith("200")
+        notes = json_body(body, headers)["notes"]
+        assert related.TARGET_UNREADABLE_NOTE in notes
+        assert "1 binaries the engine could not read were compared on stored data" in notes

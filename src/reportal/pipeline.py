@@ -170,11 +170,6 @@ REQUIREMENT_REASONS: dict[str, str] = {
     SEED_ENGINE: REASON_ENGINE_UNAVAILABLE,
 }
 
-# Disassembly format `prepare` requests.  It is the format the disassembly
-# route caches, so a pipeline run and a `GET /api/functions/<id>/disasm` share
-# one cached listing.
-DISASM_FORMAT = "nasm"
-
 # Name source `resolve-names` reports for a library-identification proposal.
 PREDICTED_NAME_SOURCE_UNSTRIP = "unstrip"
 PREDICTED_NAME_SOURCE_MATCH = "match"
@@ -656,7 +651,10 @@ def _effect_prepare(ctx: Context) -> None:
             conn,
             function_id,
             lambda: engine.disassemble(
-                project_dir, int(function["va"]), int(function["size"]), DISASM_FORMAT
+                project_dir,
+                int(function["va"]),
+                int(function["size"]),
+                store.cached_disasm_format(conn, binary_id),
             ),
             extent_size=int(function["size"]),
             project_dir=project_dir,

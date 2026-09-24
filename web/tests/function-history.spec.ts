@@ -7,7 +7,7 @@ import { expect, test } from "./fixtures";
 const state = e2eState();
 
 test("a rename records history naming its actor with a relative age", async ({ page }) => {
-  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await page.goto(`/#/functions/${state.ids.function_id}?tab=matches`);
   const title = page.locator(".detail-title-name");
   await expect(title).toBeVisible();
   const seeded = (await title.innerText()).trim();

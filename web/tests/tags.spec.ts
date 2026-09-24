@@ -14,7 +14,7 @@ test("a tag is renamed everywhere and then deleted", async ({ page }) => {
   const panel = panelByTitle(page, "Tags");
   await expect(panel.locator("tbody tr").first()).toBeVisible();
 
-  await page.goto(`/#/binaries/1`);
+  await page.goto(`/#/binaries/1?tab=review`);
   const tags = panelByTitle(page, "Tags");
   await tags.getByLabel("Tag", { exact: true }).fill(name);
   await tags.getByRole("button", { name: "Add tag" }).click();
@@ -41,6 +41,6 @@ test("a tag is renamed everywhere and then deleted", async ({ page }) => {
   await renamedDetail.getByRole("button", { name: "Delete" }).click();
   await expect(panel.locator("tbody tr").filter({ hasText: renamed })).toHaveCount(0);
 
-  await page.goto("/#/binaries/1");
+  await page.goto("/#/binaries/1?tab=review");
   await expect(panelByTitle(page, "Tags").getByText(renamed, { exact: true })).toHaveCount(0);
 });

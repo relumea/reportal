@@ -132,8 +132,7 @@ SCAN_KIND_DEBUG_SESSION = "debug-session"
 # table and the stored `pe-info` section table.  The hosted portal publishes no
 # equivalent, so the payload carries this label and docs/PARITY.md says so.
 FUNCTION_COVERAGE_NOTE = (
-    "reportal's own metric over the stored function table and the stored pe-info"
-    " sections; the hosted portal publishes no per-section byte coverage"
+    "measured over the stored function table and the stored header-scan sections"
 )
 
 # Decimal places a coverage percentage is rounded to.  One decimal matches the
@@ -244,6 +243,24 @@ CREATE TABLE IF NOT EXISTS disasm_cache (
     project_dir TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL
 );
+
+-- The LSH candidate index over each function's MinHash fingerprint
+-- (`match_index.py`): the listing a row was built from, and its band keys.
+-- A derived cache: every row is rebuilt from the listing it names.
+CREATE TABLE IF NOT EXISTS lsh_fingerprints (
+    function_id    INTEGER PRIMARY KEY REFERENCES functions(id) ON DELETE CASCADE,
+    listing_sha256 TEXT NOT NULL,
+    created_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lsh_buckets (
+    function_id INTEGER NOT NULL REFERENCES lsh_fingerprints(function_id) ON DELETE CASCADE,
+    band        INTEGER NOT NULL,
+    bucket      TEXT NOT NULL,
+    PRIMARY KEY (function_id, band)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lsh_buckets_band_bucket ON lsh_buckets(band, bucket);
 
 CREATE TABLE IF NOT EXISTS decompilations (
     function_id INTEGER PRIMARY KEY REFERENCES functions(id) ON DELETE CASCADE,
@@ -1189,6 +1206,24 @@ def set_binary_compiler(
     conn.commit()
 
 
+def set_binary_detected(conn: sqlite3.Connection, binary_id: int, *, arch: str, fmt: str) -> None:
+    """Record the ISA and container format of *binary_id* where it carries none yet.
+
+    An empty value is ignored, and a stored one (detection, or the upload's
+    hint) is kept: this fills the blanks an upload leaves (a file with no
+    telling suffix, such as a Linux ELF) until an analysis names what it read.
+    """
+    if arch.strip():
+        conn.execute(
+            "UPDATE binaries SET arch = ? WHERE id = ? AND arch = ''", (arch.strip(), binary_id)
+        )
+    if fmt.strip():
+        conn.execute(
+            "UPDATE binaries SET format = ? WHERE id = ? AND format = ''", (fmt.strip(), binary_id)
+        )
+    conn.commit()
+
+
 def rename_binary(conn: sqlite3.Connection, binary_id: int, name: str) -> dict[str, Any] | None:
     """Set the display name of *binary_id*; None when the id is unknown.
 
@@ -1315,12 +1350,10 @@ def set_rebrew_context(conn: sqlite3.Connection, binary_id: int, project_dir: st
         " ON CONFLICT(binary_id) DO UPDATE SET project_dir = excluded.project_dir",
         (binary_id, project_dir),
     )
-    conn.commit()
     # ``previous is None`` is a live identity change too: listings and
     # decompilations recorded against the empty project_dir must not survive
     # the first real context.  Same-path refreshes leave derived rows alone.
     if previous != project_dir:
-        clear_disasm_for_binary(conn, binary_id)
         conn.execute(
             "DELETE FROM decompilations WHERE function_id IN ("
             " SELECT f.id FROM functions f"
@@ -1335,7 +1368,11 @@ def set_rebrew_context(conn: sqlite3.Connection, binary_id: int, project_dir: st
             " WHERE a.binary_id = ?)",
             (binary_id,),
         )
-        conn.commit()
+        # The cache clear carries the commit, so it runs last: one commit lands
+        # the context change and every purge together, with no window that
+        # swaps the engine input before the purge of the old input's rows.
+        clear_disasm_for_binary(conn, binary_id)
+    conn.commit()
 
 
 def get_rebrew_context(conn: sqlite3.Connection, binary_id: int) -> str | None:
@@ -1740,10 +1777,11 @@ def update_analysis(
         return None
     if engine is not None:
         conn.execute("UPDATE analyses SET engine = ? WHERE id = ?", (engine, analysis_id))
-        conn.commit()
     if model is not None:
         conn.execute("UPDATE analyses SET model = ? WHERE id = ?", (model, analysis_id))
-        conn.commit()
+    # One commit for both labels: the routes that carry them send them as a
+    # pair, so a reader never sees one updated beside the other stale.
+    conn.commit()
     return get_analysis(conn, analysis_id)
 
 
@@ -2629,6 +2667,21 @@ def list_outstanding_functions(
     return _binary_function_rows(conn, binary_id, limit, exclude_statuses=sorted(MATCHED_STATUSES))
 
 
+def prune_analysis_functions(conn: sqlite3.Connection, analysis_id: int, keep_vas: set[int]) -> int:
+    """Delete the functions of *analysis_id* whose VA is not in *keep_vas*; returns the count.
+
+    Their matches, listings and other per-function rows go with them through
+    the foreign keys' cascades.
+    """
+    rows = conn.execute("SELECT id, va FROM functions WHERE analysis_id = ?", (analysis_id,))
+    stale = [int(row["id"]) for row in rows.fetchall() if int(row["va"]) not in keep_vas]
+    conn.executemany(
+        "DELETE FROM functions WHERE id = ?", [(function_id,) for function_id in stale]
+    )
+    conn.commit()
+    return len(stale)
+
+
 def list_binary_functions(
     conn: sqlite3.Connection,
     *,
@@ -2881,11 +2934,27 @@ def clear_matches_for(conn: sqlite3.Connection, function_id: int, *, commit: boo
 
 # ── Disassembly cache ──────────────────────────────────────────────
 
-# The only listing format the cache holds: `disasm_cache` is one text per
-# function, and the hex view is a rendering of the same bytes rather than
-# something worth storing.  The route, the MCP tool and the CLI all read the
-# cache under the same rule, so it lives here rather than once per surface.
-CACHEABLE_DISASM_FORMAT = "nasm"
+
+def cached_disasm_format(conn: sqlite3.Connection, binary_id: int) -> str:
+    """The one listing format `disasm_cache` holds for *binary_id*'s functions.
+
+    The cache is one text per function, keyed by its id alone: NASM source for
+    a 32-bit x86 (or not yet known) binary, the ``asm`` listing for any other
+    ISA (:func:`engines.listing_format`).  The hex view is a rendering of the
+    same bytes, never stored.  Every surface that reads or fills the cache
+    (route, MCP tool, CLI, matching, pipeline, auto worker, diff) asks here, so
+    a listing is never served under another format's name.
+    """
+    from reportal import engines
+
+    binary = get_binary(conn, binary_id)
+    return engines.listing_format(effective_arch(binary) if binary is not None else "")
+
+
+# Every write that replaces or drops a cached listing also drops the function's
+# LSH index row (its buckets cascade), so the index never answers for a listing
+# the cache no longer holds; `match_index.sync` re-indexes it from the new one.
+_DROP_LSH_FINGERPRINT = "DELETE FROM lsh_fingerprints WHERE function_id = ?"
 
 
 def _disasm_identity(conn: sqlite3.Connection, function_id: int) -> tuple[int, str] | None:
@@ -2954,6 +3023,7 @@ def set_disasm(
             " created_at = excluded.created_at",
             (function_id, text, recorded_size, recorded_dir, now()),
         )
+        conn.execute(_DROP_LSH_FINGERPRINT, (function_id,))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -2992,6 +3062,7 @@ def get_disasm(conn: sqlite3.Connection, function_id: int) -> str | None:
 def clear_disasm(conn: sqlite3.Connection, function_id: int) -> bool:
     """Drop the cached listing of *function_id*; False when there was none."""
     cur = conn.execute("DELETE FROM disasm_cache WHERE function_id = ?", (function_id,))
+    conn.execute(_DROP_LSH_FINGERPRINT, (function_id,))
     conn.commit()
     return cur.rowcount > 0
 
@@ -3062,6 +3133,13 @@ def clear_disasm_for_binary(conn: sqlite3.Connection, binary_id: int) -> int:
     """Drop every cached listing belonging to *binary_id*; returns how many went."""
     cur = conn.execute(
         "DELETE FROM disasm_cache WHERE function_id IN ("
+        " SELECT f.id FROM functions f"
+        " JOIN analyses a ON a.id = f.analysis_id"
+        " WHERE a.binary_id = ?)",
+        (binary_id,),
+    )
+    conn.execute(
+        "DELETE FROM lsh_fingerprints WHERE function_id IN ("
         " SELECT f.id FROM functions f"
         " JOIN analyses a ON a.id = f.analysis_id"
         " WHERE a.binary_id = ?)",
@@ -3226,6 +3304,29 @@ def list_ai_artifacts(conn: sqlite3.Connection, function_id: int) -> list[dict[s
     return [row for row in (_artifact_row(entry) for entry in cur.fetchall()) if row is not None]
 
 
+def ai_artifacts_for_binary(
+    conn: sqlite3.Connection, binary_id: int, kind: str
+) -> dict[int, dict[str, Any]]:
+    """Stored artifacts of *kind* on one binary's functions, keyed by function id.
+
+    Each value is the row :func:`get_ai_artifact` answers; an unparsable
+    payload is left out, as it is there.
+    """
+    cur = conn.execute(
+        "SELECT x.function_id AS function_id, x.kind AS kind, x.payload_json AS payload_json,"
+        " x.model AS model, x.created_at AS created_at FROM ai_artifacts x"
+        " JOIN functions f ON x.function_id = f.id JOIN analyses a ON f.analysis_id = a.id"
+        " WHERE a.binary_id = ? AND x.kind = ? ORDER BY f.va, x.function_id",
+        (binary_id, kind),
+    )
+    found: dict[int, dict[str, Any]] = {}
+    for row in cur.fetchall():
+        artifact = _artifact_row(row)
+        if artifact is not None:
+            found[int(row["function_id"])] = artifact
+    return found
+
+
 def clear_ai_artifact(
     conn: sqlite3.Connection, function_id: int, kind: str, *, commit: bool = True
 ) -> bool:
@@ -3350,6 +3451,38 @@ def list_scans(conn: sqlite3.Connection, analysis_id: int) -> list[dict[str, Any
             stored = {}
         row["params"] = dict(stored) if isinstance(stored, dict) else {}
     return rows
+
+
+def latest_scans_for_binaries(
+    conn: sqlite3.Connection, binary_ids: Sequence[int], kind: str
+) -> dict[int, dict[str, Any]]:
+    """The *kind* scan of each binary's newest analysis, keyed by binary id.
+
+    One round trip for a batch read, answering what
+    :func:`latest_analysis_for_binary` plus :func:`get_scan` answer per binary:
+    a binary whose newest analysis carries no scan of *kind* is absent from the
+    map, and an unparsable payload is skipped rather than raised on.
+    """
+    grouped: dict[int, dict[str, Any]] = {}
+    if not binary_ids:
+        return grouped
+    ids = [int(binary_id) for binary_id in binary_ids]
+    placeholders = ", ".join("?" for _ in ids)
+    cur = conn.execute(
+        "SELECT a.binary_id AS binary_id, s.result_json AS result_json"
+        " FROM analyses a JOIN scans s ON s.analysis_id = a.id"
+        f" WHERE s.kind = ? AND a.binary_id IN ({placeholders})"
+        " AND a.id = (SELECT MAX(a2.id) FROM analyses a2 WHERE a2.binary_id = a.binary_id)",
+        [kind, *ids],
+    )
+    for row in cur.fetchall():
+        try:
+            stored = json.loads(str(row["result_json"]))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(stored, dict):
+            grouped[int(row["binary_id"])] = stored
+    return grouped
 
 
 # ── Pipeline runs ──────────────────────────────────────────────────
@@ -4251,6 +4384,42 @@ def tags_for_binaries(
     return grouped
 
 
+def collections_for_binaries(
+    conn: sqlite3.Connection,
+    binary_ids: Sequence[int],
+    *,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[int, list[dict[str, Any]]]:
+    """The collections each of *binary_ids* is a member of, each ``{id, name}``.
+
+    One round trip for a batch read; an id with no visible collection is absent
+    from the map.  *visible_to* narrows it the same way
+    :func:`collections_of_binary` does: a collection the caller may not see is
+    not disclosed by a binary it can.
+    """
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    if not binary_ids:
+        return grouped
+    ids = [int(binary_id) for binary_id in binary_ids]
+    placeholders = ", ".join("?" for _ in ids)
+    sql = (
+        "SELECT cb.binary_id AS binary_id, c.id AS id, c.name AS name"
+        " FROM collection_binaries cb JOIN collections c ON c.id = cb.collection_id"
+        f" WHERE cb.binary_id IN ({placeholders})"
+    )
+    params: list[Any] = list(ids)
+    scope = auth.visible_clause(conn, visible_to, prefix="c.")
+    if scope is not None:
+        sql += " AND " + scope[0]
+        params.extend(scope[1])
+    sql += " ORDER BY c.name, c.id"
+    for row in conn.execute(sql, params).fetchall():
+        grouped.setdefault(int(row["binary_id"]), []).append(
+            {"id": int(row["id"]), "name": str(row["name"])}
+        )
+    return grouped
+
+
 def sha256_for_binaries(
     conn: sqlite3.Connection, binary_ids: Sequence[int]
 ) -> dict[int, str | None]:
@@ -4490,6 +4659,22 @@ def list_comments(
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY id"
     return _rows(conn.execute(sql, params))
+
+
+def function_comments_for_binary(
+    conn: sqlite3.Connection, binary_id: int
+) -> dict[int, list[dict[str, Any]]]:
+    """Comments on one binary's functions, oldest first, keyed by function id."""
+    cur = conn.execute(
+        "SELECT c.* FROM comments c JOIN functions f ON c.scope_id = f.id"
+        " JOIN analyses a ON f.analysis_id = a.id"
+        " WHERE c.scope_kind = 'function' AND a.binary_id = ? ORDER BY c.id",
+        (binary_id,),
+    )
+    found: dict[int, list[dict[str, Any]]] = {}
+    for row in cur.fetchall():
+        found.setdefault(int(row["scope_id"]), []).append(dict(row))
+    return found
 
 
 def get_comment(conn: sqlite3.Connection, comment_id: int) -> dict[str, Any] | None:
@@ -4823,6 +5008,11 @@ def iter_chunks_with_embeddings(
 # the types existed, so a caller that names none keeps every result it found
 # and the typed queries are a superset rather than a replacement.
 SEARCH_KIND_ALL = "all"
+
+# A function address query: hex digits with or without a leading ``0x``.  The
+# ceiling is SQLite's signed 64-bit integer, the widest VA a row can hold.
+_VA_QUERY = re.compile(r"(?:0[xX])?([0-9a-fA-F]+)")
+_MAX_SQLITE_INT = 2**63 - 1
 SEARCH_KIND_SHA256 = "sha256"
 SEARCH_KIND_BINARY = "binary"
 SEARCH_KIND_COLLECTION = "collection"
@@ -5126,18 +5316,41 @@ def _search_binaries_by_tag(
 def _search_functions(
     conn: sqlite3.Connection, match: _Match, limit: int
 ) -> tuple[list[dict[str, Any]], int]:
-    """Functions whose name carries the needle."""
+    """Functions whose name carries the needle or whose VA it spells.
+
+    A literal query of hex digits (``0x`` optional) also matches the function
+    at that exact address in every binary, VA hits first; each row names its
+    binary so equal addresses in two binaries stay apart.
+    """
     name_sql, name_param = match.clause("f.name")
+    va = _va_query(match)
+    where = name_sql if va is None else f"({name_sql} OR f.va = ?)"
+    params: tuple[Any, ...] = (name_param,) if va is None else (name_param, va)
+    order = "f.va" if va is None else "f.va = ? DESC, f.va"
+    order_params: tuple[Any, ...] = () if va is None else (va,)
     sql = (
-        "SELECT f.id, f.va, f.name, f.status, a.binary_id AS binary_id"
+        "SELECT f.id, f.va, f.name, f.status, a.binary_id AS binary_id,"
+        " b.name AS binary_name"
         " FROM functions f JOIN analyses a ON f.analysis_id = a.id"
-        f" WHERE {name_sql} ORDER BY f.va"
+        " JOIN binaries b ON b.id = a.binary_id"
+        f" WHERE {where}"
     )
-    total = _count(conn, sql, (name_param,))
-    rows = _rows(conn.execute(f"{sql} LIMIT ?", (name_param, limit)))
+    total = _count(conn, sql, params)
+    rows = _rows(conn.execute(f"{sql} ORDER BY {order} LIMIT ?", (*params, *order_params, limit)))
     for row in rows:
-        row["match"] = "name"
+        row["match"] = "va" if va is not None and row["va"] == va else "name"
     return rows, total
+
+
+def _va_query(match: _Match) -> int | None:
+    """The address a literal query spells, or None when it is not one."""
+    if match.regex:
+        return None
+    found = _VA_QUERY.fullmatch(match.query)
+    if found is None:
+        return None
+    value = int(found.group(1), 16)
+    return value if value <= _MAX_SQLITE_INT else None
 
 
 def _search_collections(

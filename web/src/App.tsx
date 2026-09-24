@@ -1,9 +1,8 @@
-import { Component, Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Component, Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 
 import {
   Link,
-  Navigate,
   matchRoutes,
   useLocation,
   useNavigate,
@@ -13,18 +12,21 @@ import {
 } from "react-router";
 import type { Params, RouteObject } from "react-router";
 
+import { Icon } from "./icons";
 import { api } from "./api";
-import { Button, ErrorNote, Loading } from "./components";
+import { Button, EmptyState, ErrorNote, Loading, Panel, ViewTitle } from "./components";
 import {
   clickFocusedRowAction,
   clickFocusedSave,
   cycleViewSection,
   discardFocusedTypeEdit,
+  displayCombo,
   focusMemoryGoto,
   focusPanel,
   focusViewFilter,
   focusViewFilters,
   installShortcuts,
+  isMac,
   jumpTableRow,
   moveTableRow,
   registerShortcut,
@@ -118,6 +120,29 @@ const NotificationsBell = lazy(() =>
   import("./views/NotificationsDialog").then((m) => ({ default: m.NotificationsBell })),
 );
 
+// A chunk name this page no longer finds on the server: the SPA was rebuilt
+// (an upgrade) since the page loaded, so its entry bundle points at old names.
+const STALE_CHUNK = /Failed to fetch dynamically imported module|Importing a module script failed/u;
+// sessionStorage key and window of the one automatic reload a stale chunk gets;
+// a second failure inside the window is a real fault and is shown.
+const STALE_RELOAD_KEY = "reportal-stale-chunk-reload";
+const STALE_RELOAD_WINDOW_MS = 30_000;
+
+/** Reload once for a stale chunk; false when the page already tried. */
+function reloadForStaleChunk(): boolean {
+  try {
+    const last = Number(sessionStorage.getItem(STALE_RELOAD_KEY) ?? 0);
+    if (Date.now() - last < STALE_RELOAD_WINDOW_MS) return false;
+    sessionStorage.setItem(STALE_RELOAD_KEY, String(Date.now()));
+  } catch {
+    // Storage is blocked (a private window): without the guard a reload
+    // could loop, so the error below stays on screen instead.
+    return false;
+  }
+  window.location.reload();
+  return true;
+}
+
 /** Catch a failed lazy chunk so a missing or broken view says so instead of
  * leaving the content pane blank. */
 class ViewLoadBoundary extends Component<
@@ -132,6 +157,7 @@ class ViewLoadBoundary extends Component<
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
+    if (STALE_CHUNK.test(error.message) && reloadForStaleChunk()) return;
     console.error("view chunk failed", error, info.componentStack);
   }
 
@@ -179,13 +205,28 @@ const NAV_JUMPS: ReadonlyArray<readonly [string, NavView]> = [
 /** What a matched route contributes to the shell: the sidebar section it
  * belongs to and the topbar title, which may depend on its parameters. */
 interface RouteHandle {
-  view: NavView;
+  /** The sidebar entry this route belongs to; null for a page no entry owns. */
+  view: NavView | null;
   title: string | ((params: Params<string>) => string);
 }
 
 type AppRoute = RouteObject & { handle: RouteHandle };
 
 /** Route elements: each reads its own parameters and hands its view the props. */
+/** A route no view owns: a stale or mistyped link says so, rather than landing
+ * silently on the dashboard as if it had worked. */
+function NotFound(): ReactNode {
+  const location = useLocation();
+  return (
+    <Panel title="Page not found">
+      <EmptyState>
+        Nothing lives at <code>#{location.pathname}</code>. Pick a view from the sidebar, or{" "}
+        <Link to="/">open the dashboard</Link>.
+      </EmptyState>
+    </Panel>
+  );
+}
+
 function BinaryRoute(): ReactNode {
   const { binaryId } = useParams();
   const [params] = useSearchParams();
@@ -339,6 +380,15 @@ export function App(): ReactNode {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [cheatsheetOpen, setCheatsheetOpen] = useState(false);
+  // The name a loaded detail row publishes, keyed to the path it loaded for, so
+  // a title from a view the router already left cannot linger on the next one.
+  const [viewTitle, setViewTitle] = useState<{ path: string; title: string } | null>(null);
+  const publishTitle = useCallback(
+    (title: string | null) => {
+      setViewTitle(title === null ? null : { path: location.pathname, title });
+    },
+    [location.pathname],
+  );
 
   useEffect(() => {
     let active = true;
@@ -744,18 +794,25 @@ export function App(): ReactNode {
     },
     {
       path: "*",
-      element: <Navigate to="/" replace />,
-      handle: { view: "dashboard", title: "Dashboard" },
+      element: <NotFound />,
+      handle: { view: null, title: "Page not found" },
     },
   ];
   const content = useRoutes(routes);
   const last = (matchRoutes(routes, location) ?? []).at(-1);
   const route = last?.route.handle as RouteHandle | undefined;
-  const activeView: NavView = route?.view ?? "dashboard";
-  const title =
+  const activeView: NavView | null = route === undefined ? "dashboard" : route.view;
+  const routeTitle =
     typeof route?.title === "function"
       ? route.title((last?.params ?? {}) as Params<string>)
-      : (route?.title ?? "reportal");
+      : (route?.title ?? "relumea");
+  const title =
+    viewTitle !== null && viewTitle.path === location.pathname ? viewTitle.title : routeTitle;
+
+  // The tab names the row the reader is on, like the shell title does.
+  useEffect(() => {
+    document.title = `${title} · relumea`;
+  }, [title]);
 
   return (
     <div className={collapsed ? "layout sidebar-collapsed" : "layout"}>
@@ -765,20 +822,21 @@ export function App(): ReactNode {
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 64 64" focusable="false">
-              <path
-                d="M20 44V20h12a8 8 0 0 1 0 16h-4l10 8"
+            <svg viewBox="0 0 19 19" focusable="false">
+              <rect
+                x="0.85"
+                y="0.85"
+                width="17.3"
+                height="17.3"
+                rx="4"
                 fill="none"
                 stroke="currentColor"
-                strokeWidth="5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+                strokeWidth="1.7"
               />
-              <circle className="brand-mark-live" cx="46" cy="24" r="4" />
+              <rect className="brand-mark-cell" x="7.2" y="7.2" width="10.9" height="10.9" rx="2.6" />
             </svg>
           </span>
-          <span>reportal</span>
-          <span className="brand-tag">workbench</span>
+          <span className="brand-name">relumea</span>
           <button
             type="button"
             className="sidebar-toggle"
@@ -787,7 +845,7 @@ export function App(): ReactNode {
             title="Toggle the sidebar (Ctrl/Command+B)"
             onClick={() => setCollapsed((current) => !current)}
           >
-            {collapsed ? "\u00bb" : "\u00ab"}
+            <Icon name={collapsed ? "expand" : "collapse"} />
           </button>
         </div>
         <nav className="nav" aria-label="Sections">
@@ -806,16 +864,27 @@ export function App(): ReactNode {
                     aria-current={current ? "page" : undefined}
                     title={label}
                   >
+                    <Icon name={view} />
                     <span className="nav-link-text">{label}</span>
-                    <span className="nav-link-mark" aria-hidden="true">
-                      {label.charAt(0)}
-                    </span>
                   </Link>
                 );
               })}
             </div>
           ))}
         </nav>
+        {/* Workspace facts and the one per-reader preference: not page
+            controls, so they sit with the navigation, not in every page head. */}
+        <div className="sidebar-foot">
+          <ThemePicker />
+          <span className="health" id="health">
+            {health ? (
+              <>
+                <span className="health-dot" aria-hidden="true" />
+                {`v${health.version} · ${health.counts.binaries} ${health.counts.binaries === 1 ? "binary" : "binaries"} · ${health.counts.functions} function${health.counts.functions === 1 ? "" : "s"}`}
+              </>
+            ) : null}
+          </span>
+        </div>
       </aside>
       <main className="main">
         <header className="topbar">
@@ -829,7 +898,7 @@ export function App(): ReactNode {
                 title={`Go back (Alt+\u2190)`}
                 onClick={() => stepHistory(-1)}
               >
-                {"\u2190"}
+                <Icon name="back" />
               </Button>
               <Button
                 tone="ghost"
@@ -839,27 +908,30 @@ export function App(): ReactNode {
                 title={`Go forward (Alt+\u2192)`}
                 onClick={() => stepHistory(1)}
               >
-                {"\u2192"}
+                <Icon name="forward" />
               </Button>
             </div>
             <h1 id="title">{title}</h1>
           </div>
-          <ThemePicker />
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm topbar-search"
+            aria-keyshortcuts={isMac() ? "Meta+K" : "Control+K"}
+            onClick={() => setSearchOpen(true)}
+          >
+            <Icon name="search" />
+            Search
+            <kbd className="key">{displayCombo("mod+k", isMac())}</kbd>
+          </button>
           <Suspense fallback={null}>
             <NotificationsBell />
           </Suspense>
-          <span className="health" id="health">
-            {health ? (
-              <>
-                <span className="health-dot" aria-hidden="true" />
-                {`v${health.version} · ${health.counts.binaries} binaries · ${health.counts.functions} functions`}
-              </>
-            ) : null}
-          </span>
         </header>
         <div className="content" id="content" tabIndex={-1}>
           <ViewLoadBoundary>
-            <Suspense fallback={<Loading label="Loading the view" />}>{content}</Suspense>
+            <ViewTitle.Provider value={publishTitle}>
+              <Suspense fallback={<Loading label="Loading the view" />}>{content}</Suspense>
+            </ViewTitle.Provider>
           </ViewLoadBoundary>
         </div>
       </main>

@@ -10,7 +10,7 @@ import { expect, test } from "./fixtures";
 const state = e2eState();
 
 test("the full-file view pages and copies a selected range as hex", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const panel = panelByTitle(page, "Memory");
 
   await panel.getByLabel("Mode").selectOption("file");

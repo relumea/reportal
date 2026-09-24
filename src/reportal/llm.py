@@ -560,6 +560,7 @@ class LlmClient:
             raise LlmUnavailable(UNAVAILABLE_DETAIL)
         extra: dict[str, Any] = {"response_format": {"type": "json_object"}} if json_object else {}
         try:
+            # cordis-boundary: emission; metering records it, derived writes are journal-tracked.
             completion = self._sdk().chat.completions.create(
                 model=config.model,
                 messages=messages,  # type: ignore[arg-type]  # the SDK's typed message union
@@ -605,6 +606,7 @@ class LlmClient:
             request["tools"] = tools
             request["tool_choice"] = "auto"
         try:
+            # cordis-boundary: emission; metering records it, derived writes are journal-tracked.
             completion = self._sdk().chat.completions.create(**request)
         except (OpenAIError, ValueError) as exc:
             raise _transport_error(exc) from exc
@@ -642,6 +644,7 @@ class LlmClient:
         for start in range(0, len(texts), EMBEDDINGS_BATCH_SIZE):
             batch = texts[start : start + EMBEDDINGS_BATCH_SIZE]
             try:
+                # cordis-boundary: emission; nothing sent can be recalled, no cleanup claimed.
                 response = sdk.embeddings.create(
                     model=config.model,
                     input=batch,
@@ -961,12 +964,17 @@ def _parse_json(text: str) -> Any:
     return data
 
 
-def _entry_list(data: Any, *, keys: tuple[str, ...], what: str) -> list[Any]:
+def _entry_list(
+    data: Any, *, keys: tuple[str, ...], what: str, entry_keys: tuple[str, ...]
+) -> list[Any]:
     """Return the entry list a response carries, or raise :class:`LlmError`.
 
     A bare JSON list is accepted; a JSON object must carry one of *keys* as a
-    list.  A missing key or a non-list value raises naming *what* and the key,
-    so a response of the wrong shape never reads as an empty artifact.
+    list, or be one entry itself (it carries every one of *entry_keys*): the
+    JSON-object response mode cannot answer a bare list, so a model with one
+    finding answers that finding.  A missing key or a non-list value raises
+    naming *what* and the key, so a response of the wrong shape never reads as
+    an empty artifact.
     """
     if isinstance(data, list):
         return data
@@ -978,6 +986,8 @@ def _entry_list(data: Any, *, keys: tuple[str, ...], what: str) -> list[Any]:
             if isinstance(value, list):
                 return value
             raise LlmError(f"LLM {what} response carried a non-list {key!r} field")
+        if all(key in data for key in entry_keys):
+            return [data]
         raise LlmError(f"LLM {what} response carried no {keys[0]!r} list")
     raise LlmError(f"LLM {what} response was not a JSON object or list")
 
@@ -1146,7 +1156,7 @@ def inline_comments(
     """
     messages = comments_messages(code, context)
     data = _parse_json(_complete(messages, client))
-    entries = _entry_list(data, keys=("comments",), what="comments")
+    entries = _entry_list(data, keys=("comments",), what="comments", entry_keys=("line", "comment"))
     comments: list[dict[str, Any]] = []
     reason = ""
     for entry in entries:
@@ -1181,7 +1191,12 @@ def suggest_types(
     """
     messages = types_messages(code, context)
     data = _parse_json(_complete(messages, client))
-    entries = _entry_list(data, keys=("suggestions", "types"), what="type suggestion")
+    entries = _entry_list(
+        data,
+        keys=("suggestions", "types"),
+        what="type suggestion",
+        entry_keys=("name", "type"),
+    )
     suggestions: list[dict[str, Any]] = []
     reason = ""
     for entry in entries:
@@ -1224,7 +1239,9 @@ def rename_suggestions(
     """
     messages = renames_messages(code, context)
     data = _parse_json(_complete(messages, client))
-    entries = _entry_list(data, keys=("suggestions", "renames"), what="renames")
+    entries = _entry_list(
+        data, keys=("suggestions", "renames"), what="renames", entry_keys=("from", "to")
+    )
     suggestions: list[dict[str, Any]] = []
     reason = ""
     for entry in entries:

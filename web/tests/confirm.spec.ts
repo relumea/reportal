@@ -8,8 +8,8 @@ import { panelByTitle, rowContaining, uniqueName } from "./helpers";
 import { expect, test } from "./fixtures";
 
 const state = e2eState();
-const TAG_CONFIRM_MESSAGE = "Remove tag?";
-const BULK_CONFIRM_MESSAGE = "Delete 1?";
+const TAG_CONFIRM_MESSAGE = /^Remove tag e2e-confirm-.*\?$/;
+const BULK_CONFIRM_MESSAGE = "Delete 1 selected binary?";
 
 async function addTag(page: Page, name: string): Promise<void> {
   const tags = panelByTitle(page, "Tags");
@@ -20,7 +20,7 @@ async function addTag(page: Page, name: string): Promise<void> {
 
 test("cancelling the tag delete keeps the tag and confirming removes it", async ({ page }) => {
   const name = uniqueName("e2e-confirm");
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   await addTag(page, name);
 
   const tags = panelByTitle(page, "Tags");

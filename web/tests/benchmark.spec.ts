@@ -9,7 +9,7 @@ import { expect, test } from "./fixtures";
 const state = e2eState();
 
 test("the benchmark panel reads empty and offers a partner", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=provenance`);
   const panel = panelByTitle(page, "Benchmark");
   await expect(panel).toBeVisible();
 
@@ -27,7 +27,7 @@ test("the benchmark panel reads empty and offers a partner", async ({ page }) =>
 });
 
 test("the rename half names the input it is missing", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=provenance`);
   const panel = panelByTitle(page, "Benchmark");
   await expect(panel.getByRole("heading", { name: "Rename proposals" })).toBeVisible();
 

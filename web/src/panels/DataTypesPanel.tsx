@@ -19,6 +19,7 @@ import {
   Panel,
   Toolbar,
   TypeNameLink,
+  countOf,
 } from "../components";
 import {
   DATA_TYPE_KIND_LABELS,
@@ -596,7 +597,7 @@ export function DataTypesPanel({
               </Button>
               <Muted>
                 Showing {Math.min(shown, entry.data.types.length)} of{" "}
-                {entry.data.types.length} matching type(s).
+                {countOf(entry.data.types.length, "matching type")}.
               </Muted>
             </Toolbar>
           ) : null}

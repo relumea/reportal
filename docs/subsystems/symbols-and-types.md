@@ -1,12 +1,12 @@
 # Symbols, signatures and data types
 
-Sources: src/reportal/symbols.py, src/reportal/pdb.py, src/reportal/signatures.py, src/reportal/data_types.py
+Sources: src/reportal/symbols.py, src/reportal/pdb.py, src/reportal/symbol_library.py, src/reportal/signatures.py, src/reportal/data_types.py
 
 This subsystem owns the editable models reportal keeps over what it read or was told: debug-symbol
-ingestion, the per-function signature model, and the data-type model with its C rendering. The
-parsers write nothing and carry a `notes` list saying what they did not do; only
-`symbols.import_symbols`, the signature edits and the data-type edits write, and each mutation
-records the state it replaced.
+ingestion, the workspace symbol library, the per-function signature model, and the data-type model
+with its C rendering. The parsers write nothing and carry a `notes` list saying what they did not
+do; only `symbols.import_symbols`, the signature edits and the data-type edits write, and each
+mutation records the state it replaced.
 
 ## Vocabulary
 
@@ -18,6 +18,12 @@ records the state it replaced.
   `export_file_name` is `<stem>.sym<suffix>`, and `ExportFormatError` is `unsupported-format`.
 - `pdb.CONTAINER_MAGIC` is the MSF 7.0 superblock. Only public and procedure symbols are read, so
   `types` is always empty and an unmapped segment answers `va: None`.
+- `symbol_library`: `TABLE` (`symbol_library`), one row per stored file keyed by `identity`
+  (`pe:<guid>-<age>` from `pdb.read_identity` matched against the image's CodeView record
+  `pe_debug_id`, or `elf:<hex>` from `symbols.build_id`). `resolve` applies a match through
+  `symbols.import_symbols` as one journaled action; a PE miss may fetch the PDB from the public
+  symbol server behind `external.remote_enabled`, and a file that parses but carries no identity
+  is refused as `no-identity`.
 - `signatures`: `function_signatures` and `signature_history`. A parameter carries `index`, `type`,
   `name` plus optional `at`, `kind` (`PARAMETER_KINDS`) and `bits`. `default_at` is the convention
   table's answer. `SOURCE_DECOMPILATION`, `SOURCE_MANUAL`, `SOURCE_REVERT`. Either history view
@@ -33,17 +39,21 @@ records the state it replaced.
 ## Wiring
 
 - Routes: `POST`/`GET /api/binaries/<id>/symbols`, `GET .../symbols/export`,
-  `GET`/`POST .../binary-export`; `GET .../data-types`,
+  `POST .../symbols/resolve`, `GET`/`POST /api/symbols/library`,
+  `GET`/`POST .../binary-export`;
+  `GET .../data-types`,
   `POST .../data-types/import`, `POST .../data-types/export`, `PATCH`/`DELETE /api/data-types/<id>`,
   its member, value and history routes; `GET /api/binaries/<id>/signatures`,
   `POST .../signatures/import`, `POST .../signatures/export`,
   `GET`/`PATCH /api/functions/<id>/signature` and
   its parameter and history routes.
-- CLI: `symbols`, `symbols-status`, `symbols-export`, `binary-export`, `data-types-import`,
+- CLI: `symbols`, `symbols-status`, `symbols-export`, `symbols-library`, `symbols-library-add`,
+  `symbols-resolve`, `binary-export`, `data-types-import`,
   `data-type-functions`,
   `signatures`, `signatures-import`, `signatures-export`, `signature`, `signature-set`,
   `signature-param*`, `signature-history`, `signature-revert`.
-- MCP: `import_symbols`, `get_symbols`, `export_symbols`, `export_binary`, `list_data_types`,
+- MCP: `import_symbols`, `get_symbols`, `export_symbols`, `list_symbol_library`,
+  `add_symbol_library`, `resolve_symbols`, `export_binary`, `list_data_types`,
   `import_data_types`,
   `edit_data_type`, `export_data_types`, `get_data_type_history`, `get_signature`,
   `list_signatures`, `run_signature_import`, `edit_signature`, `export_signatures`.
@@ -65,6 +75,11 @@ records the state it replaced.
 - An export rewrites only a name that fits its existing slot, never grows one and never touches
   the stored file, and a placeholder store name never replaces a real symbol.
   `tests/test_symbols.py`.
+- A library file whose parse carries no match identity is refused before any write, so no entry
+  exists that nothing could ever match. `tests/test_symbol_library.py`.
+- A symbol-server fetch runs only while remote sources are enabled, against the fixed host with
+  a validated PDB file name and no followed redirect; every automatic resolve stays local.
+  `tests/test_symbol_library.py`.
 
 ## See also
 

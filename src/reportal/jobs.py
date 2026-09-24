@@ -19,9 +19,11 @@ the local equivalent, deliberately small:
 - :func:`events` renders a job's state as server-sent events, so a client can
   follow a run instead of polling it.
 
-Two ceilings are deliberate and stated rather than hidden.  A job is one step
-today (``steps_total`` is 1 and ``progress`` is 0 or 100): the engine calls a
-scan makes are not interruptible, so there is nothing finer to report.  And
+Two ceilings are deliberate and stated rather than hidden.  Most kinds are one
+step (``steps_total`` is 1 and ``progress``, a percent, is 0 or 100): the engine
+calls a scan makes are not interruptible, so there is nothing finer to report; a
+kind with its own step count (the match, one step per function) reports the
+percent through ``_progress_sink``.  And
 cancelling a ``running`` job is refused rather than faked: the scan has already
 entered the engine and cannot be stopped, so the caller may cancel only what has
 not started (a ``queued`` job), which is the honest half of the hosted contract.
@@ -63,6 +65,7 @@ from reportal import (
     pdf,
     pipeline,
     protocols,
+    rebrew_import,
     related,
     remediation,
     secrets,
@@ -90,6 +93,36 @@ STATUSES: tuple[str, ...] = (
     STATUS_FAILED,
     STATUS_CANCELLED,
 )
+
+# The kind an upload queues for a binary with no analysis context: function
+# discovery and the import (`rebrew_import.analyse_binary`).
+ANALYSE_KIND = "analyse"
+
+# The scans an analysis queues once its functions exist (`analysis_follow_ups`):
+# every target's, then a PE's.  The match runs last among every target's: it is
+# the longest, one step per function.
+ANALYSIS_FOLLOW_UPS: tuple[tuple[str, dict[str, str | bool]], ...] = (
+    ("filetype", {}),
+    ("triage", {}),
+    ("capabilities", {}),
+    ("secrets", {}),
+    ("protocols", {}),
+    ("crypto", {}),
+    ("threat", {}),
+    ("library", {}),
+    ("unstrip", {}),
+    ("behavior", {"domain": "execution"}),
+    ("behavior", {"domain": "networking"}),
+    ("behavior", {"domain": "filesystem"}),
+    ("hardening", {"domain": "anti-analysis"}),
+    ("hardening", {"domain": "obfuscation"}),
+    ("pe-info", {}),
+    ("function-triage", {}),
+    # A fresh binary's own functions all carry placeholder names, which name
+    # nothing: as candidates they only crowd the corpus's named ones out.
+    ("match", {"include_self": False}),
+)
+ANALYSIS_FOLLOW_UPS_PE: tuple[tuple[str, dict[str, str | bool]], ...] = (("related", {}),)
 
 # The table, and the bounds a reader or a submitter is held to.
 TABLE = "jobs"
@@ -686,9 +719,55 @@ def render_pdf(
     return log.attach(result)
 
 
+def analysis_follow_ups(fmt: str) -> tuple[tuple[str, dict[str, str | bool]], ...]:
+    """The scans an analysis queues once its functions exist, for a target's format.
+
+    Every binary gets the local, deterministic scans, its header and section
+    scan (`pe-info`, which reads an ELF's sections too), function triage and
+    the corpus match (both read the listing in the binary's
+    `store.cached_disasm_format`, so any ISA); a PE also gets the
+    related-binary ranking (which reads its strings).  Nothing here
+    calls the network, and function triage calls a model only when one is
+    configured.
+    """
+    if fmt == "pe":
+        return ANALYSIS_FOLLOW_UPS + ANALYSIS_FOLLOW_UPS_PE
+    return ANALYSIS_FOLLOW_UPS
+
+
+def _perform_analyse(
+    conn: sqlite3.Connection, binary_id: int, _params: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Generate the binary's rebrew project, import its functions, queue the scans.
+
+    Not a scan row: the import writes the binary's analysis and functions the
+    way ``import-rebrew`` does, and like it is not journaled.  The follow-up
+    scans are ordinary queued jobs, each journaled when it runs; a full queue
+    stops the list and the summary says how far it got.
+    """
+    summary = rebrew_import.analyse_binary(binary_id)
+    target = summary["targets"][0] if summary["targets"] else {}
+    queued: list[int] = []
+    for kind, params in analysis_follow_ups(str(target.get("format", ""))):
+        try:
+            queued.append(int(submit(conn, kind=kind, binary_id=binary_id, params=params)["id"]))
+        except ValueError as exc:
+            summary["follow_up_error"] = str(exc)
+            break
+    summary["follow_up_jobs"] = queued
+    return summary
+
+
 def builtin_kinds() -> tuple[JobKind, ...]:
     """The operations that may be queued, in registry order."""
     return (
+        JobKind(
+            name=ANALYSE_KIND,
+            label="Discover functions and import the analysis",
+            scan_kinds=None,
+            run=_perform_analyse,
+            perform=_perform_analyse,
+        ),
         JobKind(
             name="filetype",
             label="File type, packer and protector detection",
@@ -699,7 +778,7 @@ def builtin_kinds() -> tuple[JobKind, ...]:
         ),
         JobKind(
             name="pe-info",
-            label="PE identity, sections and security metadata",
+            label="Header scan: identity, sections and security metadata",
             scan_kinds=store.SCAN_KIND_PE_INFO,
             run=_perform_pe_info,
             perform=_perform_pe_info,

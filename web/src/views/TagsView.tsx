@@ -20,6 +20,7 @@ import {
   Loading,
   Panel,
   Toolbar,
+  countOf,
 } from "../components";
 import type { TagRow } from "../types";
 import { useAsync } from "../useAsync";
@@ -65,7 +66,7 @@ function TagDetailPanel({ tag, onChanged }: { tag: TagRow; onChanged: () => void
           </Button>
           <ConfirmButton
             label="Delete"
-            message={`Delete tag ${tag.name} and remove it from ${tag.binary_count} binary(ies) and ${tag.collection_count} collection(s)?`}
+            message={`Delete tag ${tag.name} and remove it from ${countOf(tag.binary_count, "binary", "binaries")} and ${countOf(tag.collection_count, "collection")}?`}
             pending={busy === "delete"}
             onConfirm={() =>
               void run("delete", () => api(`/tags/${tag.id}`, { method: "DELETE" }))
@@ -94,7 +95,7 @@ function TagDetailPanel({ tag, onChanged }: { tag: TagRow; onChanged: () => void
       {actionError ? <ErrorNote error={actionError} /> : null}
       {renamed ? (
         <p className="muted">
-          {`Renamed to ${name}. The ${tag.binary_count} binary link(s) and ${tag.collection_count} collection link(s) still point at this tag.`}
+          {`Renamed to ${name}. The ${countOf(tag.binary_count, "binary link")} and ${countOf(tag.collection_count, "collection link")} still point at this tag.`}
         </p>
       ) : null}
     </Panel>
@@ -125,7 +126,7 @@ export function TagsView({
     <>
       <Panel
         title="Tags"
-        subtitle="The register's tag vocabulary, with what carries each one."
+        subtitle="Every tag in the workspace and what carries it."
       >
         {error ? <ErrorNote error={error} onRetry={reload} /> : null}
         {tags === undefined ? (

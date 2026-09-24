@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import socket
 import sqlite3
 import sys
@@ -77,6 +78,16 @@ SCHEMA_HINT = "the database exists but carries no schema; run 'reportal init'"
 PORT_HINT = "stop the process holding the port, or serve on another one (--port)"
 ENGINE_HINT = engines.ENGINE_UNAVAILABLE_HINT
 SPA_HINT = SPA_NOT_BUILT_DETAIL
+KUNA_HINT = "install kuna, or pick another decompiler backend; decompilation answers engine-error"
+SPECS_HINT = (
+    "install pypcode (its bundled specs are found on their own), or set KUNA_SPECS to a"
+    " Ghidra install root or a pypcode processors/x86/data/languages directory"
+)
+RIZIN_HINT = "install rizin; function discovery on upload needs it"
+
+# The decompiler and discovery tools the engine runs.
+KUNA_EXECUTABLE = "kuna"
+RIZIN_EXECUTABLE = "rizin"
 BACKUP_HINT = "enable reportal-backup.timer or run 'reportal backup'; see docs/DR_RUNBOOK.md"
 
 # The tables a usable schema needs before any read.  The journal's table is
@@ -332,6 +343,36 @@ def _optional_check() -> dict[str, str]:
     return _check("optional", STATUS_OK, detail)
 
 
+def _decompiler_check() -> dict[str, str]:
+    """Whether the default decompiler backend can decompile.
+
+    rebrew's ``kuna`` backend is a separate executable that reads SLEIGH specs
+    from ``KUNA_SPECS`` or the directory the engine discovers (a pypcode
+    install); without either every decompilation answers ``engine-error``.
+    """
+    kuna = shutil.which(KUNA_EXECUTABLE)
+    if kuna is None:
+        return _check("decompiler", STATUS_WARN, "no kuna on PATH", KUNA_HINT)
+    specs = engines.kuna_spec_dir()
+    if specs is None:
+        return _check(
+            "decompiler", STATUS_WARN, f"kuna at {kuna}, no SLEIGH specs found", SPECS_HINT
+        )
+    return _check("decompiler", STATUS_OK, f"kuna at {kuna}, specs at {specs}")
+
+
+def _discovery_check() -> dict[str, str]:
+    """Whether an uploaded binary's functions can be discovered.
+
+    The ``analyse`` job an upload queues runs ``rebrew intake``, whose function
+    discovery needs rizin; without it every analysis fails with no functions.
+    """
+    rizin = shutil.which(RIZIN_EXECUTABLE)
+    if rizin is None:
+        return _check("discovery", STATUS_WARN, "no rizin on PATH", RIZIN_HINT)
+    return _check("discovery", STATUS_OK, f"rizin at {rizin}")
+
+
 def _loopback_public_base_url(url: str) -> bool:
     """True when *url* would send a paying customer back to this host only."""
     lowered = url.strip().lower()
@@ -458,6 +499,8 @@ def report(*, port: int = DEFAULT_PORT) -> dict[str, Any]:
             "" if index.is_file() else SPA_HINT,
         )
     )
+    checks.append(_decompiler_check())
+    checks.append(_discovery_check())
     checks.append(_optional_check())
     checks.append(_backup_check(root))
     checks.append(_port_check(port))

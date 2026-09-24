@@ -17,6 +17,9 @@ body carries a `doc_url` that resolves.
 - `page(slug)`: `title`, `headings`, `blocks`, `previous`, `next`, `source` and `version`.
   `pages()` lists every page in reading order (`PAGE_ORDER`, then the rest by name, then
   subdirectories, then the changelog).
+- `REPOSITORY_ONLY_PAGES`: business, research and competitive pages (funding, commercialization,
+  parity, the backlog) that stay in `docs/` but are neither listed, served nor packaged; a table
+  row or list item linking to one is dropped from a rendered page.
 - Block kinds: `heading`, `paragraph`, `code`, `list` (with each item's `depth`), `quote`, `table`.
   Anything outside the subset becomes a paragraph rather than being dropped.
 - Scope: `SCOPE_KIND` (`docs`) and `SCOPE_ID` (0), the knowledge scope `excerpts()` feeds.
@@ -31,8 +34,8 @@ Routes: `GET /api/docs` and `GET /api/docs/{slug:path}` (a subdirectory page rea
 `/api/docs/subsystems/store`). CLI: `reportal docs [slug]` and
 `reportal changelog`. `settings` reports `docs.directory` by calling `documents_dir`; `knowledge`
 ingests `excerpts()` under the `docs` scope; `server.JsonError` calls `doc_url(error)` for every
-error body. `scripts/sync_packaged_docs.py` mirrors the `docs/` tree, subdirectories included, and
-`CHANGELOG.md` into the packaged `manual/` directory.
+error body. `scripts/sync_packaged_docs.py` mirrors the `docs/` tree, subdirectories included and
+repository-only pages left out, and `CHANGELOG.md` into the packaged `manual/` directory.
 
 ## Invariants
 

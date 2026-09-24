@@ -16,6 +16,7 @@ import {
   Panel,
   Toolbar,
   TypeNameLink,
+  countOf,
 } from "../components";
 import { CALLING_CONVENTIONS, PARAMETER_KINDS, SIGNATURE_NOT_FOUND } from "../constants";
 import type { ParameterKind } from "../constants";
@@ -207,7 +208,7 @@ function SignatureCopy({
     )
       .then((result) => {
         setNote(
-          `Copied onto ${result.count} of ${ids.length} function(s)` +
+          `Copied onto ${result.count} of ${countOf(ids.length, "function")}` +
             (result.skipped.length ? `, ${result.skipped.length} skipped` : ""),
         );
         setTargets("");
@@ -220,11 +221,12 @@ function SignatureCopy({
   return (
     <>
       <Toolbar>
-        <Field
-          label="Copy to"
-          hint="Comma-separated function ids in this analysis."
-        >
-          <input value={targets} onChange={(event) => setTargets(event.target.value)} />
+        <Field label="Copy to" hint="Function ids in this analysis">
+          <input
+            placeholder="12, 40, 41"
+            value={targets}
+            onChange={(event) => setTargets(event.target.value)}
+          />
         </Field>
         <Button tone="primary" pending={busy} onClick={copy}>
           Copy signature

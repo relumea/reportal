@@ -1,44 +1,78 @@
-/* reportal workbench stylesheet.  One token layer drives every surface: the
+/* relumea workspace stylesheet.  One token layer drives every surface: the
    palette, spacing, radii, type scale and the semantic status/severity/confidence
    colors.  Primitives (panel, button, badge, field, table, note, code block)
    are the only components that read those tokens; a view composes them. */
 
+/* Brand faces (BRAND.md section 5), self-hosted subsets; license in
+   public/fonts/OFL.txt.  Archivo sets the interface, JetBrains Mono only data:
+   addresses, identifiers, byte counts, hashes and code. */
+@font-face {
+  font-family: "Archivo";
+  src: url("/fonts/archivo.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Metric-matched fallback, so the swap to Archivo does not shift the layout. */
+@font-face {
+  font-family: "Archivo Fallback";
+  src: local("Arial"), local("Helvetica Neue"), local("Liberation Sans"), local("DejaVu Sans");
+  size-adjust: 95.69%;
+  ascent-override: 91.75%;
+  descent-override: 21.95%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/fonts/jetbrains-mono.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ── Tokens ───────────────────────────────────────────────────────── */
 
+/* Dark is the brand palette (BRAND.md section 4) moved onto a dark ground, not a
+   separate identity: neutral ink greys with no blue cast, the brand green lifted
+   to clear AA on them, and the landing's verdict hues at dark-ground lightness.
+   BRAND.md "Web workspace themes" lists the mapping. */
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0e1219;
-  --surface: #151b26;
-  --surface-2: #1b2331;
-  --surface-3: #202a3a;
-  --surface-hover: #232e40;
+  --bg: #0b0b0c;
+  --surface: #131316;
+  --surface-2: #1a1a1e;
+  --surface-3: #212126;
+  --surface-hover: #26262b;
 
   /* Alternating table rows; the alpha is the token the audit measures, so a
      change in either theme is one value, not a duplicated rule. */
   --row-stripe: rgba(255, 255, 255, 0.04);
 
-  --border: #263044;
-  --border-strong: #35435d;
+  --border: #28282e;
+  --border-strong: #3a3a42;
 
-  --text: #e6ecf5;
-  --text-muted: #97a5bd;
-  --text-faint: #8ea0ba;
+  --text: #ededef;
+  --text-muted: #a3a3ab;
+  --text-faint: #8e8e97;
 
-  --accent: #86b4ff;
-  --accent-hover: #9dc5ff;
-  --accent-ink: #071122;
-  --accent-soft: rgba(134, 180, 255, 0.16);
+  --accent: #3fbf7a;
+  --accent-hover: #5ccf91;
+  --accent-ink: #04170d;
+  --primary-hover: #c9c9cf;
+  --accent-soft: rgba(63, 191, 122, 0.16);
 
-  --ok: #4ade80;
-  --ok-soft: rgba(74, 222, 128, 0.14);
-  --warn: #facc15;
-  --warn-soft: rgba(250, 204, 21, 0.14);
-  --danger: #fb8b8b;
-  --danger-soft: rgba(251, 139, 139, 0.14);
-  --info: #7dd3fc;
-  --info-soft: rgba(125, 211, 252, 0.14);
+  --ok: #4cc38a;
+  --ok-soft: rgba(76, 195, 138, 0.14);
+  --warn: #e3b65c;
+  --warn-soft: rgba(227, 182, 92, 0.14);
+  --danger: #f08a80;
+  --danger-soft: rgba(240, 138, 128, 0.14);
+  --info: #6cb4e4;
+  --info-soft: rgba(108, 180, 228, 0.14);
 
   /* Instrument hue families.  One concept, one hue: a status family keeps its
      colour in badges, table cells, meters and borders across every view.  The
@@ -46,58 +80,70 @@
      tokens (`--st-*`) belong to the individual entity inside it.  Contrast of
      every ink over its own fill is measured by .scratch/token_probe.py and by
      tools/audit_ui.py on the rendered page. */
-  --hue-match: #4ade80;
-  --hue-match-soft: rgba(74, 222, 128, 0.14);
-  --hue-match-line: rgba(74, 222, 128, 0.32);
-  --hue-near: #facc15;
-  --hue-near-soft: rgba(250, 204, 21, 0.14);
-  --hue-near-line: rgba(250, 204, 21, 0.32);
-  --hue-stub: #a9b6cc;
-  --hue-stub-soft: rgba(154, 168, 192, 0.16);
-  --hue-stub-line: rgba(154, 168, 192, 0.3);
-  --hue-thunk: #c4b5fd;
-  --hue-thunk-soft: rgba(196, 181, 253, 0.16);
-  --hue-thunk-line: rgba(196, 181, 253, 0.32);
-  --hue-fail: #fb8b8b;
-  --hue-fail-soft: rgba(251, 139, 139, 0.14);
-  --hue-fail-line: rgba(251, 139, 139, 0.32);
-  --hue-live: #7dd3fc;
-  --hue-live-soft: rgba(125, 211, 252, 0.14);
-  --hue-live-line: rgba(125, 211, 252, 0.36);
+  --hue-match: #4cc38a;
+  --hue-match-soft: rgba(76, 195, 138, 0.14);
+  --hue-match-line: rgba(76, 195, 138, 0.32);
+  --hue-near: #e3b65c;
+  --hue-near-soft: rgba(227, 182, 92, 0.14);
+  --hue-near-line: rgba(227, 182, 92, 0.32);
+  --hue-stub: #a3a3ab;
+  --hue-stub-soft: rgba(163, 163, 171, 0.16);
+  --hue-stub-line: rgba(163, 163, 171, 0.3);
+  --hue-thunk: #b8a7f0;
+  --hue-thunk-soft: rgba(184, 167, 240, 0.16);
+  --hue-thunk-line: rgba(184, 167, 240, 0.32);
+  --hue-fail: #f08a80;
+  --hue-fail-soft: rgba(240, 138, 128, 0.14);
+  --hue-fail-line: rgba(240, 138, 128, 0.32);
+  --hue-live: #6cb4e4;
+  --hue-live-soft: rgba(108, 180, 228, 0.14);
+  --hue-live-line: rgba(108, 180, 228, 0.36);
 
   /* Function status ink.  EXACT/RELOC/PROVEN read as one match family at three
      intensities; THUNK is its own entity because a generated byte match is not
      a decompiled one. */
-  --st-exact: #4ade80;
-  --st-reloc: #38d9a9;
-  --st-proven: #7ef0c0;
-  --st-thunk: #c4b5fd;
-  --st-near: #facc15;
-  --st-stub: #a9b6cc;
-  --st-idle: #a9b6cc;
-  --st-live: #7dd3fc;
-  --st-fail: #fb8b8b;
+  --st-exact: #4cc38a;
+  --st-reloc: #4fc2b0;
+  --st-proven: #86d4ad;
+  --st-thunk: #b8a7f0;
+  --st-near: #e3b65c;
+  --st-stub: #a3a3ab;
+  --st-idle: #a3a3ab;
+  --st-live: #6cb4e4;
+  --st-fail: #f08a80;
+
+  /* Coverage-cell fills: one per verdict, shared by the map and its legend
+     (BRAND.md section 4, "word vs fill").  Here they alias the inks; the light
+     theme takes the brand's lighter fills. */
+  --cell-exact: var(--st-exact);
+  --cell-reloc: var(--st-reloc);
+  --cell-proven: var(--st-proven);
+  --cell-thunk: var(--st-thunk);
+  --cell-near: var(--st-near);
+  --cell-stub: var(--st-stub);
+  --cell-idle: var(--st-idle);
+  --cell-fail: var(--st-fail);
 
   /* Confidence: one hue (teal), three intensities. */
-  --conf-high: #5eead4;
-  --conf-medium: #2dd4bf;
-  --conf-low: #8fd6cf;
-  --conf-soft: rgba(94, 234, 212, 0.14);
+  --conf-high: #5ccdbd;
+  --conf-medium: #45b3a5;
+  --conf-low: #8ec9c1;
+  --conf-soft: rgba(92, 205, 189, 0.14);
 
   /* Severity: one hue (red), three intensities. */
-  --sev-high: #ff9d9d;
-  --sev-medium: #e08b8b;
-  --sev-low: #bf9c9c;
-  --sev-soft: rgba(255, 154, 154, 0.14);
+  --sev-high: #f59a92;
+  --sev-medium: #d98b84;
+  --sev-low: #b89c98;
+  --sev-soft: rgba(245, 154, 146, 0.14);
 
   /* The one sequential ramp, cold to matched.  Coverage and progress only,
      never reused for decoration. */
-  --ramp-1: #3b4a63;
-  --ramp-2: #3f6ea8;
-  --ramp-3: #3f9d8f;
-  --ramp-4: #3fbf6e;
-  --ramp-5: #4ade80;
-  --ramp-track: #202a3a;
+  --ramp-1: #3a3a42;
+  --ramp-2: #2f5c49;
+  --ramp-3: #2f8a5a;
+  --ramp-4: #3aa86c;
+  --ramp-5: #4cc38a;
+  --ramp-track: #212126;
 
   /* Diff operations are their own entities; they alias the palette but do not
      share a token with the match family, so retuning one does not move the
@@ -112,11 +158,11 @@
   --meter-unlit: rgba(255, 255, 255, 0.06);
 
   /* Reference-band marker on a meter track (the packed-entropy range). */
-  --meter-band: rgba(250, 204, 21, 0.6);
+  --meter-band: rgba(227, 182, 92, 0.6);
 
   /* Live-data emphasis: the glow marks a running signal, nothing else. */
-  --glow-live: 0 0 0 1px rgba(125, 211, 252, 0.35), 0 0 12px rgba(125, 211, 252, 0.22);
-  --flash-bg: rgba(134, 180, 255, 0.2);
+  --glow-live: 0 0 0 1px rgba(108, 180, 228, 0.35), 0 0 12px rgba(108, 180, 228, 0.22);
+  --flash-bg: rgba(63, 191, 122, 0.18);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -127,9 +173,12 @@
   --space-7: 32px;
   --space-8: 40px;
 
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 10px;
+  /* One height for a button and the field beside it in a toolbar. */
+  --control-h: 32px;
+
+  --radius-sm: 5px;
+  --radius-md: 9px;
+  --radius-lg: 14px;
   --radius-pill: 999px;
   /* Aliases used by a few surfaces that predate the sm/md scale. */
   --radius-1: var(--radius-sm);
@@ -145,10 +194,9 @@
   --text-xl: 1.25rem;
   --text-2xl: 1.625rem;
 
-  /* Platform UI fonts only: no Material/Roboto default that every generated
-     app ships. The zine theme overrides this with MS Sans Serif. */
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  /* The brand faces; the zine theme overrides this with MS Sans Serif. */
+  --font-sans: "Archivo", "Archivo Fallback", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 
   --sidebar-width: 236px;
   --content-max: 1680px;
@@ -167,67 +215,68 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg: #f5f7fb;
+  --bg: #fafafa;
   --surface: #ffffff;
-  --surface-2: #f2f5fa;
-  --surface-3: #e9eef6;
-  --surface-hover: #eef3fa;
+  --surface-2: #f5f6f8;
+  --surface-3: #eef0f3;
+  --surface-hover: #f5f6f8;
 
-  --row-stripe: rgba(23, 32, 46, 0.035);
+  --row-stripe: rgba(10, 10, 11, 0.025);
 
-  --border: #d9e0ea;
-  --border-strong: #c0cbdb;
+  --border: #e7e8ec;
+  --border-strong: #d5d8de;
 
-  --text: #17202e;
-  --text-muted: #55647c;
-  --text-faint: #5a6880;
+  --text: #0a0a0b;
+  --text-muted: #55585f;
+  --text-faint: #6b7078;
 
-  --accent: #2255bb;
-  --accent-hover: #1d4aa5;
+  --accent: #0f7a42;
+  --accent-hover: #0b6234;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(34, 85, 187, 0.12);
+  --primary-hover: #26262a;
+  --accent-soft: #eaf5ef;
 
-  --ok: #106430;
-  --ok-soft: rgba(16, 100, 48, 0.12);
-  --warn: #7d5106;
-  --warn-soft: rgba(125, 81, 6, 0.14);
-  --danger: #ae2929;
-  --danger-soft: rgba(174, 41, 41, 0.12);
-  --info: #0a6688;
-  --info-soft: rgba(10, 102, 136, 0.12);
+  --ok: #0f7a42;
+  --ok-soft: #eaf5ef;
+  --warn: #8a5a00;
+  --warn-soft: #fdf3ea;
+  --danger: #a32318;
+  --danger-soft: rgba(163, 35, 24, 0.1);
+  --info: #0b5c8a;
+  --info-soft: rgba(11, 92, 138, 0.1);
 
-  --hue-match: #106430;
-  --hue-match-soft: rgba(16, 100, 48, 0.12);
-  --hue-match-line: rgba(16, 100, 48, 0.35);
-  --hue-near: #7d5106;
-  --hue-near-soft: rgba(125, 81, 6, 0.14);
-  --hue-near-line: rgba(125, 81, 6, 0.32);
-  --hue-stub: #4d5c74;
-  --hue-stub-soft: rgba(77, 92, 116, 0.14);
-  --hue-stub-line: rgba(77, 92, 116, 0.3);
+  --hue-match: #0f7a42;
+  --hue-match-soft: #eaf5ef;
+  --hue-match-line: rgba(15, 122, 66, 0.35);
+  --hue-near: #8a5a00;
+  --hue-near-soft: #fdf8f1;
+  --hue-near-line: rgba(138, 90, 0, 0.32);
+  --hue-stub: #5f6673;
+  --hue-stub-soft: #f5f6f8;
+  --hue-stub-line: rgba(95, 102, 115, 0.3);
   --hue-thunk: #5b3fa8;
   --hue-thunk-soft: rgba(91, 63, 168, 0.14);
   --hue-thunk-line: rgba(91, 63, 168, 0.32);
-  --hue-fail: #ae2929;
-  --hue-fail-soft: rgba(174, 41, 41, 0.12);
-  --hue-fail-line: rgba(174, 41, 41, 0.32);
-  --hue-live: #0a6688;
-  --hue-live-soft: rgba(10, 102, 136, 0.12);
-  --hue-live-line: rgba(10, 102, 136, 0.34);
+  --hue-fail: #a32318;
+  --hue-fail-soft: rgba(163, 35, 24, 0.1);
+  --hue-fail-line: rgba(163, 35, 24, 0.32);
+  --hue-live: #0b5c8a;
+  --hue-live-soft: rgba(11, 92, 138, 0.1);
+  --hue-live-line: rgba(11, 92, 138, 0.34);
 
-  --st-exact: #106430;
-  --st-reloc: #0f6b5c;
-  --st-proven: #15663a;
+  --st-exact: #0f7a42;
+  --st-reloc: #0f6f68;
+  --st-proven: #2a7154;
   --st-thunk: #5b3fa8;
-  --st-near: #7d5106;
-  --st-stub: #4d5c74;
-  --st-idle: #4d5c74;
-  --st-live: #0a6688;
-  --st-fail: #ae2929;
+  --st-near: #8a5a00;
+  --st-stub: #5f6673;
+  --st-idle: #5f6673;
+  --st-live: #0b5c8a;
+  --st-fail: #a32318;
 
-  --conf-high: #0e6b63;
-  --conf-medium: #116b64;
-  --conf-low: #3f6b68;
+  --conf-high: #0f6f68;
+  --conf-medium: #2b6b66;
+  --conf-low: #6b7078;
   --conf-soft: rgba(15, 118, 110, 0.12);
 
   --sev-high: #ae2929;
@@ -235,22 +284,31 @@
   --sev-low: #6f4a44;
   --sev-soft: rgba(174, 41, 41, 0.12);
 
-  --ramp-1: #b9c5d8;
-  --ramp-2: #7fa3d0;
-  --ramp-3: #5aa894;
-  --ramp-4: #2f8f57;
-  --ramp-5: #106430;
-  --ramp-track: #e9eef6;
+  --ramp-1: #c3c7cf;
+  --ramp-2: #a9dcc1;
+  --ramp-3: #86d3a4;
+  --ramp-4: #2f9a5f;
+  --ramp-5: #0f7a42;
+  --ramp-track: #eef0f3;
 
-  --grid-line: rgba(23, 32, 46, 0.1);
-  --meter-unlit: rgba(23, 32, 46, 0.07);
-  --meter-band: rgba(125, 81, 6, 0.6);
+  --grid-line: rgba(10, 10, 11, 0.08);
+  --meter-unlit: #eff0f3;
+  --meter-band: rgba(138, 90, 0, 0.6);
 
   --glow-live: 0 0 0 1px rgba(10, 102, 136, 0.3), 0 0 10px rgba(10, 102, 136, 0.18);
-  --flash-bg: rgba(34, 85, 187, 0.16);
+  --flash-bg: rgba(15, 122, 66, 0.12);
 
-  --shadow-1: 0 1px 2px rgba(23, 32, 46, 0.08);
-  --shadow-2: 0 8px 24px rgba(23, 32, 46, 0.1);
+  --shadow-1: 0 1px 2px rgb(10 10 11 / 4%);
+  --shadow-2: 0 1px 2px rgb(10 10 11 / 4%), 0 12px 32px -18px rgb(10 10 11 / 12%);
+
+  --cell-exact: #86d3a4;
+  --cell-reloc: #7fcbb8;
+  --cell-proven: #a9dcc1;
+  --cell-thunk: #c9bdf0;
+  --cell-near: #e8cf86;
+  --cell-stub: #c3c7cf;
+  --cell-idle: #c3c7cf;
+  --cell-fail: #e8a49c;
 }
 
 /* Windows 2000 "Windows Standard" scheme, taken from the zine project's
@@ -289,6 +347,7 @@
   --accent: #0a246a;
   --accent-hover: #000080;
   --accent-ink: #ffffff;
+  --primary-hover: #26262a;
   --accent-soft: rgba(10, 36, 106, 0.12);
 
   --ok: #054d1f;
@@ -409,22 +468,22 @@
   padding: var(--space-2) var(--space-3);
 }
 
-:root[data-theme="zine"] .topbar h1,
-:root[data-theme="zine"] .topbar .health,
-:root[data-theme="zine"] .topbar .theme-picker-label {
+:root[data-theme="zine"] .topbar h1 {
   color: #ffffff;
 }
 
-:root[data-theme="zine"] .topbar .history-nav .btn {
+/* The zine topbar is the Windows title bar, so every control on it takes the
+   title bar's foreground: a ghost button otherwise keeps the dark page text. */
+:root[data-theme="zine"] .topbar .btn {
   color: #ffffff;
   border-color: transparent;
 }
 
-:root[data-theme="zine"] .topbar .history-nav .btn:hover:not(:disabled) {
+:root[data-theme="zine"] .topbar .btn:hover:not(:disabled) {
   background: rgb(255 255 255 / 0.15);
 }
 
-:root[data-theme="zine"] .topbar .history-nav .btn:disabled {
+:root[data-theme="zine"] .topbar .btn:disabled {
   opacity: 0.45;
 }
 
@@ -513,6 +572,13 @@ p.muted[role="status"]:not(:empty) {
   background: var(--accent-soft);
 }
 
+/* Scrolling regions get a thin scrollbar in the border colour, not the
+   platform default. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
 /* ── Shell ────────────────────────────────────────────────────────── */
 
 .layout {
@@ -521,7 +587,13 @@ p.muted[role="status"]:not(:empty) {
   min-height: 100vh;
 }
 
+/* Full height and sticky, so the footer (theme, workspace facts) stays in
+   view however long the page runs; a long nav scrolls inside it. */
 .sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
   background: var(--surface);
   border-right: 1px solid var(--border);
   padding: var(--space-5) var(--space-3);
@@ -530,26 +602,26 @@ p.muted[role="status"]:not(:empty) {
   gap: var(--space-5);
 }
 
+/* The wordmark: lowercase, bold, -0.03em tracking, the mark one gap-2 away
+   (BRAND.md section 2). */
 .brand {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-  font-size: var(--text-lg);
+  font-size: 1.125rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.03em;
 }
 
-/* The product mark from favicon.svg: the R stroke plus a live status bead.
-   Replaces the generic accent pill so the chrome is recognizable without the
-   wordmark. */
+/* The mark from favicon.svg: an outline square in the ink colour holding the
+   accent verdict cell.  Never below 16px, where the inner cell muddies. */
 .brand-mark {
   display: inline-flex;
   flex: none;
-  align-self: center;
-  width: 18px;
-  height: 18px;
-  color: var(--accent);
+  width: 19px;
+  height: 19px;
+  color: var(--text);
 }
 
 .brand-mark svg {
@@ -558,16 +630,8 @@ p.muted[role="status"]:not(:empty) {
   height: 100%;
 }
 
-.brand-mark-live {
-  fill: var(--ok);
-}
-
-.brand-tag {
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: var(--text-faint);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.brand-mark-cell {
+  fill: var(--accent);
 }
 
 .nav {
@@ -596,26 +660,24 @@ p.muted[role="status"]:not(:empty) {
   align-items: center;
   gap: var(--space-2);
   min-height: 24px;
-  padding: var(--space-2) var(--space-3);
+  padding: 6px var(--space-3);
   border-radius: var(--radius-md);
   color: var(--text-muted);
   font-weight: 500;
-  border-left: 2px solid transparent;
 }
 
-.nav-link-mark {
-  display: none;
-  flex: 0 0 auto;
-  width: 1.5rem;
-  height: 1.5rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
-  color: var(--text);
-  font-size: var(--text-xs);
-  font-weight: 700;
-  text-transform: uppercase;
+/* Each view's drawn icon: faint beside its label, the accent on the current page,
+   and the whole link when the sidebar is collapsed. */
+.nav-link .icon {
+  color: var(--text-faint);
+}
+
+.nav-link:hover .icon {
+  color: var(--text-muted);
+}
+
+.nav-link.active .icon {
+  color: var(--accent);
 }
 
 .nav-link:hover {
@@ -624,10 +686,27 @@ p.muted[role="status"]:not(:empty) {
   text-decoration: none;
 }
 
+/* The current page: the accent tint and full ink, no side stripe. */
 .nav-link.active {
   background: var(--accent-soft);
-  border-left-color: var(--accent);
   color: var(--text);
+  font-weight: 600;
+}
+
+.sidebar-foot {
+  position: sticky;
+  bottom: calc(-1 * var(--space-5));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding: var(--space-3) var(--space-2) var(--space-5);
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.sidebar-foot .health {
+  white-space: normal;
 }
 
 .main {
@@ -638,7 +717,6 @@ p.muted[role="status"]:not(:empty) {
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-4);
   flex-wrap: wrap;
   padding-bottom: var(--space-4);
@@ -650,7 +728,20 @@ p.muted[role="status"]:not(:empty) {
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  flex: 1 1 auto;
   min-width: 0;
+}
+
+.icon {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.1875rem;
 }
 
 .history-nav {
@@ -664,6 +755,11 @@ p.muted[role="status"]:not(:empty) {
   font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.01em;
+}
+
+.topbar-search .key {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
 }
 
 .theme-picker {
@@ -729,7 +825,12 @@ p.muted[role="status"]:not(:empty) {
   background: var(--surface-2);
 }
 
+/* A folded panel says so: a chevron before the title that turns down when
+   open.  Hover alone gave no hint that the body was there at all. */
 .panel-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: 0;
   border: 0;
   background: transparent;
@@ -737,6 +838,21 @@ p.muted[role="status"]:not(:empty) {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+
+.panel-fold .icon {
+  color: var(--text-faint);
+  transition: transform 150ms ease-out;
+}
+
+.panel-fold[aria-expanded="true"] .icon {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-fold .icon {
+    transition: none;
+  }
 }
 
 .panel-fold:hover {
@@ -771,6 +887,11 @@ p.muted[role="status"]:not(:empty) {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+}
+
+/* A panel whose content is all conditional and currently absent is its header alone. */
+.panel-body:empty {
+  display: none;
 }
 
 .panel-body > :last-child {
@@ -819,6 +940,33 @@ p.muted[role="status"]:not(:empty) {
   flex-wrap: wrap;
 }
 
+/* A toolbar of labelled fields lines their controls up with its buttons, and
+   a field's hint hangs under its control instead of making that field taller
+   than its neighbours. */
+.toolbar:has(> .field) {
+  align-items: flex-end;
+}
+
+.toolbar:has(> .field > .field-hint) {
+  row-gap: var(--space-6);
+  padding-bottom: var(--space-4);
+}
+
+.toolbar > .field:has(> .field-hint) {
+  position: relative;
+}
+
+.toolbar > .field > .field-hint {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  max-width: 100%;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -855,6 +1003,13 @@ textarea {
   font: var(--text-base) / 1.4 var(--font-sans);
 }
 
+select,
+input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]) {
+  min-height: var(--control-h);
+  padding-block: var(--space-1);
+  line-height: 1.3;
+}
+
 input:hover,
 select:hover,
 textarea:hover {
@@ -876,7 +1031,7 @@ input[type="checkbox"] {
 }
 
 input[type="file"] {
-  padding: var(--space-1) var(--space-2);
+  padding: 2px var(--space-1);
   color: var(--text-muted);
 }
 
@@ -885,7 +1040,7 @@ input[type="file"]::file-selector-button {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-3);
+  padding: 2px var(--space-3);
   margin-right: var(--space-3);
   font: inherit;
   cursor: pointer;
@@ -934,16 +1089,82 @@ input[type="file"]::file-selector-button:hover {
   cursor: not-allowed;
 }
 
+/* The one filled action is ink, not accent (BRAND.md section 7, "primary is
+   filled ink"): the text colour as the fill, the surface as the label, so it
+   inverts with the theme.  Green stays the verdict colour. */
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--surface);
   font-weight: 600;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+/* One filled action per view (BRAND.md section 7): the page's own.  A panel's
+   header action (run this scan, recompute that) keeps its emphasis as accent
+   ink on an accent outline, so a page of thirty panels is not thirty filled
+   buttons competing with the one that matters. */
+/* A square control holding one icon (copy, notifications). */
+.btn-icon {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.btn-sm.btn-icon,
+.copy-row .btn-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.bell-count {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  min-width: 17px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 600 10px / 16px var(--font-mono);
+  text-align: center;
+}
+
+/* A sortable column header: the header's own type, a pointer and the arrow. */
+.sort-header {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.sort-header:hover,
+.sort-header.active {
+  color: var(--text);
+}
+
+.panel-head .btn-primary {
+  background: var(--surface);
+  border-color: var(--hue-match-line);
+  color: var(--accent);
+}
+
+.panel-head .btn-primary:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .btn-danger {
@@ -1011,6 +1232,11 @@ input[type="file"]::file-selector-button:hover {
   flex-wrap: nowrap;
 }
 
+/* The header of a trailing actions column sits over its right-aligned buttons. */
+.data-table:has(tbody td:last-child > .actions-cell) thead th:last-child {
+  text-align: right;
+}
+
 /* A narrow cell must not shrink an action: at phone width a text link squeezed
    below its content wraps one glyph per line ("Zipped" measured 18x56).  The
    cell keeps its intrinsic width and the table's own scroller carries the
@@ -1023,14 +1249,57 @@ input[type="file"]::file-selector-button:hover {
   min-height: 24px;
 }
 
+/* A description can carry a long path; it breaks anywhere so it cannot
+   widen the table past the revert actions. */
+.journal-change {
+  overflow-wrap: anywhere;
+}
+
+/* The journal's ids are a secondary line under the change they describe; a
+   long action id truncates (its full value is the link title) so the revert
+   actions stay in view. */
+.journal-ids {
+  display: block;
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.journal-actions,
+.journal-actions .confirm {
+  flex-wrap: wrap;
+}
+
+/* A row's actions read as quiet text until the row is hovered or focused, so
+   a long table shows its data rather than a column of button frames. */
+.data-table tbody tr:not(:hover, :focus-within) .actions-cell .btn:not(.btn-primary, .btn-danger) {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
+/* A destructive row action (revert, withdraw) stays quiet until its row is
+   hovered or focused: a column of red boxes down every row read as a page of
+   errors.  The hovered row shows it in full danger colour before the click. */
+.data-table tbody tr:not(:hover, :focus-within) .btn-danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+}
+
 /* ── Badges ───────────────────────────────────────────────────────── */
 
+/* A chip states a fact; the brand's chip radius, not a pill. */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   padding: 1px var(--space-2);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-muted);
@@ -1509,7 +1778,15 @@ input[type="file"]::file-selector-button:hover {
   animation: flash-fade var(--flash-duration) ease-out;
 }
 
-/* The dashboard's 30-day series: one bar per day, over a shared peak. */
+/* The first-run panel's lede: prose at the body size, at a reading measure. */
+.start-lede {
+  margin: 0 0 var(--space-4);
+  max-width: 68ch;
+  font-size: var(--text-lg);
+  color: var(--text-muted);
+}
+
+/* The dashboard's 30-day series: one bar per day, each chart over its own peak. */
 .series {
   margin-bottom: 0.6rem;
 }
@@ -1532,6 +1809,10 @@ input[type="file"]::file-selector-button:hover {
   flex: 1 1 0;
   min-height: 1px;
   background: var(--hue-stub);
+}
+
+.series-bar.series-bar-zero {
+  min-height: 0;
 }
 
 .series-bar.series-a {
@@ -1651,6 +1932,10 @@ input[type="file"]::file-selector-button:hover {
 }
 
 .journal-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
   font-size: var(--text-xs);
   color: var(--text-faint);
   font-family: var(--font-mono);
@@ -1892,11 +2177,14 @@ pre.code {
   white-space: nowrap;
 }
 
+/* `break-word`, not `anywhere`: a long hash still breaks when it would
+   overflow, but a short word never counts as breakable when the table sizes
+   its columns, so no column is squeezed into "persona / l". */
 .data-table tbody td {
-  padding: var(--space-2) var(--space-3);
+  padding: 6px var(--space-3);
   border-bottom: 1px solid var(--border);
-  vertical-align: top;
-  overflow-wrap: anywhere;
+  vertical-align: middle;
+  overflow-wrap: break-word;
 }
 
 .data-table tbody tr:last-child td {
@@ -1915,6 +2203,25 @@ pre.code {
 .data-table td.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* An editable cell fills its column instead of its intrinsic width, so a row
+   of fields fits the table rather than scrolling it sideways. */
+.data-table td input:not([type="checkbox"], [type="radio"]) {
+  width: 100%;
+  min-width: 8ch;
+}
+
+/* A number, a stamp or a copyable hash never breaks across lines. */
+.data-table td.num,
+.data-table td .copy-row {
+  white-space: nowrap;
+}
+
+/* A cell's inline group (an icon and a name, a run of badges) stays one line. */
+.data-table td > .toolbar {
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 /* A member's bit width is a small number, so the input stays narrow and the
@@ -2000,6 +2307,7 @@ pre.code {
 }
 
 .detail-heading {
+  flex: 1 1 360px;
   min-width: 0;
 }
 
@@ -2021,6 +2329,16 @@ pre.code {
   color: inherit;
   cursor: text;
   text-align: left;
+}
+
+.detail-title-name .icon {
+  margin-left: var(--space-2);
+  color: var(--text-muted);
+}
+
+.detail-title-name:hover .icon,
+.detail-title-name:focus-visible .icon {
+  color: var(--text);
 }
 
 .detail-title input {
@@ -2061,11 +2379,134 @@ pre.code {
   font-size: var(--text-xs);
 }
 
+/* A header line that is a sentence, not an address or a count. */
+.detail-subtitle.detail-prose {
+  font-family: var(--font-sans);
+}
+
 .detail-facts {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-1);
   margin-top: var(--space-3);
+}
+
+/* The function header's best named candidate: the answer a stripped
+   function's page leads with, one Apply away. */
+.covmap-more {
+  margin-top: var(--space-3);
+}
+
+.covmap-more > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.covmap-more[open] > summary {
+  margin-bottom: var(--space-3);
+}
+
+.best-match {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+
+.best-match-label {
+  font-size: var(--text-xs);
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* The detail header's actions sit right of the heading; the fields the
+   operator may override take a full-width row under both. */
+.detail-side {
+  justify-content: flex-end;
+}
+
+/* A header action that opens a short list of downloads under it. */
+.menu {
+  position: relative;
+  margin-top: 0;
+}
+
+.menu > summary {
+  list-style: none;
+}
+
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  z-index: 20;
+  min-width: 12rem;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.menu-list a {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-decoration: none;
+}
+
+.menu-list a:hover,
+.menu-list a:focus-visible {
+  background: var(--surface-2);
+}
+
+/* Under the heading on a narrow pane, the actions read from the left. */
+@media (max-width: 900px) {
+  .detail-side {
+    justify-content: flex-start;
+  }
+
+  .detail-side .menu-list {
+    right: auto;
+    left: 0;
+  }
+}
+
+.detail-settings {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* A stored timestamp reads as date and clock time; the raw value is a hover. */
+.stamp {
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.detail-facts .stamp {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
 }
 
 .back-link {
@@ -2640,6 +3081,40 @@ kbd.key {
   padding-left: var(--space-4);
 }
 
+/* The staged count and the Upload action sit together above the staged rows. */
+.upload-go {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+
+.upload-go p {
+  margin: 0;
+}
+
+/* A staged file's plan controls wrap inside one cell rather than spreading
+   over a column each. */
+.upload-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-3);
+}
+
+.upload-option {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.data-table td .upload-option input[type="file"] {
+  max-width: 14rem;
+}
+
 .upload-error {
   color: var(--danger);
 }
@@ -2657,6 +3132,8 @@ kbd.key {
     position: sticky;
     top: 0;
     z-index: 20;
+    height: auto;
+    overflow-y: visible;
     min-width: 0;
     flex-direction: row;
     align-items: center;
@@ -2672,7 +3149,8 @@ kbd.key {
     padding: 0;
   }
 
-  .brand-tag {
+  /* The top bar has no rail to fold into. */
+  .sidebar-toggle {
     display: none;
   }
 
@@ -2680,6 +3158,7 @@ kbd.key {
      keeps a compact label and a divider, and the strip scrolls horizontally
      instead of wrapping into a flat row of unlabelled chips. */
   .nav {
+    order: 2;
     flex: 1 1 100%;
     min-width: 0;
     flex-direction: row;
@@ -2713,7 +3192,6 @@ kbd.key {
   }
 
   .nav-link {
-    border-left: none;
     border-bottom: 2px solid transparent;
     border-radius: var(--radius-sm);
     padding: var(--space-1) var(--space-2);
@@ -2721,8 +3199,27 @@ kbd.key {
   }
 
   .nav-link.active {
-    border-left-color: transparent;
     border-bottom-color: var(--accent);
+  }
+
+  .nav-link .icon {
+    display: none;
+  }
+
+  /* The strip is sticky, so every row it carries costs the page height on a
+     phone: only the theme select stays, beside the brand, not on a row. */
+  .sidebar-foot {
+    position: static;
+    order: 1;
+    margin: 0 0 0 auto;
+    padding: 0;
+    border-top: none;
+    background: none;
+  }
+
+  .sidebar-foot .health,
+  .sidebar-foot .theme-picker-label {
+    display: none;
   }
 
   .main {
@@ -2833,8 +3330,8 @@ kbd.key {
 }
 
 /* ── Sidebar collapse ─────────────────────────────────────────────────
-   Ctrl/Command+B collapses the sidebar to a narrow rail; the labels go and
-   the section dots stay, so the shell reads the same and the keyboard layer
+   Above 900px, Ctrl/Command+B collapses the sidebar to a narrow rail; the labels go and
+   the view icons stay, so the shell reads the same and the keyboard layer
    still has every view. */
 .sidebar-toggle {
   margin-left: auto;
@@ -2855,48 +3352,61 @@ kbd.key {
   color: var(--text);
 }
 
-.layout.sidebar-collapsed {
-  grid-template-columns: 64px minmax(0, 1fr);
-}
+@media (min-width: 901px) {
+  .sidebar-collapsed .sidebar-foot {
+    display: none;
+  }
 
-.sidebar-collapsed .sidebar {
-  align-items: center;
-  padding: var(--space-3) var(--space-1);
-}
+  .layout.sidebar-collapsed {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
 
-.sidebar-collapsed .brand span:not(.brand-mark),
-.sidebar-collapsed .nav-group-label {
-  display: none;
-}
+  .sidebar-collapsed .sidebar {
+    align-items: center;
+    padding: var(--space-3) var(--space-1);
+  }
 
-.sidebar-collapsed .nav-link {
-  justify-content: center;
-  padding: var(--space-2) 0;
-  border-left-width: 0;
-}
+  .sidebar-collapsed .brand span:not(.brand-mark),
+  .sidebar-collapsed .nav-group-label {
+    display: none;
+  }
 
-.sidebar-collapsed .nav-link-text {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
+  .sidebar-collapsed .nav-link {
+    justify-content: center;
+    padding: var(--space-2) 0;
+    border-left-width: 0;
+  }
 
-.sidebar-collapsed .nav-link-mark {
-  display: inline-flex;
-}
+  .sidebar-collapsed .nav-link-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 
-.sidebar-collapsed .nav-group {
-  gap: 0;
-}
+  .sidebar-collapsed .nav-link .icon {
+    width: 1.125rem;
+    height: 1.125rem;
+  }
 
-.sidebar-collapsed .sidebar-toggle {
-  margin-left: 0;
+  .sidebar-collapsed .nav-group {
+    gap: 0;
+  }
+
+  .sidebar-collapsed .brand {
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: 0;
+  }
+
+  .sidebar-collapsed .sidebar-toggle {
+    margin-left: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2916,4 +3426,54 @@ kbd.key {
   .skip-link {
     transition: none;
   }
+}
+
+/* The binary header's analysis line: its state and the control that runs it. */
+.analysis-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+/* The binary header's running-jobs line: a pulsing dot while scans run. */
+.live-jobs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.live-jobs-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--st-live);
+  box-shadow: var(--glow-live);
+  animation: live-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-jobs-dot {
+    animation: none;
+  }
+}
+
+/* A row of toggle chips standing in for a field's control keeps the control
+   height, so its label lines up with the selects beside it. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
 }

@@ -32,8 +32,13 @@ test("a batch upload lists each file, applies its tag and reports each result", 
   await panel.getByRole("button", { name: "Upload", exact: true }).click();
   await expect(panel.getByText(`Uploaded ${first} as binary #`)).toBeVisible();
   await expect(panel.getByText(`Uploaded ${second} as binary #`)).toBeVisible();
+  await expect(panel.getByText(/Analysis queued/)).toHaveCount(2);
+  // Each stored file links to its own binary page.
+  const opened = panel.getByRole("link", { name: /^Open binary #\d+$/ });
+  await expect(opened).toHaveCount(2);
+  await expect(opened.first()).toHaveAttribute("href", /^#\/binaries\/\d+$/);
   await expect(panel.getByText(`Tags: ${tag}.`)).toBeVisible();
-  await expect(panel.getByText("2 file(s): 0 already stored, 0 refused.")).toBeVisible();
+  await expect(panel.getByText("2 files: 0 already stored, 0 refused.")).toBeVisible();
 
   const archive = panelByTitle(page, "Extract an archive").locator("select").first();
   await archive.selectOption({ label: first });
@@ -78,7 +83,7 @@ test("a duplicate is reported as already stored, not as a failure", async ({ pag
   await page.locator('input[type="file"][name="file"]').setInputFiles(fileUpload(name));
   await panel.getByRole("button", { name: "Upload", exact: true }).click();
   await expect(panel.getByText(`Already stored ${name} as binary #`)).toBeVisible();
-  await expect(panel.getByText("1 file(s): 1 already stored, 0 refused.")).toBeVisible();
+  await expect(panel.getByText("1 file: 1 already stored, 0 refused.")).toBeVisible();
 });
 
 test("the drop zone accepts a file and Configure all reaches every row", async ({ page }) => {
@@ -99,9 +104,16 @@ test("the drop zone accepts a file and Configure all reaches every row", async (
 
   // Configure all applies one value to the queued rows and replaces the badge.
   await panel.getByLabel("ISA for every file").selectOption("x86_32");
-  await expect(panel.getByText("auto / x86_32 / auto", { exact: true })).toBeVisible();
   await expect(panel.getByText("auto", { exact: true })).toBeHidden();
   await expect(panel.getByLabel("ISA for dropped.bin")).toHaveValue("x86_32");
+
+  // The per-file options wrap inside one cell, so the staged row fits the panel
+  // at a laptop width instead of scrolling its controls out of view.
+  await page.setViewportSize({ width: 1024, height: 800 });
+  const staged = panel.locator("table.data-table").first();
+  await expect
+    .poll(() => staged.evaluate((table) => table.scrollWidth <= (table.closest(".table-scroll")?.clientWidth ?? 0)))
+    .toBe(true);
 });
 
 test("an upload can be registered into a team's scope", async ({ page }) => {

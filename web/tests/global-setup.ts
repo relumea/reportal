@@ -60,5 +60,6 @@ export default async function globalSetup(): Promise<void> {
     large_function_count: seed.large_function_count,
     stale_run: seed.stale_run,
     team: seed.team,
+    similar: seed.similar,
   });
 }

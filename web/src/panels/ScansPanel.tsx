@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Badge, EmptyState, NA, Panel, PanelBody, StatusCell } from "../components";
+import { Badge, EmptyState, NA, Panel, PanelBody, Stamp, StatusCell } from "../components";
 import { panelKey, usePanel } from "../panelCache";
+import type { PanelEntry } from "../panelCache";
 import type { AnalysisScans, BinaryScan, BinaryScans } from "../types";
 
 /** The inputs a scan ran with, as one line; a scan that recorded none says so. */
@@ -40,7 +41,9 @@ function ScansTable({ scans }: { scans: BinaryScan[] }): ReactNode {
                 <StatusCell status={scan.status} />
               </td>
               <td className="mono">{scanInputs(scan.params)}</td>
-              <td className="muted">{scan.created_at}</td>
+              <td className="muted">
+                <Stamp at={scan.created_at} />
+              </td>
             </tr>
           ))}
         </tbody>
@@ -49,10 +52,17 @@ function ScansTable({ scans }: { scans: BinaryScan[] }): ReactNode {
   );
 }
 
+/** The binary's stored-scan list, which the Scans panel shows and the
+ *  stored-only scan panels read to skip a GET that can only answer no-scan. */
+export function useBinaryScans(binaryId: number): PanelEntry<BinaryScans> | undefined {
+  return usePanel(panelKey("binary", binaryId, "scans"), () =>
+    api<BinaryScans>(`/binaries/${binaryId}/scans`),
+  );
+}
+
 /** Every stored scan of the binary's newest analysis, with the inputs it ran with. */
 export function ScansPanel({ binaryId }: { binaryId: number }): ReactNode {
-  const key = panelKey("binary", binaryId, "scans");
-  const entry = usePanel(key, () => api<BinaryScans>(`/binaries/${binaryId}/scans`));
+  const entry = useBinaryScans(binaryId);
   const count = entry?.state === "ready" ? entry.data.count : undefined;
   return (
     <Panel

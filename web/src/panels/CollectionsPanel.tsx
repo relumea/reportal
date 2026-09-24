@@ -93,7 +93,7 @@ export function BinaryCollectionsPanel({ binaryId }: { binaryId: number }): Reac
       <Toolbar>
         <Field label="Add to collection">
           <select value={pick} onChange={(event) => setPick(event.target.value)}>
-            <option value="">{candidates.length ? "choose one" : "none left"}</option>
+            <option value="">{candidates.length ? "Choose one" : "None left"}</option>
             {candidates.map((row) => (
               <option key={row.id} value={row.id}>
                 {row.name}

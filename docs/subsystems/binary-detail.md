@@ -20,7 +20,8 @@ not derived is an analyst-declared callee edge.
   names, through the behavior classifier; an unknown domain raises `InvalidEdgeError`.
 - `composition.NAME_SOURCE_MAP` maps reportal's stored `name_source` vocabulary onto five labels,
   and `QUALITY_BANDS` onto four cutoffs (95.0, 80.0, 70.0). `CATEGORIES` is `malware`, `debug`,
-  `unique`, `library`; `MAX_ROWS` is 500.
+  `unique`, `library`; `MAX_ROWS` is 500. `LABEL_KINDS` is `tag`, `collection`, `family`: the stored
+  rows a rollup row's `labels` carry, rolled up by `attribution`.
 - `related.RELATED_CLASSIFICATIONS` runs `identical`, `same-imports`, `same-toolchain`,
   `similar-lifecycle`, `similar-capabilities`, `similar-size`, `unrelated`, each with a confidence
   and a signal kind. `IMPORT_OVERLAP_THRESHOLD` and `CAPABILITY_OVERLAP_THRESHOLD` are 0.8,
@@ -58,6 +59,9 @@ not derived is an analyst-declared callee edge.
   replaces a row for the same `(function, callee, kind)` in place. `tests/test_function_extras.py`.
 - A self-match is excluded from the composition rollup and its function count is reported in the
   notes. `tests/test_composition.py`.
+- A composition label is a stored row (a tag, a visible collection, a family reference or a
+  `detect` match), never a verdict; a collection the caller cannot see is not disclosed, and
+  `attribution` sums the rollup counts so the two cannot disagree. `tests/test_composition.py`.
 - A pair that matches nothing is `unrelated`, carries no signals, and is dropped unless the caller
   asks for it. `tests/test_related.py`.
 - A blank family name raises `InvalidFamilyNameError` and a case-insensitive repeat

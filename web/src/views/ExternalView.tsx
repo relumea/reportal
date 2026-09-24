@@ -111,8 +111,7 @@ export function ExternalView(): ReactNode {
         ) : (
           <>
             <Muted>
-              remote sources {registry.data.remote_enabled ? "enabled" : "disabled"}, a VirusTotal
-              key {registry.data.key_configured ? "is configured" : "is not configured"}
+              {`Remote sources are ${registry.data.remote_enabled ? "on" : "off"}, and a VirusTotal key is ${registry.data.key_configured ? "" : "not "}configured.`}
             </Muted>
             <DataTable
               columns={[

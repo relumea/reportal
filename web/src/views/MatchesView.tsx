@@ -37,6 +37,7 @@ import {
   MATCH_PLATFORM_LABELS,
   TRANSFER_MODES,
   TRANSFER_MODE_LABELS,
+  isPlaceholderName,
   nameSourceLabel,
 } from "../constants";
 import { METER_SEGMENTS, nameSourceHue, qualityHue } from "../design";
@@ -92,6 +93,11 @@ function unmatchedRow(fn: FunctionRow): BinaryMatchRow {
 
 function hasCandidate(row: BinaryMatchRow): boolean {
   return row.candidate_function_id > 0;
+}
+
+/** A recorded candidate whose name is generated (`fcn_…`): applying it names nothing. */
+function unnamedCandidate(row: BinaryMatchRow): boolean {
+  return hasCandidate(row) && isPlaceholderName(row.candidate_name);
 }
 
 function sourceLabel(row: BinaryMatchRow): string {
@@ -222,23 +228,85 @@ export function MatchesView({
   onSelectFunction: (functionId: number | null) => void;
 }): ReactNode {
   const navigate = useNavigate();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [draft, setDraft] = useState(functionId === null ? "" : String(functionId));
 
   // Syncs an externally chosen function (a `?function=` link) into the box.
-  // Clearing on the way out happens in the All Functions handler below, not
+  // Clearing on the way out happens in the All functions handler below, not
   // here: an effect clearing after the click races a refill typed into the
   // same box and silently drops it.
   useEffect(() => {
     if (functionId !== null) setDraft(String(functionId));
   }, [functionId]);
 
+  const [suggestions, setSuggestions] = useState<Array<{ id: number; label: string }>>([]);
+
+  // A typed name narrows the global function search, so a reader who knows the
+  // name never needs the id: the picked option carries the name and the id.
+  useEffect(() => {
+    const text = draft.trim();
+    if (text === "" || /^\d+$/.test(text)) {
+      setSuggestions([]);
+      return undefined;
+    }
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void api<{ functions: Array<{ id: number; name: string }> }>(
+        `/search?q=${encodeURIComponent(text)}&limit=10`,
+      )
+        .then((results) => {
+          if (!active) return;
+          setSuggestions(
+            results.functions.slice(0, 10).map((row) => ({
+              id: row.id,
+              label: `${row.name} (#${row.id})`,
+            })),
+          );
+        })
+        .catch(() => {
+          if (active) setSuggestions([]);
+        });
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [draft]);
+
+  /** The function the box names: a bare id, else the picked suggestion's row. */
+  const draftFunctionId = (): number | null => {
+    const text = draft.trim();
+    if (/^\d+$/.test(text)) return Number(text);
+    return suggestions.find((item) => item.label === text)?.id ?? null;
+  };
+
   const functionResult = useAsync<FunctionRow>(
     () => api<FunctionRow>(`/functions/${functionId}`),
     [functionId],
     functionId !== null,
   );
-  const binaryId = functionResult.data?.binary_id ?? null;
+  // The binary whose match rows these are: named by the loaded function, or
+  // picked on its own when the reader wants every function's rows at once.
+  // Kept in `?binary=` so a binary's matches can be linked to and survive a reload.
+  const [binaryChoice, setBinaryChoice] = useState<number | null>(
+    () => Number(params.get("binary")) || null,
+  );
+  const chooseBinary = (id: number | null): void => {
+    setBinaryChoice(id);
+    setParams(
+      (next) => {
+        if (id === null) next.delete("binary");
+        else next.set("binary", String(id));
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const binaryId = functionResult.data?.binary_id ?? binaryChoice;
+  useEffect(() => {
+    const loaded = functionResult.data?.binary_id;
+    if (typeof loaded === "number") setBinaryChoice(loaded);
+  }, [functionResult.data]);
 
   const matchesResult = useAsync<BinaryMatchesPayload>(
     () => api<BinaryMatchesPayload>(`/binaries/${binaryId}/matches`),
@@ -260,6 +328,7 @@ export function MatchesView({
 
   const [bandFilter, setBandFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
+  const [showUnnamed, setShowUnnamed] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [minSimilarity, setMinSimilarity] = useState(DEFAULT_MIN_SIMILARITY);
   const [minConfidence, setMinConfidence] = useState(DEFAULT_MIN_MATCH_CONFIDENCE);
@@ -300,6 +369,7 @@ export function MatchesView({
 
   const ranked = useMemo(() => {
     const filtered = rows.filter((row) => {
+      if (!showUnnamed && unnamedCandidate(row)) return false;
       if (bandFilter !== "" && row.band !== bandFilter) return false;
       if (sourceFilter !== "" && sourceLabel(row) !== sourceFilter) return false;
       return true;
@@ -311,7 +381,8 @@ export function MatchesView({
       return right.similarity - left.similarity;
     });
     return sorted;
-  }, [rows, metric, bandFilter, sourceFilter]);
+  }, [rows, metric, bandFilter, sourceFilter, showUnnamed]);
+  const unnamedCount = useMemo(() => rows.filter(unnamedCandidate).length, [rows]);
 
   const bandCounts = useMemo(() => {
     const counts = new Map<string, number>(QUALITY_BANDS.map((band) => [band, 0]));
@@ -593,18 +664,39 @@ export function MatchesView({
       subtitle="Cross-function candidates recorded for one binary's functions."
       actions={
         <Toolbar>
-          <Field label="Function" hint="Enter loads">
+          <Field label="Function" hint="Name or id, Enter to load">
             <input
-              type="number"
-              min="1"
-              placeholder="function id"
+              type="text"
+              list="function-suggestions"
+              placeholder="name or function id"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") onSelectFunction(Number(draft) || null);
+                if (event.key === "Enter") onSelectFunction(draftFunctionId());
               }}
             />
+            <datalist id="function-suggestions">
+              {suggestions.map((item) => (
+                <option key={item.id} value={item.label} />
+              ))}
+            </datalist>
           </Field>
+          {functionId === null ? (
+            <Field label="Binary" hint="Whose rows to show">
+              <select
+                aria-label="Binary whose matches to show"
+                value={binaryChoice === null ? "" : String(binaryChoice)}
+                onChange={(event) => chooseBinary(Number(event.target.value) || null)}
+              >
+                <option value="">Pick a binary</option>
+                {(binariesResult.data?.binaries ?? []).map((binary) => (
+                  <option key={binary.id} value={binary.id}>
+                    {`#${binary.id} ${binary.name}`}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : null}
           <div className="toolbar" role="group" aria-label="Match scope">
             <Button
               tone={functionId === null ? "primary" : "ghost"}
@@ -615,14 +707,14 @@ export function MatchesView({
                 navigate("/matches");
               }}
             >
-              All Functions
+              All functions
             </Button>
             <Button
               tone={functionId === null ? "ghost" : "primary"}
               aria-pressed={functionId !== null}
-              onClick={() => onSelectFunction(Number(draft) || null)}
+              onClick={() => onSelectFunction(draftFunctionId())}
             >
-              Selected Function
+              Selected function
             </Button>
           </div>
           <Button
@@ -639,7 +731,7 @@ export function MatchesView({
             Match
           </Button>
           <Button disabled={binaryId === null || recorded.length === 0} onClick={openBulk}>
-            Bulk Transfer
+            Bulk transfer
           </Button>
           {functionId !== null ? (
             <Badge hue="match">
@@ -654,21 +746,21 @@ export function MatchesView({
         </Toolbar>
       }
     >
-      {functionId === null ? (
+      {functionResult.error ? (
+        <ErrorNote error={functionResult.error} onRetry={functionResult.reload} />
+      ) : functionId !== null && functionResult.data === undefined ? (
+        <Loading label="Loading function" />
+      ) : binaryId === null ? (
         <EmptyState
           action={
-            <a className="back-link" href="#/functions">
+            <a className="btn btn-primary" href="#/functions">
               Browse functions
             </a>
           }
         >
-          Enter a function id to open its binary&apos;s match view. Function ids are listed on the
-          Functions page.
+          Matches are recorded per binary. Pick a binary above to see every recorded pair, or type a
+          function name or id to open one function&apos;s binary with its own candidates first.
         </EmptyState>
-      ) : functionResult.error ? (
-        <ErrorNote error={functionResult.error} onRetry={functionResult.reload} />
-      ) : binaryId === null ? (
-        <Loading label="Loading function" />
       ) : (
         <>
           {runError ? <ErrorNote error={runError} /> : null}
@@ -822,8 +914,15 @@ export function MatchesView({
                 <>
                   <Toolbar>
                     <Muted>
-                      {ranked.length} / {rows.length} functions match the filters
+                      {ranked.length} / {rows.length} rows match the filters
                     </Muted>
+                    {unnamedCount > 0 ? (
+                      <CheckboxField
+                        label={`Show ${unnamedCount} unnamed candidate${unnamedCount === 1 ? "" : "s"}`}
+                        checked={showUnnamed}
+                        onChange={setShowUnnamed}
+                      />
+                    ) : null}
                     {bandFilter !== "" || sourceFilter !== "" ? (
                       <Button
                         tone="ghost"
@@ -852,7 +951,7 @@ export function MatchesView({
               ) : null}
               {bulkOpen ? (
                 <Panel
-                  title="Bulk Transfer"
+                  title="Bulk transfer"
                   subtitle="Copy names and signatures from the chosen candidates in one journaled action."
                 >
                   {bulkError ? <ErrorNote error={bulkError} /> : null}

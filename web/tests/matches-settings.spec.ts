@@ -12,17 +12,17 @@ const state = e2eState();
 test("a platform scope narrows the recorded match rows to none", async ({ page }) => {
   await page.goto("/#/matches");
   await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
-  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
+  await page.getByRole("button", { name: "Selected function", exact: true }).click();
   const modes = page.getByRole("group", { name: "Match scope" });
   await expect(
-    modes.getByRole("button", { name: "Selected Function", exact: true }),
+    modes.getByRole("button", { name: "Selected function", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
-  await modes.getByRole("button", { name: "All Functions", exact: true }).click();
+  await modes.getByRole("button", { name: "All functions", exact: true }).click();
   await expect(
-    modes.getByRole("button", { name: "All Functions", exact: true }),
+    modes.getByRole("button", { name: "All functions", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
   await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
-  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
+  await page.getByRole("button", { name: "Selected function", exact: true }).click();
 
   // The seeded workspace recorded both edges of the pair.
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
@@ -54,9 +54,9 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
   await expect(page.getByText("No match").first()).toBeVisible();
   // Hosted filter header reads N / M with a Clear all that resets the panel.
-  await expect(page.getByText("5 / 7 functions match the filters")).toBeVisible();
+  await expect(page.getByText("5 / 7 rows match the filters")).toBeVisible();
   await page.getByRole("button", { name: "Clear all", exact: true }).click();
-  await expect(page.getByText("7 / 7 functions match the filters")).toBeVisible();
+  await expect(page.getByText("7 / 7 rows match the filters")).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear all", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: /No Match/ }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
@@ -110,7 +110,7 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
 test("the top setting reaches the run and is recorded with it", async ({ page }) => {
   await page.goto("/#/matches");
   await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
-  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
+  await page.getByRole("button", { name: "Selected function", exact: true }).click();
   await expect(page.getByText(/candidates? recorded/)).toBeVisible();
 
   await page.getByRole("button", { name: "Settings" }).click();

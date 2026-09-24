@@ -46,6 +46,11 @@ SCORE_SCALE = 100.0
 # a whole corpus of listings in memory for the process lifetime.
 PREPARED_CACHE_SIZE = 4096
 
+# MinHash permutations per packed fingerprint: resembl's
+# `scoring.NUM_PERMUTATIONS`, the count `minhash_from_tokens` builds by default.
+# `band_keys` passes it to resembl, which refuses a fingerprint of another size.
+NUM_PERMUTATIONS = 128
+
 # Import probes for `available`; `resembl.scoring` pulls pygments/numpy only
 # when actually imported, which `available` deliberately avoids.
 _REQUIRED_MODULES = ("rapidfuzz", "resembl.scoring")
@@ -109,6 +114,29 @@ def _prepare(text: str) -> bytes:
     tokens = scoring.code_tokenize(text)
     packed: bytes = scoring.minhash_pack(scoring.minhash_from_tokens(tokens))
     return packed
+
+
+def fingerprint(text: str) -> bytes:
+    """The packed MinHash fingerprint of a non-empty listing.
+
+    The same bytes :func:`jaccard` compares, served from the prepared cache.
+    Raises :class:`SimilarityUnavailable` when the extra is not installed.
+    """
+    return _prepare(text)
+
+
+def band_keys(packed: bytes, bands: int, rows: int) -> list[str]:
+    """The bucket key of each of *bands* bands of *rows* consecutive MinHash values.
+
+    resembl's ``lsh.band_buckets``: band ``i`` covers values ``i * rows`` to
+    ``(i + 1) * rows - 1`` and its key is their hex, so two fingerprints share
+    band ``i``'s key exactly when they agree on every value in it.
+    """
+    _load_modules()
+    from resembl.lsh import band_buckets
+
+    keys: list[str] = band_buckets(packed, NUM_PERMUTATIONS, bands, rows)
+    return keys
 
 
 def cache_info() -> _CacheInfo:

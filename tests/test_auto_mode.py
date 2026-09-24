@@ -359,6 +359,44 @@ class TestRunAuto:
         assert auto_mode.REASON_TIMEOUT in reasons
         assert auto_mode.REASON_BUSY in reasons
 
+    def test_an_abandoned_attempt_returns_the_slot_it_took(
+        self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Its release binds to the instance the acquire took, not to the global.
+
+        The global is swapped below while the attempt still sleeps, the way a
+        test bounds concurrency: a release that re-read the module global
+        would hand its permit to an instance the thread never acquired and
+        strand the one it did.
+        """
+        ids = seed_rows(conn, rows=((0x1000, "First", 8, "STUB"),))
+        original = auto_mode._attempt_slots
+        probe = WorkerProbe(sleep=1.0)
+        auto_workers.register_worker(probe.make(), origin="test")
+        monkeypatch.setattr(auto_mode, "_wait_for", lambda _event, _timeout: False)
+        auto_mode.run_auto(
+            conn,
+            binary_id=ids["binary"],
+            worker="probe",
+            max_attempts=1,
+            task_timeout=1.0,
+            concurrency=1,
+        )
+        impostor = threading.BoundedSemaphore(1)
+        assert impostor.acquire(blocking=False)
+        monkeypatch.setattr(auto_mode, "_attempt_slots", impostor)
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if original.acquire(blocking=False):
+                original.release()
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError(
+                "the abandoned attempt never returned its permit to the instance it took"
+            )
+        assert not impostor.acquire(blocking=False)
+
     def test_unknown_binary_raises_key_error(self, conn: sqlite3.Connection) -> None:
         with pytest.raises(KeyError):
             auto_mode.run_auto(conn, binary_id=999)

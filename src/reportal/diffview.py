@@ -23,21 +23,19 @@ from typing import Any
 
 from reportal import diffing, engines, similarity, store
 
-# Kinds the diff supports: `decomp` aligns stored C, `disasm` the engine's NASM
-# listings.  Order matches DEFAULT_KIND and the SPA so the first entry is the
-# default surface everywhere.
+# Kinds the diff supports: `disasm` aligns the two listings, `decomp` stored C.
+# The listing is the default: it is what a match compared, and it is stored for
+# every candidate (a corpus-pack function has a listing and no decompilation).
+# Order matches DEFAULT_KIND and the SPA so the first entry is the default
+# surface everywhere.
 KIND_DISASM = "disasm"
 KIND_DECOMP = "decomp"
-DIFF_KINDS = (KIND_DECOMP, KIND_DISASM)
-DEFAULT_KIND = KIND_DECOMP
+DIFF_KINDS = (KIND_DISASM, KIND_DECOMP)
+DEFAULT_KIND = KIND_DISASM
 
 # Normalization is on by default: an unnormalized disassembly diff is dominated
 # by addresses and encoded bytes that say nothing about the code.
 DEFAULT_NORMALIZE = True
-
-# Format of the disassembly listing the diff holds; the cache key is the
-# function id alone, so only this format may be cached.
-LISTING_FORMAT = "nasm"
 
 
 class DiffError(Exception):
@@ -74,7 +72,7 @@ def _project_context(conn: sqlite3.Connection, function: dict[str, Any]) -> str:
 def _disassembly(
     conn: sqlite3.Connection, engine: engines.RebrewEngine, function: dict[str, Any]
 ) -> str:
-    """Return a function's NASM listing, from ``disasm_cache`` or the engine."""
+    """Return a function's listing, from ``disasm_cache`` or the engine."""
     function_id = int(function["id"])
     cached = store.get_disasm(conn, function_id)
     if cached is not None:
@@ -86,7 +84,10 @@ def _disassembly(
             conn,
             function_id,
             lambda: engine.disassemble(
-                project_dir, int(function["va"]), int(function["size"]), LISTING_FORMAT
+                project_dir,
+                int(function["va"]),
+                int(function["size"]),
+                store.cached_disasm_format(conn, int(function["binary_id"])),
             ),
             extent_size=int(function["size"]),
             project_dir=project_dir,
@@ -103,6 +104,13 @@ def _decompilation(
     stored = store.get_decompilation(conn, int(function["id"]))
     if stored is not None:
         return str(stored["code"])
+    if store.get_rebrew_context(conn, int(function["binary_id"])) is None:
+        raise DiffError(
+            400,
+            "no-engine-context",
+            f"function {function['id']} has no stored decompilation and its binary has no"
+            " analysis project to decompile it; the disassembly diff reads the stored listing",
+        )
     project_dir = _project_context(conn, function)
     _require_engine(engine)
     try:

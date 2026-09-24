@@ -19,8 +19,9 @@ It is a **consumer and orchestrator** of sibling engines, never a reimplementati
 
 Sandbox detonation (`sandbox.py`) is off until the workspace opts in and a runner
 is installed (`docs/THREAT_MODEL.md` boundary 7). Static analysis never executes a
-sample. Runtime network only when the operator opts in: LLM bridge (`llm.py`) or
-guarded URL ingest (`remote_ingest.py`). Without an LLM endpoint every AI route
+sample. Runtime network only when the operator opts in: LLM bridge (`llm.py`),
+guarded URL ingest (`remote_ingest.py`) or the symbol-server fetch
+(`symbol_library.py`, behind the external gate). Without an LLM endpoint every AI route
 is 503 `llm-unavailable`.
 
 ## Layout

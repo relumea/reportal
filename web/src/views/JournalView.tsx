@@ -15,6 +15,7 @@ import {
   Panel,
   StatusCell,
   Toolbar,
+  NA,
 } from "../components";
 import { clearPanels } from "../panelCache";
 import type { JournalEntry, JournalList, JournalRevertResult } from "../types";
@@ -109,7 +110,7 @@ export function JournalView({
   return (
     <Panel
       title="Journal"
-      subtitle="Every wired mutation records its inverse here; a revert replays the action newest-first and works from another process."
+      subtitle="Every change records its inverse here. A revert undoes an action's writes newest first, from any process."
       actions={
         action ? (
           <Button tone="ghost" onClick={() => navigate("/journal")}>
@@ -121,7 +122,7 @@ export function JournalView({
       <Toolbar>
         <Field label="Actor" hint="who wrote the entry">
           <select value={filters.actor} onChange={(event) => apply({ actor: event.target.value })}>
-            <option value="">any actor</option>
+            <option value="">Any actor</option>
             {(data?.actors ?? []).map((value) => (
               <option key={value} value={value}>
                 {value}
@@ -165,21 +166,27 @@ export function JournalView({
       ) : (
         <DataTable
           columns={[
-            { label: "Entry", key: "id", numeric: true },
             {
-              label: "Action",
-              mono: true,
-              render: (row) => <a href={`#/journal/${row.action}`}>{row.action}</a>,
+              label: "Change",
+              render: (row) => (
+                <>
+                  <span className="journal-change">{row.description}</span>
+                  <span className="journal-ids">
+                    entry {row.id} · {row.kind} · action{" "}
+                    <a href={`#/journal/${row.action}`} title={row.action}>
+                      {row.action}
+                    </a>
+                  </span>
+                </>
+              ),
             },
-            { label: "Kind", key: "kind" },
             { label: "Status", render: (row) => <StatusCell status={row.status} /> },
-            { label: "Actor", render: (row) => row.actor || "-" },
+            { label: "Actor", render: (row) => row.actor || NA },
             { label: "Created", key: "created_at", mono: true },
-            { label: "Description", key: "description" },
             {
               label: "Actions",
               render: (row) => (
-                <div className="actions-cell">
+                <div className="actions-cell journal-actions">
                   <ConfirmButton
                     label="Revert entry"
                     message="Revert this entry and restore the row it changed?"

@@ -435,6 +435,9 @@ def restore(
             if source.is_dir():
                 destination = root / directory
                 if destination.is_dir() and overwrite:
+                    # cordis-boundary: this deletion cannot be undone from the
+                    # workspace; the immutable archive is the compensation, so
+                    # a failed overwrite-restore is fixed by running it again.
                     shutil.rmtree(destination)
                 destination.mkdir(parents=True, exist_ok=True)
                 for entry in sorted(source.rglob("*")):

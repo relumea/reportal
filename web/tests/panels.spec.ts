@@ -17,7 +17,7 @@ const FILTER_TARGET = "NP_ENTRY";
 const KNOWLEDGE_DOCUMENT_TITLE = "Smoke knowledge note";
 
 test("a file-offset read renders the window's own bytes", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const memory = panelByTitle(page, "Memory");
 
   // A read needs an address, and the refusal is visible on the control.
@@ -48,7 +48,7 @@ test("a file-offset read renders the window's own bytes", async ({ page }) => {
 });
 
 test("filtering the type list narrows it and counts stay exact", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelByTitle(page, "Data Types");
   const total = state.types.length;
 
@@ -71,14 +71,10 @@ test("the binary header name is click-to-rename", async ({ page }) => {
     "href",
     `/api/binaries/${state.ids.binary_id}/download`,
   );
-  await expect(page.getByRole("link", { name: "PDF", exact: true })).toHaveAttribute(
-    "href",
-    `/api/binaries/${state.ids.binary_id}/report/pdf`,
-  );
-  await expect(page.getByRole("link", { name: "Symbols", exact: true })).toHaveAttribute(
-    "href",
-    `/api/binaries/${state.ids.binary_id}/symbols/export`,
-  );
+  // The seed stores neither a PDF nor a symbol file, so neither header control
+  // links to a refusal: PDF offers to render one, Symbols says why it is off.
+  await expect(page.getByRole("button", { name: "Generate PDF", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Symbols", exact: true })).toBeDisabled();
   await expect(page.getByLabel("scope of notepad.exe")).toHaveValue("public");
   await expect(page.locator(".detail-facts").first()).toContainText(/\d{2}:\d{2}/);
   await expect(page.locator(".detail-facts").first()).toContainText(/PE/);
@@ -134,7 +130,7 @@ test("the function header signature shows its breakdown", async ({ page }) => {
 });
 
 test("function matches opens the matching view", async ({ page }) => {
-  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await page.goto(`/#/functions/${state.ids.function_id}?tab=matches`);
   const matches = panelByTitle(page, "Matches");
   await expect(matches.getByRole("columnheader", { name: "Signature" })).toBeVisible();
   const link = matches.getByRole("link", { name: "View function matching" });
@@ -151,7 +147,7 @@ test("function matches opens the matching view", async ({ page }) => {
 test("the cross-references panel scans on demand and renders what the engine found", async ({
   page,
 }) => {
-  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await page.goto(`/#/functions/${state.ids.function_id}?tab=references`);
   // Located by its control, not its heading: the title carries the count badge.
   const xrefs = page
     .locator(".panel")
@@ -166,7 +162,7 @@ test("the cross-references panel scans on demand and renders what the engine fou
 });
 
 test("function globals link Memory and the function list", async ({ page }) => {
-  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await page.goto(`/#/functions/${state.ids.function_id}?tab=references`);
   const globals = page
     .locator(".panel")
     .filter({ has: page.getByRole("button", { name: "Load references" }) })
@@ -181,7 +177,7 @@ test("function globals link Memory and the function list", async ({ page }) => {
 });
 
 test("function callers names link a function", async ({ page }) => {
-  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await page.goto(`/#/functions/${state.ids.function_id}?tab=references`);
   const callers = page
     .locator(".panel")
     .filter({ has: page.getByRole("heading", { name: /^Callers / }) });
@@ -193,7 +189,7 @@ test("function callers names link a function", async ({ page }) => {
 });
 
 test("composition analysis opens the matching view", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=provenance`);
   const composition = panelByTitle(page, "Composition Analysis");
   const link = composition.getByRole("link", { name: "Open Matching View" });
   await expect(link).toBeVisible();
@@ -232,7 +228,8 @@ test("the binary details entry point links to a function", async ({ page }) => {
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", /#\/(functions\/\d+|binaries\/\d+\/functions\?va=)/);
   await expect(page.getByRole("heading", { name: /^Sections \d+$/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^Security \d+\/\d+$/ })).toBeVisible();
+  await page.getByRole("tab", { name: "Security" }).click();
+  await expect(page.getByRole("heading", { name: /^Loader mitigations \d+\/\d+$/ })).toBeVisible();
   const capabilities = page.locator(".panel").filter({
     has: page.getByRole("heading", { name: /^Capabilities/ }),
   });
@@ -256,6 +253,7 @@ test("the binary details entry point links to a function", async ({ page }) => {
     data: { action: run.journal_action },
   });
   expect(revert.ok()).toBeTruthy();
+  await page.getByRole("tab", { name: "Format" }).click();
   await expect(page.getByRole("heading", { name: /^Relocations \d+$/ })).toBeVisible();
   const imports = page
     .locator(".panel")
@@ -291,29 +289,29 @@ test("a run a dead process left running can be recovered from the auto view", as
 
   // The run is closed with its recorded writes kept revertible, so the control
   // it was offered through is gone.
-  await expect(auto.getByText(/Closed run #\d+ as \w+: 1 task\(s\) interrupted/)).toBeVisible();
+  await expect(auto.getByText(/Closed run #\d+ as \w+: 1 task interrupted/)).toBeVisible();
   await expect(auto.getByRole("button", { name: "Recover run" })).toHaveCount(0);
 });
 
 test("the function knowledge panel retrieves the binary's documents", async ({ page }) => {
-  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await page.goto(`/#/functions/${state.ids.function_id}?tab=references`);
   const knowledge = panelByTitle(page, "Knowledge");
 
   // A blank search asks about the function's own name, which the seeded note
   // never mentions, so the explicit empty state is the honest first answer.
   await knowledge.getByRole("button", { name: "Search documents" }).click();
-  await expect(knowledge.getByText(/0 chunk\(s\) for/)).toBeVisible();
+  await expect(knowledge.getByText(/0 chunks for/)).toBeVisible();
   await expect(knowledge.getByText("No matches", { exact: false })).toBeVisible();
 
   // A term the seeded note carries returns its chunk, ranked.
   await knowledge.getByLabel("Query", { exact: true }).fill("toolbar");
   await knowledge.getByRole("button", { name: "Search documents" }).click();
   await expect(knowledge.getByText(KNOWLEDGE_DOCUMENT_TITLE)).toBeVisible();
-  await expect(knowledge.getByText(/1 chunk\(s\) for "toolbar"/)).toBeVisible();
+  await expect(knowledge.getByText(/1 chunk for "toolbar"/)).toBeVisible();
 });
 
 test("each stored remediation artifact links to its raw read", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=security`);
   const remediation = panelByTitle(page, "Remediation");
   const base = `/api/binaries/${state.ids.binary_id}/remediation`;
 
@@ -326,7 +324,7 @@ test("each stored remediation artifact links to its raw read", async ({ page }) 
 
 test("the binary's collections panel reads and changes its membership", async ({ page }) => {
   const collection = state.collections[0].name;
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   // The title carries the count badge, so the panel is located by its shape.
   const collections = page
     .locator(".panel")
@@ -365,16 +363,18 @@ test("the external view names the analysis's own status before a pull", async ({
   await expect(pull.getByRole("button", { name: "Pull", exact: true })).toBeEnabled();
 });
 
-test("the binary header names the analysis context its engine reads use", async ({ page }) => {
+test("an analyzed binary's header offers no analysis to run", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
 
-  // The seeder imports a project, and every engine-backed panel on this page
-  // (disassembly, cross-references, structs) reads through it.
-  await expect(page.getByText("analysis context ready", { exact: true })).toBeVisible();
+  // The seeder imports a project, so the binary is analyzed: the header shows
+  // its function count and no "Analyze" prompt (that is for a fresh upload).
+  const head = page.locator(".detail-head");
+  await expect(head.getByText(/\d+ functions/)).toBeVisible();
+  await expect(head.getByRole("button", { name: /^Analyze/ })).toHaveCount(0);
 });
 
 test("the AI summary panel discards the artifact it shows", async ({ page }) => {
-  await page.goto(`/#/functions/${state.ids.function_id}`);
+  await page.goto(`/#/functions/${state.ids.function_id}?tab=ai`);
   const summary = panelByTitle(page, "Summary");
 
   // The seeder stores one, so the panel renders its payload rather than the
@@ -454,7 +454,7 @@ test("a gated scan panel carves without a prior fetch", async ({ page }) => {
     if (route.request().method() === "GET") firmwareGets.push(route.request().url());
     return route.continue();
   });
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=provenance`);
   const firmware = panelByTitle(page, "Firmware carving");
   await expect(firmware.getByText(/No firmware carve yet/)).toBeVisible();
   expect(firmwareGets).toEqual([]);
@@ -463,12 +463,12 @@ test("a gated scan panel carves without a prior fetch", async ({ page }) => {
   // ungated panel uses: the carve stores the scan and the panel renders it,
   // all without a single GET (the POST's own payload populates the entry).
   await firmware.getByRole("button", { name: "Carve" }).click();
-  await expect(firmware.getByText(/region\(s\) in \d+ bytes/)).toBeVisible();
+  await expect(firmware.getByText(/regions? in \d+ bytes/)).toBeVisible();
   expect(firmwareGets).toEqual([]);
 });
 
 test("an artifact note round-trips through the panel", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   const feedback = panelByTitle(page, "Agent Feedback");
   const row = feedback.locator("table.table tbody tr").first();
 
@@ -505,7 +505,7 @@ test("an artifact note round-trips through the panel", async ({ page }) => {
 });
 
 test("the debug panel reports the opt-in state and refuses while off", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=format`);
   const debugPanel = panelByTitle(page, "Debug Session");
   await debugPanel.scrollIntoViewIfNeeded();
 

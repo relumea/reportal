@@ -333,7 +333,7 @@ def sqlite_backend() -> GraphBackend:
     """The built-in backend over the local SQLite graph."""
     return GraphBackend(
         name=SQLITE_BACKEND_NAME,
-        description="the local deterministic graph in reportal's SQLite store (default)",
+        description="the local deterministic graph in the workspace's SQLite store (default)",
         available=sqlite_available,
         sync=sqlite_sync,
         query=sqlite_query,

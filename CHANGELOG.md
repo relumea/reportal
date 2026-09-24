@@ -7,6 +7,197 @@ view renders it from here.
 
 ## Unreleased
 
+- `import-rebrew` no longer names a function `__declspec`, `__stdcall` or another declaration
+  word: a coverage.db name that is one, or a whole prototype, becomes the prototype's declarator,
+  else the undecorated `symbol`, else `sub_<va>`. The SPA smoke seeds its functions from the
+  notepad project's coverage.db through the same reader, since that project's
+  `function_structure.json` still lists five of its first six functions as `__declspec`.
+- `decompiler-script` (route `?include=`, CLI `--include`, MCP `include`) can carry analyst
+  comments, stored AI summaries (as the function comment) and complete stored prototypes beside
+  the renames. The IDA script is IDAPython (`idc.set_name`, `idc.set_func_cmt`, `idc.SetType`)
+  instead of IDC calls in a `.py` file, the Ghidra script finds functions with `getFunctionAt`,
+  and every stored string is written as an escaped ASCII literal, so a name or comment with
+  quotes, backslashes, newlines or non-ASCII text stays data. The Binja document's list is now
+  `functions` (was `renames`), and the `unsafe name` refusal is gone: names that are not
+  identifiers are skipped instead.
+- The PDF report adds Family detection, Related binaries, Composition and AI summaries sections,
+  each left out when nothing is stored.
+- Workbench usability fixes. The binary header no longer links to a raw JSON refusal: PDF offers
+  Generate PDF until a report is stored and Symbols is disabled, with the reason on hover, until a
+  symbol file is ingested. A new Export renames menu in the header downloads the stored renames as
+  a Ghidra script, an IDA script or Binary Ninja JSON; `GET /api/binaries/<id>/decompiler-script`
+  now answers an attachment named after the binary (`notepad_renames_ghidra.py`), and the scripts
+  left the Debug Symbols panel. With no model configured, the conversation and function AI views
+  show one notice linking Models and disable Send, Run agent, Generate, Suggest and Rewrite; an
+  `llm-unavailable` error reads "No model is configured for this workspace." (the API code is
+  unchanged). The Journal table folds entry, kind and action id into a line under the description
+  so the revert actions stay on screen at 1024 px. Clicking a binary or function name focuses the
+  rename field with the name selected (a pencil marks it), and Rename in the Functions list edits
+  the cell in place instead of a browser prompt. Search matches a function VA typed as hex with or
+  without `0x`, names each function hit's binary, and has a Search button in the top bar. Upload
+  sits beside the staged files, staged options wrap instead of overflowing, each result links its
+  binary, and the dashboard offers Upload binaries. A binary, function or conversation that does
+  not exist says "not found" with a link back to its list instead of a Retry.
+- Function matching above a `min_similarity` of 80 draws each function's candidates from a
+  persisted LSH band index (`lsh_fingerprints`, `lsh_buckets`) instead of scoring the whole
+  corpus. The index is exact: a pair the Jaccard floor admits always shares enough bands, so the
+  recorded rows are the pairwise run's, and a test proves it. At or below 80, the default
+  included, the run stays pairwise. `reportal match-index` reports the index and
+  `reportal match-index rebuild` refills it from the cached listings.
+- Similar-functions search: `POST /api/functions/<id>/similar`, `POST /api/functions/similar`
+  (a pasted listing, or hex code bytes with an arch, disassembled in process), the read-only
+  `find_similar_functions` MCP tool, `reportal similar` and a Similar functions panel on the
+  function page rank every function with a cached listing, best first, and record nothing. A
+  malformed or empty query is 400 `invalid-similar-query`.
+- The sidebar shows a drawn icon for every view, beside the label when open and alone in the
+  collapsed rail, in place of the label's first letter; the rail stacks the mark over its toggle on
+  the icon column. A collapse saved on a wide screen no longer folds the phone top bar into a
+  broken rail, and counts of one read "1 binary" and "1 function".
+- Counts across the SPA read in the right number ("1 file", "2 matching types") instead of
+  "file(s)"; a binary with no recorded size shows n/a instead of 0 (uploads refuse an empty file);
+  sort selects name their order ("Newest first", "Name (A to Z)") instead of the raw key; the
+  Matches toolbar and the Bulk transfer dialog use sentence case; the Jobs table names the domain
+  of a behavior or hardening scan and no longer repeats "finished" beside a done badge; Recent
+  activity leads with what changed and badges only an entry that is not active; the Models and
+  External registry text reads as sentences; hints and placeholders no longer clip mid-word; a
+  trailing actions column right-aligns its header; and Save note stays disabled until a binary is
+  in scope instead of ignoring the click.
+- The dark theme is the relumea brand palette on a dark ground instead of the old navy instrument
+  palette: neutral ink greys (`#0b0b0c` ground, `#131316` surface, `#ededef` text), the brand green
+  lifted to `#3fbf7a`, and the landing page's verdict hues at dark-ground lightness; every ink
+  clears 4.5:1 on every surface and on its own tint. The primary button is filled ink (`--text`
+  fill, `--surface` label) in every theme, as BRAND.md specifies, instead of filled accent; a
+  panel header's action keeps its accent outline. The light theme was already the brand palette.
+- An uploaded binary is analysed on its own: the upload queues an `analyse` job that onboards it
+  into a generated rebrew project (function discovery and the coverage db) and imports the result,
+  so its functions, listing and decompilation are there without an `import-rebrew`, and then
+  queues the local scans (file type, triage, capabilities, secrets, protocols, crypto, threat,
+  library, unstrip, behaviour and hardening; PE header and related binaries for a PE; function
+  triage and the corpus match for 32-bit x86), so the panels fill without a click. The binary
+  header shows the job, its failure reason and an Analyse control. The import records the target's
+  ISA, the Listing view reads a non-32-bit target through the hex format (the NASM source decodes
+  32-bit x86 only, and now says so instead of mis-decoding), and `reportal doctor` warns when
+  rizin (discovery) or kuna and its SLEIGH specs (decompilation) are missing; the engine finds
+  a pypcode install's specs on its own, so `KUNA_SPECS` is only an override.
+- Auto runs take a model budget (`max_tokens`, `max_usd` priced at `usd_per_mtok`; the Auto-mode
+  form, `reportal auto --max-tokens/--max-usd/--usd-per-mtok`, the API and the `run_auto` MCP
+  tool): once the tokens the run's attempts recorded reach a cap, the remaining functions are
+  skipped as `budget-exhausted`, and the run reports what it spent.
+- Corpus packs (`reportal corpus-export`, `corpus-import`, `corpus-info`): named functions and
+  their listings exported from one workspace and imported into another as match candidates, so a
+  corpus built once (for example from many rebrew projects with `import-rebrew --build-db`, which
+  now builds a missing or outdated `coverage.db`) serves every install that imports it.
+  `reportal corpus-from-libs` writes the known-library half from static libraries: the MSVC 6
+  CRTs and MinGW's `libmingwex`/`libmingw32` make a 6,106-function pack that names statically
+  linked CRT helpers in a stripped Windows binary (`__aullrem`, `__aulldiv`, `__allmul`).
+- Analysis and matching are no longer 32-bit x86 only.  An uploaded ELF or x86-64 binary is
+  onboarded with its real format and ISA (rebrew intake had recorded every non-DOS target as a
+  32-bit PE, and discovery stopped at an ELF `.plt`: a static x86-64 `docker-init` went from 1
+  function to 1,225).  The new `asm` disassembly format lists any ISA, `disasm_cache` holds each
+  binary's `store.cached_disasm_format` (NASM for 32-bit x86, `asm` otherwise), so matching,
+  function triage, AI summaries and diffs now work on those binaries (an upload queues triage and
+  the match for every ISA), and `corpus-from-libs` reads libraries of
+  any ISA: a pack of this system's x86-64 `libc.a` (3,792 functions) named 472 of 944 functions
+  in a stripped static binary linked against it, 456 of the 468 at a known symbol correctly.
+- The web workspace carries the relumea brand: the mark and lowercase wordmark, page titles
+  ending `· relumea`, the Archivo and JetBrains Mono faces (self-hosted, OFL), the brand palette
+  as the light theme and its verdict green as the dark theme's accent, and the brand radii.  The
+  sidebar is ordered by the day's work (Overview, Corpus, Intelligence, Agent, Activity,
+  Settings) with the theme picker and health line pinned to its foot; a panel's header action no
+  longer competes with the page's one filled button, and row-level revert and withdraw buttons
+  stay quiet until their row is hovered.
+- A function diff opens on the disassembly (`--kind`, `?kind=` and the MCP tool default to
+  `disasm`): it is what a match compared and every candidate stores it, so a diff against a
+  corpus-pack function no longer fails for want of a project to decompile.  The decompilation
+  kind is labeled "Decompilation", not "AI Decompilation", and zero-count summary chips stay
+  neutral.
+- An unknown address (a stale or mistyped link) shows "Page not found" instead of silently
+  landing on the dashboard, and on a phone the detail tabs no longer slide under the sticky
+  navigation strip.
+- Copy controls are one icon each (named "Copy" for assistive tech, "Copied" after), the
+  notifications control is a bell with a count, a sortable column header reads like the other
+  headers, every "Any ..." filter option is sentence case, and the binary header keeps its
+  stored path behind a tooltip and a copy control instead of wrapping it across two lines.
+- An empty workspace's dashboard leads with the one step that starts everything (upload a
+  binary, or the CLI imports), and a quiet month reads as one line.
+- `/pricing` carries the same brand as the workspace (it still wore the old dark skin, a
+  monospace headline and a "Recommended" kicker), and its copy drops the filler.
+- Detail pages: a folded panel shows a chevron, a lazy panel says it is not loaded instead of
+  drawing a skeleton while idle, two panels that shared the title "Security" (and two "Callees",
+  two "AI Decompilation") are named for what each shows, similarity reads as a percent
+  everywhere, a missing unpack scan no longer prints a CLI instruction, and the cheatsheet names
+  arrow keys as "Left" and "Right".
+- The in-app manual and the wheel no longer carry the repository's business, research and
+  competitive pages (funding, commercialization, the competitor survey, the parity tracker, the
+  backlog); they stay in `docs/` for the people who build the product.
+- Interface copy: the product is named relumea, never "the portal" or the hosted service it was
+  compared against; American spelling; no filler subtitles; an Analyses note that denied the
+  Owner column it sat above is gone; job progress reads as a percent of the steps.
+- An ELF binary's detail page works like a PE's: the header scan (`pe-info`, now queued after
+  every analysis, not only a PE's) carries its sections, so Sections, Memory and the coverage map
+  fill in; the analysis records the format as well as the ISA (an uploaded Linux ELF read `n/a`);
+  PE-only rows and blocks say they are PE structures instead of asking for a rescan that could
+  never fill them; and a missing header scan is a hint, not a raw red API error.
+- Usability: a function page leads with its best named match and an Apply name control; the
+  match queued after an analysis leaves the binary's own placeholder-named functions out, and the
+  Matches view hides such candidates until asked and keeps the chosen binary in `?binary=`; the
+  binaries table shows only known format facts and fits its actions on screen, and its bulk
+  controls wait for a selection; the coverage map leads with code sections; the dashboard's
+  30-day charts scale each series to itself and its "Matched functions" card is named for what it
+  counts ("Reversed"); header and sort icons are drawn SVG instead of text glyphs; a page opened
+  before an upgrade reloads once instead of failing to load a view.
+- Analysis finds nearly every function of a stripped Linux or Windows x64 binary, with exact
+  sizes, from its unwind tables (a rebrew discovery change), so matching can name them: a
+  stripped static x86-64 sqlite shell now gets 1,367 of its 1,420 sqlite functions named from a
+  `libsqlite3.a` pack at 99.3% precision (was 57% recall), a stripped AArch64 build 1,414 of
+  1,434 from an AArch64 pack (97.7% precision), and a stripped static glibc test binary 682
+  functions from the glibc pack (was 564, 98% precision).
+- `corpus-from-libs` packs a GNU library's file-static functions too, not only its exported
+  ones: most of a library's code is `static`, and it is linked into a target all the same.
+  An x86-64 `libsqlite3.a` pack grows from 209 to 1,423 functions, and a stripped static sqlite
+  shell matched against it at the default settings gets 803 of 822 assigned names right
+  (was 18 of 25), naming 57% of its sqlite functions (was 9%). The glibc `libc.a` pack grows
+  from 3,792 to 4,336 functions and names 564 functions of the stripped static test binary
+  correctly (was 456), at the same 96% precision.
+- The kuna decompiler finds the SLEIGH specs a pypcode install bundles, so decompilation works
+  without `KUNA_SPECS` (a rebrew fix: the search missed a tool env on another Python version).
+- An AI answer that is a single comment, type or rename as a bare JSON object (what a small model
+  in JSON-object mode returns for one finding) parses as that one entry instead of failing
+  with `llm-error`.
+- The related-binaries ranking no longer fails when the engine cannot read one binary in the
+  corpus: that binary is compared on its stored data, and the notes count it.
+- The binary and function detail views put their panels on tabs (Overview, Format, Memory and
+  types, Security, Provenance, Review; Code, References, Matches and history, AI and automation),
+  the open one kept in the route's `tab` query; a panel shortcut opens its tab first.
+- The function's disassembly is a listing by default: address, bytes, mnemonic and operand
+  columns with register, constant and branch colours, labelled in-function jump targets that
+  scroll to their row, calls linked to the named function, and click-to-highlight on a register
+  or constant. NASM source and Hex stay on the View select. The decompilation sits beside it
+  on a wide screen and is C-highlighted; the control-flow block list scrolls inside its panel.
+- The decompilation is coloured by highlight.js's C grammar instead of a hand-written pattern,
+  which adds preprocessor lines and `NULL`/`true`/`false` literals. A call colours only when it
+  names a C library function; the function's own name in its definition does too.
+- Visual fixes: form controls share the button height and line up in toolbars, a field hint no
+  longer pushes its row out of line, the topbar's tools sit right, table rows are denser with
+  row actions quiet until the row is hovered, table cells' fields fit their column, the binary
+  header's settings take their own row, and the function header no longer repeats its name
+  and address. A drag-selection in a code block is no longer overwritten by click-to-copy.
+
+- A workspace symbol library for vendor and system debug files (`GET`/`POST /api/symbols/library`,
+  `reportal symbols-library`, `reportal symbols-library-add`, the read-only `list_symbol_library`
+  and destructive `add_symbol_library`/`resolve_symbols` MCP tools): each file is parsed once and
+  keyed by the identity its binary carries (the PE debug directory's CodeView GUID+age against
+  `pdb.read_identity`, or the ELF GNU build id), and `POST /api/binaries/<id>/symbols/resolve` and
+  `reportal symbols-resolve` apply the matching entry through the existing import as one journaled
+  action. A PE miss may fetch the PDB from the Microsoft public symbol server behind the external
+  gate (fixed host, validated file name, no redirects, bounded body, identity re-checked), and a
+  binary upload plus `import-rebrew` run the local resolve automatically.
+- Workspace git checkouts for the agent (the destructive `clone_repo` and `write_repo_file` MCP
+  tools with the read-only `list_repos`, `list_repo_files` and `read_repo_file`): a shallow
+  `git clone` behind the existing remote-ingest opt-in lands a decomp/reveng repository under
+  the workspace's new `repos/` directory (created by `reportal init`, carried by
+  `reportal backup`), where every path a tool accepts resolves against the checkout root and
+  refuses to leave it.
 - Binary export with symbols rewritten in (`GET`/`POST /api/binaries/<id>/binary-export`,
   `reportal binary-export`, the destructive `export_binary` MCP tool and the binary detail Export
   link): the stored ELF's `.symtab`/`.dynsym` or the PE's export table has each non-placeholder

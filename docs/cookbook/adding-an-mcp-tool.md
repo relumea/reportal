@@ -34,8 +34,8 @@ Prerequisites: read the registry in [mcp_tools.py](../../src/reportal/mcp_tools.
 4. Annotate the tool with `_READ` when it only reads stored rows, and `_WRITE` when it writes.
    `_WRITE` carries `destructive_hint=True`; `_READ` carries `read_only_hint=True`.
 5. Add the tool name to `_READ_ONLY_TOOLS` or `_DESTRUCTIVE_TOOLS` in `tests/test_mcp.py` and raise
-   the pinned counts in `test_builtin_tools_cover_every_capability`: `262` total, `122` read-only,
-   `140` destructive.
+   the pinned counts in `test_builtin_tools_cover_every_capability`: `280` total, `132` read-only,
+   `148` destructive.
 6. Add the name to `_EXPECTED_TOOLS` in the same test. The description must say what the tool does,
    not restate its name: the test fails a description whose words are all in the name.
 

@@ -31,6 +31,9 @@ WorkingDirectory=/srv/reportal
 # instead of a stdio buffer.  LimitCORE refuses a core dump that would capture
 # tokens and LLM keys the process holds in memory.
 Environment=PYTHONUNBUFFERED=1
+# Where the kuna decompiler reads SLEIGH specs, when the pypcode install the
+# engine finds on its own is not the one to use (`reportal doctor` names it).
+#Environment=KUNA_SPECS=/opt/ghidra
 LimitCORE=0
 # Readiness before serving: a missing workspace, an unwritable database, a
 # broken schema or a taken port stops the start instead of serving failures.

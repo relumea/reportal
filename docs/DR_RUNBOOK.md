@@ -30,7 +30,7 @@ kept.
 | Auto runs and attempts | `auto_runs`, `auto_tasks`, `auto_attempts` | `auto_store` | Yes | The undo plan is the recoverable part |
 | Secret store | tables in the portal database | `secret_store` | Yes (plaintext in the archive) | No |
 | Uploaded binaries | `<workspace>/binaries/<sha256><suffix>` | `api.upload_binary` | Yes | Re-upload (content-addressed) |
-| Uploaded debug symbols | `<workspace>/symbols/<prefix>/<sha256>` and `symbol_files` | symbol import via API, CLI or MCP | Yes; local file paths are relocated on restore | No: original symbol bytes cannot be derived from the binary |
+| Uploaded and fetched debug symbols | `<workspace>/symbols/<prefix>/<sha256>`, `symbol_files` and `symbol_library` | symbol import and library add via API, CLI or MCP; a symbol-server fetch lands in the same directory | Yes; local file paths are relocated on restore | No: original symbol bytes cannot be derived from the binary |
 | Job backlog | `jobs` in the portal database | `jobs` | Yes | In-process workers are not backed up; do not start workers during a restore drill |
 | Engine reports and PDF | `<workspace>/reports/<binary_id>/` | report route / `pdf` | Yes | Re-run the report |
 | Workspace marker | `reportal.toml` | `reportal init` / operators | Yes | Re-create; secrets in env are not in the file |

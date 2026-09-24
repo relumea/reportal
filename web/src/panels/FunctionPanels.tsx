@@ -31,19 +31,25 @@ import {
   DEFAULT_DECOMPILER_BACKEND,
   DEFAULT_FUNCTION_CODE_VIEW,
   DEFAULT_TRANSFER_MODE,
-  DISASM_FORMATS,
+  DISASM_VIEWS,
+  DISASM_VIEW_LABELS,
+  NASM_ARCH,
   FUNCTION_CODE_VIEWS,
   FUNCTION_CODE_VIEW_LABELS,
   TRANSFER_MODES,
   TRANSFER_MODE_LABELS,
 } from "../constants";
-import type { AiArtifactKind, DisasmFormat, FunctionCodeView } from "../constants";
+import type { AiArtifactKind, DisasmView, FunctionCodeView } from "../constants";
+import { useModelGate } from "../modelReady";
 import { panelKey, refreshPanel, useLazyPanel, usePanel } from "../panelCache";
 import type { PanelEntry } from "../panelCache";
 import { setCodeViewSwitch } from "./codeViewSwitch";
 import { CfgPanel } from "./CfgPanel";
+import { CSource } from "./CSource";
+import { DisasmListing } from "./DisasmListing";
 import type {
   AiArtifact,
+  Binary,
   AiCommentsPayload,
   AiDecompilation,
   AiDecompilationToken,
@@ -58,13 +64,14 @@ import type {
   RenamesApplyResult,
   RenamesPayload,
   RenameSuggestion,
+  SimilarResult,
   TransferMode,
   TransferRowReport,
   Xrefs,
 } from "../types";
 
-function toDisasmFormat(value: string): DisasmFormat {
-  return value === "hex" ? "hex" : "nasm";
+function toDisasmView(value: string): DisasmView {
+  return value === "hex" || value === "nasm" ? value : "listing";
 }
 
 /** Panel key and loader of a function's rename history, shared with the panels
@@ -96,25 +103,56 @@ function refreshDecompilation(functionId: number): void {
   }
 }
 
+/** Panel key and loader of a binary's functions by entry VA, which the
+ * listing links calls through and the references panels label rows with. */
+function functionsByVaKey(binaryId: number): string {
+  return panelKey("binary", binaryId, "functions-by-va");
+}
+
+function loadFunctionsByVa(binaryId: number): Promise<Map<number, FunctionRow>> {
+  return api<{ functions: FunctionRow[] }>(`/binaries/${binaryId}/functions`).then(
+    (data) => new Map<number, FunctionRow>(data.functions.map((row) => [row.va, row])),
+    () => new Map<number, FunctionRow>(),
+  );
+}
+
 function DisasmPanel({
   functionId,
+  binaryId,
   toggle,
 }: {
   functionId: number;
+  binaryId: number;
   /** The code-view toggle this panel shares with the control-flow panel. */
   toggle?: ReactNode;
 }): ReactNode {
-  const [format, setFormat] = useState<DisasmFormat>("nasm");
+  const [view, setView] = useState<DisasmView>("listing");
+  // The engine's NASM source decodes 32-bit x86 only; a binary with another
+  // ISA reads its listing from the hex format.  A row with no recorded ISA
+  // predates the stamp and was imported from a 32-bit project.
+  const binary = usePanel(panelKey("binary", binaryId), () => api<Binary>(`/binaries/${binaryId}`));
+  const arch = binary?.state === "ready" ? binary.data.arch_override || binary.data.arch : null;
+  const nasmReadable = arch === null || arch === "" || arch === NASM_ARCH;
+  const views = DISASM_VIEWS.filter((option) => option !== "nasm" || nasmReadable);
+  const format = view === "hex" || !nasmReadable ? "hex" : "nasm";
+  const functions = usePanel(functionsByVaKey(binaryId), () => loadFunctionsByVa(binaryId));
   const [busy, setBusy] = useState(false);
   const key = panelKey("fn", functionId, "disasm", format);
   const loader = (): Promise<DisasmResult> =>
     api<DisasmResult>(`/functions/${functionId}/disasm?format=${format}`);
-  const entry = usePanel(key, loader);
+  const entry = usePanel(key, loader, binary !== undefined && binary.state !== "loading");
 
   let body: ReactNode;
   if (!entry || entry.state === "loading") body = <Loading label="Loading disassembly" />;
   else if (entry.state === "error") body = <ErrorNote error={entry.error} />;
-  else body = <CodeBlock text={entry.data.disasm} title={format} />;
+  else if (view === "listing")
+    body = (
+      <DisasmListing
+        text={entry.data.disasm}
+        functionsByVa={functions?.state === "ready" ? functions.data : new Map()}
+      />
+    );
+  else body = <CodeBlock text={entry.data.disasm} title={DISASM_VIEW_LABELS[view]} />;
 
   return (
     <Panel
@@ -123,11 +161,11 @@ function DisasmPanel({
       actions={
         <Toolbar>
           {toggle}
-          <Field label="Format">
-            <select value={format} onChange={(event) => setFormat(toDisasmFormat(event.target.value))}>
-              {DISASM_FORMATS.map((option) => (
+          <Field label="View">
+            <select value={view} onChange={(event) => setView(toDisasmView(event.target.value))}>
+              {views.map((option) => (
                 <option key={option} value={option}>
-                  {option}
+                  {DISASM_VIEW_LABELS[option]}
                 </option>
               ))}
             </select>
@@ -176,7 +214,13 @@ function CodeViewToggle({
 
 /** A function's code views, one at a time: the disassembly listing, or the
  *  basic-block control-flow graph.  The hosted portal shows the same pair. */
-export function CodeSection({ functionId }: { functionId: number }): ReactNode {
+export function CodeSection({
+  functionId,
+  binaryId,
+}: {
+  functionId: number;
+  binaryId: number;
+}): ReactNode {
   const [view, setView] = useState<FunctionCodeView>(DEFAULT_FUNCTION_CODE_VIEW);
   const toggle = <CodeViewToggle view={view} onChange={setView} />;
   // The hosted portal's `Space` toggles Disassembly and Control Flow; the
@@ -195,7 +239,7 @@ export function CodeSection({ functionId }: { functionId: number }): ReactNode {
   return view === "cfg" ? (
     <CfgPanel functionId={functionId} toggle={toggle} />
   ) : (
-    <DisasmPanel functionId={functionId} toggle={toggle} />
+    <DisasmPanel functionId={functionId} binaryId={binaryId} toggle={toggle} />
   );
 }
 
@@ -210,12 +254,7 @@ export function DecompilationPanel({ functionId }: { functionId: number }): Reac
   if (!entry || entry.state === "loading") body = <Loading label="Loading decompilation" />;
   else if (entry.state === "error") body = <ErrorNote error={entry.error} />;
   else
-    body = (
-      <>
-        <Muted>backend: {entry.data.backend || backend}</Muted>
-        <CodeBlock text={entry.data.code} title={backend} />
-      </>
-    );
+    body = <CSource text={entry.data.code} title={entry.data.backend || backend} />;
 
   return (
     <Panel
@@ -261,7 +300,7 @@ interface ReferencesData {
 }
 
 const REFERENCES_HINT =
-  "Load references to see the data this function touches and the calls into and out of it.";
+  "Not loaded. Load references to see the data this function touches and the calls into and out of it.";
 
 /** One lazy load shared by the Globals, Callers and Callees panels. */
 function useReferences(functionId: number, binaryId: number): {
@@ -273,12 +312,7 @@ function useReferences(functionId: number, binaryId: number): {
   const [entry, run] = useLazyPanel<ReferencesData>(key);
   const [busy, setBusy] = useState(false);
   const loader = async (): Promise<ReferencesData> => {
-    const functionsByVa = await api<{ functions: FunctionRow[] }>(
-      `/binaries/${binaryId}/functions`,
-    ).then(
-      (data) => new Map<number, FunctionRow>(data.functions.map((row) => [row.va, row])),
-      () => new Map<number, FunctionRow>(),
-    );
+    const functionsByVa = await loadFunctionsByVa(binaryId);
     const result = await api<FunctionReferences>(`/functions/${functionId}/references`);
     return { result, functionsByVa };
   };
@@ -321,7 +355,7 @@ function GlobalsPanel({
       subtitle="Data addresses the disassembly references; a read or a write only when the instruction makes it clear."
       actions={<ReferencesAction busy={busy} loaded={data !== undefined} load={load} />}
     >
-      <PanelBody entry={entry} hint="Loading globals">
+      <PanelBody entry={entry} hint="Loading globals" idle={REFERENCES_HINT}>
         {(loaded) =>
           loaded.result.globals.length === 0 ? (
             <EmptyState>No data references resolved for this function.</EmptyState>
@@ -368,7 +402,6 @@ function GlobalsPanel({
           )
         }
       </PanelBody>
-      <Muted>{REFERENCES_HINT}</Muted>
     </Panel>
   );
 }
@@ -394,7 +427,7 @@ function CallersPanel({
       subtitle="Call sites into this function; each names the function it sits in."
       actions={<ReferencesAction busy={busy} loaded={data !== undefined} load={load} />}
     >
-      <PanelBody entry={entry} hint="Loading callers">
+      <PanelBody entry={entry} hint="Loading callers" idle={REFERENCES_HINT}>
         {(loaded) =>
           loaded.result.callers.length === 0 ? (
             <EmptyState>No callers resolved for this function.</EmptyState>
@@ -417,7 +450,7 @@ function CallersPanel({
           )
         }
       </PanelBody>
-      <Muted>{data?.result.count_note ?? REFERENCES_HINT}</Muted>
+      {data ? <Muted>{data.result.count_note}</Muted> : null}
     </Panel>
   );
 }
@@ -443,7 +476,7 @@ export function CalleesPanel({
       subtitle="Calls this function makes; an import-slot call stays a row saying it is indirect."
       actions={<ReferencesAction busy={busy} loaded={data !== undefined} load={load} />}
     >
-      <PanelBody entry={entry} hint="Loading callees">
+      <PanelBody entry={entry} hint="Loading callees" idle={REFERENCES_HINT}>
         {(loaded) =>
           loaded.result.callees.length === 0 ? (
             <EmptyState>No callees resolved for this function.</EmptyState>
@@ -483,7 +516,7 @@ export function CalleesPanel({
           )
         }
       </PanelBody>
-      <Muted>{data?.result.count_note ?? REFERENCES_HINT}</Muted>
+      {data ? <Muted>{data.result.count_note}</Muted> : null}
     </Panel>
   );
 }
@@ -530,7 +563,11 @@ function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
         </Button>
       }
     >
-      <PanelBody entry={entry} hint="Loading cross-references">
+      <PanelBody
+        entry={entry}
+        hint="Loading cross-references"
+        idle="Not loaded. Load cross-references to scan the binary for instructions that point here."
+      >
         {(payload) =>
           payload.refs.length === 0 ? (
             <EmptyState>
@@ -602,6 +639,110 @@ function functionNameLink(
   return <a href={`#/functions/${fn.id}`}>{label || `#${fn.id}`}</a>;
 }
 
+/** Cache key and loader of a function's recorded match candidates, best first. */
+export const matchesKey = (functionId: number): string => panelKey("fn", functionId, "matches");
+export const loadMatches = (functionId: number): Promise<{ matches: MatchRow[] }> =>
+  api<{ matches: MatchRow[] }>(`/functions/${functionId}/matches`);
+
+/** Copy a recorded candidate's name and/or signature onto *functionId*. */
+export function applyMatch(
+  functionId: number,
+  candidateFunctionId: number,
+  mode: TransferMode,
+): Promise<TransferRowReport> {
+  return api<TransferRowReport>(`/functions/${functionId}/apply-match`, {
+    method: "POST",
+    json: { candidate_function_id: candidateFunctionId, mode, actor: "spa" },
+  });
+}
+
+/**
+ * Stored functions whose cached listing is most similar to this one, ranked on
+ * demand.  The query records nothing, so it is a button rather than a load on
+ * open: the first run may disassemble this function through the engine.
+ */
+export function SimilarFunctionsPanel({ functionId }: { functionId: number }): ReactNode {
+  const key = panelKey("fn", functionId, "similar");
+  const [entry, run] = useLazyPanel<SimilarResult>(key);
+  const [busy, setBusy] = useState(false);
+
+  const load = (): void => {
+    setBusy(true);
+    run(() =>
+      api<SimilarResult>(`/functions/${functionId}/similar`, { method: "POST", json: {} }).finally(
+        () => setBusy(false),
+      ),
+    );
+  };
+
+  const data = entry?.state === "ready" ? entry.data : undefined;
+
+  return (
+    <Panel
+      title={
+        <>
+          Similar functions <Badge>{data === undefined ? NA : String(data.hits.length)}</Badge>
+        </>
+      }
+      subtitle="Every stored function with a cached listing, ranked by structural similarity to this one."
+      actions={
+        <Button pending={busy} onClick={load}>
+          {data === undefined ? "Find similar" : "Search again"}
+        </Button>
+      }
+    >
+      <PanelBody
+        entry={entry}
+        hint="Ranking similar functions"
+        idle="Not searched. Find similar ranks the workspace's cached listings against this function."
+      >
+        {(payload) => (
+          <>
+            <Muted>
+              {`${payload.compared} candidates compared (${payload.candidate_source}),`}
+              {` similarity at least ${payload.min_similarity}%.`}
+            </Muted>
+            <DataTable
+              label="Similar functions"
+              rows={payload.hits}
+              rowKey={(hit) => hit.function_id}
+              empty={
+                <EmptyState>
+                  No stored function reaches {payload.min_similarity}% similarity.
+                </EmptyState>
+              }
+              columns={[
+                {
+                  label: "Function",
+                  render: (hit) => (
+                    <a href={`#/functions/${hit.function_id}`}>{hit.name || `#${hit.function_id}`}</a>
+                  ),
+                },
+                { label: "VA", mono: true, render: (hit) => hex(hit.va) },
+                {
+                  label: "Binary",
+                  render: (hit) => <a href={`#/binaries/${hit.binary_id}`}>{hit.binary_name}</a>,
+                },
+                {
+                  label: "Similarity",
+                  numeric: true,
+                  render: (hit) => `${hit.similarity.toFixed(1)}%`,
+                },
+                {
+                  label: "Compare",
+                  render: (hit) => (
+                    <a href={`#/diff/${functionId}/${hit.function_id}`}>Diff</a>
+                  ),
+                },
+              ]}
+            />
+          </>
+        )}
+      </PanelBody>
+    </Panel>
+  );
+}
+
 export function MatchesPanel({
   functionId,
   onMutated,
@@ -609,9 +750,8 @@ export function MatchesPanel({
   functionId: number;
   onMutated: () => void;
 }): ReactNode {
-  const key = panelKey("fn", functionId, "matches");
-  const loader = (): Promise<{ matches: MatchRow[] }> =>
-    api<{ matches: MatchRow[] }>(`/functions/${functionId}/matches`);
+  const key = matchesKey(functionId);
+  const loader = (): Promise<{ matches: MatchRow[] }> => loadMatches(functionId);
   const entry = usePanel(key, loader);
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(0);
@@ -622,14 +762,11 @@ export function MatchesPanel({
     setActionError(null);
     setBusy(row.id);
     try {
-      const report = await api<TransferRowReport>(`/functions/${functionId}/apply-match`, {
-        method: "POST",
-        json: {
-          candidate_function_id: row.candidate_function_id,
-          mode: modes[row.id] ?? DEFAULT_TRANSFER_MODE,
-          actor: "spa",
-        },
-      });
+      const report = await applyMatch(
+        functionId,
+        row.candidate_function_id,
+        modes[row.id] ?? DEFAULT_TRANSFER_MODE,
+      );
       const missing = report.missing_types.length
         ? ` (missing types: ${report.missing_types.join(", ")})`
         : "";
@@ -646,7 +783,7 @@ export function MatchesPanel({
   return (
     <Panel
       title="Matches"
-      subtitle="Candidates recorded for this function, newest first."
+      subtitle="Candidates recorded for this function, best similarity first."
       actions={
         <a className="btn btn-ghost" href={`#/matches?function=${functionId}`}>
           View function matching
@@ -679,7 +816,7 @@ export function MatchesPanel({
               {
                 label: "Similarity",
                 numeric: true,
-                render: (row) => Number(row.similarity).toFixed(3),
+                render: (row) => `${Number(row.similarity).toFixed(1)}%`,
               },
               {
                 label: "Confidence",
@@ -833,6 +970,7 @@ function AiArtifactPanel<T>({
   const loader = (): Promise<AiArtifact<T>> =>
     api<AiArtifact<T>>(`/functions/${functionId}/${path}`);
   const entry = usePanel(key, loader);
+  const modelGate = useModelGate();
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -878,7 +1016,13 @@ function AiArtifactPanel<T>({
       subtitle={subtitle}
       actions={
         <>
-          <Button tone="primary" pending={busy} onClick={() => void generate()}>
+          <Button
+            tone="primary"
+            pending={busy}
+            disabled={modelGate.disabled}
+            title={modelGate.title}
+            onClick={() => void generate()}
+          >
             {entry?.state === "ready" ? "Regenerate" : "Generate"}
           </Button>
           {entry?.state === "ready" ? (
@@ -995,6 +1139,7 @@ function AiRenamesPanel({
   const loader = (): Promise<AiArtifact<RenamesPayload>> =>
     api<AiArtifact<RenamesPayload>>(`/functions/${functionId}/renames`);
   const entry = usePanel(key, loader);
+  const modelGate = useModelGate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [renameFunction, setRenameFunction] = useState(true);
   const [actionError, setActionError] = useState<unknown>(null);
@@ -1126,7 +1271,12 @@ function AiRenamesPanel({
       subtitle="Model-proposed identifiers; applying rewrites the stored decompilation."
       actions={
         <>
-          <Button pending={busy === "suggest"} onClick={() => void suggest()}>
+          <Button
+            pending={busy === "suggest"}
+            disabled={modelGate.disabled}
+            title={modelGate.title}
+            onClick={() => void suggest()}
+          >
             {entry?.state === "ready" ? "Re-suggest" : "Suggest"}
           </Button>
           <Button tone="primary" pending={busy === "apply"} onClick={() => void apply(false)}>
@@ -1170,6 +1320,7 @@ function AiDecompilationPanel({ functionId }: { functionId: number }): ReactNode
   const loader = (): Promise<AiDecompilation> =>
     api<AiDecompilation>(`/functions/${functionId}/ai-decompilation`);
   const entry = usePanel(key, loader);
+  const modelGate = useModelGate();
   const [actionError, setActionError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
@@ -1390,11 +1541,17 @@ function AiDecompilationPanel({ functionId }: { functionId: number }): ReactNode
 
   return (
     <Panel
-      title="AI Decompilation"
+      title="AI rewrite"
       subtitle="A whole-function rewrite, the placeholders it still carries and the overrides that name them."
       actions={
         <>
-          <Button tone="primary" pending={busy === "generate"} onClick={() => void generate()}>
+          <Button
+            tone="primary"
+            pending={busy === "generate"}
+            disabled={modelGate.disabled}
+            title={modelGate.title}
+            onClick={() => void generate()}
+          >
             {entry?.state === "ready" ? "Rewrite again" : "Rewrite"}
           </Button>
           {entry?.state === "ready" ? (
@@ -1425,7 +1582,6 @@ export function AiSection({
 }): ReactNode {
   return (
     <section>
-      <h3>AI</h3>
       <AiDecompilationPanel functionId={functionId} />
       <AiSummaryPanel functionId={functionId} />
       <AiCommentsPanel functionId={functionId} />

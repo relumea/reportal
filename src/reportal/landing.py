@@ -26,152 +26,155 @@ from reportal import credits as credits_mod
 # absorbing a burst.
 CACHE_CONTROL = "public, max-age=300"
 
-# Palette and type match the SPA dark workbench tokens in web/src/styles.css so
-# /pricing reads as the same product with the logo removed, not a second skin.
+# The relumea brand (BRAND.md in the parent repository), the same tokens the SPA's
+# light theme carries: near-white ground, one verdict-green accent, hairlines,
+# Archivo for text and JetBrains Mono for figures only, both served from the
+# SPA's public fonts at /static/fonts/.
 _STYLE = """
+@font-face {
+  font-family: "Archivo"; src: url("/static/fonts/archivo.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono"; src: url("/static/fonts/jetbrains-mono.woff2") format("woff2");
+  font-weight: 400 700; font-style: normal; font-display: swap;
+}
 :root {
-  color-scheme: dark;
-  --bg: #0e1219;
-  --surface: #151b26;
-  --surface-2: #1b2331;
-  --border: #263044;
-  --border-strong: #35435d;
-  --text: #e6ecf5;
-  --muted: #97a5bd;
-  --faint: #8ea0ba;
-  --accent: #86b4ff;
-  --accent-hover: #9dc5ff;
-  --accent-ink: #071122;
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  --radius: 6px;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-base: 14px;
+  color-scheme: light;
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f5f6f8;
+  --border: #e7e8ec;
+  --border-strong: #d5d8de;
+  --text: #0a0a0b;
+  --muted: #55585f;
+  --faint: #6b7078;
+  --accent: #0f7a42;
+  --accent-hover: #0b6234;
+  --accent-ink: #ffffff;
+  --accent-soft: #eaf5ef;
+  --font-sans: "Archivo", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --radius-card: 14px;
+  --radius-control: 9px;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: var(--text-base)/1.55 var(--font-sans);
+  font: 15px/1.55 var(--font-sans);
 }
 a { color: var(--accent); }
 a:hover, a:focus-visible { color: var(--accent-hover); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
 header { border-bottom: 1px solid var(--border); background: var(--surface); }
 header .wrap {
   display: flex; align-items: center; justify-content: space-between;
-  min-height: 52px; gap: 16px; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px;
+  min-height: 56px; gap: 16px; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px;
 }
 .brand {
-  display: inline-flex; align-items: baseline; gap: 8px;
-  font-weight: 700; font-size: 16px; letter-spacing: 0.01em; color: var(--text);
+  display: inline-flex; align-items: center; gap: 8px;
+  font-weight: 700; font-size: 18px; letter-spacing: -0.03em; color: var(--text);
   text-decoration: none;
 }
-.brand-mark {
-  display: inline-flex; flex: none; align-self: center;
-  width: 18px; height: 18px; color: var(--accent);
-}
+.brand-mark { display: inline-flex; flex: none; width: 19px; height: 19px; color: var(--text); }
 .brand-mark svg { display: block; width: 100%; height: 100%; }
-.brand-mark-live { fill: #4ade80; }
-.brand-tag {
-  font-size: 11px; font-weight: 500; color: var(--faint);
-  text-transform: uppercase; letter-spacing: 0.08em;
-}
+.brand-mark-cell { fill: var(--accent); }
 .brand-ver {
-  font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--muted);
+  font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--faint);
+  letter-spacing: 0;
 }
-nav { display: flex; flex-wrap: wrap; gap: 4px 18px; }
-nav a { text-decoration: none; color: var(--muted); font-size: 13px; }
+nav { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+nav a { text-decoration: none; color: var(--muted); font-size: 14px; }
 nav a:hover, nav a:focus-visible { color: var(--text); }
 .hero {
-  padding: 48px 0 36px;
-  display: grid; gap: 24px;
+  padding: 56px 0 40px;
+  display: grid; gap: 28px;
   grid-template-columns: minmax(0, 1.5fr) minmax(220px, 0.65fr);
   align-items: end;
 }
 .hero h1 {
-  font-size: clamp(1.55rem, 3.2vw, 2.05rem); line-height: 1.2;
-  margin: 0 0 12px; font-weight: 700; letter-spacing: 0.005em; max-width: 28ch;
-  font-family: var(--font-mono);
+  font-size: clamp(2rem, 4vw, 2.75rem); line-height: 1.08;
+  margin: 0 0 14px; font-weight: 700; letter-spacing: -0.028em; max-width: 20ch;
+  text-wrap: balance;
 }
-.hero p { font-size: var(--text-base); color: var(--muted); max-width: 58ch; margin: 0 0 20px; }
-.hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.hero p { font-size: 18px; color: var(--muted); max-width: 58ch; margin: 0 0 22px; }
+.hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
 .cta {
-  display: inline-block; background: var(--accent); color: var(--accent-ink);
-  padding: 10px 16px; border-radius: var(--radius); text-decoration: none;
-  font-weight: 600; font-size: 13px; border: 1px solid var(--accent);
+  display: inline-block; background: var(--text); color: var(--bg);
+  padding: 10px 18px; border-radius: var(--radius-control); text-decoration: none;
+  font-weight: 600; font-size: 14px; border: 1px solid var(--text);
 }
-.cta:hover, .cta:focus-visible { background: var(--accent-hover); border-color: var(--accent-hover);
-  color: var(--accent-ink); }
+.cta:hover, .cta:focus-visible { background: #26262a; border-color: #26262a; color: var(--bg); }
 .cta.secondary {
-  background: transparent; color: var(--text); border-color: var(--border-strong);
+  background: var(--surface); color: var(--text); border-color: var(--border-strong);
 }
 .cta.secondary:hover, .cta.secondary:focus-visible {
-  border-color: var(--accent); color: var(--accent); background: transparent;
+  border-color: var(--text); color: var(--text); background: var(--surface);
 }
-.link-quiet { color: var(--muted); text-decoration: none; font-size: 13px; }
+.link-quiet { color: var(--muted); text-decoration: none; font-size: 14px; }
 .link-quiet:hover, .link-quiet:focus-visible { color: var(--text); }
 .hero-aside {
-  border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius);
-  padding: 14px 16px; font-family: var(--font-mono); font-size: 12px; color: var(--muted);
-  line-height: 1.7;
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: var(--radius-card); padding: 16px 18px; font-size: 14px;
+  color: var(--muted); line-height: 1.6;
 }
-.hero-aside strong { color: var(--text); font-weight: 600; display: block; margin-bottom: 4px;
-  font-family: var(--font-sans); font-size: 13px; }
-section { padding: 40px 0; border-top: 1px solid var(--border); }
-h2 { font-size: 18px; margin: 0 0 6px; font-weight: 600; letter-spacing: 0.01em; }
-.lede { color: var(--muted); margin: 0 0 22px; max-width: 70ch; font-size: 14px; }
+.hero-aside strong { color: var(--text); font-weight: 600; display: block; margin-bottom: 4px; }
+section { padding: 48px 0; border-top: 1px solid var(--border); }
+h2 {
+  font-size: 26px; margin: 0 0 8px; font-weight: 700; letter-spacing: -0.025em;
+  line-height: 1.14;
+}
+.lede { color: var(--muted); margin: 0 0 24px; max-width: 70ch; font-size: 16px; }
 .features {
   display: flex; flex-direction: column; gap: 0;
-  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
-  overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-card);
+  background: var(--surface); overflow: hidden;
 }
 .feature {
   display: grid; grid-template-columns: minmax(9rem, 13rem) minmax(0, 1fr);
   gap: 12px 18px; align-items: baseline;
-  padding: 12px 16px; border-top: 1px solid var(--border);
+  padding: 14px 18px; border-top: 1px solid var(--border);
 }
 .feature:first-child { border-top: 0; }
-.feature h3 {
-  margin: 0; font-size: var(--text-sm); font-family: var(--font-mono); font-weight: 600;
-  color: var(--text); letter-spacing: 0.02em;
-}
-.feature p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
-.plans { display: grid; gap: 14px;
+.feature h3 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); }
+.feature p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.plans { display: grid; gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); align-items: start; }
 .plan {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 18px; display: flex; flex-direction: column; height: 100%;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-card); padding: 20px; display: flex; flex-direction: column;
+  height: 100%;
 }
-.plan.featured { border-color: var(--accent); background: var(--surface-2); }
-.badge {
-  display: inline-block; font-size: 12px; color: var(--accent); margin-bottom: 8px;
-  font-family: var(--font-mono);
-}
-.plan h3 { margin: 0 0 2px; font-size: 15px; }
+.plan.featured { border-color: var(--accent); }
+.plan h3 { margin: 0 0 2px; font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
 .price {
-  font-size: 28px; font-weight: 700; margin: 10px 0 2px;
-  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  font-size: 32px; font-weight: 700; margin: 10px 0 2px; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
-.price small { font-size: 12px; font-weight: 400; color: var(--muted); }
-.tagline { color: var(--muted); font-size: 13px; margin: 0 0 14px; min-height: 2.8em; }
-.plan ul { list-style: none; padding: 0; margin: 0 0 16px; }
-.plan li { padding: 6px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.price small { font-size: 13px; font-weight: 400; color: var(--muted); letter-spacing: 0; }
+.tagline { color: var(--muted); font-size: 14px; margin: 0 0 14px; min-height: 2.8em; }
+.plan ul { list-style: none; padding: 0; margin: 0 0 18px; }
+.plan li { padding: 7px 0; border-top: 1px solid var(--border); font-size: 14px; }
 .plan li:first-child { border-top: 0; }
 .plan .cta { margin-top: auto; text-align: center; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-th { color: var(--muted); font-weight: 600; }
-td.num, th.num {
-  text-align: right; font-variant-numeric: tabular-nums; font-family: var(--font-mono);
+th {
+  color: var(--faint); font-weight: 600; font-size: 12px; text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
-.faq h3 { margin: 20px 0 6px; font-size: 14px; }
+td.num, th.num {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+td.num { font-family: var(--font-mono); font-size: 13px; }
+.faq h3 { margin: 22px 0 6px; font-size: 16px; font-weight: 600; }
 .faq p { margin: 0; color: var(--muted); max-width: 72ch; }
 footer {
-  border-top: 1px solid var(--border); padding: 24px 0 48px; color: var(--muted);
-  font-size: 12px; font-family: var(--font-mono);
+  border-top: 1px solid var(--border); padding: 24px 0 48px; color: var(--faint);
+  font-size: 13px;
 }
 @media (max-width: 720px) {
   .hero { grid-template-columns: 1fr; }
@@ -218,7 +221,7 @@ _FEATURES: tuple[tuple[str, str], ...] = (
     (
         "Answer to an agent",
         (
-            "An MCP server exposes the whole portal as tools, so an agent drives the same"
+            "An MCP server exposes the whole workspace as tools, so an agent drives the same"
             " surface your analysts do."
         ),
     ),
@@ -252,7 +255,6 @@ def _price(plan: plans.Plan) -> str:
 def _plan_card(plan: plans.Plan, *, featured: bool) -> str:
     """One pricing card, every figure taken from the catalog."""
     items = "".join(f"<li>{escape(line)}</li>" for line in plan.features)
-    badge = '<span class="badge">Recommended</span>' if featured else ""
     if plan.self_serve:
         label = "Start free trial" if plan.trial_days else f"Choose {plan.name}"
         href = f"/#/billing?plan={escape(plan.id)}"
@@ -262,7 +264,6 @@ def _plan_card(plan: plans.Plan, *, featured: bool) -> str:
     suffix = "" if plan.price_cents == 0 else f"<small>/{escape(plan.interval)}</small>"
     return (
         f'<article class="plan{" featured" if featured else ""}">'
-        f"{badge}"
         f"<h3>{escape(plan.name)}</h3>"
         f'<div class="price">{_price(plan)}{suffix}</div>'
         f'<p class="tagline">{escape(plan.tagline)}</p>'
@@ -340,8 +341,8 @@ def _faq() -> str:
     """The questions the pricing model actually raises, answered plainly."""
     reference = credits_mod.TASK_PROFILES[credits_mod.REFERENCE_TASK]
     credit_answer = (
-        f"One credit is one {_reference_label().lower()}, the cheapest thing the"
-        " portal does. Every other task is priced against it and published above,"
+        f"One credit is one {_reference_label().lower()}, the cheapest AI task."
+        " Every other task is priced against it and published above,"
         " measured rather than estimated, so you can count what a job costs before"
         " you run it rather than after."
     )
@@ -370,8 +371,8 @@ def _faq() -> str:
         " credit allowances stop applying, because we are not paying for it."
     )
     self_host_answer = (
-        "Yes. reportal is a self-hosted portal first. A self-hosted install has no"
-        " tenant and is unmetered by construction."
+        "Yes. The software runs on your own host first; a self-hosted install has no"
+        " tenant and nothing to meter."
     )
     privacy_answer = (
         "Only when you configure it to. There is no telemetry, no sample upload and no"
@@ -411,9 +412,9 @@ def render() -> str:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>reportal pricing: a reverse-engineering workbench</title>
-<meta name="description" content="reportal is a reverse-engineering portal: decompile,
- match, triage and automate. Plans from free to enterprise, priced on real inference cost.">
+<title>relumea: plans and credits</title>
+<meta name="description" content="relumea decompiles, matches, triages and automates
+ reverse engineering. Static analysis is unmetered; credits cover the AI tasks.">
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <style>{_STYLE}</style>
 </head>
@@ -421,23 +422,21 @@ def render() -> str:
 <header><div class="wrap">
   <a class="brand" href="/">
     <span class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 64 64" focusable="false">
-        <path d="M20 44V20h12a8 8 0 0 1 0 16h-4l10 8" fill="none"
-              stroke="currentColor" stroke-width="5"
-              stroke-linecap="round" stroke-linejoin="round"/>
-        <circle class="brand-mark-live" cx="46" cy="24" r="4"/>
+      <svg viewBox="0 0 19 19" focusable="false">
+        <rect x="0.85" y="0.85" width="17.3" height="17.3" rx="4" fill="none"
+              stroke="currentColor" stroke-width="1.7"/>
+        <rect class="brand-mark-cell" x="7.2" y="7.2" width="10.9" height="10.9" rx="2.6"/>
       </svg>
     </span>
-    <span>reportal</span>
-    <span class="brand-tag">workbench</span>
+    <span>relumea</span>
     <span class="brand-ver">v{escape(__version__)}</span>
   </a>
   <nav>
-    <a href="#features">Surfaces</a>
+    <a href="#features">What it does</a>
     <a href="#pricing">Plans</a>
     <a href="#credits">Credits</a>
     <a href="#faq">Questions</a>
-    <a href="/">Open workbench</a>
+    <a href="/">Open the workspace</a>
   </nav>
 </div></header>
 
@@ -446,12 +445,12 @@ def render() -> str:
   <div class="hero">
     <div>
       <h1>Decompile, match, triage, keep the corpus.</h1>
-      <p>A self-hosted reverse-engineering workbench: read a binary, match its
-         functions against everything you have seen before, triage what matters, and
-         let an agent drive the sweep. Metered only where inference actually runs.</p>
+      <p>Read a binary, match its functions against everything you have seen before,
+         triage what matters, and let an agent work through the rest. Only the AI
+         tasks are metered.</p>
       <div class="hero-actions">
         <a class="cta" href="/#/users">Create a workspace</a>
-        <a class="link-quiet" href="/">Open the workbench</a>
+        <a class="link-quiet" href="/">Open the workspace</a>
         <a class="link-quiet" href="#pricing">Plans and credits</a>
       </div>
     </div>
@@ -464,16 +463,15 @@ def render() -> str:
 </div>
 
 <section id="features"><div class="wrap">
-  <h2>Surfaces</h2>
-  <p class="lede">What the workbench already does, not a feature pitch.</p>
+  <h2>What it does</h2>
+  <p class="lede">Each of these runs in the workspace today.</p>
   <div class="features">{features}</div>
 </div></section>
 
 <section id="pricing"><div class="wrap">
   <h2>Pricing</h2>
   <p class="lede">Static analysis is unmetered on every plan. Credits cover the AI
-     tasks, priced on what the inference actually costs us, so the numbers are
-     sustainable rather than promotional.</p>
+     tasks, priced from measured token use.</p>
   <div class="plans">{cards}</div>
 </div></section>
 
@@ -499,8 +497,8 @@ def render() -> str:
 </main>
 
 <footer><div class="wrap">
-  reportal v{escape(__version__)} · self-hosted reverse-engineering workbench ·
-  <a href="/">open workbench</a>
+  relumea v{escape(__version__)} · <a href="/">open the workspace</a> ·
+  <a href="/static/fonts/OFL.txt">font licenses</a>
 </div></footer>
 </body>
 </html>

@@ -16,7 +16,7 @@ const state = e2eState();
 async function openControlFlow(page: Page): Promise<Locator> {
   await page.goto(`/#/functions/${state.ids.function_id}`);
   const disassembly = panelByTitle(page, "Disassembly");
-  await expect(disassembly.getByText("bits 32", { exact: false })).toBeVisible();
+  await expect(disassembly.locator(".listing-row").first()).toBeVisible();
   await disassembly.getByRole("button", { name: "Control Flow", exact: true }).click();
   const cfg = panelByTitle(page, "Control Flow");
   await expect(cfg.locator(".cfg-block").first()).toBeVisible();
@@ -26,7 +26,7 @@ async function openControlFlow(page: Page): Promise<Locator> {
 test("the toggle swaps the code panel between the listing and the graph", async ({ page }) => {
   await page.goto(`/#/functions/${state.ids.function_id}`);
   const disassembly = panelByTitle(page, "Disassembly");
-  await expect(disassembly.getByText("bits 32", { exact: false })).toBeVisible();
+  await expect(disassembly.locator(".listing-row").first()).toBeVisible();
 
   const toggle = disassembly.getByRole("button", { name: "Control Flow", exact: true });
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -38,7 +38,7 @@ test("the toggle swaps the code panel between the listing and the graph", async 
   await expect(panelByTitle(page, "Disassembly")).toHaveCount(0);
 
   await cfg.getByRole("button", { name: "Disassembly", exact: true }).click();
-  await expect(panelByTitle(page, "Disassembly").getByText("bits 32", { exact: false })).toBeVisible();
+  await expect(panelByTitle(page, "Disassembly").locator(".listing-row").first()).toBeVisible();
 });
 
 test("a block carries its address, byte size, instruction count and instruction text", async ({

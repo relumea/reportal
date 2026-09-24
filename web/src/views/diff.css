@@ -52,6 +52,16 @@
   color: var(--diff-insert);
 }
 
+/* On a tinted row the line number takes the row's hue: faint grey on the
+   insert or delete fill fell under 4.5:1. */
+.diff-row.diff-insert .diff-line {
+  color: var(--diff-insert);
+}
+
+.diff-row.diff-delete .diff-line {
+  color: var(--diff-delete);
+}
+
 .diff-summary {
   display: flex;
   flex-wrap: wrap;

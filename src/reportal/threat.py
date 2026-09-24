@@ -1358,10 +1358,7 @@ SCORE_CRITICAL_FLOOR = 75
 # set first, so the cap only trims the rendered detail.
 MAX_EVIDENCE_PER_CONTRIBUTION = 8
 
-SCORE_SCOPE_NOTE = (
-    "reportal's own deterministic heuristic over the stored scans, not the hosted"
-    " portal's model score"
-)
+SCORE_SCOPE_NOTE = "a deterministic heuristic over the stored scans, not a model's score"
 SCORE_SCALE_NOTE = (
     "0-100: 1-24 low, 25-49 moderate, 50-74 high, 75-100 critical; every contribution's"
     " points are named in this payload"

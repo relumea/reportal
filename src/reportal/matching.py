@@ -35,9 +35,19 @@ preceded by an exact prefilter: a pair whose MinHash Jaccard is below the floor
 cannot reach that threshold, because the text-ratio term is capped, so the full
 score is never computed for it.  That removes most of the pairwise cost without
 changing a single recorded row; the prefilter applies to the default blended
-scorer only, since the floor is derived from its weights.  LSH banding over the
-packed fingerprints is the lever beyond it, for a threshold low enough that the
-Jaccard floor proves nothing.
+scorer only, since the floor is derived from its weights.
+
+Above :data:`reportal.match_index.LSH_PAIRWISE_MAX_SIMILARITY` (80.0) the default scorer
+draws each source's candidates from the persisted LSH index instead of the
+whole corpus: a bucket join returns the functions sharing at least
+:func:`reportal.match_index.required_bands` band keys with the source, which
+is a superset of the pairs the Jaccard floor admits, so the recorded rows are
+the pairwise path's.  At or below it, the default 80.0 included, the run stays
+pairwise.
+
+:func:`find_similar` is the ad-hoc form: one listing (a stored function's, a
+pasted one, or code bytes disassembled in process) ranked against every cached
+listing, through the same index and the same floor, without recording a row.
 """
 
 from __future__ import annotations
@@ -50,7 +60,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from reportal import engines, journal, similarity, store
+from reportal import engines, journal, match_index, similarity, store
 
 _log = logging.getLogger(__name__)
 
@@ -169,6 +179,42 @@ TRANSFER_SOURCE = "match"
 # Decimals a derived difference metric is rounded to, matching the similarity
 # scores stored to one decimal.
 DIFFERENCE_DECIMALS = 1
+
+# The ad-hoc similarity query's defaults and bounds.  The default floor sits
+# above `match_index.LSH_PAIRWISE_MAX_SIMILARITY` (80.0), so a query that names
+# none is served from the index; a floor at or below it is answered pairwise.
+DEFAULT_SIMILAR_MIN_SIMILARITY = 85.0
+DEFAULT_SIMILAR_LIMIT = 10
+MAX_SIMILAR_LIMIT = 100
+
+# The largest query a caller may send: a listing's characters, or code bytes
+# (hex in the request, so the body carries twice as many characters).
+MAX_QUERY_LISTING_CHARS = 1 << 20
+MAX_QUERY_BYTES = 1 << 16
+
+# ISAs a code-bytes query may name: the arch tokens the engine's disassembler
+# maps onto a Capstone configuration.  `x86_32` code is listed as NASM source,
+# every other ISA in the `asm` format, as `engines.listing_format` decides for
+# a stored function, so a query compares like with like.
+QUERY_ARCHES: tuple[str, ...] = (
+    "x86_16",
+    "x86_32",
+    "x86_64",
+    "arm32",
+    "arm64",
+    "mips32",
+    "mips64",
+    "ppc32",
+    "ppc64",
+    "sh2",
+)
+
+# Error code every refused similarity query answers with.
+INVALID_SIMILAR_QUERY = "invalid-similar-query"
+
+# How a query's candidates were generated, reported on every answer.
+CANDIDATES_FROM_INDEX = "index"
+CANDIDATES_PAIRWISE = "pairwise"
 
 # C words that spell a primitive type or a qualifier rather than a local type.
 # A declaration that references no other identifier is not a reference to a
@@ -609,6 +655,7 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
     None instead of aborting the run: one unresolvable function must not cost
     the whole corpus its matches. An engine failure is logged so the skip is
     visible; :func:`match_binary` leaves that function's prior rows alone.
+    The listing is in :func:`store.cached_disasm_format` for the binary.
     """
 
     def disassemble(function: dict[str, Any]) -> str | None:
@@ -616,15 +663,17 @@ def cached_disassembler(conn: sqlite3.Connection, engine: engines.RebrewEngine) 
         cached = store.get_disasm(conn, function_id)
         if cached is not None:
             return cached
-        project_dir = store.get_rebrew_context(conn, int(function["binary_id"]))
+        binary_id = int(function["binary_id"])
+        project_dir = store.get_rebrew_context(conn, binary_id)
         if project_dir is None:
             return None
         extent_size = int(function["size"])
+        fmt = store.cached_disasm_format(conn, binary_id)
         try:
             text, _filled = store.get_or_compute_disasm(
                 conn,
                 function_id,
-                lambda: engine.disassemble(project_dir, int(function["va"]), extent_size),
+                lambda: engine.disassemble(project_dir, int(function["va"]), extent_size, fmt),
                 extent_size=extent_size,
                 project_dir=project_dir,
             )
@@ -744,8 +793,10 @@ def match_binary(
         disassembler = cached_disassembler(conn, engine)
     # The floor is a proof, not a heuristic, and it holds only for the blended
     # scorer whose weights it comes from, so a caller's own scorer is scored
-    # without it.
+    # without it.  The index rests on the same floor.
     floor = similarity.jaccard_floor(resolved.min_similarity) if default_scorer else 0.0
+    use_index = default_scorer and match_index.uses_index(resolved.min_similarity)
+    min_bands = match_index.required_bands(resolved.min_similarity)
 
     allowed = resolve_scope(conn, resolved, visible_to=visible_to)
     scoped = bool(resolved.binary_ids or resolved.collection_ids or visible_to is not None)
@@ -790,6 +841,8 @@ def match_binary(
     if candidates:
         relevant = {int(function["id"]): function for function in (*sources, *candidates)}
         texts = {function_id: disassembler(function) for function_id, function in relevant.items()}
+        if use_index:
+            match_index.index_listings(conn, texts)
     candidate_ids = [int(function["id"]) for function in candidates]
     function_binary = {
         int(function["id"]): int(function["binary_id"]) for function in (*sources, *candidates)
@@ -820,8 +873,15 @@ def match_binary(
         # One transaction per source: clear plus its replacement edges, so a
         # mid-run crash leaves prior sources durable without a fsync per edge.
         store.clear_matches_for(conn, source_id, commit=False)
+        pool = candidate_ids
+        if use_index:
+            # Every candidate with a listing was just indexed from that listing,
+            # so the join misses no pair the floor admits.  Filtering keeps the
+            # corpus order, which is the tie order of the stable sort below.
+            nearby = match_index.near(conn, source_text, min_bands)
+            pool = [candidate_id for candidate_id in candidate_ids if candidate_id in nearby]
         scored: list[tuple[float, int]] = []
-        for candidate_id in candidate_ids:
+        for candidate_id in pool:
             if candidate_id == source_id:
                 continue
             candidate_text = texts.get(candidate_id)
@@ -909,6 +969,231 @@ def binary_match_rows(conn: sqlite3.Connection, binary_id: int) -> list[dict[str
             }
         )
     return rows
+
+
+# ── Ad-hoc similarity query ────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SimilarQuery:
+    """One validated similarity query.
+
+    Exactly one of ``listing`` and ``code`` is set for a pasted query; both
+    are None for a stored function's query, whose listing the caller reads.
+    ``arch`` and ``va`` describe ``code`` and are unused otherwise.
+    """
+
+    min_similarity: float = DEFAULT_SIMILAR_MIN_SIMILARITY
+    limit: int = DEFAULT_SIMILAR_LIMIT
+    listing: str | None = None
+    code: bytes | None = None
+    arch: str = ""
+    va: int = 0
+
+
+def _invalid_query(detail: str) -> InvalidSettingsError:
+    return InvalidSettingsError(INVALID_SIMILAR_QUERY, detail)
+
+
+def parse_similar_query(body: Mapping[str, Any], *, stored: bool) -> SimilarQuery:
+    """Validate a similarity query body.
+
+    Every query takes ``min_similarity`` (0-100) and ``limit`` (1 to
+    :data:`MAX_SIMILAR_LIMIT`).  A stored function's query takes nothing else.
+    A pasted query carries either ``listing`` (non-empty assembly text) or
+    ``bytes`` (non-empty hex) with ``arch`` (one of :data:`QUERY_ARCHES`) and
+    an optional non-negative ``va``.  Anything else raises
+    :class:`InvalidSettingsError` with :data:`INVALID_SIMILAR_QUERY`.
+    """
+    try:
+        min_similarity = _request_number(body, "min_similarity", DEFAULT_SIMILAR_MIN_SIMILARITY)
+        _require_range("min_similarity", min_similarity, MIN_SIMILARITY_RANGE)
+        limit = _request_int(body, "limit", DEFAULT_SIMILAR_LIMIT)
+    except InvalidSettingsError as exc:
+        raise _invalid_query(exc.detail) from exc
+    if not 1 <= limit <= MAX_SIMILAR_LIMIT:
+        raise _invalid_query(f"limit is between 1 and {MAX_SIMILAR_LIMIT}")
+    allowed = {"min_similarity", "limit"} | (
+        set() if stored else {"listing", "bytes", "arch", "va"}
+    )
+    unknown = sorted(str(key) for key in body if key not in allowed)
+    if unknown:
+        raise _invalid_query(f"unknown field: {', '.join(unknown)}")
+    if stored:
+        return SimilarQuery(min_similarity=min_similarity, limit=limit)
+    has_listing = "listing" in body
+    has_bytes = "bytes" in body
+    if has_listing == has_bytes:
+        raise _invalid_query("send exactly one of listing or bytes")
+    if has_listing:
+        listing = body["listing"]
+        if not isinstance(listing, str) or not listing.strip():
+            raise _invalid_query("listing must be non-empty assembly text")
+        if len(listing) > MAX_QUERY_LISTING_CHARS:
+            raise _invalid_query(f"listing is at most {MAX_QUERY_LISTING_CHARS} characters")
+        if "arch" in body or "va" in body:
+            raise _invalid_query("arch and va describe bytes; a listing takes neither")
+        return SimilarQuery(min_similarity=min_similarity, limit=limit, listing=listing)
+    raw = body["bytes"]
+    if not isinstance(raw, str) or not raw.strip():
+        raise _invalid_query("bytes must be a non-empty hex string")
+    try:
+        code = bytes.fromhex(raw)
+    except ValueError as exc:
+        raise _invalid_query("bytes must be a hex string") from exc
+    if len(code) > MAX_QUERY_BYTES:
+        raise _invalid_query(f"bytes is at most {MAX_QUERY_BYTES} bytes")
+    arch = body.get("arch")
+    if not isinstance(arch, str) or arch not in QUERY_ARCHES:
+        raise _invalid_query(f"arch is one of {', '.join(QUERY_ARCHES)}")
+    va = body.get("va", 0)
+    if isinstance(va, bool) or not isinstance(va, int) or va < 0:
+        raise _invalid_query("va must be a non-negative integer")
+    return SimilarQuery(min_similarity=min_similarity, limit=limit, code=code, arch=arch, va=va)
+
+
+def query_listing(query: SimilarQuery, engine: engines.RebrewEngine) -> str:
+    """The listing a pasted query compares: its text, or its bytes disassembled.
+
+    Raises :class:`InvalidSettingsError` when the bytes decode to no
+    instruction, and :class:`reportal.engines.EngineError` when the engine
+    fails.
+    """
+    if query.listing is not None:
+        return query.listing
+    assert query.code is not None, "parse_similar_query sets listing or code"
+    listing = engine.disassemble_bytes(query.code, query.va, query.arch)
+    if not listing.strip():
+        raise _invalid_query("bytes decode to no instruction")
+    return listing
+
+
+def stored_listing(
+    conn: sqlite3.Connection, function: Mapping[str, Any], engine: engines.RebrewEngine | None
+) -> str | None:
+    """A stored function's listing: ``disasm_cache``, else the engine when given one.
+
+    None when nothing is cached and there is no engine or rebrew context to
+    fill it from.  Raises :class:`reportal.engines.EngineError` when the engine
+    fails, unlike :func:`cached_disassembler`, which a whole-corpus run needs
+    to keep going.
+    """
+    function_id = int(function["id"])
+    cached = store.get_disasm(conn, function_id)
+    if cached is not None or engine is None:
+        return cached
+    binary_id = int(function["binary_id"])
+    project_dir = store.get_rebrew_context(conn, binary_id)
+    if project_dir is None:
+        return None
+    extent_size = int(function["size"])
+    fmt = store.cached_disasm_format(conn, binary_id)
+    text, _filled = store.get_or_compute_disasm(
+        conn,
+        function_id,
+        lambda: engine.disassemble(project_dir, int(function["va"]), extent_size, fmt),
+        extent_size=extent_size,
+        project_dir=project_dir,
+    )
+    return text
+
+
+def _function_rows(conn: sqlite3.Connection, function_ids: Sequence[int]) -> dict[int, sqlite3.Row]:
+    """``id, name, va, binary_id, binary_name`` for each function id, in chunks."""
+    rows: dict[int, sqlite3.Row] = {}
+    for start in range(0, len(function_ids), match_index.LOOKUP_CHUNK):
+        chunk = function_ids[start : start + match_index.LOOKUP_CHUNK]
+        placeholders = ", ".join("?" for _ in chunk)
+        for row in conn.execute(
+            "SELECT f.id AS id, f.name AS name, f.va AS va, a.binary_id AS binary_id,"
+            " b.name AS binary_name"
+            " FROM functions f JOIN analyses a ON a.id = f.analysis_id"
+            " JOIN binaries b ON b.id = a.binary_id"
+            f" WHERE f.id IN ({placeholders})",
+            tuple(chunk),
+        ):
+            rows[int(row["id"])] = row
+    return rows
+
+
+def find_similar(
+    conn: sqlite3.Connection,
+    listing: str,
+    *,
+    min_similarity: float = DEFAULT_SIMILAR_MIN_SIMILARITY,
+    limit: int = DEFAULT_SIMILAR_LIMIT,
+    exclude_function_id: int | None = None,
+    visible_to: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Rank the stored functions whose cached listing is most similar to *listing*.
+
+    The corpus is every function with a valid cached listing (``disasm_cache``,
+    as :func:`reportal.store.get_disasm` serves it) that *visible_to* may see,
+    minus *exclude_function_id*; no engine runs for a candidate.  At or above
+    :data:`reportal.match_index.LSH_PAIRWISE_MAX_SIMILARITY` the candidates come from
+    the LSH index (synced first, so every cached listing is in it); below, from
+    the whole corpus.  Each candidate the Jaccard floor admits is scored with
+    :func:`reportal.similarity.similarity`, and hits at or above
+    *min_similarity* are returned best first, ties by function id, at most
+    *limit*.  Nothing is recorded.
+
+    Raises :class:`reportal.similarity.SimilarityUnavailable` without the extra.
+    """
+    if not similarity.available():
+        raise similarity.SimilarityUnavailable(
+            "similarity queries require the optional 'similarity' extra"
+            " (uv sync --extra similarity)"
+        )
+    allowed = resolve_scope(conn, MatchSettings(), visible_to=visible_to)
+    use_index = match_index.uses_index(min_similarity)
+    if use_index:
+        match_index.sync(conn)
+        pool = sorted(match_index.near(conn, listing, match_index.required_bands(min_similarity)))
+    else:
+        pool = [
+            int(row["function_id"])
+            for row in conn.execute(
+                "SELECT function_id FROM disasm_cache ORDER BY function_id"
+            ).fetchall()
+        ]
+    if exclude_function_id is not None:
+        pool = [function_id for function_id in pool if function_id != exclude_function_id]
+    meta = _function_rows(conn, pool)
+    floor = similarity.jaccard_floor(min_similarity)
+    scored: list[tuple[float, int]] = []
+    compared = 0
+    for function_id in pool:
+        row = meta.get(function_id)
+        if row is None or (visible_to is not None and int(row["binary_id"]) not in allowed):
+            continue
+        text = store.get_disasm(conn, function_id)
+        if not text:
+            continue
+        compared += 1
+        if floor > 0.0 and similarity.jaccard(listing, text) < floor:
+            continue
+        score = similarity.similarity(listing, text)
+        if math.isfinite(score) and score >= min_similarity:
+            scored.append((score, function_id))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    hits = [
+        {
+            "function_id": function_id,
+            "name": str(meta[function_id]["name"]),
+            "va": int(meta[function_id]["va"]),
+            "binary_id": int(meta[function_id]["binary_id"]),
+            "binary_name": str(meta[function_id]["binary_name"]),
+            "similarity": score,
+        }
+        for score, function_id in scored[:limit]
+    ]
+    return {
+        "min_similarity": min_similarity,
+        "limit": limit,
+        "candidate_source": CANDIDATES_FROM_INDEX if use_index else CANDIDATES_PAIRWISE,
+        "compared": compared,
+        "hits": hits,
+    }
 
 
 # ── Symbol transfer ────────────────────────────────────────────────

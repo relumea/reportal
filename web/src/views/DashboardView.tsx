@@ -24,6 +24,7 @@ import {
   Panel,
   Readout,
   SegmentMeter,
+  Stamp,
   StatusCell,
   UNAVAILABLE,
 } from "../components";
@@ -82,8 +83,8 @@ const STATUS_ORDER: readonly string[] = [
 const STATS: ReadonlyArray<{ key: string; label: string; unit?: string }> = [
   { key: "binaries", label: "Binaries" },
   { key: "functions", label: "Functions" },
-  { key: "matched", label: "Matched" },
-  { key: "matches", label: "Match records" },
+  { key: "matched", label: "Verified functions" },
+  { key: "matches", label: "Candidate pairs" },
   { key: "collections", label: "Collections" },
   { key: "documents", label: "Documents" },
 ];
@@ -232,7 +233,7 @@ function SystemState({
   return (
     <Panel
       title="System state"
-      subtitle="Every registered row, refreshed while this view is open."
+      subtitle="Workspace totals, refreshed while this page is open."
     >
       <div className="cockpit-strip">
         {STATS.map((stat) => (
@@ -250,7 +251,11 @@ function SystemState({
         label="Coverage"
         value={total > 0 ? matched / total : null}
         readout={`${matched} / ${total}`}
-        title={total > 0 ? undefined : "no functions registered"}
+        title={
+          total > 0
+            ? "functions with an EXACT, RELOC or PROVEN verdict: rebuilt source that matches the original bytes"
+            : "no functions registered"
+        }
       />
     </Panel>
   );
@@ -385,7 +390,7 @@ function SectionPanel({
     >
       {meters === null ? (
         <EmptyState>
-          Unavailable: no stored PE details for this binary, so section bounds are unknown.
+          Unavailable: no stored header scan for this binary, so section bounds are unknown.
         </EmptyState>
       ) : (
         <div className="cockpit-strip">
@@ -505,7 +510,7 @@ function JournalTail({
   return (
     <Panel
       title="Recent activity"
-      subtitle="The newest journal entries, newest first."
+      subtitle="The latest recorded changes."
       actions={
         <Button tone="ghost" onClick={() => navigate("/journal")}>
           Full journal
@@ -524,14 +529,13 @@ function JournalTail({
               }
             >
               <div>
-                <a className="journal-action" href={`#/journal/${entry.action}`}>
-                  {entry.action}
-                </a>
-                <div className="muted">{entry.description}</div>
+                <a href={`#/journal/${entry.action}`}>{entry.description}</a>
+                <div className="journal-action muted">{entry.action}</div>
               </div>
               <div className="journal-meta">
-                <StatusCell status={entry.status} />
-                <span>{entry.created_at}</span>
+                {/* Active is the normal state; only a reverted or failed entry needs a badge. */}
+                {entry.status === "active" ? null : <StatusCell status={entry.status} />}
+                <Stamp at={entry.created_at} />
               </div>
             </div>
           ))}
@@ -541,9 +545,42 @@ function JournalTail({
   );
 }
 
+/**
+ * The one step that starts everything, shown only while the workspace holds no
+ * binary: a wall of zeros does not say where to begin.
+ */
+function StartPanel(): ReactNode {
+  const navigate = useNavigate();
+  return (
+    <Panel title="Start with a binary">
+      <p className="start-lede">
+        Upload an executable, library or firmware image. Analysis starts on its own: function
+        discovery, then the scans, then a match of every function against the rest of this
+        workspace.
+      </p>
+      <div className="toolbar">
+        <Button tone="primary" onClick={() => navigate("/binaries")}>
+          Upload a binary
+        </Button>
+        <Muted>
+          Or bring existing work: <code>reportal import-rebrew</code> for a rebrew project,{" "}
+          <code>reportal corpus-import</code> for a corpus pack.
+        </Muted>
+      </div>
+    </Panel>
+  );
+}
+
 function QuickLinks(): ReactNode {
   return (
-    <Panel title="Jump to" subtitle="The main flows of a session.">
+    <Panel
+      title="Jump to"
+      actions={
+        <a className="btn btn-primary btn-sm" href="#/binaries">
+          Upload binaries
+        </a>
+      }
+    >
       <div className="quick-links">
         {QUICK_LINKS.map((link) => (
           <a href={link.href} key={link.href}>
@@ -608,38 +645,47 @@ function SeriesPanel({
     { key: "auto_runs", label: "Agents triggered", tone: "series-b" },
     { key: "actions", label: "Journaled actions", tone: "series-c" },
   ];
-  const peak = Math.max(
-    1,
-    ...series.series.flatMap((day) => [day.analyses, day.auto_runs, day.actions]),
-  );
   const types = Object.entries(series.totals.software_types);
+  const quiet = charts.every((chart) => series.totals[chart.key] === 0);
   return (
     <Panel
       title="Last 30 days"
       subtitle={`${series.range.from} to ${series.range.to}: what this workspace did, counted from stored rows only.`}
     >
-      {charts.map((chart) => (
-        <div className="series" key={chart.key}>
-          <div className="series-head">
-            <span>{chart.label}</span>
-            <span className="mono">{series.totals[chart.key]}</span>
+      {quiet ? <EmptyState>Nothing recorded in these {series.days} days.</EmptyState> : null}
+      {(quiet ? [] : charts).map((chart) => {
+        // Each chart scales to its own busiest day: one shared peak flattened
+        // a handful of analyses to nothing beside thousands of journal rows.
+        const peak = Math.max(1, ...series.series.map((day) => day[chart.key]));
+        return (
+          <div className="series" key={chart.key}>
+            <div className="series-head">
+              <span>{chart.label}</span>
+              <span className="mono">{series.totals[chart.key]}</span>
+            </div>
+            {series.totals[chart.key] === 0 ? (
+              <Muted>None in these {series.days} days.</Muted>
+            ) : (
+              <div
+                className="series-bars"
+                role="img"
+                aria-label={`${chart.label} per day over ${series.days} days, ${series.totals[chart.key]} in total, at most ${peak} a day`}
+              >
+                {series.series.map((day) => (
+                  <span
+                    key={`${chart.key}-${day.date}`}
+                    className={
+                      day[chart.key] === 0 ? "series-bar series-bar-zero" : `series-bar ${chart.tone}`
+                    }
+                    style={{ height: `${Math.round((day[chart.key] / peak) * 100)}%` }}
+                    title={`${day.date}: ${day[chart.key]}`}
+                  />
+                ))}
+              </div>
+            )}
           </div>
-          <div
-            className="series-bars"
-            role="img"
-            aria-label={`${chart.label} per day over ${series.days} days, ${series.totals[chart.key]} in total`}
-          >
-            {series.series.map((day) => (
-              <span
-                key={`${chart.key}-${day.date}`}
-                className={`series-bar ${chart.tone}`}
-                style={{ height: `${Math.round((day[chart.key] / peak) * 100)}%` }}
-                title={`${day.date}: ${day[chart.key]}`}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
+        );
+      })}
       <Muted>
         Software types detected:{" "}
         {types.length
@@ -774,6 +820,7 @@ export function DashboardView(): ReactNode {
   return (
     <div className="cockpit">
       <div className="cockpit-col">
+        {(counts.binaries ?? 0) === 0 ? <StartPanel /> : null}
         <SystemState counts={counts} changed={changedStats} />
         <SeriesPanel series={series.data ?? null} error={series.error} onRetry={series.reload} />
         <BinaryPanel summaries={summaryRows} changed={changedBinaries} />

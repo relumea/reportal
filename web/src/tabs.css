@@ -1,0 +1,64 @@
+/* Detail-page tabs (tabs.tsx): an underlined strip that stays in view while
+   the tab's panels scroll under it. */
+
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  gap: var(--space-1);
+  margin: var(--space-4) 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.tab {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-4);
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font: 600 var(--text-sm) / 1.2 var(--font-sans);
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--text);
+}
+
+.tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.tab-panel[hidden] {
+  display: none;
+}
+
+/* Below 900px the sidebar is a sticky strip at the top, so a tab strip stuck
+   at `top: 0` would slide under it and vanish. */
+@media (max-width: 900px) {
+  .tabs {
+    position: static;
+  }
+}
+
+@media (forced-colors: active) {
+  .tab[aria-selected="true"] {
+    border-bottom-color: Highlight;
+  }
+}

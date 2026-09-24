@@ -62,6 +62,7 @@ class TestRegistry:
     def test_the_registry_holds_the_documented_kinds(self) -> None:
         assert set(jobs.JOB_KINDS) == {
             "ai-enrich",
+            "analyse",
             "behavior",
             "benchmark",
             "capabilities",

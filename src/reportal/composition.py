@@ -162,6 +162,25 @@ NO_MATCHES_NOTE = (
 )
 SELF_MATCH_NOTE = "{} functions matched only within this binary; a self-match is not a composition"
 
+# Label kinds a rollup row carries: the matched binary's tags, its visible
+# collection membership and the registered families it is known by (a family
+# whose reference binary it is, or a stored ``detect`` match).  The order here
+# is the order a row's ``labels`` list and the attribution rollup use.
+LABEL_TAG = "tag"
+LABEL_COLLECTION = "collection"
+LABEL_FAMILY = "family"
+LABEL_KINDS: tuple[str, ...] = (LABEL_TAG, LABEL_COLLECTION, LABEL_FAMILY)
+
+# Provenance note for the labels and the attribution rollup: both read stored
+# rows only, and a label is a statement about the matched binary, never a
+# verdict about this one.
+ATTRIBUTION_NOTE = (
+    "labels on a matched binary come from stored rows only: its tags, its visible"
+    " collection membership and the registered families (a family's reference"
+    " binary, or a stored detect match); a label is evidence about the matched"
+    " binary, not a verdict"
+)
+
 
 class NoCompositionError(KeyError):
     """The requested binary is not in the store.
@@ -399,6 +418,81 @@ def _attach_composition_sha256(conn: sqlite3.Connection, composition: list[dict[
         entry["sha256"] = digests.get(int(entry["binary_id"]))
 
 
+def _family_references(conn: sqlite3.Connection) -> dict[int, list[str]]:
+    """Registered family names keyed by the reference binary each was built from."""
+    references: dict[int, list[str]] = {}
+    for family in store.list_families(conn):
+        references.setdefault(int(family["reference_binary_id"]), []).append(str(family["name"]))
+    return references
+
+
+def _attach_labels(
+    conn: sqlite3.Connection,
+    composition: list[dict[str, Any]],
+    *,
+    visible_to: Mapping[str, Any] | None = None,
+) -> None:
+    """Fill every rollup row's ``labels``, in :data:`LABEL_KINDS` order.
+
+    Every label is a stored row: the binary's tags, the collections it is a
+    member of (narrowed by *visible_to* the way :func:`store.collections_of_binary`
+    narrows a single read) and the registered families it is known by, either
+    as a family's reference binary or through its stored ``detect`` scan.  A
+    binary with no label carries an empty list rather than losing its row, so
+    the table still names where its matched code came from.
+    """
+    ids = [int(entry["binary_id"]) for entry in composition]
+    if not ids:
+        return
+    tags = store.tags_for_binaries(conn, ids)
+    collections = store.collections_for_binaries(conn, ids, visible_to=visible_to)
+    detect = store.latest_scans_for_binaries(conn, ids, store.SCAN_KIND_DETECT)
+    references = _family_references(conn)
+    for entry in composition:
+        binary_id = int(entry["binary_id"])
+        families = set(references.get(binary_id, ()))
+        scan = detect.get(binary_id) or {}
+        for match in scan.get("matches") or ():
+            if isinstance(match, dict) and str(match.get("name") or "").strip():
+                families.add(str(match["name"]))
+        entry["labels"] = (
+            [{"kind": LABEL_TAG, "name": str(tag["name"])} for tag in tags.get(binary_id, ())]
+            + [
+                {"kind": LABEL_COLLECTION, "name": str(row["name"])}
+                for row in collections.get(binary_id, ())
+            ]
+            + [{"kind": LABEL_FAMILY, "name": name} for name in sorted(families)]
+        )
+
+
+def _attribution(composition: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """One row per label, with the matched functions and binaries it covers.
+
+    A function count is the sum of the rollup counts of the rows carrying the
+    label, so the attribution and the composition table cannot disagree about
+    how much code a label covers.  Rows sort by covered functions descending,
+    then :data:`LABEL_KINDS` order, then name.
+    """
+    rollup: dict[tuple[str, str], dict[str, Any]] = {}
+    kind_rank = {kind: index for index, kind in enumerate(LABEL_KINDS)}
+    for entry in composition:
+        for label in entry.get("labels") or ():
+            key = (str(label["kind"]), str(label["name"]))
+            row = rollup.setdefault(
+                key, {"kind": key[0], "name": key[1], "binaries": 0, "functions": 0}
+            )
+            row["binaries"] += 1
+            row["functions"] += int(entry["count"])
+    return sorted(
+        rollup.values(),
+        key=lambda row: (
+            -int(row["functions"]),
+            kind_rank.get(str(row["kind"]), len(LABEL_KINDS)),
+            str(row["name"]),
+        ),
+    )
+
+
 def compute_composition(
     conn: sqlite3.Connection,
     *,
@@ -412,7 +506,9 @@ def compute_composition(
     The payload carries the headline counts (``total_functions``,
     ``matched_functions``, ``matched_percent``), the five name-source buckets,
     the five quality bands, the four hosted ``categories``, one row per other
-    binary this binary matched to, and one row per function capped at
+    binary this binary matched to (with its ``labels``: tags, visible
+    collection membership and known families), the ``attribution`` rollup of
+    those labels, and one row per function capped at
     :data:`MAX_ROWS`.  ``refined`` is false when the store holds no match edge
     for the binary, and the notes name the command that fills the table.
     ``matched_percent`` and every percent is None when the binary has no
@@ -452,9 +548,10 @@ def compute_composition(
 
     composition = _composition_rows(rows, total)
     _attach_composition_sha256(conn, composition)
+    _attach_labels(conn, composition, visible_to=visible_to)
     categories = _category_rows(functions, rows, total)
 
-    notes = [SCOPE_NOTE]
+    notes = [SCOPE_NOTE, ATTRIBUTION_NOTE]
     scope_payload = {
         "binary_ids": sorted(binary_ids),
         "collection_ids": sorted(collection_ids),
@@ -488,6 +585,7 @@ def compute_composition(
         "category_notes": list(CATEGORY_NOTES),
         "scope": scope_payload,
         "composition": composition,
+        "attribution": _attribution(composition),
         "tags": _composition_tags(conn, composition),
         "functions": rows[:MAX_ROWS],
         "notes": notes,

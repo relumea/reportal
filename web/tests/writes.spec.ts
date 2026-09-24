@@ -19,7 +19,7 @@ test("creating a collection adds a row to the collection table", async ({ page }
 
 test("adding and removing a tag updates the tag list", async ({ page }) => {
   const name = uniqueName("e2e-tag");
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   const tags = panelByTitle(page, "Tags");
   await tags.getByLabel("Tag", { exact: true }).fill(name);
   await tags.getByRole("button", { name: "Add tag" }).click();

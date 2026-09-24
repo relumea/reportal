@@ -278,6 +278,7 @@ def _stripe_request(path: str, form: dict[str, str], *, idempotency_key: str) ->
     for _attempt in range(_STRIPE_TRANSIENT_ATTEMPTS):
         try:
             with httpx.Client(timeout=_REQUEST_TIMEOUT_S) as client:
+                # cordis-boundary: emission, compensate by the Idempotency-Key on every attempt.
                 response = client.post(f"{STRIPE_API_BASE}{path}", data=form, headers=headers)
                 try:
                     payload = response.json()

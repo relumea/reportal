@@ -65,19 +65,27 @@ function SeamCard({ seam }: { seam: IntegrationSeam }): ReactNode {
             mono: true,
             render: (part) => part.origin || <span className="muted">{NA}</span>,
           },
-          ...PART_FLAGS.map((flag) => ({
-            label: flag.label,
-            render: (part: IntegrationPart) => flagCell(part, flag.key),
-          })),
-          {
-            label: "Unavailable reason",
-            render: (part) =>
-              part.available === false && part.unavailable_reason ? (
-                part.unavailable_reason
-              ) : (
-                <span className="muted">{NA}</span>
-              ),
-          },
+          // Only the flags this seam declares: a column that is n/a on every
+          // row answers nothing and pushed the part names into a sliver.
+          ...PART_FLAGS.filter((flag) => seam.parts.some((part) => part[flag.key] !== undefined)).map(
+            (flag) => ({
+              label: flag.label,
+              render: (part: IntegrationPart) => flagCell(part, flag.key),
+            }),
+          ),
+          ...(seam.parts.some((part) => part.available === false)
+            ? [
+                {
+                  label: "Unavailable reason",
+                  render: (part: IntegrationPart) =>
+                    part.available === false && part.unavailable_reason ? (
+                      part.unavailable_reason
+                    ) : (
+                      <span className="muted">{NA}</span>
+                    ),
+                },
+              ]
+            : []),
         ]}
         rows={seam.parts}
         rowKey={(part) => `${seam.name}:${part.name}`}
@@ -230,7 +238,7 @@ function McpCard(): ReactNode {
       subtitle={`${data.mcp.total} tools (${data.mcp.read_only} read-only, ${data.mcp.destructive} destructive) over stdio, no auth: the pipe is the trust boundary.`}
     >
       <Muted>
-        reportal's MCP server speaks newline-delimited JSON-RPC on stdin/stdout, so any MCP
+        The MCP server (`reportal mcp`) speaks newline-delimited JSON-RPC on stdin/stdout, so any MCP
         client runs it from its own config. The workspace is resolved the way every other command
         resolves it, by walking up to the nearest reportal.toml, so run the client from a workspace
         (or pass a path it can start in).
@@ -257,7 +265,7 @@ export function IntegrationsView(): ReactNode {
   return (
     <Panel
       title="Integrations"
-      subtitle="Every seam a third party extends reportal through, read from the live registries."
+      subtitle="Every extension point a plugin can register into, read from the live registries."
     >
       {error ? (
         <ErrorNote error={error} onRetry={reload} />
@@ -266,8 +274,8 @@ export function IntegrationsView(): ReactNode {
       ) : (
         <>
           <Muted>
-            {data.count} seams. An empty origin means the registry does not track where that part
-            was declared; a part whose seam is not from its group is a plugin.
+            {data.count} extension points. An empty origin means the registry does not record where
+            a part was declared; a part registered from outside the package is a plugin.
           </Muted>
           {data.seams.map((seam) => (
             <SeamCard key={seam.name} seam={seam} />

@@ -29,6 +29,10 @@ The reader takes bytes, never a path, makes no network call and runs nothing.
 Anything the container gets wrong, a wrong magic, a directory or a record that
 runs past the buffer, a block index outside the file, raises :class:`PdbError`
 instead of returning a partial answer.
+
+:func:`read_identity` is the matching half: the GUID and age pair that the
+image's CodeView debug record carries too, which is what a symbol library keys
+a lookup on.
 """
 
 from __future__ import annotations
@@ -68,10 +72,18 @@ _INFO_STREAM = 1
 _DBI_STREAM = 3
 _NO_STREAM = 0xFFFF
 
-# PDB info stream header: version, signature and age, uint32 each.  The reader
-# validates the stream's length and recognizes the versions LLVM names, so an
-# unknown one is a note rather than a failure.
+# PDB info stream header: version, signature and age, uint32 each, then the
+# 16-byte GUID the linker also writes into the image's CodeView record.  The
+# reader validates the stream's length and recognizes the versions LLVM names,
+# so an unknown one is a note rather than a failure.
 _INFO_HEADER_SIZE = 12
+_INFO_IDENTITY_SIZE = 28
+_INFO_IDENTITY = struct.Struct("<III")
+_GUID_AT = 12
+
+# Versions whose info stream carries the GUID (VC70Dep onward).  An earlier
+# version in an MSF 7.0 container is refused by name rather than misread.
+_IDENTITY_VERSIONS = frozenset({19990604, 20000404, 20030901, 20091201, 20140508})
 _INFO_VERSIONS = frozenset(
     {
         19941610,
@@ -190,6 +202,9 @@ _UNRESOLVED_NOTE = "{count} symbols answer va: None because their segment is not
 _TRUNCATED_NOTE = "the symbol list is truncated at {limit} symbols"
 _UNKNOWN_INFO_NOTE = (
     "the pdb info stream reports version {version}, which this reader does not know"
+)
+_NO_IDENTITY_NOTE = (
+    "the pdb info stream reports version {version}, which carries no GUID this reader can match"
 )
 
 
@@ -442,6 +457,31 @@ def _info_note(info: bytes, notes: list[str]) -> None:
     version = _U32.unpack_from(info, 0)[0]
     if version not in _INFO_VERSIONS:
         notes.append(_UNKNOWN_INFO_NOTE.format(version=version))
+
+
+def read_identity(data: bytes) -> dict[str, Any]:
+    """The GUID and age that match this PDB to its PE image.
+
+    The linker writes the same pair into the image's CodeView debug record, so
+    ``{"guid", "age"}`` (the GUID as the lowercase hex of the 16 bytes both
+    files store, the age as an int) is the identity a symbol store keys a
+    lookup on.  Raises :class:`PdbError` when the container has no readable
+    info stream or the stream's version predates the GUID, since guessing an
+    identity would match the wrong symbols to an image.
+    """
+    try:
+        sizes, blocks, block_size, num_blocks = _directory(data)
+        if len(sizes) <= _INFO_STREAM:
+            raise PdbError(_UNREADABLE, "container holds no pdb info stream")
+        info = _read_stream(data, blocks[_INFO_STREAM], sizes[_INFO_STREAM], block_size, num_blocks)
+    except struct.error as exc:
+        raise PdbError(_UNREADABLE, "container or pdb info stream is truncated") from exc
+    if len(info) < _INFO_IDENTITY_SIZE:
+        raise PdbError(_UNREADABLE, "pdb info stream is shorter than its identity header")
+    version, _signature, age = _INFO_IDENTITY.unpack_from(info, 0)
+    if version not in _IDENTITY_VERSIONS:
+        raise PdbError(_UNREADABLE, _NO_IDENTITY_NOTE.format(version=version))
+    return {"guid": info[_GUID_AT : _GUID_AT + 16].hex(), "age": age}
 
 
 def read_symbols(data: bytes) -> dict[str, Any]:

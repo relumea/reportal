@@ -38,7 +38,7 @@ import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from reportal.docs import CHANGELOG_FILE, PAGE_ORDER
+from reportal.docs import CHANGELOG_FILE, PAGE_ORDER, REPOSITORY_ONLY_PAGES
 from reportal.doctor import DEPLOY_UNIT_FILES
 
 DIST_DIR = Path("dist")
@@ -109,6 +109,7 @@ def packaged_pages(docs_dir: Path = DOCS_DIR) -> tuple[str, ...]:
         found.extend(
             f"{MANUAL_PREFIX}{path.relative_to(docs_dir).as_posix()}"
             for path in docs_dir.glob(pattern)
+            if not (pattern == "*.md" and path.stem in REPOSITORY_ONLY_PAGES)
         )
     return tuple(sorted(found))
 

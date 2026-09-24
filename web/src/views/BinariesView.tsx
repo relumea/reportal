@@ -16,9 +16,12 @@ import {
   Muted,
   Panel,
   Toolbar,
+  byteSize,
+  countOf,
 } from "../components";
 import {
   BINARY_ORDERS,
+  BINARY_ORDER_LABELS,
   DEFAULT_BINARY_ORDER,
   MAX_UPLOAD_FILES,
   UPLOAD_ARCHITECTURES,
@@ -489,7 +492,7 @@ export function BinariesView({
               method: "POST",
               body: payload,
             });
-            return ` Symbols: ${report.symbols} name(s), ${report.types} type(s).`;
+            return ` Symbols: ${countOf(report.symbols, "name")}, ${countOf(report.types, "type")}.`;
           } catch (failure) {
             return ` Symbols failed (${errorText(failure)}).`;
           }
@@ -588,11 +591,6 @@ export function BinariesView({
       <Panel
         title="Upload binaries"
         subtitle="Registered by content hash; uploading the same bytes again returns the stored row instead of a copy."
-        actions={
-          <Button tone="primary" pending={busy === "upload"} onClick={() => void upload()}>
-            Upload
-          </Button>
-        }
       >
         <Toolbar>
           <Field label="Files">
@@ -608,11 +606,6 @@ export function BinariesView({
               ))}
             </select>
           </Field>
-          {uploadRows.length ? (
-            <Button tone="ghost" onClick={() => setUploadRows([])}>
-              Clear list
-            </Button>
-          ) : null}
         </Toolbar>
         <div
           className={dragging ? "drop-zone dragging" : "drop-zone"}
@@ -637,7 +630,7 @@ export function BinariesView({
           }}
         >
           {busy === "upload" ? (
-            <span className="muted">Uploading {uploadRows.length} file(s)...</span>
+            <span className="muted">Uploading {countOf(uploadRows.length, "file")}...</span>
           ) : (
             <span className="muted">
               Drop binaries, firmware images or archives here, or choose them above. A duplicate
@@ -647,7 +640,15 @@ export function BinariesView({
         </div>
         {uploadRows.length ? (
           <>
-            <p className="muted">{uploadRows.length} selected for upload</p>
+            <div className="upload-go">
+              <p className="muted">{uploadRows.length} selected for upload</p>
+              <Button tone="ghost" onClick={() => setUploadRows([])}>
+                Clear list
+              </Button>
+              <Button tone="primary" pending={busy === "upload"} onClick={() => void upload()}>
+                Upload
+              </Button>
+            </div>
             <Toolbar>
               <Field label="Configure all">
                 <select
@@ -724,118 +725,103 @@ export function BinariesView({
                 },
                 {
                   label: "Plan",
-                  render: (row) =>
-                    // A row nobody configured stays on the automatic plan, which
-                    // is what the hosted portal's dashed badge means.
-                    row.format === "" && row.arch === "" && row.compiler === "" ? (
-                      <Badge tone="info" title="Format, ISA and compiler are derived from the file">
-                        auto
-                      </Badge>
-                    ) : (
-                      <span className="muted">
-                        {row.format || "auto"} / {row.arch || "auto"} / {row.compiler || "auto"}
-                      </span>
-                    ),
-                },
-                {
-                  label: "Name",
                   render: (row) => (
-                    <input
-                      aria-label={`name for ${row.file.name}`}
-                      placeholder={row.file.name}
-                      value={row.name}
-                      onChange={(event) => updateRow(row.key, { name: event.target.value })}
-                    />
-                  ),
-                },
-                {
-                  label: "Tags",
-                  render: (row) => (
-                    <TagChips
-                      values={row.tags}
-                      onChange={(tags) => updateRow(row.key, { tags })}
-                    />
-                  ),
-                },
-                {
-                  label: "Format",
-                  render: (row) => (
-                    <select
-                      aria-label={`format for ${row.file.name}`}
-                      value={row.format}
-                      onChange={(event) => updateRow(row.key, { format: event.target.value })}
-                    >
-                      <option value="">Auto</option>
-                      {UPLOAD_FORMATS.map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                  ),
-                },
-                {
-                  label: "ISA",
-                  render: (row) => (
-                    <select
-                      aria-label={`ISA for ${row.file.name}`}
-                      value={row.arch}
-                      onChange={(event) => updateRow(row.key, { arch: event.target.value })}
-                    >
-                      <option value="">Auto</option>
-                      {UPLOAD_ARCHITECTURES.map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                  ),
-                },
-                {
-                  label: "Compiler",
-                  render: (row) => (
-                    <select
-                      aria-label={`compiler for ${row.file.name}`}
-                      value={row.compiler}
-                      onChange={(event) => updateRow(row.key, { compiler: event.target.value })}
-                    >
-                      <option value="">Auto</option>
-                      {UPLOAD_COMPILERS.map((value) => (
-                        <option key={value} value={value}>
-                          {value}
-                        </option>
-                      ))}
-                    </select>
-                  ),
-                },
-                {
-                  label: "Debug symbols",
-                  render: (row) => (
-                    <input
-                      type="file"
-                      aria-label={`debug symbols for ${row.file.name}`}
-                      onChange={(event) =>
-                        updateRow(row.key, { symbols: event.target.files?.[0] ?? null })
-                      }
-                    />
-                  ),
-                },
-                {
-                  label: "Scope",
-                  render: (row) => (
-                    <select
-                      aria-label={`scope for ${row.file.name}`}
-                      value={row.scope}
-                      onChange={(event) => updateRow(row.key, { scope: event.target.value })}
-                    >
-                      <option value="">Workspace</option>
-                      {teams.map((team) => (
-                        <option key={team.id} value={team.id}>
-                          team {team.name}
-                          {String(team.id) === activeTeam ? " (active)" : ""}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="upload-options">
+                      {/* A row nobody configured stays on the automatic plan, which is
+                          what the hosted portal's dashed badge means. */}
+                      {row.format === "" && row.arch === "" && row.compiler === "" ? (
+                        <Badge tone="info" title="Format, ISA and compiler are derived from the file">
+                          auto
+                        </Badge>
+                      ) : null}
+                      <div className="upload-option">
+                        <span>Name</span>
+                        <input
+                          aria-label={`name for ${row.file.name}`}
+                          placeholder={row.file.name}
+                          value={row.name}
+                          onChange={(event) => updateRow(row.key, { name: event.target.value })}
+                        />
+                      </div>
+                      <div className="upload-option">
+                        <span>Tags</span>
+                        <TagChips
+                          values={row.tags}
+                          onChange={(tags) => updateRow(row.key, { tags })}
+                        />
+                      </div>
+                      <div className="upload-option">
+                        <span>Format</span>
+                        <select
+                          aria-label={`format for ${row.file.name}`}
+                          value={row.format}
+                          onChange={(event) => updateRow(row.key, { format: event.target.value })}
+                        >
+                          <option value="">Auto</option>
+                          {UPLOAD_FORMATS.map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="upload-option">
+                        <span>ISA</span>
+                        <select
+                          aria-label={`ISA for ${row.file.name}`}
+                          value={row.arch}
+                          onChange={(event) => updateRow(row.key, { arch: event.target.value })}
+                        >
+                          <option value="">Auto</option>
+                          {UPLOAD_ARCHITECTURES.map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="upload-option">
+                        <span>Compiler</span>
+                        <select
+                          aria-label={`compiler for ${row.file.name}`}
+                          value={row.compiler}
+                          onChange={(event) => updateRow(row.key, { compiler: event.target.value })}
+                        >
+                          <option value="">Auto</option>
+                          {UPLOAD_COMPILERS.map((value) => (
+                            <option key={value} value={value}>
+                              {value}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="upload-option">
+                        <span>Scope</span>
+                        <select
+                          aria-label={`scope for ${row.file.name}`}
+                          value={row.scope}
+                          onChange={(event) => updateRow(row.key, { scope: event.target.value })}
+                        >
+                          <option value="">Workspace</option>
+                          {teams.map((team) => (
+                            <option key={team.id} value={team.id}>
+                              team {team.name}
+                              {String(team.id) === activeTeam ? " (active)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="upload-option">
+                        <span>Debug symbols</span>
+                        <input
+                          type="file"
+                          aria-label={`debug symbols for ${row.file.name}`}
+                          onChange={(event) =>
+                            updateRow(row.key, { symbols: event.target.files?.[0] ?? null })
+                          }
+                        />
+                      </div>
+                    </div>
                   ),
                 },
                 {
@@ -876,19 +862,21 @@ export function BinariesView({
         {uploadError ? <ErrorNote error={uploadError} /> : null}
         <p className="muted" role="status">
           {uploadResult
-            ? `${uploadResult.count} file(s): ${uploadResult.duplicates} already stored, ${uploadResult.errors} refused.`
+            ? `${countOf(uploadResult.count, "file")}: ${uploadResult.duplicates} already stored, ${uploadResult.errors} refused.`
             : ""}
         </p>
         {uploadResult ? (
           <div className="upload-results">
             {uploadResult.duplicates > 0 ? (
               <p className="upload-banner">
-                {uploadResult.duplicates} file(s) were already stored; the batches below name them.
+                {countOf(uploadResult.duplicates, "file")} {uploadResult.duplicates === 1 ? "was" : "were"} already
+                stored; the batches below name them.
               </p>
             ) : null}
             {uploadResult.errors > 0 ? (
               <p className="upload-banner upload-error">
-                {uploadResult.errors} file(s) were refused; each row states why.
+                {countOf(uploadResult.errors, "file")} {uploadResult.errors === 1 ? "was" : "were"} refused; each
+                row states why.
               </p>
             ) : null}
             <ul>
@@ -906,6 +894,13 @@ export function BinariesView({
                       : ` Team #${entry.owner_team_id} scope.`}
                   {entry.tags.length ? ` Tags: ${entry.tags.join(", ")}.` : ""}
                   {symbolNotes[index] ?? ""}
+                  {entry.analysis_job ? " Analysis queued: functions and scans appear as it runs." : ""}
+                  {entry.error || entry.binary_id === null ? null : (
+                    <>
+                      {" "}
+                      <a href={`#/binaries/${entry.binary_id}`}>Open binary #{entry.binary_id}</a>
+                    </>
+                  )}
                 </li>
               ))}
             </ul>
@@ -918,6 +913,308 @@ export function BinariesView({
           </div>
         ) : null}
       </Panel>
+      <Panel
+        title="Binaries"
+        subtitle={`${binaries?.length ?? 0} of ${matched} binaries`}
+        actions={
+          <>
+            <Button tone="ghost" onClick={() => navigate("/analyses")}>
+              Browse analyses
+            </Button>
+            <Button tone="ghost" onClick={() => navigate("/functions")}>
+              Browse functions
+            </Button>
+          </>
+        }
+      >
+        <Toolbar>
+          <Field label="Search">
+            <input
+              type="search"
+              placeholder="name, hash or notes"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") apply({ search: draft });
+              }}
+            />
+          </Field>
+          <Button onClick={() => apply({ search: draft })}>Search</Button>
+          <Field label="Tag">
+            <select value={filters.tag} onChange={(event) => apply({ tag: event.target.value })}>
+              <option value="">Any tag</option>
+              {(tagData.data?.tags ?? []).map((row) => (
+                <option key={row.id} value={row.name}>
+                  {row.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Format">
+            <select
+              value={filters.format}
+              onChange={(event) => apply({ format: event.target.value })}
+            >
+              <option value="">Any format</option>
+              {(data?.formats ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Language">
+            <select
+              value={filters.language}
+              onChange={(event) => apply({ language: event.target.value })}
+            >
+              <option value="">Any language</option>
+              {(data?.languages ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Compiler">
+            <select
+              value={filters.compiler}
+              onChange={(event) => apply({ compiler: event.target.value })}
+            >
+              <option value="">Any compiler</option>
+              {(data?.compilers ?? []).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Order">
+            <select value={filters.order} onChange={(event) => apply({ order: event.target.value })}>
+              {BINARY_ORDERS.map((value) => (
+                <option key={value} value={value}>
+                  {BINARY_ORDER_LABELS[value]}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Button
+            tone="ghost"
+            disabled={
+              filters.search === "" &&
+              filters.tag === "" &&
+              filters.format === "" &&
+              filters.language === "" &&
+              filters.compiler === "" &&
+              filters.order === DEFAULT_BINARY_ORDER
+            }
+            onClick={() => {
+              setDraft("");
+              navigate({ pathname: "/binaries", search: "" });
+            }}
+          >
+            Clear filters
+          </Button>
+        </Toolbar>
+        {error ? <ErrorNote error={error} onRetry={reload} /> : null}
+        {binaries === null ? null : (
+          <DataTable
+            columns={[
+              {
+                label: "",
+                render: (row) => (
+                  <input
+                    type="checkbox"
+                    aria-label={`select ${row.name}`}
+                    checked={selected.has(row.id)}
+                    onChange={() => toggleSelected(row.id)}
+                  />
+                ),
+              },
+              { label: "ID", key: "id", numeric: true },
+              {
+                label: "Name",
+                key: "name",
+                render: (row) => (
+                  <span className="toolbar">
+                    {row.sha256 ? <HashIdenticon hash={row.sha256} /> : null}
+                    {row.visibility === "team" ? (
+                      <Badge mono title="team-scoped">
+                        lock
+                      </Badge>
+                    ) : null}
+                    {row.name}
+                  </span>
+                ),
+              },
+              {
+                label: "Format",
+                // Only what is known: four "n/a" chips on a fresh upload read
+                // as noise and pushed the row's actions off the table.
+                render: (row) => {
+                  const format = row.format_override || row.format;
+                  const arch = row.arch_override || row.arch;
+                  if (!format && !arch && !row.language && !row.compiler) {
+                    return <Muted>unknown</Muted>;
+                  }
+                  return (
+                    <span className="toolbar">
+                      {format ? (
+                        <Badge mono title={row.format_override ? "Format asserted by hand" : undefined}>
+                          {format}
+                        </Badge>
+                      ) : null}
+                      {arch ? (
+                        <Badge mono title={row.arch_override ? "ISA asserted by hand" : undefined}>
+                          {arch}
+                        </Badge>
+                      ) : null}
+                      {row.language ? <Badge mono>{row.language}</Badge> : null}
+                      {row.compiler ? <Badge mono>{row.compiler}</Badge> : null}
+                    </span>
+                  );
+                },
+              },
+              {
+                label: "Size",
+                numeric: true,
+                render: (row) => byteSize(row.size),
+              },
+              {
+                label: "SHA-256",
+                render: (row) => <CopyValue value={row.sha256} compact />,
+              },
+              { label: "Functions", key: "function_count", numeric: true },
+              { label: "Created", key: "created_at", mono: true },
+              {
+                label: "Comments",
+                numeric: true,
+                render: (row) => <Badge>{row.comment_count}</Badge>,
+              },
+              {
+                label: "Scope",
+                // With no team to move a row into, the scope is not a choice.
+                render: (row) =>
+                  (teamData.data?.teams ?? []).length === 0 && row.visibility !== "team" ? (
+                    <Muted>public</Muted>
+                  ) : (
+                  <select
+                    aria-label={`scope of ${row.name}`}
+                    value={row.visibility === "team" ? String(row.owner_team_id ?? "") : "public"}
+                    disabled={busy === `scope-${row.id}`}
+                    onChange={(event) => void setScope(row.id, event.target.value)}
+                  >
+                    <option value="public">public</option>
+                    {(teamData.data?.teams ?? []).map((team) => (
+                      <option key={team.id} value={team.id}>
+                        team {team.name}
+                      </option>
+                    ))}
+                  </select>
+                  ),
+              },
+              {
+                label: "Actions",
+                render: (row) => (
+                  <div className="actions-cell">
+                    <a href={`/api/binaries/${row.id}/download`}>Download</a>
+                    <a href={`/api/binaries/${row.id}/download-zipped`}>Zipped</a>
+                  </div>
+                ),
+              },
+            ]}
+            rows={binaries}
+            rowKey={(row) => row.id}
+            onRowClick={(row, event) => {
+              if (event?.ctrlKey || event?.metaKey) {
+                window.open(`#/binaries/${row.id}`, "_blank", "noopener");
+                return;
+              }
+              navigate(`/binaries/${row.id}`);
+            }}
+            empty={
+              <EmptyState>
+                {filtered
+                  ? "No binaries match this filter. Clear filters to see them all."
+                  : (
+                      <>
+                        No binaries yet. Upload one above to start analysis.
+                      </>
+                    )}
+              </EmptyState>
+            }
+          />
+        )}
+        {binaries !== null && binaries.length < matched ? (
+          <Toolbar>
+            <Button pending={busy === "more"} onClick={() => void loadMore()}>
+              Load more
+            </Button>
+            <Muted>
+              {binaries.length} of {matched} loaded
+            </Muted>
+          </Toolbar>
+        ) : null}
+      </Panel>
+      {binaries && binaries.length > 0 ? (
+        <Panel
+          title="Bulk actions"
+          subtitle="Applies to the rows checked in the table above."
+          actions={
+            <>
+              <span className="muted">{selected.size} selected</span>
+              <Button
+                tone="primary"
+                pending={busy === "add_tag"}
+                disabled={selected.size === 0 || bulkTag.trim() === ""}
+                title={selected.size === 0 ? "Check rows in the table first" : undefined}
+                onClick={() => void runBulk("add_tag", bulkTag)}
+              >
+                Add tag
+              </Button>
+              <Button
+                pending={busy === "remove_tag"}
+                disabled={selected.size === 0 || bulkTag.trim() === ""}
+                title={selected.size === 0 ? "Check rows in the table first" : undefined}
+                onClick={() => void runBulk("remove_tag", bulkTag)}
+              >
+                Remove tag
+              </Button>
+              <ConfirmButton
+                label="Delete"
+                message={`Delete ${selected.size} selected ${selected.size === 1 ? "binary" : "binaries"}?`}
+                pending={busy === "delete"}
+                disabled={selected.size === 0}
+                onConfirm={() => void runBulk("delete", "")}
+              />
+              <Button
+                tone="ghost"
+                disabled={selected.size === 0}
+                onClick={() => setSelected(new Set())}
+              >
+                Clear selection
+              </Button>
+            </>
+          }
+        >
+          <Toolbar>
+            <Field label="Tag">
+              <input
+                placeholder="tag name"
+                value={bulkTag}
+                onChange={(event) => setBulkTag(event.target.value)}
+              />
+            </Field>
+          </Toolbar>
+          {bulkError ? <ErrorNote error={bulkError} /> : null}
+          <p className="muted" role="status">{bulkMessage}</p>
+          {bulkAction ? (
+            <p className="muted">
+              Revert this action: <a href={`#/journal/${bulkAction}`}>{bulkAction}</a>
+            </p>
+          ) : null}
+        </Panel>
+      ) : null}
       <Panel
         title="Extract an archive"
         subtitle="Unpack a stored zip/apk, tar or gz and register every member it holds; one journal action reverts the whole extraction."
@@ -965,13 +1262,13 @@ export function BinariesView({
         </Toolbar>
         <Muted>
           The archive has to be stored first, which is what the upload panel above does. A member
-          that is not a binary the portal can register is reported as skipped with its reason
+          that cannot be registered as a binary is reported as skipped with its reason
           rather than dropped silently.
         </Muted>
         {extractError ? <ErrorNote error={extractError} /> : null}
         <p className="muted" role="status">
           {extractResult
-            ? `${extractResult.kept} of ${extractResult.members.length} member(s) registered into ${extractResult.collection_name} (${extractResult.skipped} skipped).`
+            ? `${extractResult.kept} of ${countOf(extractResult.members.length, "member")} registered into ${extractResult.collection_name} (${extractResult.skipped} skipped).`
             : ""}
         </p>
         {extractResult ? (
@@ -1000,7 +1297,7 @@ export function BinariesView({
       </Panel>
       <Panel
         title="Malware families"
-        subtitle="Families are curated locally from a reference binary. reportal bundles no external threat-intelligence feed; a detection matches a binary against these signatures only."
+        subtitle="Families are curated here from a reference binary. No external threat-intelligence feed is bundled; a detection matches a binary against these signatures only."
         actions={
           <Button tone="primary" pending={busy === "family"} onClick={() => void registerFamily()}>
             Register family
@@ -1073,283 +1370,6 @@ export function BinariesView({
           />
         )}
       </Panel>
-      <Panel
-        title="Binaries"
-        subtitle={`${binaries?.length ?? 0} of ${matched} binaries`}
-        actions={
-          <>
-            <Button tone="ghost" onClick={() => navigate("/analyses")}>
-              Browse analyses
-            </Button>
-            <Button tone="ghost" onClick={() => navigate("/functions")}>
-              Browse functions
-            </Button>
-          </>
-        }
-      >
-        <Toolbar>
-          <Field label="Search" hint="name, SHA-256 or notes">
-            <input
-              type="search"
-              placeholder="name, hash or notes"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") apply({ search: draft });
-              }}
-            />
-          </Field>
-          <Button onClick={() => apply({ search: draft })}>Search</Button>
-          <Field label="Tag">
-            <select value={filters.tag} onChange={(event) => apply({ tag: event.target.value })}>
-              <option value="">any tag</option>
-              {(tagData.data?.tags ?? []).map((row) => (
-                <option key={row.id} value={row.name}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Format">
-            <select
-              value={filters.format}
-              onChange={(event) => apply({ format: event.target.value })}
-            >
-              <option value="">any format</option>
-              {(data?.formats ?? []).map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Language">
-            <select
-              value={filters.language}
-              onChange={(event) => apply({ language: event.target.value })}
-            >
-              <option value="">any language</option>
-              {(data?.languages ?? []).map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Compiler">
-            <select
-              value={filters.compiler}
-              onChange={(event) => apply({ compiler: event.target.value })}
-            >
-              <option value="">any compiler</option>
-              {(data?.compilers ?? []).map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label="Order">
-            <select value={filters.order} onChange={(event) => apply({ order: event.target.value })}>
-              {BINARY_ORDERS.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Button
-            tone="ghost"
-            disabled={
-              filters.search === "" &&
-              filters.tag === "" &&
-              filters.format === "" &&
-              filters.language === "" &&
-              filters.compiler === "" &&
-              filters.order === DEFAULT_BINARY_ORDER
-            }
-            onClick={() => {
-              setDraft("");
-              navigate({ pathname: "/binaries", search: "" });
-            }}
-          >
-            Clear filters
-          </Button>
-        </Toolbar>
-        {error ? <ErrorNote error={error} onRetry={reload} /> : null}
-        {binaries === null ? null : (
-          <DataTable
-            columns={[
-              {
-                label: "",
-                render: (row) => (
-                  <input
-                    type="checkbox"
-                    aria-label={`select ${row.name}`}
-                    checked={selected.has(row.id)}
-                    onChange={() => toggleSelected(row.id)}
-                  />
-                ),
-              },
-              { label: "ID", key: "id", numeric: true },
-              {
-                label: "Name",
-                key: "name",
-                render: (row) => (
-                  <span className="toolbar">
-                    {row.sha256 ? <HashIdenticon hash={row.sha256} /> : null}
-                    {row.visibility === "team" ? (
-                      <Badge mono title="team-scoped">
-                        lock
-                      </Badge>
-                    ) : null}
-                    {row.name}
-                  </span>
-                ),
-              },
-              {
-                label: "Format",
-                render: (row) => (
-                  <span className="toolbar">
-                    <Badge mono title={row.format_override ? "Format asserted by hand" : undefined}>
-                      {row.format_override || row.format || "n/a"}
-                    </Badge>
-                    <Badge mono title={row.arch_override ? "ISA asserted by hand" : undefined}>
-                      {row.arch_override || row.arch || "n/a"}
-                    </Badge>
-                    <Badge mono>{row.language || "n/a"}</Badge>
-                    <Badge mono>{row.compiler || "n/a"}</Badge>
-                  </span>
-                ),
-              },
-              {
-                label: "Size",
-                numeric: true,
-                render: (row) => row.size.toLocaleString(),
-              },
-              {
-                label: "SHA-256",
-                render: (row) => <CopyValue value={row.sha256} compact />,
-              },
-              { label: "Functions", key: "function_count", numeric: true },
-              { label: "Created", key: "created_at", mono: true },
-              {
-                label: "Comments",
-                numeric: true,
-                render: (row) => <Badge>{row.comment_count}</Badge>,
-              },
-              {
-                label: "Scope",
-                render: (row) => (
-                  <select
-                    aria-label={`scope of ${row.name}`}
-                    value={row.visibility === "team" ? String(row.owner_team_id ?? "") : "public"}
-                    disabled={busy === `scope-${row.id}`}
-                    onChange={(event) => void setScope(row.id, event.target.value)}
-                  >
-                    <option value="public">public</option>
-                    {(teamData.data?.teams ?? []).map((team) => (
-                      <option key={team.id} value={team.id}>
-                        team {team.name}
-                      </option>
-                    ))}
-                  </select>
-                ),
-              },
-              {
-                label: "Actions",
-                render: (row) => (
-                  <div className="actions-cell">
-                    <a href={`/api/binaries/${row.id}/download`}>Download</a>
-                    <a href={`/api/binaries/${row.id}/download-zipped`}>Zipped</a>
-                  </div>
-                ),
-              },
-            ]}
-            rows={binaries}
-            rowKey={(row) => row.id}
-            onRowClick={(row, event) => {
-              if (event?.ctrlKey || event?.metaKey) {
-                window.open(`#/binaries/${row.id}`, "_blank", "noopener");
-                return;
-              }
-              navigate(`/binaries/${row.id}`);
-            }}
-            empty={
-              <EmptyState>
-                {filtered
-                  ? "No binaries match this filter. Clear filters to see them all."
-                  : (
-                      <>
-                        No binaries yet. Upload one above to start analysis.
-                      </>
-                    )}
-              </EmptyState>
-            }
-          />
-        )}
-        {binaries !== null && binaries.length < matched ? (
-          <Toolbar>
-            <Button pending={busy === "more"} onClick={() => void loadMore()}>
-              Load more
-            </Button>
-            <Muted>
-              {binaries.length} of {matched} loaded
-            </Muted>
-          </Toolbar>
-        ) : null}
-      </Panel>
-      {binaries && binaries.length > 0 ? (
-        <Panel
-          title="Bulk actions"
-          subtitle="Applies to the rows checked in the table above."
-          actions={
-            <>
-              <span className="muted">{selected.size} selected</span>
-              <Button
-                tone="primary"
-                pending={busy === "add_tag"}
-                onClick={() => void runBulk("add_tag", bulkTag)}
-              >
-                Add tag
-              </Button>
-              <Button
-                pending={busy === "remove_tag"}
-                onClick={() => void runBulk("remove_tag", bulkTag)}
-              >
-                Remove tag
-              </Button>
-              <ConfirmButton
-                label="Delete"
-                message={`Delete ${selected.size} selected ${selected.size === 1 ? "binary" : "binaries"}?`}
-                pending={busy === "delete"}
-                disabled={selected.size === 0}
-                onConfirm={() => void runBulk("delete", "")}
-              />
-              <Button tone="ghost" onClick={() => setSelected(new Set())}>
-                Clear selection
-              </Button>
-            </>
-          }
-        >
-          <Toolbar>
-            <Field label="Tag">
-              <input
-                placeholder="tag name"
-                value={bulkTag}
-                onChange={(event) => setBulkTag(event.target.value)}
-              />
-            </Field>
-          </Toolbar>
-          {bulkError ? <ErrorNote error={bulkError} /> : null}
-          <p className="muted" role="status">{bulkMessage}</p>
-          {bulkAction ? (
-            <p className="muted">
-              Revert this action: <a href={`#/journal/${bulkAction}`}>{bulkAction}</a>
-            </p>
-          ) : null}
-        </Panel>
-      ) : null}
     </>
   );
 }

@@ -2,19 +2,18 @@
 // tags, an on-demand log drawer and a journalled delete.
 //
 // The filters live in the URL hash (`#/analyses?status=...&order=...`), the
-// convention the router already encodes route state with, so a filtered list is
-// shareable and survives a reload.  Owner is not a column: reportal is a
-// single-user loopback tool with no account model, and who changed what is what
-// the Journal view records, which this view links to.
-
-import { useEffect, useState } from "react";
-import { createSearchParams, useNavigate } from "react-router";
-import type { ReactNode } from "react";
-
-import { api } from "../api";
-import "./analyses.css";
-import {
-  Badge,
+  // convention the router already encodes route state with, so a filtered list is
+  // shareable and survives a reload.  Owner is the owning team (or personal);
+  // who changed what is what the Journal view records, which this view links to.
+  
+  import { useEffect, useState } from "react";
+  import { createSearchParams, useNavigate } from "react-router";
+  import type { ReactNode } from "react";
+  
+  import { api } from "../api";
+  import "./analyses.css";
+  import {
+    Badge,
   Button,
   ConfirmButton,
   CopyValue,
@@ -28,6 +27,7 @@ import {
   Loading,
   Muted,
   NA,
+  byteSize,
   Panel,
   StatusCell,
   Toolbar,
@@ -37,6 +37,7 @@ import {
   ANALYSIS_ORDERS,
   ANALYSIS_STATUSES,
   WORKSPACE_FILTERS,
+  WORKSPACE_FILTER_LABELS,
   DEFAULT_ANALYSIS_LIMIT,
   DEFAULT_ANALYSIS_LOG_LIMIT,
   MAX_ANALYSIS_LIMIT,
@@ -228,8 +229,8 @@ function ImportedFunctions({ analysisId }: { analysisId: number }): ReactNode {
   return (
     <>
       <Muted>
-        Callers come from the stored decompilation text ({data.caller_method}); reportal stores no
-        call graph.
+        Callers come from the stored decompilation text ({data.caller_method}); no call graph is
+        stored.
       </Muted>
       <DataTable
         columns={[
@@ -544,34 +545,39 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               value={filters.workspace}
               onChange={(event) => apply({ workspace: event.target.value })}
             >
-              <option value="">any scope</option>
+              <option value="">Any scope</option>
               {WORKSPACE_FILTERS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {WORKSPACE_FILTER_LABELS[value]}
                 </option>
               ))}
             </select>
           </Field>
-          <div className="chip-row" role="group" aria-label="Status">
-            {ANALYSIS_STATUSES.map((value) => (
-              <Button
-                key={value}
-                size="sm"
-                tone={filters.status.includes(value) ? "primary" : "ghost"}
-                title={`Show ${value} analyses`}
-                aria-pressed={filters.status.includes(value)}
-                onClick={() => toggleStatus(value)}
-              >
-                {value}
-              </Button>
-            ))}
+          <div className="field">
+            <span className="field-label" aria-hidden="true">
+              Status
+            </span>
+            <div className="chip-row" role="group" aria-label="Status">
+              {ANALYSIS_STATUSES.map((value) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  tone={filters.status.includes(value) ? "primary" : "ghost"}
+                  title={`Show ${value} analyses`}
+                  aria-pressed={filters.status.includes(value)}
+                  onClick={() => toggleStatus(value)}
+                >
+                  {value}
+                </Button>
+              ))}
+            </div>
           </div>
           <Field label="Platform">
             <select
               value={filters.platform}
               onChange={(event) => apply({ platform: event.target.value })}
             >
-              <option value="">any platform</option>
+              <option value="">Any platform</option>
               {(result.data?.platforms ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -581,7 +587,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
           </Field>
           <Field label="Architecture">
             <select value={filters.arch} onChange={(event) => apply({ arch: event.target.value })}>
-              <option value="">any architecture</option>
+              <option value="">Any architecture</option>
               {(result.data?.architectures ?? []).map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -591,7 +597,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
           </Field>
           <Field label="Order">
             <select value={filters.order} onChange={(event) => apply({ order: event.target.value })}>
-              <option value="">newest first</option>
+              <option value="">Newest first</option>
               {ANALYSIS_ORDERS.map((value) => (
                 <option key={value} value={value}>
                   {ANALYSIS_ORDER_LABELS[value]}
@@ -676,10 +682,6 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
             ) : null}
           </div>
         ) : null}
-        <Muted>
-          Reportal is a single-user loopback tool, so an analysis has no owner column. The{" "}
-          <a href="#/journal">Journal</a> lists who did what, entry by entry.
-        </Muted>
         {result.error ? <ErrorNote error={result.error} onRetry={result.reload} /> : null}
         {actionError ? <ErrorNote error={actionError} /> : null}
         {analyses === undefined ? (
@@ -753,7 +755,7 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 {
                   label: "Size",
                   numeric: true,
-                  render: (row) => row.binary_size.toLocaleString(),
+                  render: (row) => byteSize(row.binary_size),
                 },
                 { label: "Engine", key: "engine" },
                 {
@@ -850,6 +852,8 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               <Button
                 tone="primary"
                 pending={busy === "add_tag"}
+                disabled={selected.size === 0 || bulkTag.trim() === ""}
+                title={selected.size === 0 ? "Check rows in the table first" : undefined}
                 onClick={() => void runBulk("add_tag", bulkTag)}
               >
                 Add tag
@@ -859,6 +863,8 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
               </Button>
               <Button
                 pending={busy === "remove_tag"}
+                disabled={selected.size === 0 || bulkTag.trim() === ""}
+                title={selected.size === 0 ? "Check rows in the table first" : undefined}
                 onClick={() => void runBulk("remove_tag", bulkTag)}
               >
                 Remove tag
@@ -870,7 +876,11 @@ export function AnalysesView({ query }: { query: Record<string, string> }): Reac
                 disabled={selected.size === 0}
                 onConfirm={() => void runBulk("delete", "")}
               />
-              <Button tone="ghost" onClick={() => setSelected(new Set())}>
+              <Button
+                tone="ghost"
+                disabled={selected.size === 0}
+                onClick={() => setSelected(new Set())}
+              >
                 Clear selection
               </Button>
             </>

@@ -9,6 +9,7 @@ import os
 import shutil
 import sqlite3
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,20 @@ from reportal import cli, clock, journal, sandbox, store
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_runners() -> Iterator[None]:
+    """Withdraw every runner the test registered, so no row outlives it.
+
+    ``refresh_runners`` deliberately keeps in-process registrations, so it
+    cannot be the inverse here: the snapshot-and-withdraw loop below is.
+    """
+    before = {runner.name for runner in sandbox.registered_runners()}
+    yield
+    for runner in sandbox.registered_runners():
+        if runner.name not in before:
+            sandbox.unregister_runner(runner.name)
 
 
 def _bwrap_works() -> bool:

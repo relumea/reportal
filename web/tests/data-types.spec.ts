@@ -21,7 +21,7 @@ function panelTypes(page: Page) {
 }
 
 test("the kind filter narrows the type list", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
 
   await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
@@ -56,7 +56,7 @@ test("the kind filter narrows the type list", async ({ page }) => {
 });
 
 test("a function type shows its return and parameters", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
   await types.getByPlaceholder(/Search \d+ types or namespaces\.\.\./).fill(FUNCTION_TYPE);
   const card = types.locator(".card").filter({ hasText: FUNCTION_TYPE }).first();
@@ -70,7 +70,7 @@ test("a function type shows its return and parameters", async ({ page }) => {
 });
 
 test("the search matches a namespace", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
   await types.getByPlaceholder(/Search \d+ types or namespaces\.\.\./).fill("winnt");
   await expect(types.getByText(NAMESPACED_TYPEDEF, { exact: false }).first()).toBeVisible();
@@ -84,7 +84,7 @@ test("the search matches a namespace", async ({ page }) => {
 });
 
 test("the namespace tree filters by branch and collapses", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
 
   await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
@@ -116,7 +116,7 @@ test("the sort control orders the list the way the route ordered it", async ({ p
         seeded,
       );
 
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
   await expect(types.getByText(STRUCT_NAME, { exact: false }).first()).toBeVisible();
 

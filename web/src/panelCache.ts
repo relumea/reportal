@@ -49,6 +49,23 @@ export function panelKey(...parts: Array<string | number>): string {
   return parts.join(":");
 }
 
+/** Re-read one mounted panel in the background, keeping its current entry until
+ *  the new one lands: what a poll uses, so it never flashes a loading state. */
+export function revalidatePanel(key: string): void {
+  void queryClient.invalidateQueries({ queryKey: panelQueryKey(key), exact: true });
+}
+
+/** Re-read every mounted panel of one binary (`binary:<id>...` keys), keeping
+ *  what each shows until its new answer lands. */
+export function refreshBinaryPanels(binaryId: number): void {
+  const prefix = panelKey("binary", binaryId);
+  void queryClient.invalidateQueries({
+    predicate: (query) =>
+      query.queryKey[0] === PANEL_KEY &&
+      (query.queryKey[1] === prefix || String(query.queryKey[1]).startsWith(`${prefix}:`)),
+  });
+}
+
 /** Drop every cached panel after a mutation that is not scoped to one panel. */
 export function clearPanels(): void {
   queryClient.removeQueries({ queryKey: [PANEL_KEY] });
@@ -64,13 +81,19 @@ export function refreshPanel<T>(key: string, load: () => Promise<T>): void {
   void store(key, load);
 }
 
-/** Auto-load a panel once per key; returns undefined until the load resolves. */
-export function usePanel<T>(key: string, load: () => Promise<T>): PanelEntry<T> | undefined {
+/** Auto-load a panel once per key; returns undefined until the load resolves.
+ *  While `enabled` is false nothing loads, but a `refreshPanel` still lands. */
+export function usePanel<T>(
+  key: string,
+  load: () => Promise<T>,
+  enabled = true,
+): PanelEntry<T> | undefined {
   const loadRef = useRef(load);
   loadRef.current = load;
   const query = useQuery<PanelEntry<T>>({
     queryKey: panelQueryKey(key),
     queryFn: () => loadEntry(() => loadRef.current()),
+    enabled,
     // A panel loaded once stays cached while mounted; a remount within
     // PANEL_GC_MS reuses it, and a mutation calls `refreshPanel`.
     staleTime: Infinity,

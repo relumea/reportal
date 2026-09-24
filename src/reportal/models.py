@@ -85,7 +85,9 @@ MAX_UPGRADE_LIMIT = 200
 # distribution metadata to read a version from.
 UNKNOWN_VERSION = "unknown"
 
-_THRESHOLD_NOTE = "reportal re-runs the LLM-backed artifacts; it never re-analyses the binary"
+_THRESHOLD_NOTE = (
+    "An upgrade re-runs only the LLM-backed artifacts; the binary is never re-analyzed."
+)
 
 
 class ModelError(Exception):
@@ -171,9 +173,7 @@ def engine_model() -> Model:
         name=ENGINE_PACKAGE,
         kind=KIND_ENGINE,
         version=_distribution_version(ENGINE_PACKAGE),
-        description=(
-            "the in-process analysis engine: fingerprints, disassembly, scans, decompilation"
-        ),
+        description=("In-process analysis engine: fingerprints, disassembly, scans, decompilation"),
         available=engine.available,
         unavailable_reason=reason,
     )
@@ -191,7 +191,7 @@ def decompiler_models() -> tuple[Model, ...]:
             name=backend,
             kind=KIND_DECOMPILER,
             version=_distribution_version(ENGINE_PACKAGE),
-            description=f"the {backend} decompiler backend, reached through the engine",
+            description=f"The {backend} decompiler, run through the engine",
             available=engine.available,
             unavailable_reason=reason,
         )
@@ -207,7 +207,7 @@ def llm_model() -> Model:
             name=UNCONFIGURED_MODEL,
             kind=KIND_LLM,
             description=(
-                "no chat-completions endpoint is configured, so no AI artifact can be produced"
+                "No chat-completions endpoint is configured, so no AI artifact can be produced"
             ),
             available=_never,
             unavailable_reason=lambda: llm.UNAVAILABLE_DETAIL,
@@ -215,7 +215,7 @@ def llm_model() -> Model:
     return Model(
         name=client.model,
         kind=KIND_LLM,
-        description="the configured OpenAI-compatible chat-completions model",
+        description="The configured OpenAI-compatible chat-completions model",
         available=client.available,
         unavailable_reason=lambda: llm.UNAVAILABLE_DETAIL,
     )
@@ -227,7 +227,7 @@ def similarity_model() -> Model:
         name=SIMILARITY_PACKAGE,
         kind=KIND_SIMILARITY,
         version=_distribution_version(SIMILARITY_PACKAGE),
-        description="the optional similarity extra: assembly-similarity scoring for a match run",
+        description="Assembly-similarity scoring for match runs (the optional similarity extra)",
         available=similarity.available,
         unavailable_reason=lambda: (
             "the optional similarity extra is not installed: uv sync --extra similarity"

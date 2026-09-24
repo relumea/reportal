@@ -74,11 +74,29 @@ PAGE_ORDER: tuple[str, ...] = (
     "CONFIG",
     "MCP_TOOLS",
     "MODULE_MAP",
-    "PARITY",
-    "TODO",
     "DEPLOY",
     "DR_RUNBOOK",
-    "REVENGAI",
+)
+
+# Pages for the people who build reportal, not for the people who run it:
+# business planning, research notes and the competitive tracking.  They stay in
+# the repository's docs/; the in-app manual neither lists nor serves them, and
+# the wheel's packaged copy (scripts/sync_packaged_docs.py) leaves them out.
+REPOSITORY_ONLY_PAGES: frozenset[str] = frozenset(
+    {
+        "COMMERCIALIZATION",
+        "FUNDING",
+        "LIVE_DEBUGGING",
+        "PARITY",
+        "RESEARCH_ROADMAP",
+        "REVENGAI",
+        "TODO",
+    }
+)
+
+# A markdown link to one of the repository-only pages, from docs/ or a subdirectory.
+_REPOSITORY_ONLY_LINK_RE = re.compile(
+    r"\]\((?:\.\./)?(?:" + "|".join(sorted(REPOSITORY_ONLY_PAGES)) + r")\.md(?:#[^)]*)?\)"
 )
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
@@ -234,6 +252,8 @@ def _slug_path(slug: str) -> Path:
         or any(part in {"", ".", ".."} for part in parts)
     ):
         raise UnknownDocError(f"{slug!r} is not a documentation page")
+    if len(parts) == 1 and resolved.upper() in REPOSITORY_ONLY_PAGES:
+        raise UnknownDocError(f"no documentation page named {slug!r}")
     changelog = changelog_path()
     if len(parts) == 1 and changelog is not None and resolved == _slug_of(changelog):
         return changelog
@@ -411,7 +431,7 @@ def page(slug: str) -> dict[str, Any]:
     """
     path = _slug_path(slug)
     text = _read(path)
-    parsed = blocks(text)
+    parsed = _without_repository_only(blocks(text))
     previous, following = neighbours(slug)
     return {
         "slug": slug,
@@ -423,6 +443,34 @@ def page(slug: str) -> dict[str, Any]:
         "source": _relative_of(path),
         "version": __version__,
     }
+
+
+def _without_repository_only(parsed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """*parsed* without the table rows and list items that point at a repository-only page.
+
+    An index row describing a funding plan is as much the page as the page
+    itself, so the manual drops the row rather than render a link it will not
+    serve.  A table or list left with nothing is dropped whole.
+    """
+    kept: list[dict[str, Any]] = []
+    for block in parsed:
+        if block["kind"] == "table":
+            rows = [
+                row
+                for row in block["rows"]
+                if not any(_REPOSITORY_ONLY_LINK_RE.search(cell) for cell in row)
+            ]
+            if rows:
+                kept.append({**block, "rows": rows})
+        elif block["kind"] == "list":
+            items = [
+                item for item in block["items"] if not _REPOSITORY_ONLY_LINK_RE.search(item["text"])
+            ]
+            if items:
+                kept.append({**block, "items": items})
+        else:
+            kept.append(block)
+    return kept
 
 
 def excerpts() -> list[dict[str, str]]:
@@ -463,7 +511,7 @@ def _page_files() -> list[Path]:
     for path in sorted(directory.glob("*.md")):
         # The changelog is appended once via changelog_path(), whether it sits
         # beside docs/ (checkout) or inside the packaged manual/ directory.
-        if path.name == CHANGELOG_FILE:
+        if path.name == CHANGELOG_FILE or path.stem in REPOSITORY_ONLY_PAGES:
             continue
         available.setdefault(path.stem, path)
     nested = sorted(directory.glob("*/*.md"))

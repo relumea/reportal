@@ -120,7 +120,11 @@ class TestListings:
         ids = _seed(conn, decomp=True)
         engines.set_engine(engines.RebrewEngine(enabled=False))
         payload = diffview.function_diff(
-            conn, engines.get_engine(), function_id=ids["left"], candidate_id=ids["right"]
+            conn,
+            engines.get_engine(),
+            function_id=ids["left"],
+            candidate_id=ids["right"],
+            kind="decomp",
         )
         assert payload["kind"] == "decomp"
         assert payload["normalized"] is True
@@ -131,7 +135,7 @@ class TestListings:
     ) -> None:
         ids = _seed(conn)
         payload = diffview.function_diff(
-            conn, fake_engine, function_id=ids["left"], candidate_id=ids["right"]
+            conn, fake_engine, function_id=ids["left"], candidate_id=ids["right"], kind="decomp"
         )
         assert payload["left"]["function_id"] == ids["left"]
         assert store.get_decompilation(conn, ids["left"]) is None
@@ -250,3 +254,25 @@ class TestDiffviewEdges:
                 conn, _Boom(), function_id=ids["left"], candidate_id=ids["right"]
             )
         assert caught.value.code == "engine-error"
+
+
+def test_the_default_diff_is_the_disassembly() -> None:
+    """A match compared listings, and every candidate stores one."""
+    assert diffview.DEFAULT_KIND == diffview.KIND_DISASM == diffview.DIFF_KINDS[0]
+
+
+def test_a_decompilation_diff_without_a_project_names_the_way_out(
+    conn: sqlite3.Connection,
+) -> None:
+    """A corpus-pack candidate has a listing and no project: the refusal says
+    the disassembly diff still works instead of a bare missing-context code."""
+    ids = _seed(conn, context=False)
+    engines.set_engine(engines.RebrewEngine(enabled=False))
+    with pytest.raises(diffview.DiffError, match="the disassembly diff reads the stored listing"):
+        diffview.function_diff(
+            conn,
+            engines.get_engine(),
+            function_id=ids["left"],
+            candidate_id=ids["right"],
+            kind="decomp",
+        )

@@ -162,9 +162,10 @@ class TestReserveBeforeWrite:
             ctx: WorkerContext,
             timeout: float,
             database: Path,
+            budget: auto_mode.RunBudget,
         ) -> WorkerResult:
             observed.append(len(auto_store.auto_task_intents(conn, task_id)))
-            return real_call(worker, ctx, timeout, database)
+            return real_call(worker, ctx, timeout, database, budget)
 
         monkeypatch.setattr(auto_mode, "_call_with_timeout", spy)
         worker = auto_workers.get_worker("reserve-probe")
@@ -179,6 +180,7 @@ class TestReserveBeforeWrite:
             engine=None,
             llm_client=None,
             db_path=db_path,
+            budget=auto_mode.RunBudget(params),
         )
         # The intent existed before the worker ran, and the worker still wrote
         # the file without recording it: the reservation is all recovery has.
@@ -265,6 +267,7 @@ class TestAppliedIntent:
             engine=None,
             llm_client=None,
             db_path=db_path,
+            budget=auto_mode.RunBudget(params),
         )
         assert captured["intents"]
         assert all(entry["status"] == auto_store.INTENT_APPLIED for entry in captured["intents"])

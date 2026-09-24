@@ -24,7 +24,7 @@ definitions and store them), ``types`` (with ``--source``)/``types-import``/``ty
 declared size, its member shape and position and its enum values),
 ``types-history``/``types-revert`` (list a type's edits and
 restore the state one recorded), ``crypto-scan`` (detect crypto constants and APIs
-and store the result), ``pe-info`` (inspect a binary's PE identity, sections,
+and store the result), ``pe-info`` (inspect a binary's header: identity, sections,
 security flags, signature, debug and Rich-header metadata and store the
 result), ``capabilities`` (classify a binary from its imports and
 strings and store the result), ``filetype`` (detect file type, packer and
@@ -100,7 +100,6 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
-import hashlib
 import json
 import os
 import sqlite3
@@ -113,7 +112,6 @@ from functools import partial
 from pathlib import Path
 from typing import Any, NoReturn, cast
 
-import rebrew.workspace
 import typer
 from rich.console import Console
 from rich.markup import escape
@@ -140,6 +138,7 @@ from reportal import (
     components,
     composition,
     conversations,
+    corpus,
     data_types,
     decompiler_scripts,
     details,
@@ -166,6 +165,7 @@ from reportal import (
     library,
     lineage,
     llm,
+    match_index,
     matching,
     models,
     notifications,
@@ -173,6 +173,7 @@ from reportal import (
     pipeline,
     protocols,
     ratings,
+    rebrew_import,
     related,
     remediation,
     remote_ingest,
@@ -184,6 +185,7 @@ from reportal import (
     similarity,
     store,
     surface,
+    symbol_library,
     symbols,
     threat,
     unpack,
@@ -202,6 +204,7 @@ from reportal._paths import (
     ensure_workspace_dirs,
     project_root,
     reports_dir,
+    write_bytes_atomic,
     write_text_atomic,
 )
 from reportal.surface import bulk_data_type_definitions as _bulk_data_types
@@ -221,23 +224,12 @@ EXIT_DECLINED = EXIT_ERROR
 # the glyphs an operator copies.  Markup (`[red]…[/red]`) still applies.
 console = Console(stderr=True, highlight=False)
 
-# Engine label recorded on analyses produced by `import-rebrew`; it is what
-# makes a re-import find and refresh its own analysis instead of adding one.
-IMPORT_ENGINE = "rebrew-import"
-
 # Scope of the signature rows a binary's seed run replaces: one row per function
 # of the binary, reached through its analyses.
 _BINARY_SIGNATURES_WHERE = (
     "function_id IN (SELECT f.id FROM functions f JOIN analyses a ON a.id = f.analysis_id"
     " WHERE a.binary_id = ?)"
 )
-
-# Status, name source and size of a function row ingested from the engine's
-# import-stub list.  An import thunk is `jmp dword ptr [iat]`, six bytes, and
-# the size is what lets the disassembly route list the stub.
-THUNK_STATUS = "THUNK"
-THUNK_NAME_SOURCE = store.IMPORTED_NAME_SOURCE
-THUNK_SIZE = 6
 
 # Matches shown by `reportal match` in human mode; the JSON payload carries
 # the same rows.  A whole-corpus run produces one row per pair, too many to
@@ -484,7 +476,7 @@ def init(
     if marker.exists():
         console.print(f"[yellow]{marker} already exists, leaving it untouched.[/yellow]")
     else:
-        marker.write_text(_MARKER_TEMPLATE, encoding="utf-8")
+        write_text_atomic(marker, _MARKER_TEMPLATE)
         console.print(f"[green]Wrote[/green] {marker}")
     created_dirs = ensure_workspace_dirs(target)
     if created_dirs:
@@ -772,7 +764,7 @@ def deploy_units_command(
         written: dict[str, str] = {}
         for name, source in paths.items():
             target = write / name
-            target.write_bytes(source.read_bytes())
+            write_bytes_atomic(target, source.read_bytes())
             written[name] = str(target)
         if json_output:
             typer.echo(json.dumps({"directory": str(write), "units": written}))
@@ -6028,7 +6020,7 @@ def add_binary(
     binary = path.expanduser().resolve()
     if not binary.is_file():
         _fail(f"not a file: {path}", json_output)
-    sha256 = _sha256_file(binary)
+    sha256 = rebrew_import.sha256_file(binary)
     display_name = name or binary.name
     hint = ""
     if compiler:
@@ -6101,26 +6093,6 @@ def add_binary(
 
 
 # ── download ───────────────────────────────────────────────────────
-
-
-def _write_protected_zip(source: Path, target: Path, member: str, password: str) -> int:
-    """Write *source* as an encrypted zip at *target*, returning the bytes written.
-
-    Like :func:`_copy_stream` the archive lands in a temporary file beside the
-    target and is moved into place with ``os.replace``, so a failure leaves no
-    half-written archive behind.
-    """
-    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".download-zip-")
-    os.close(handle)
-    temp = Path(temp_name)
-    try:
-        with source.open("rb") as reader, temp.open("wb") as writer:
-            written = zipcrypto.write_protected_zip(writer, member, reader, password)
-        os.replace(temp, target)
-        return written
-    finally:
-        with contextlib.suppress(OSError):
-            temp.unlink()
 
 
 def _copy_stream(source: Path, target: Path) -> int:
@@ -6220,7 +6192,9 @@ def download(
                 _fail(f"the {exc}", json_output)
         target.parent.mkdir(parents=True, exist_ok=True)
         if as_zip:
-            written = _write_protected_zip(source, target, f"{stored_name}.zip", password)
+            written = zipcrypto.write_protected_zip_file(
+                source, target, f"{stored_name}.zip", password
+            )
         else:
             written = _copy_stream(source, target)
         payload = {
@@ -6288,7 +6262,7 @@ def binary_export_command(
     if target.exists() and not force:
         _fail(f"refusing to overwrite {target} without --force", json_output)
     try:
-        target.write_bytes(payload)
+        write_bytes_atomic(target, payload)
     except OSError as exc:
         _fail(f"cannot write {target}: {exc}", json_output)
     result = {**report, "path": str(target), "bytes": len(payload)}
@@ -6636,6 +6610,156 @@ def match(
             f"{row['candidate_name']} @ 0x{row['candidate_va']:x}",
             f"{row['similarity']:.1f}",
             f"{row['confidence']:.2f}",
+        )
+    console.print(table)
+
+
+# ── match index and similarity queries ─────────────────────────────
+
+MATCH_INDEX_ACTIONS = ("status", "rebuild")
+
+
+@app.command("match-index")
+def match_index_command(
+    action: str = typer.Argument("status", help="status or rebuild"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Report or rebuild the LSH candidate index over cached function listings.
+
+    ``status`` reads the counts and indexes nothing.  ``rebuild`` drops the
+    index and re-indexes every valid cached listing; it needs the similarity
+    extra.  Match runs and similarity queries whose minimum similarity is above
+    80 draw their candidates from it.
+    """
+    if action not in MATCH_INDEX_ACTIONS:
+        _fail(
+            f"unknown action {action!r}; expected one of {', '.join(MATCH_INDEX_ACTIONS)}",
+            json_output,
+        )
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        if action == "rebuild":
+            try:
+                payload = match_index.rebuild(conn)
+            except similarity.SimilarityUnavailable as exc:
+                _fail(str(exc), json_output)
+        else:
+            payload = match_index.status(conn)
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    if action == "rebuild":
+        console.print(f"indexed {payload['indexed']} listings")
+    console.print(
+        f"{payload['functions']} functions indexed, {payload['buckets']} buckets"
+        f" ({payload['bands']} bands of {payload['rows_per_band']} rows);"
+        f" {payload['unindexed']} of {payload['cached_listings']} cached listings unindexed"
+    )
+    console.print(
+        f"match runs and queries with min similarity above {payload['pairwise_max_similarity']:g}"
+        " draw candidates from the index"
+    )
+
+
+@app.command("similar")
+def similar_command(
+    function_id: int | None = typer.Argument(None, help="Stored function to query with"),
+    listing: Path | None = typer.Option(
+        None, "--listing", help="Assembly listing file to query with ('-' reads stdin)"
+    ),
+    code: str | None = typer.Option(None, "--bytes", help="Hex code bytes to query with"),
+    arch: str | None = typer.Option(None, "--arch", help="ISA of --bytes (x86_32, arm64, ...)"),
+    va: int | None = typer.Option(None, "--va", help="Address --bytes load at (default 0)"),
+    min_similarity: float = typer.Option(
+        matching.DEFAULT_SIMILAR_MIN_SIMILARITY,
+        "--min-similarity",
+        help="Minimum similarity percent for a hit",
+    ),
+    limit: int = typer.Option(matching.DEFAULT_SIMILAR_LIMIT, "--limit", help="Maximum hits"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Rank the stored functions most similar to a function, a listing or code bytes.
+
+    Give a function id, or ``--listing``, or ``--bytes`` with ``--arch``.  The
+    corpus is every function with a cached listing; nothing is recorded.
+    Bytes are disassembled in process, never executed.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if (function_id is not None) + (listing is not None) + (code is not None) != 1:
+        _fail("give exactly one of a function id, --listing or --bytes", json_output)
+    body: dict[str, Any] = {"min_similarity": min_similarity, "limit": limit}
+    if listing is not None:
+        try:
+            body["listing"] = (
+                sys.stdin.read() if str(listing) == "-" else listing.read_text(encoding="utf-8")
+            )
+        except (OSError, UnicodeDecodeError) as exc:
+            _fail(f"cannot read {listing}: {exc}", json_output)
+    if code is not None:
+        body["bytes"] = code
+        if arch is not None:
+            body["arch"] = arch
+        if va is not None:
+            body["va"] = va
+    elif arch is not None or va is not None:
+        _fail("--arch and --va describe --bytes", json_output)
+    try:
+        query = matching.parse_similar_query(body, stored=function_id is not None)
+    except matching.InvalidSettingsError as exc:
+        _fail(exc.detail, json_output)
+    if not similarity.available():
+        _fail(
+            "similarity queries require the optional 'similarity' extra"
+            " (uv sync --extra similarity)",
+            json_output,
+        )
+    engine = engines.get_engine()
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        try:
+            if function_id is not None:
+                function = store.get_function(conn, function_id)
+                if function is None:
+                    _fail(f"no function with id {function_id}", json_output)
+                text = matching.stored_listing(conn, function, engine)
+                if not text:
+                    _fail(
+                        f"function {function_id} has no cached listing and no analysis context",
+                        json_output,
+                    )
+            else:
+                text = matching.query_listing(query, engine)
+        except matching.InvalidSettingsError as exc:
+            _fail(exc.detail, json_output)
+        except engines.EngineError as exc:
+            _fail(f"engine error: {exc}", json_output)
+        payload = matching.find_similar(
+            conn,
+            text,
+            min_similarity=query.min_similarity,
+            limit=query.limit,
+            exclude_function_id=function_id,
+        )
+    payload = {"function_id": function_id, **payload}
+    if json_output:
+        typer.echo(json.dumps(payload))
+        return
+    console.print(
+        f"{len(payload['hits'])} hits from {payload['compared']} candidates"
+        f" ({payload['candidate_source']}), min similarity {payload['min_similarity']:g}"
+    )
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Function", style="cyan")
+    table.add_column("Binary")
+    table.add_column("Sim", justify="right")
+    for hit in payload["hits"]:
+        table.add_row(
+            f"#{hit['function_id']} {escape(hit['name'])} @ 0x{hit['va']:x}",
+            f"#{hit['binary_id']} {escape(hit['binary_name'])}",
+            f"{hit['similarity']:.1f}",
         )
     console.print(table)
 
@@ -8007,6 +8131,15 @@ def auto_command(
         "--goal",
         help="Free-form objective a goal-directed worker works each function toward",
     ),
+    max_tokens: int = typer.Option(
+        0, "--max-tokens", help="Stop starting attempts after this many model tokens (0: none)"
+    ),
+    max_usd: float = typer.Option(
+        0.0, "--max-usd", help="Stop starting attempts after this spend in USD (0: none)"
+    ),
+    usd_per_mtok: float = typer.Option(
+        0.0, "--usd-per-mtok", help="Model price in USD per million tokens, for --max-usd"
+    ),
     recover: bool = typer.Option(
         False,
         "--recover",
@@ -8046,6 +8179,9 @@ def auto_command(
                 max_attempts=max_attempts,
                 max_tasks=max_tasks,
                 goal=goal,
+                max_tokens=max_tokens,
+                max_usd=max_usd,
+                usd_per_mtok=usd_per_mtok,
             )
         except ValueError as exc:
             _fail(str(exc), json_output)
@@ -8295,17 +8431,163 @@ def symbols_export(
     _emit_export_body(text, kind=kind, json_output=json_output)
 
 
+@app.command("symbols-library")
+def symbols_library_command(
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """The workspace symbol library: every stored file with its match identity.
+
+    The library is workspace-wide: one entry applies to any binary whose PE
+    debug GUID+age or ELF GNU build id carries the same identity.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        entries = symbol_library.list_entries(conn)
+    if json_output:
+        typer.echo(json.dumps({"symbol_library": entries, "count": len(entries)}))
+        return
+    if not entries:
+        console.print("the symbol library is empty")
+        return
+    table = Table(title="symbol library")
+    table.add_column("Id", justify="right", style="magenta")
+    table.add_column("Kind")
+    table.add_column("Identity", style="cyan")
+    table.add_column("Symbols", justify="right")
+    table.add_column("Types", justify="right")
+    table.add_column("Origin")
+    for entry in entries:
+        table.add_row(
+            str(entry["id"]),
+            str(entry["kind"]),
+            str(entry["identity"]),
+            str(entry["symbols"]),
+            str(entry["types"]),
+            str(entry["origin"]),
+        )
+    console.print(table)
+
+
+@app.command("symbols-library-add")
+def symbols_library_add(
+    paths: list[Path] = typer.Argument(..., help="PDB or ELF/DWARF files to add"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Add symbol files to the workspace library: parse, key by identity, store.
+
+    Each file must carry a match identity (a PDB GUID+age or an ELF GNU build
+    id) or it is refused: an entry nothing could ever match is dead weight.
+    The bytes land beside the per-binary ingests under `symbols/`, and the
+    whole run is one journaled action.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    prepared: list[tuple[bytes, dict[str, Any], str, str]] = []
+    for raw_path in paths:
+        label = str(raw_path)
+        try:
+            data, parsed = symbols.parse_file(label)
+            identity = symbol_library.file_identity(data)
+        except (symbols.SymbolError, symbol_library.SymbolLibraryError) as exc:
+            _fail(f"{label}: {exc.code}: {exc.detail}", json_output)
+        prepared.append((data, parsed, identity, label))
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            rows = [
+                symbol_library.store_entry(
+                    conn, log, data, parsed=parsed, identity=identity, origin=label
+                )
+                for data, parsed, identity, label in prepared
+            ]
+    if json_output:
+        typer.echo(json.dumps(log.attach({"symbol_library": rows, "count": len(rows)})))
+        return
+    _print_journal_action(log, json_output)
+    added = sum(1 for row in rows if not row["duplicate"])
+    console.print(
+        f"[green]Added[/green] {added} file(s) to the symbol library"
+        f" ({len(rows) - added} duplicate(s))"
+    )
+    for row in rows:
+        console.print(
+            f"  {row['identity'] or 'no identity'}  {row['kind']}"
+            f"  {row['symbols']} symbol(s), {row['types']} type(s)"
+            + ("  (already stored)" if row["duplicate"] else "")
+        )
+
+
+@app.command("symbols-resolve")
+def symbols_resolve(
+    binary_id: int = typer.Argument(..., help="Binary to match against the library"),
+    fetch: bool = typer.Option(
+        False,
+        "--fetch",
+        help="Ask the public symbol server for a missing PDB (needs remote sources on)",
+    ),
+    local: bool = typer.Option(False, "--local", help="Never touch the network"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Match a binary to the symbol library by identity and apply the match.
+
+    The identity is read from the binary's own bytes: the PE debug directory's
+    CodeView GUID+age, or the ELF GNU build id.  Without --fetch the symbol
+    server is asked only when remote sources are already enabled; --fetch
+    forces it and --local forbids it.  A match renames the functions it names
+    and adds its types as one journaled action; no match reports the reason.
+    """
+    portal_db = _db_path(json_output)
+    if not portal_db.exists():
+        _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
+    if fetch and local:
+        _fail("--fetch and --local cannot both be given", json_output)
+    wanted: bool | None = True if fetch else False if local else None
+    with contextlib.closing(store.connect(portal_db)) as conn:
+        _cli_require_binary(conn, binary_id, json_output)
+        try:
+            report = symbol_library.resolve(conn, binary_id, fetch=wanted)
+        except (symbol_library.SymbolLibraryError, external.ExternalError) as exc:
+            _fail(f"{exc.code}: {exc.detail}", json_output)
+    if json_output:
+        typer.echo(json.dumps(report))
+        return
+    if not report["matched"]:
+        console.print(f"[yellow]No match[/yellow]: {report['reason']}")
+        if report["fetch"] != "not-attempted":
+            console.print(f"  fetch: {report['fetch']}")
+        return
+    action = report.get(journal.ACTION_FIELD)
+    if action:
+        console.print(f"[dim]journal action {action}[/dim]")
+    ingest = report.get("ingest") or {}
+    console.print(
+        f"[green]Matched[/green] binary {binary_id} via {report['source']}"
+        f" ({report['identity']}): {ingest.get('symbols', 0)} symbol(s),"
+        f" {ingest.get('types', 0)} type(s), {ingest.get('applied', 0)} name(s) applied"
+    )
+    for note in (ingest.get("parsed") or {}).get("notes") or []:
+        console.print(f"  [yellow]note[/yellow]: {note}")
+
+
 @app.command("decompiler-script")
 def decompiler_script(
-    binary_id: int = typer.Argument(..., help="Binary whose renames to export"),
+    binary_id: int = typer.Argument(..., help="Binary whose analysis to export"),
     format_kind: str = typer.Option("ghidra", "--format", help="ghidra, ida or binja"),
+    include_kinds: str = typer.Option(
+        "renames",
+        "--include",
+        help="Comma list of renames, comments, signatures, summaries",
+    ),
     output: str = typer.Option("", "--output", help="Write here instead of stdout"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Render the stored renames as a runnable decompiler script.
+    """Render the stored analysis as a runnable decompiler script.
 
-    Stored-only: a function still carrying a decompiler placeholder is left
-    out, so the script only carries names the tool would not already show.
+    Stored-only: a function still carrying a decompiler placeholder is never
+    renamed, so the script only carries names the tool would not already show.
     """
     portal_db = _db_path(json_output)
     if not portal_db.exists():
@@ -8315,7 +8597,8 @@ def decompiler_script(
         _fail(f"format must be one of {', '.join(decompiler_scripts.SCRIPT_FORMATS)}", json_output)
     with contextlib.closing(store.connect(portal_db)) as conn:
         try:
-            payload = decompiler_scripts.script(conn, binary_id, fmt=kind)
+            include = decompiler_scripts.parse_include(include_kinds)
+            payload = decompiler_scripts.script(conn, binary_id, fmt=kind, include=include)
         except decompiler_scripts.ScriptError as exc:
             _fail(f"{exc.code}: {exc.detail}", json_output)
     text = str(payload["text"])
@@ -9555,7 +9838,7 @@ def fingerprint(
 def disasm(
     function_id: int = typer.Argument(..., help="Function id whose listing to print"),
     fmt: str = typer.Option(
-        store.CACHEABLE_DISASM_FORMAT,
+        "nasm",
         "--format",
         help=f"One of: {', '.join(engines.DISASM_FORMATS)}",
     ),
@@ -9563,9 +9846,10 @@ def disasm(
 ) -> None:
     """Print one function's disassembly through its binary's rebrew context.
 
-    The nasm listing is cached the way the route caches it (the hex view is not:
-    it is a rendering of the same bytes), so a repeated read answers without the
-    engine.  Human mode writes the listing to stdout so it pipes; the header
+    The format the cache holds for the binary (``nasm`` for 32-bit x86, ``asm``
+    for any other ISA) is cached the way the route caches it (the hex view is
+    not: it is a rendering of the same bytes), so a repeated read answers
+    without the engine.  Human mode writes the listing to stdout so it pipes; the header
     line stays on stderr with the rest of the human chrome.
     """
     portal_db = _db_path(json_output)
@@ -9586,12 +9870,11 @@ def disasm(
             _fail(f"binary {binary_id} has no analysis context yet", json_output)
         va = int(function["va"])
         size = int(function["size"])
-        cached = (
-            store.get_disasm(conn, function_id) if fmt == store.CACHEABLE_DISASM_FORMAT else None
-        )
+        cacheable = fmt == store.cached_disasm_format(conn, binary_id)
+        cached = store.get_disasm(conn, function_id) if cacheable else None
         if cached is None:
             try:
-                if fmt == store.CACHEABLE_DISASM_FORMAT:
+                if cacheable:
                     listing, _filled = store.get_or_compute_disasm(
                         conn,
                         function_id,
@@ -11223,7 +11506,7 @@ def pe_info(
     binary_id: int = typer.Argument(..., help="Binary id to inspect"),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
-    """Inspect a binary's PE identity, sections and security metadata."""
+    """Inspect a binary's header: identity, sections and security metadata."""
     portal_db = _db_path(json_output)
     if not portal_db.exists():
         _fail(f"no reportal database at {portal_db} (run 'reportal init')", json_output)
@@ -13003,344 +13286,27 @@ def flirt_apply(
 # ── import-rebrew ──────────────────────────────────────────────────
 
 
-class _ImportError(Exception):
-    """A rebrew workspace that cannot be imported."""
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Column names of *table*."""
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-def _resolve_rebrew_db(project_dir: Path) -> Path:
-    """Locate the coverage.db of a rebrew workspace.
-
-    Honours ``[project] db_dir`` in the workspace's ``rebrew-project.toml``,
-    falling back to ``db/coverage.db``.  The shared resolver names the path
-    whether or not it exists, so the missing-file check stays here.
-    """
-    db_file = rebrew.workspace.db_path(project_dir)
-    if not db_file.is_file():
-        raise _ImportError(f"no coverage.db at {db_file}")
-    return db_file
-
-
-def _target_binaries(project_dir: Path) -> dict[str, Path]:
-    """Map target id to its binary path from the workspace config.
-
-    A target whose binary is unset, empty or absent from disk is skipped.
-    """
-    binaries: dict[str, Path] = {}
-    config = rebrew.workspace.read_config(project_dir)
-    for target_id, entry in rebrew.workspace.targets_table(config).items():
-        candidate = rebrew.workspace.target_binary(project_dir, entry)
-        if candidate is not None and candidate.is_file():
-            binaries[target_id] = candidate
-    return binaries
-
-
-def _sha256_file(path: Path) -> str:
-    """Streaming SHA-256 of *path*."""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _fingerprint_best_effort(
-    conn: sqlite3.Connection, binary_id: int, binary_path: Path | None
-) -> None:
-    """Store a fingerprint for an imported binary when the engine can produce one.
-
-    The engine never gates an import: an engine that is not importable, a
-    missing binary or a failed invocation is skipped without touching the
-    import result.
-    """
-    if binary_path is None:
-        return
-    engine = engines.get_engine()
-    if not engine.available():
-        return
-    try:
-        fingerprint = engine.fingerprint(binary_path)
-    except engines.EngineError:
-        return
-    store.set_fingerprint(conn, binary_id, fingerprint)
-
-
-def _stub_va(raw: Any) -> int | None:
-    """Return a stub's VA as an int: a hex string from the engine, or None."""
-    if isinstance(raw, bool):
-        return None
-    if isinstance(raw, int):
-        return raw
-    try:
-        return int(str(raw), 16)
-    except (TypeError, ValueError):
-        return None
-
-
-def _ingest_import_stubs(
-    conn: sqlite3.Connection,
-    *,
-    analysis_id: int,
-    binary_path: Path | None,
-    project_dir: Path,
-) -> int:
-    """Add the engine's import stubs as THUNK functions; returns the count added.
-
-    Best effort: an engine that is not importable, a missing binary file or a
-    failed invocation is skipped, so an import succeeds without engine data.  A
-    VA the coverage-db rows already occupy is left alone, and a stub whose VA
-    does not parse is skipped without aborting the rest.
-    """
-    if binary_path is None:
-        return 0
-    engine = engines.get_engine()
-    if not engine.available():
-        return 0
-    try:
-        result = engine.imports(binary_path)
-    except engines.EngineError:
-        return 0
-    stubs = result.get("stubs")
-    stubs = stubs if isinstance(stubs, list) else []
-    added = 0
-    for stub in stubs:
-        if not isinstance(stub, dict):
-            continue
-        va = _stub_va(stub.get("va"))
-        if va is None:
-            continue
-        created = store.add_function_if_absent(
-            conn,
-            analysis_id=analysis_id,
-            va=va,
-            name=str(stub.get("name") or ""),
-            size=THUNK_SIZE,
-            status=THUNK_STATUS,
-            name_source=THUNK_NAME_SOURCE,
-            source_path=str(project_dir),
-        )
-        if created is not None:
-            added += 1
-    return added
-
-
-def _rebrew_targets(conn: sqlite3.Connection, table: str) -> list[str]:
-    """Distinct targets in *table*, without the metadata table's schema row."""
-    sql = f"SELECT DISTINCT target FROM {table}"
-    params: tuple[str, ...] = ()
-    if table == "metadata":
-        sql += " WHERE target != ?"
-        params = (rebrew.workspace.SCHEMA_TARGET,)
-    rows = conn.execute(sql, params).fetchall()
-    return sorted(str(row[0]) for row in rows)
-
-
-def _functions_from_table(conn: sqlite3.Connection, target: str) -> list[dict[str, Any]]:
-    """Read a target's function rows from rebrew's ``functions`` table."""
-    columns = _table_columns(conn, "functions")
-    if "va" not in columns:
-        raise _ImportError("coverage.db functions table has no va column")
-    wanted = ["va"] + [c for c in ("name", "size", "status", "module") if c in columns]
-    sql = f"SELECT {', '.join(wanted)} FROM functions WHERE target = ?"
-    if "markerType" in columns:
-        sql += " AND markerType NOT IN ('GLOBAL', 'DATA')"
-    return [
-        {
-            "va": int(row["va"]),
-            "name": str(row["name"] or ""),
-            "size": int(row["size"] or 0),
-            "status": str(row["status"] or "unknown"),
-        }
-        for row in conn.execute(sql, (target,)).fetchall()
-    ]
-
-
-def _functions_from_cells(conn: sqlite3.Connection, target: str) -> list[dict[str, Any]]:
-    """Synthesize function rows from rebrew's ``cells`` table.
-
-    Used when a coverage.db has no ``functions`` table: each non-empty cell
-    becomes one function at the cell start, named from the cell's function
-    list when present.
-    """
-    columns = _table_columns(conn, "cells")
-    if not {"start", "state"} <= columns:
-        raise _ImportError("coverage.db cells table has no start/state columns")
-    has_end = "end" in columns
-    has_functions = "functions" in columns
-    selected = ", ".join(
-        ["start", "state"] + (["end"] if has_end else []) + (["functions"] if has_functions else [])
-    )
-    functions: list[dict[str, Any]] = []
-    for row in conn.execute(
-        f"SELECT {selected} FROM cells WHERE target = ? AND state != 'none'", (target,)
-    ).fetchall():
-        va = int(row["start"])
-        end = int(row["end"]) if has_end and row["end"] is not None else va + 1
-        name = ""
-        if has_functions and row["functions"]:
-            try:
-                names = json.loads(row["functions"])
-            except (json.JSONDecodeError, TypeError):
-                names = []
-            if isinstance(names, list) and names and isinstance(names[0], str):
-                name = names[0]
-        functions.append(
-            {
-                "va": va,
-                "name": name or f"sub_{va:x}",
-                "size": max(1, end - va),
-                "status": str(row["state"]).upper(),
-            }
-        )
-    return functions
-
-
-def _collect_rebrew_functions(
-    conn: sqlite3.Connection, target: str, source: str
-) -> list[dict[str, Any]]:
-    if source == "functions":
-        return _functions_from_table(conn, target)
-    if source == "cells":
-        return _functions_from_cells(conn, target)
-    return []
-
-
-def run_import_rebrew(project_dir: Path) -> dict[str, Any]:
-    """Ingest a rebrew workspace into the portal database; returns a summary.
-
-    Idempotent: a binary is identified by content hash (or name+path when the
-    binary is absent), its import analysis is reused, and functions are
-    upserted by VA, so a second run refreshes rows instead of duplicating.
-    Each binary records the resolved project directory as its rebrew context,
-    which disassembly reads back; storing it is not engine-gated.  The target
-    binary's import stubs are ingested on top, best effort, as already-named
-    THUNK rows that never replace a coverage-db row.
-    Raises :class:`_ImportError` for a missing or unrecognized workspace.
-    """
-    project_dir = project_dir.expanduser().resolve()
-    rebrew_db = _resolve_rebrew_db(project_dir)
-    binaries_map = _target_binaries(project_dir)
-
-    portal_db = db_path()
-    store.init_db(portal_db)
-    summary: dict[str, Any] = {
-        "project": str(project_dir),
-        "coverage_db": str(rebrew_db),
-        "targets": [],
-        "created_functions": 0,
-        "updated_functions": 0,
-        "stubs": 0,
-    }
-
-    with contextlib.closing(
-        sqlite3.connect(rebrew.workspace.sqlite_ro_uri(rebrew_db), uri=True)
-    ) as coverage:
-        coverage.row_factory = sqlite3.Row
-        tables = {
-            str(row[0])
-            for row in coverage.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
-        source = next((t for t in ("functions", "cells", "metadata") if t in tables), None)
-        if source is None:
-            raise _ImportError(
-                f"unrecognized coverage.db schema at {rebrew_db} "
-                "(no functions, cells or metadata table)"
-            )
-        targets = _rebrew_targets(coverage, source)
-        if not targets:
-            raise _ImportError(f"{rebrew_db} contains no targets")
-
-        with contextlib.closing(store.connect(portal_db)) as portal:
-            for target in targets:
-                functions = _collect_rebrew_functions(coverage, target, source)
-                binary_path = binaries_map.get(target)
-                sha256 = _sha256_file(binary_path) if binary_path else None
-                binary_id = store.add_binary(
-                    portal,
-                    sha256=sha256,
-                    name=target,
-                    path=str(binary_path) if binary_path else "",
-                    size=binary_path.stat().st_size if binary_path else 0,
-                    fmt=binary_path.suffix.lstrip(".").upper() if binary_path else "",
-                )
-                store.set_rebrew_context(portal, binary_id, str(project_dir))
-                _fingerprint_best_effort(portal, binary_id, binary_path)
-                analysis = store.find_analysis(portal, binary_id=binary_id, engine=IMPORT_ENGINE)
-                if analysis is None:
-                    analysis_id = store.create_analysis(
-                        portal,
-                        binary_id=binary_id,
-                        engine=IMPORT_ENGINE,
-                        status="done",
-                        log=f"imported from {rebrew_db}",
-                    )
-                else:
-                    analysis_id = int(analysis["id"])
-                    store.update_analysis_status(
-                        portal, analysis_id, status="done", log=f"imported from {rebrew_db}"
-                    )
-
-                created = updated = 0
-                for function in functions:
-                    status = function["status"]
-                    confidence = 1.0 if status.upper() in store.MATCHED_STATUSES else 0.0
-                    _, was_created = store.upsert_function(
-                        portal,
-                        analysis_id=analysis_id,
-                        va=function["va"],
-                        name=function["name"],
-                        size=function["size"],
-                        status=status,
-                        name_source="rebrew",
-                        confidence=confidence,
-                        source_path=str(project_dir),
-                    )
-                    if was_created:
-                        created += 1
-                    else:
-                        updated += 1
-
-                stubs = _ingest_import_stubs(
-                    portal,
-                    analysis_id=analysis_id,
-                    binary_path=binary_path,
-                    project_dir=project_dir,
-                )
-
-                summary["targets"].append(
-                    {
-                        "name": target,
-                        "binary_id": binary_id,
-                        "analysis_id": analysis_id,
-                        "sha256": sha256,
-                        "functions": len(functions),
-                        "created": created,
-                        "updated": updated,
-                        "stubs": stubs,
-                    }
-                )
-                summary["created_functions"] += created
-                summary["updated_functions"] += updated
-                summary["stubs"] += stubs
-
-    return summary
-
-
 @app.command("import-rebrew")
 def import_rebrew(
     project_dir: Path = typer.Argument(..., help="Path to a rebrew workspace"),
+    build_db: bool = typer.Option(
+        False,
+        "--build-db",
+        help="Build the project's coverage.db from its sources first (writes into the project)",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ) -> None:
     """Import a rebrew workspace: register its target binaries, functions and import stubs."""
     if not project_dir.is_dir():
         _fail(f"not a directory: {project_dir}", json_output)
+    if build_db:
+        try:
+            engines.get_engine().build_coverage_db(project_dir)
+        except engines.EngineError as exc:
+            _fail(str(exc), json_output)
     try:
-        summary = run_import_rebrew(project_dir)
-    except (_ImportError, WorkspaceNotFound) as exc:
+        summary = rebrew_import.import_project(project_dir)
+    except (rebrew_import.RebrewImportError, WorkspaceNotFound) as exc:
         _fail(str(exc), json_output)
 
     if json_output:
@@ -13364,6 +13330,84 @@ def import_rebrew(
             str(entry["stubs"]),
         )
     console.print(table)
+
+
+# ── corpus packs ──────────────────────────────────────────────────
+
+
+def _print_corpus(summary: dict[str, Any], verb: str, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps(summary))
+        return
+    console.print(
+        f"{verb} {summary['functions']} named functions from {summary['binaries']} binaries"
+        f" ({summary['path']})"
+    )
+    for key in ("skipped_binaries", "malformed", "pruned"):
+        if summary.get(key):
+            console.print(f"  {key.replace('_', ' ')}: {summary[key]}")
+
+
+@app.command("corpus-export")
+def corpus_export(
+    path: Path = typer.Argument(..., help="Pack file to write (gzip JSON)"),
+    binary: list[int] = typer.Option(
+        [], "--binary", help="Binary id to include (repeatable); default every binary"
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Write named functions and their listings as a match corpus another workspace imports."""
+    with contextlib.closing(store.connect(_db_path(json_output))) as conn:
+        try:
+            summary = corpus.export_pack(conn, path, binary_ids=list(binary) or None)
+        except corpus.CorpusError as exc:
+            _fail(str(exc), json_output)
+    _print_corpus(summary, "Exported", json_output)
+
+
+@app.command("corpus-from-libs")
+def corpus_from_libs(
+    path: Path = typer.Argument(..., help="Pack file to write (gzip JSON)"),
+    libraries: list[Path] = typer.Argument(..., help="Static libraries (.lib / .a) to read"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Write the named functions of static libraries as a match corpus.
+
+    Each library's objects are listed in their own ISA (x86, x86-64, ARM, MIPS,
+    PowerPC and the rest rebrew decodes); a library mixing ISAs is refused.
+    """
+    try:
+        summary = corpus.pack_from_libraries(list(libraries), path)
+    except corpus.CorpusError as exc:
+        _fail(str(exc), json_output)
+    _print_corpus(summary, "Wrote", json_output)
+
+
+@app.command("corpus-import")
+def corpus_import(
+    path: Path = typer.Argument(..., help="Pack file written by corpus-export"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """Register a corpus pack's functions as match candidates (idempotent)."""
+    with contextlib.closing(store.connect(_db_path(json_output))) as conn:
+        try:
+            summary = corpus.import_pack(conn, path)
+        except corpus.CorpusError as exc:
+            _fail(str(exc), json_output)
+    _print_corpus(summary, "Imported", json_output)
+
+
+@app.command("corpus-info")
+def corpus_info(
+    path: Path = typer.Argument(..., help="Pack file to describe"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+) -> None:
+    """What a corpus pack holds, without importing it."""
+    try:
+        summary = corpus.pack_summary(path)
+    except corpus.CorpusError as exc:
+        _fail(str(exc), json_output)
+    _print_corpus(summary, f"Pack v{summary['version']} holds", json_output)
 
 
 def main() -> None:

@@ -235,19 +235,21 @@ def _resolve_context(
     *,
     project_dir: str | None,
     engine: RebrewEngine,
+    listing_format: str,
 ) -> tuple[str, str] | None:
     """Return ``(context, kind)`` for one function, or None when there is none.
 
     A stored decompilation is preferred and needs no engine.  Otherwise the
     function is disassembled through *engine* in the binary's rebrew project,
-    which requires a project context, a positive size and an available engine.
+    in *listing_format*, which requires a project context, a positive size and
+    an available engine.
     """
     stored = store.get_decompilation(conn, row["function_id"])
     if stored is not None and str(stored["code"]).strip():
         return str(stored["code"])[:MAX_CONTEXT_CHARS], llm.TRIAGE_CONTEXT_DECOMPILATION
     if project_dir is None or row["size"] <= 0 or not engine.available():
         return None
-    listing = engine.disassemble(project_dir, row["va"], row["size"])
+    listing = engine.disassemble(project_dir, row["va"], row["size"], listing_format)
     return listing[:MAX_CONTEXT_CHARS], llm.TRIAGE_CONTEXT_DISASSEMBLY
 
 
@@ -321,12 +323,15 @@ def summarize_functions(
             "the LLM path needs a disassembly and no analysis engine is available"
         )
     project_dir = store.get_rebrew_context(conn, binary_id)
+    listing_format = store.cached_disasm_format(conn, binary_id)
 
     entries: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     model = active.model if using_llm else ""
     for row in selected:
-        resolved = _resolve_context(conn, row, project_dir=project_dir, engine=source)
+        resolved = _resolve_context(
+            conn, row, project_dir=project_dir, engine=source, listing_format=listing_format
+        )
         if resolved is None:
             skipped.append(
                 {

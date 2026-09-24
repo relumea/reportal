@@ -40,7 +40,7 @@ function valueRow(card: ReturnType<typeof cardFor>, name: string) {
 }
 
 test("a member's bit width is set and cleared", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const card = cardFor(page, STRUCT_NAME);
   await expect(card).toBeVisible();
 
@@ -58,7 +58,7 @@ test("a member's bit width is set and cleared", async ({ page }) => {
 });
 
 test("a member moves earlier with the row arrow", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const card = cardFor(page, STRUCT_NAME);
 
   // flags sits second; moving it up puts it first and recomputes the offsets.
@@ -76,7 +76,7 @@ test("a member moves earlier with the row arrow", async ({ page }) => {
 });
 
 test("a member is inserted after another from the row action", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const card = cardFor(page, STRUCT_NAME);
 
   await card.getByLabel("Add member", { exact: true }).fill("afterMagic");
@@ -88,7 +88,7 @@ test("a member is inserted after another from the row action", async ({ page }) 
 });
 
 test("a member converts to a gap and back", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const card = cardFor(page, STRUCT_NAME);
 
   const row = memberRow(card, "magic");
@@ -103,7 +103,7 @@ test("a member converts to a gap and back", async ({ page }) => {
 });
 
 test("an enum value is added, revalued and removed", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
   const card = cardFor(page, ENUM_NAME);
   await expect(card).toBeVisible();
@@ -131,7 +131,7 @@ test("an enum value is added, revalued and removed", async ({ page }) => {
 });
 
 test("the kind, namespace and declared size save together and warn", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const card = cardFor(page, UNION_NAME);
   await expect(card).toBeVisible();
 

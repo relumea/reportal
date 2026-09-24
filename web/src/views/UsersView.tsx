@@ -28,6 +28,7 @@ import {
   Note,
   Panel,
   Toolbar,
+  countOf,
 } from "../components";
 import { ROLES } from "../constants";
 import { resetSessionCache } from "../panelCache";
@@ -191,7 +192,7 @@ function SignupPanel({ onSignedUp }: { onSignedUp: () => void }): ReactNode {
   return (
     <Panel
       title="Create a workspace"
-      subtitle="SaaS signup: one user, one organisation, one owned team on the free plan. The token is shown once."
+      subtitle="Sign up: one user, one organization and one owned team on the free plan. The token is shown once."
     >
       <Toolbar>
         <Field label="Name">
@@ -380,9 +381,9 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
         >
           Create team
         </Button>
-        <Field label="New organisation">
+        <Field label="New organization">
           <input
-            placeholder="organisation name"
+            placeholder="organization name"
             value={organisationName}
             onChange={(event) => setOrganisationName(event.target.value)}
           />
@@ -402,18 +403,18 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
             )
           }
         >
-          Create organisation
+          Create organization
         </Button>
       </Toolbar>
       <Muted>
-        An organisation groups teams and decides nothing about access: the team that owns an object
+        An organization groups teams and decides nothing about access: the team that owns an object
         is still what permits a read or a write.
       </Muted>
       {(organisations.data?.organisations ?? []).length ? (
         <DataTable
           columns={[
             { label: "ID", key: "id", numeric: true },
-            { label: "Organisation", key: "name" },
+            { label: "Organization", key: "name" },
             {
               label: "Teams",
               render: (row: OrganisationRow) =>
@@ -424,7 +425,7 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
               render: (row: OrganisationRow) => (
                 <ConfirmButton
                   label="Delete"
-                  message={`Delete organisation ${row.name}? Its teams stay.`}
+                  message={`Delete organization ${row.name}? Its teams stay.`}
                   pending={busy === `organisation-${row.id}`}
                   onConfirm={() =>
                     act(`organisation-${row.id}`, () =>
@@ -451,7 +452,7 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
             { label: "ID", key: "id", numeric: true },
             { label: "Name", key: "name" },
             { label: "Members", key: "member_count", numeric: true },
-            { label: "Organisation", render: (row: TeamRow) => row.organisation_name ?? "n/a" },
+            { label: "Organization", render: (row: TeamRow) => row.organisation_name ?? "n/a" },
             { label: "Description", key: "description" },
             {
               label: "Add member",
@@ -491,10 +492,10 @@ function TeamsPanel({ users, onChanged }: { users: UserRow[]; onChanged: () => v
               ),
             },
             {
-              label: "Organisation",
+              label: "Organization",
               render: (row: TeamRow) => (
                 <select
-                  aria-label={`move ${row.name} to an organisation`}
+                  aria-label={`move ${row.name} to an organization`}
                   value={row.organisation_id ?? ""}
                   onChange={(event) =>
                     act(`organisation-${row.id}`, () =>
@@ -834,7 +835,7 @@ function ActivityPanel(): ReactNode {
         />
       )}
       <Toolbar>
-        <Field label="Feedback about reportal">
+        <Field label="Feedback about relumea">
           <input
             placeholder="what would help"
             value={message}
@@ -1117,7 +1118,7 @@ export function UsersView(): ReactNode {
         subtitle={
           users.data === undefined
             ? "Creates a user and prints its token once."
-            : `${users.data.count} user(s).`
+            : `${countOf(users.data.count, "user")}.`
         }
       >
         {users.error ? <ErrorNote error={users.error} onRetry={users.reload} /> : null}

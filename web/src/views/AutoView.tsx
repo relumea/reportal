@@ -19,6 +19,7 @@ import {
   SegmentMeter,
   StatusCell,
   UNAVAILABLE,
+  countOf,
 } from "../components";
 import {
   AUTO_CONCURRENCY_MAX,
@@ -119,6 +120,13 @@ function CoverageLine({ run }: { run: AutoRun }): ReactNode {
       <Readout label="Skipped" value={run.skipped} />
       <Readout label="Tasks" value={run.tasks} />
       <Readout label="Attempts" value={run.attempts} />
+      {run.budget?.tokens === undefined ? null : (
+        <Readout
+          label={run.budget.exhausted ? "Tokens (budget spent)" : "Tokens"}
+          value={run.budget.tokens}
+          hue={run.budget.exhausted ? "fail" : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -131,6 +139,10 @@ interface AutoRunOptions {
   maxAttempts: number;
   maxTasks: number;
   goal: string;
+  /** Model budget; 0 is no limit on that axis. */
+  maxTokens: number;
+  maxUsd: number;
+  usdPerMtok: number;
 }
 
 function StartForm({
@@ -149,6 +161,9 @@ function StartForm({
   const [maxAttempts, setMaxAttempts] = useState(DEFAULT_AUTO_MAX_ATTEMPTS);
   const [maxTasks, setMaxTasks] = useState(DEFAULT_AUTO_MAX_TASKS);
   const [goal, setGoal] = useState("");
+  const [maxTokens, setMaxTokens] = useState(0);
+  const [maxUsd, setMaxUsd] = useState(0);
+  const [usdPerMtok, setUsdPerMtok] = useState(0);
   return (
     <form
       className="toolbar"
@@ -161,6 +176,9 @@ function StartForm({
           maxAttempts,
           maxTasks,
           goal: goal.trim(),
+          maxTokens,
+          maxUsd,
+          usdPerMtok,
         });
       }}
     >
@@ -233,6 +251,39 @@ function StartForm({
           onChange={(event) => setMaxTasks(Number(event.target.value))}
         />
       </Field>
+      <Field label="Max tokens" hint="model tokens before the run stops starting attempts; 0 is none">
+        <input
+          id="auto-max-tokens"
+          type="number"
+          min={0}
+          step={1000}
+          value={maxTokens}
+          disabled={disabled}
+          onChange={(event) => setMaxTokens(Number(event.target.value))}
+        />
+      </Field>
+      <Field label="Max spend (USD)" hint="needs a token price; 0 is none">
+        <input
+          id="auto-max-usd"
+          type="number"
+          min={0}
+          step={0.01}
+          value={maxUsd}
+          disabled={disabled}
+          onChange={(event) => setMaxUsd(Number(event.target.value))}
+        />
+      </Field>
+      <Field label="USD per million tokens" hint="the model's price, for the spend cap">
+        <input
+          id="auto-usd-per-mtok"
+          type="number"
+          min={0}
+          step={0.01}
+          value={usdPerMtok}
+          disabled={disabled}
+          onChange={(event) => setUsdPerMtok(Number(event.target.value))}
+        />
+      </Field>
       <CheckboxField
         label="Execute (write C files and compile)"
         checked={execute}
@@ -274,6 +325,9 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
           max_attempts: options.maxAttempts,
           max_tasks: options.maxTasks,
           goal: options.goal,
+          max_tokens: options.maxTokens,
+          max_usd: options.maxUsd,
+          usd_per_mtok: options.usdPerMtok,
         },
       });
       setNotice(`Started auto run #${started.run_id}.`);
@@ -292,7 +346,7 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
     try {
       const result = await api<AutoRevertResult>(`/auto/runs/${runId}/revert`, { method: "POST" });
       setNotice(
-        `Removed ${result.removed.length} file(s), restored ${result.restored.length} status(es).`,
+        `Removed ${countOf(result.removed.length, "file")}, restored ${countOf(result.restored.length, "status", "statuses")}.`,
       );
       reload();
     } catch (failure) {
@@ -309,10 +363,10 @@ function AutoRunPanel({ binaryId }: { binaryId: number }): ReactNode {
     try {
       const result = await api<AutoRecoverResult>(`/auto/runs/${runId}/recover`, { method: "POST" });
       setNotice(
-        `Closed run #${result.run_id} as ${result.status}: ${result.recovered_tasks} task(s)`
-          + ` interrupted, ${result.added_descriptors} descriptor(s) kept revertible`
+        `Closed run #${result.run_id} as ${result.status}: ${countOf(result.recovered_tasks, "task")}`
+          + ` interrupted, ${countOf(result.added_descriptors, "descriptor")} kept revertible`
           + (result.uncertain_intents.length
-            ? `, ${result.uncertain_intents.length} write(s) possibly applied`
+            ? `, ${countOf(result.uncertain_intents.length, "write")} possibly applied`
             : "")
           + ".",
       );

@@ -93,7 +93,9 @@ reportal/
 │   │                         #   rename/clear over functions
 │   ├── similarity.py         # resembl-backed scoring, cached per listing
 │   ├── matching.py           # corpus matching: MatchSettings scope, rank, floor,
-│   │                         #   confidence, store; symbol transfer (name/signature/both)
+│   │                         #   confidence, store; symbol transfer (name/signature/both);
+│   │                         #   the ad-hoc similar-functions query
+│   ├── match_index.py        # persisted LSH band index: exact candidates above 80
 │   ├── diffing.py            # pure line alignment: align, summary, strip_addresses
 │   ├── diffview.py           # resolve a match pair to two listings and align them
 │   ├── lineage.py            # pairwise function lineage between two binaries
@@ -111,12 +113,15 @@ reportal/
 │   │                         #   content-addressed store, the import and the export
 │   ├── pdb.py                # the PDB 7.0 reader: MSF container, DBI section map and
 │   │                         #   symbol record stream
+│   ├── symbol_library.py     # the workspace symbol library: the PE debug-record and
+│   │                         #   ELF build-id identities, the store, resolve and fetch
 │   ├── backup.py             # workspace backup and restore: one consistent
 │   │                         #   snapshot, manifest-checked restore, path rewrite
 │   ├── library.py            # library identification and the bill of materials
 │   │                         #   (CycloneDX, SPDX, CSV) it feeds
-│   ├── decompiler_scripts.py # stored renames as runnable tool scripts (Ghidra,
-│   │                         #   IDA, Binja): pure render, no engine and no state dir
+│   ├── decompiler_scripts.py # stored renames, comments, AI summaries and prototypes
+│   │                         #   as runnable tool scripts (Ghidra, IDA, Binja): pure
+│   │                         #   render, no engine and no state dir
 │   ├── attack_surface.py     # the attack surface as a stored-only composition:
 │   │                         #   network entries, local input handlers, crypto usage
 │   ├── exploitability.py     # finding reachability over the stored security scan:
@@ -178,6 +183,7 @@ reportal/
 │   ├── instance.py           # what this install can do: versions, features, limits, counts
 │   ├── pdf.py                # PDF report writer: layout here, serialized by reportlab
 │   │                         #   (PdfLayout, wrap_text, render_report, write_report)
+│   ├── repos.py              # workspace git checkouts: guarded clone, confined tree/read/write
 │   ├── _paths.py             # workspace resolution (reportal.toml walk-up)
 │   ├── mcp_tools.py          # MCP tool registry (Tool, register_tool/tools/unregister_tool/refresh_tools)
 │   ├── mcp_server.py         # stdio MCP server (newline-delimited JSON-RPC 2.0)
@@ -209,7 +215,8 @@ LLM bridge, `httpx2` for guarded URL ingestion and the LLM HTTP client, Typer an
 standard library's `sqlite3`, `tomllib` and `difflib`, and reportlab for the PDF
 export. In `web/`: React with react-router for the route table and
 `@tanstack/react-query` for every fetch (the views' queries and the detail
-panels' cache), Vite/TypeScript, oxlint and Playwright.
+panels' cache), highlight.js (core plus its `c` grammar only) for the
+decompiled C, Vite/TypeScript, oxlint and Playwright.
 
 Two things are hand-rolled on purpose, each measured against the library a
 reader would reach for first:
@@ -1187,6 +1194,36 @@ The run row and the messages a turn wrote are one journaled action
 messages).  A tool the run called carries its own journal action, which the run's
 action does not cover: reverting a conversation does not undo a tool's write.
 
+## Workspace git checkouts
+
+`repos.py` is how a decomp or reveng project that already lives in a git
+repository joins the workspace: the agent works inside a checkout under
+`repos/` rather than only on stored rows.  The five MCP tools are the whole
+surface (`list_repos`, `list_repo_files`, `read_repo_file`, `clone_repo`,
+`write_repo_file`); there is no HTTP route and no CLI command, because the
+caller this feature exists for is the agent loop above.
+
+The design reuses two seams instead of growing new ones.  The clone is a
+caller-chosen URL leaving the process, so it runs behind `remote_ingest`'s
+existing guard: `require_enabled` (the same `REPORTAL_ALLOW_REMOTE_INGEST` /
+`[knowledge] allow_remote` opt-in, one flag to learn) and `validate_target`
+before git starts.  Everything local (the checkout name, git's presence, the
+name still being free) is checked first, so a refused clone opens no socket.
+Confinement follows `_paths.under_workspace`'s rule: a checkout name must
+match `_NAME_RE`, and every path resolves against the checkout root through
+`resolve()` before a read or a write, which is what refuses `..`, absolute
+paths and links pointing out with one check rather than three.
+
+A checkout's files are untrusted content, and nothing here executes them: git
+runs only `clone` (shallow, `GIT_TERMINAL_PROMPT=0`, bounded by
+`CLONE_TIMEOUT_SECONDS`, partial directory removed on failure), files are read
+as bytes and written atomically as text.  `clone_repo` and `write_repo_file`
+carry `destructive_hint`, so in an agent run they pause for an analyst's
+confirmation like every other writer ([Agent runs](#agent-runs)).  Git history
+is the record of what changed, so reportal keeps no journal of checkout
+writes.  Deliberate non-goals: commit, push, branch and submodule handling,
+and cloning any scheme but http(s).
+
 ## Debug symbols
 
 `symbols.py` reads the one name source reportal cannot derive.  The engine's
@@ -1228,6 +1265,21 @@ action.  `render_symbols` renders a parse as JSON or as a C header through
 `data_types.render_header`, so the export and the editable model cannot
 disagree, and a function symbol is carried as a comment so a type maps back to
 the function it came from.
+
+`symbol_library.py` stores those files once for the whole workspace instead of
+one binary at a time and keys each entry by the identity its binary carries:
+`pe_debug_id` reads the CodeView GUID and age out of a PE image's debug
+directory (the same pair `pdb.read_identity` reads out of the PDB's info
+stream), and `symbols.build_id` reads an ELF's GNU build id, so a match is one
+indexed lookup on `pe:<guid>-<age>` or `elf:<hex>`.  `resolve` applies the
+entry through `import_symbols` as one journaled action; when no entry carries a
+PE identity it may fetch the PDB from the Microsoft public symbol server
+(`fetch_pdb`), which obeys the external-source gate (`REPORTAL_ALLOW_EXTERNAL`
+or `[external] allow_remote`): fixed host, the image's own validated file name,
+no followed redirect, a bounded body, and the served file's identity checked
+against the binary's before it is stored.  A binary upload and an
+`import-rebrew` run the local half through `auto_resolve`, which never fetches
+and never fails the write that triggered it.
 
 ## HTTP surface
 
@@ -1283,6 +1335,16 @@ upload removes the temporary file and returns the existing row with
 `"duplicate": true`. The size cap is `MAX_UPLOAD_BYTES` (413 `file-too-large`);
 a missing part is 400 `no-file` and an empty one 400 `empty-file`. The CLI
 (`add-binary`, `import-rebrew`) still registers binaries from local paths.
+Each binary an upload creates queues the `analyse` job (`analysis_job` on the
+response): `rebrew_import.analyse_binary` has the engine onboard the stored file
+into `projects/<sha256>` beside the database (function discovery, then the
+coverage db) and imports that project onto the same row, so disassembly,
+decompilation and the per-function panels have functions without an
+`import-rebrew`; the import stamps the target's ISA when the row has none, and
+the job then queues the local scans that fit the target
+(`jobs.analysis_follow_ups`), each an ordinary journaled job. A
+failed analysis is the job's error, which the binary header shows beside the
+control that queues it again (`job-submit analyse <id>` from the CLI).
 Repeated `file` parts, or a JSON `files` field beside one part, make the same
 route a batch: `files[i]` carries part *i*'s `name`, `tags`, `collection_ids`
 and explicit `format`/`arch`/`compiler` (validated against `UPLOAD_FORMATS`/
@@ -1598,7 +1660,9 @@ unknown binary), creates the run and its task tree, and returns 202
 the batches, so the request never blocks for minutes; a worker that fails
 mid-run leaves a `failed` run rather than a permanent `running` one. Its body
 fields are all optional: `worker`, `execute` (false), `concurrency`,
-`functions_per_task`, `max_attempts`, `max_tasks`. `GET
+`functions_per_task`, `max_attempts`, `max_tasks`, and the budget `max_tokens`,
+`max_usd` and `usd_per_mtok` (the run stops starting attempts once the model
+tokens it recorded reach either cap; its summary reports `budget`). `GET
 /api/binaries/<id>/auto` serves the binary's latest run with its task tree and
 coverage delta (404 `no-run` before the first run), `GET /api/auto/runs/<id>`
 one run (404 `run not found`), `POST /api/auto/runs/<id>/revert` removes
@@ -2018,7 +2082,7 @@ Vite + React + TypeScript in `web/`, built with bun into
   with a stacked quality bar over the five bands (a per-segment hue from
   design.ts, the unlit remainder and the fixed-position readout of the meter
   primitives), and carries the Match Settings sheet (a control per setting, a
-  removable chip per active setting, the run button) plus the Bulk Transfer
+  removable chip per active setting, the run button) plus the Bulk transfer
   dialog (per-row Names/Signature checkboxes with master toggles, a preview and
   a transfer);
   `src/panels/` the binary and function detail panels. The Components view
@@ -2320,8 +2384,33 @@ the floor `min_similarity` implies (`similarity.jaccard_floor`) cannot reach
 that threshold, because the text-ratio term is capped, so the blended score is
 never computed for it. Measured on a 384-function corpus (147,072 pairs) that
 is 8.2 s to 0.6 s, 12.5x, with byte-identical recorded rows; on a 5,000 by
-5,000 run it is ~22 min to ~2 min. LSH candidate shortlisting is the lever
-beyond it, for a threshold so low that the Jaccard floor proves nothing.
+5,000 run it is ~22 min to ~2 min.
+
+Above a `min_similarity` of 80 the candidates come from a persisted LSH index
+instead of the whole corpus (`match_index.py`, tables `lsh_fingerprints` and
+`lsh_buckets`). Each fingerprint's 128 MinHash values are cut into 64 bands of
+2, and a pair disagreeing at `m` positions spoils at most `m` bands. A pair
+the Jaccard floor admits above 80 agrees on at least 65 positions, so it keeps
+at least `required_bands` bands whole; a bucket join that asks for that many
+shared bands drops only pairs the prefilter would have skipped. The index is
+exact, not probabilistic, so the recorded rows are the pairwise path's, and
+`tests/test_match_index.py` proves it on a seeded corpus at every threshold it
+sweeps. At or below 80, the default included, the bound proves nothing and the
+run stays pairwise. Measured on the test's 240-function corpus at 85, the
+Jaccard comparisons fall from 57,360 to 864 (66x) with the same 314 rows, and
+on a 1,000-function corpus from 999,000 to 3,570 (280x) with the same 1,350
+rows. At those sizes a run's wall time is the per-source commit, not the
+comparisons, so the index pays off as the corpus grows.
+
+The same index answers the ad-hoc query, `matching.find_similar`: one listing
+(a stored function's, a pasted one, or code bytes disassembled in process by
+`RebrewEngine.disassemble_bytes`) ranked against every cached listing, through
+`POST /api/functions/similar`, `POST /api/functions/<id>/similar`, the
+`find_similar_functions` MCP tool, `reportal similar` and the function page's
+Similar functions panel. It records nothing. The index is a derived cache:
+`store` drops a function's row whenever its cached listing changes, a match run
+indexes the listings it reads, a query first indexes cached listings with no
+row, and `reportal match-index rebuild` starts over.
 
 ### Benchmarking a run
 
@@ -2501,6 +2590,19 @@ list is capped at `MAX_ROWS` (500) while every summary count stays exact. Both
 `POST` and the CLI/MCP run store the payload as the `composition` scan through
 the journal, and `GET /api/binaries/<id>/composition` serves it stored-only
 (404 `no-scan`).
+
+Each rollup row also carries `labels`: the matched binary's tags, the
+collections it is a member of (narrowed by `visible_to` through
+`auth.visible_clause`, so a collection the caller cannot see is not disclosed
+by a binary it can) and the registered families it is known by, either as a
+family's `reference_binary_id` or through its stored `detect` scan. The
+payload's `attribution` block rolls those labels up with the binaries and the
+matched functions each label covers, sorted by covered functions then
+`LABEL_KINDS` order then name. Both read stored rows only, through
+`store.tags_for_binaries`, `store.collections_for_binaries`,
+`store.latest_scans_for_binaries` and `store.list_families`, so a label is
+evidence about the matched binary and never a verdict about the one being
+composed.
 
 A run can be scoped: `binary_ids` and `collection_ids` go through
 `matching.resolve_scope`, the same validation the match settings sheet uses, so

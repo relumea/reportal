@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SeedCollection, SeedIds, SeedTeam, StaleRun } from "./seed";
+import type { SeedCollection, SeedIds, SeedTeam, SimilarPair, StaleRun } from "./seed";
 import { workspacePath } from "./workspace";
 
 export interface E2eState {
@@ -25,6 +25,8 @@ export interface E2eState {
   stale_run: StaleRun;
   /** The team the seeder created, for the upload scope control. */
   team: SeedTeam;
+  /** The function pair the Similar functions panel ranks. */
+  similar: SimilarPair;
 }
 
 const STATE_FILE = "state.json";

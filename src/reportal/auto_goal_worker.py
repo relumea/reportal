@@ -32,15 +32,13 @@ in ``written_files``, so the run's undo plan removes exactly those.
 
 from __future__ import annotations
 
-import contextlib
 import difflib
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
 from reportal import auto_llm_worker, engines, llm, store
+from reportal._paths import write_bytes_atomic
 from reportal.auto_workers import (
     REASON_ENGINE_UNAVAILABLE,
     REASON_LLM_UNAVAILABLE,
@@ -315,27 +313,6 @@ def _function_bytes(ctx: WorkerContext, binary: Path) -> bytes | None:
     return data if len(data) == size else None
 
 
-def _write_bytes(path: Path, data: bytes) -> None:
-    """Write *data* to *path* atomically, replacing any file already there."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, temp_name = tempfile.mkstemp(dir=path.parent, prefix=".reportal-", suffix=".tmp")
-    # fdopen takes ownership only on success; close the raw fd only when it never did.
-    owned = True
-    try:
-        with os.fdopen(handle, "wb") as stream:
-            owned = False
-            stream.write(data)
-        os.replace(temp_name, path)
-    except BaseException:
-        if owned:
-            with contextlib.suppress(OSError):
-                os.close(handle)
-        raise
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temp_name)
-
-
 def _binary_patch(
     ctx: WorkerContext,
     *,
@@ -368,7 +345,7 @@ def _binary_patch(
     spliced = splice_binary(data, original, patched)
     if spliced is None:
         return {"kind": GOAL_KIND_BINARY_PATCH, "reason": REASON_BINARY_AMBIGUOUS}, ""
-    _write_bytes(target, spliced)
+    write_bytes_atomic(target, spliced)
     return (
         {
             "kind": GOAL_KIND_BINARY_PATCH,
@@ -487,7 +464,7 @@ def _run_once(ctx: WorkerContext) -> WorkerResult:
         reason = REASON_FILE_EXISTS
         detail["path"] = str(source_path)
     else:
-        _write_bytes(source_path, source.encode("utf-8"))
+        write_bytes_atomic(source_path, source.encode("utf-8"))
         written.append(str(source_path))
         detail["path"] = str(source_path)
         try:

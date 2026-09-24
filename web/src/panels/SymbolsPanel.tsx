@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Button, EmptyState, ErrorNote, Loading, Muted, Panel, Toolbar } from "../components";
+import { Button, EmptyState, ErrorNote, Loading, Muted, Panel, Toolbar, countOf } from "../components";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import type { SymbolFile, SymbolFileList } from "../types";
 
@@ -53,8 +53,8 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
       body.append("apply", apply ? "true" : "false");
       const report = await api<SymbolFile>(apiPath, { method: "POST", body });
       setStatus(
-        `Ingested ${report.kind}: ${report.symbols} symbol(s), ${report.types} type(s), ` +
-          `${report.applied} name(s) applied.`,
+        `Ingested ${report.kind}: ${countOf(report.symbols, "symbol")}, ${countOf(report.types, "type")}, ` +
+          `${countOf(report.applied, "name")} applied.`,
       );
       setFile(null);
       refresh();
@@ -94,27 +94,6 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
           Ingest symbols
         </Button>
         <span className="muted" role="status">{status}</span>
-      </Toolbar>
-      <Toolbar>
-        <span className="muted">Stored renames as a script:</span>
-        <a
-          className="btn btn-ghost btn-sm"
-          href={`/api/binaries/${binaryId}/decompiler-script?format=ghidra`}
-        >
-          Ghidra
-        </a>{" "}
-        <a
-          className="btn btn-ghost btn-sm"
-          href={`/api/binaries/${binaryId}/decompiler-script?format=ida`}
-        >
-          IDA
-        </a>{" "}
-        <a
-          className="btn btn-ghost btn-sm"
-          href={`/api/binaries/${binaryId}/decompiler-script?format=binja`}
-        >
-          Binja
-        </a>
       </Toolbar>
       {actionError ? <ErrorNote error={actionError} /> : null}
       {!entry || entry.state === "loading" ? (

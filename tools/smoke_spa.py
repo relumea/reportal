@@ -4,7 +4,7 @@ Builds a scratch workspace under the repo's gitignored ``.scratch/`` (never
 ``/tmp``): one binary pointing at the sibling ``notepad-rebrew`` project, its
 rebrew context, one analysis (whose structured log every seeded scan appends
 to, so the Analyses route's log drawer has real entries), a handful of real
-functions read from ``src/NP/functions.txt``, a stored match pair with both
+functions read from the project's ``coverage.db``, a stored match pair with both
 stored decompilations,
 a stored struct-recovery scan, a stored PE metadata scan,
 a stored per-function triage, a stored threat
@@ -73,6 +73,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import rebrew.workspace
+
 # The repo root goes on the path before the local-package import, so this file
 # works both as a script (`python tools/smoke_spa.py`, where sys.path[0] is this
 # directory) and as an imported module (`from tools import smoke_spa`, where the
@@ -97,6 +99,7 @@ from reportal import (  # noqa: E402
     knowledge,
     lineage,
     llm,
+    rebrew_import,
     renames,
     signatures,
     store,
@@ -657,7 +660,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("One row per analysis",),
             ("View log",),
             ("notepad.exe",),
-            ("single-user loopback",),
+            ("records who changed what",),
             # The owner and scope columns and the workspace filter.
             ("Workspace",),
             ("Seen by",),
@@ -719,9 +722,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # Debug symbol ingestion: the file control and its apply toggle.
             ("Debug Symbols",),
             ("Ingest symbols",),
-            # The stored renames as runnable scripts, beside the C/JSON export.
-            ("Ghidra",),
-            ("Binja",),
+            # The header menu that downloads the stored renames as decompiler scripts.
+            ("Export renames",),
             # The memory panel's mode select, and the section table's
             # addresses, which link into the continuous dump.
             ("Whole binary",),
@@ -826,7 +828,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Function #",),
             ("Signature",),
             (SMOKE_SIGNATURE_PARAMETER,),
-            ("bits 32",),
+            # The disassembly listing's instruction rows.
+            ("listing-row",),
             # The signature panel's bulk copy control.
             ("Copy signature",),
             # The three reference tables replace the combined Xrefs panel.
@@ -880,7 +883,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Settings",),
             ("Match",),
             ("Bulk Transfer",),
-            ("Enter a function id to open its binary's match view.",),
+            ("Matches are recorded per binary.",),
         ),
     ),
     (
@@ -937,8 +940,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Bearer token",),
             ("Create user",),
             # The team structure: its roles and the level above teams (entry 2).
-            ("New organisation",),
-            ("An organisation groups teams and decides nothing about access",),
+            ("New organization",),
+            ("An organization groups teams and decides nothing about access",),
         ),
     ),
     (
@@ -1127,18 +1130,22 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-# The two shapes a rebrew project carries its function list in: the text list an
-# older project left (`<va> <name> <size>` per line) and the discovery inventory
-# `rebrew init` writes now (`src/<target>/function_structure.json`).  The
-# fixtures read whichever the project has, so a regenerated project does not
-# strand the browser targets on a file the engine no longer scaffolds.
+# Where the seeded functions come from: the project's coverage.db, read through
+# the same reader `reportal import-rebrew` stores names with, else one of the two
+# list shapes a project carries: the text list an older project left (`<va>
+# <name> <size>` per line) or the discovery inventory `rebrew init` writes
+# (`src/<target>/function_structure.json`).  The inventory's names can be the
+# first word of a prototype (`__declspec`), which is why the database wins.
 FUNCTION_TEXT_NAME = "functions.txt"
 FUNCTION_JSON_NAME = "function_structure.json"
 TARGET_SUBDIR = "NP"
 
 
 def function_seed_file(project_dir: Path) -> Path:
-    """The function list *project_dir* carries, in either shape."""
+    """The function source *project_dir* carries: its coverage.db, else a list."""
+    coverage = rebrew.workspace.db_path(project_dir)
+    if coverage.is_file():
+        return coverage
     target = project_dir / "src" / TARGET_SUBDIR
     for name in (FUNCTION_TEXT_NAME, FUNCTION_JSON_NAME):
         candidate = target / name
@@ -1148,14 +1155,20 @@ def function_seed_file(project_dir: Path) -> Path:
 
 
 def read_functions(path: Path, limit: int) -> list[tuple[int, str, int]]:
-    """Return up to *limit* ``(va, name, size)`` rows from a rebrew function list.
+    """Return up to *limit* ``(va, name, size)`` rows from a rebrew function source.
 
-    A `.json` list is the discovery inventory (`va`, `name`, `size` keys); any
-    other path is the text list (`0x<va> <name> <size>` per line).
+    A `.db` path is the coverage.db (the `TARGET_SUBDIR` target, VA order), a
+    `.json` list the discovery inventory (`va`, `name`, `size` keys), and any
+    other path the text list (`0x<va> <name> <size>` per line).  Every name goes
+    through `rebrew_import.function_name`, so a declaration word never lands as
+    a function's name.
     """
     functions: list[tuple[int, str, int]] = []
     seen: set[int] = set()
-    if path.suffix == ".json":
+    if path.suffix == ".db":
+        for row in rebrew_import.coverage_functions(path, TARGET_SUBDIR)[:limit]:
+            functions.append((int(row["va"]), str(row["name"]), int(row["size"])))
+    elif path.suffix == ".json":
         rows = json.loads(path.read_text(encoding="utf-8"))
         for row in rows if isinstance(rows, list) else []:
             if not isinstance(row, dict):
@@ -1164,7 +1177,8 @@ def read_functions(path: Path, limit: int) -> list[tuple[int, str, int]]:
             if va in seen:
                 continue
             seen.add(va)
-            functions.append((va, str(row.get("name") or ""), int(row.get("size") or 0)))
+            name = rebrew_import.function_name(str(row.get("name") or ""), va=va)
+            functions.append((va, name, int(row.get("size") or 0)))
             if len(functions) >= limit:
                 break
     else:
@@ -1176,7 +1190,7 @@ def read_functions(path: Path, limit: int) -> list[tuple[int, str, int]]:
             if va in seen:
                 continue
             seen.add(va)
-            functions.append((va, parts[1], int(parts[2])))
+            functions.append((va, rebrew_import.function_name(parts[1], va=va), int(parts[2])))
             if len(functions) >= limit:
                 break
     if not functions:

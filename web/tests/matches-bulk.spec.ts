@@ -1,4 +1,4 @@
-// The Bulk Transfer dialog against the seeded workspace: one row's name is
+// The Bulk transfer dialog against the seeded workspace: one row's name is
 // transferred, the preview writes nothing, and the transfer renames the source
 // function to the chosen candidate's name.
 
@@ -26,13 +26,13 @@ async function pickChangingRow(dialog: Locator): Promise<{ row: Locator; candida
 test("a bulk name transfer previews without writing and then renames", async ({ page }) => {
   await page.goto("/#/matches");
   await page.getByPlaceholder("function id").fill(String(state.ids.function_id));
-  await page.getByRole("button", { name: "Selected Function", exact: true }).click();
+  await page.getByRole("button", { name: "Selected function", exact: true }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
 
-  await page.getByRole("button", { name: "Bulk Transfer" }).click();
+  await page.getByRole("button", { name: "Bulk transfer" }).click();
   // The dialog is nested inside the match view's own panel, so the innermost
   // panel carrying that heading is the dialog itself.
-  const dialog = panelByTitle(page, "Bulk Transfer").last();
+  const dialog = panelByTitle(page, "Bulk transfer").last();
   const { row, candidate } = await pickChangingRow(dialog);
   const sourceName = (await row.locator(".mono").innerText()).split("<-")[0]?.trim() ?? "";
   expect(sourceName).not.toEqual(candidate);

@@ -193,15 +193,11 @@ test("r clicks Rename on the focused function row", async ({ page }) => {
   await page.goto("/#/functions");
   await expect(page.locator("table.data-table tbody tr").first()).toBeVisible();
   await page.keyboard.press("j");
-  const prompted = new Promise<string>((resolve) => {
-    page.once("dialog", (dialog) => {
-      const message = dialog.message();
-      void dialog.dismiss();
-      resolve(message);
-    });
-  });
   await page.keyboard.press("r");
-  expect(await prompted).toMatch(/name/i);
+  const editor = page.getByRole("textbox", { name: /^New name for function #/ });
+  await expect(editor).toBeFocused();
+  await editor.press("Escape");
+  await expect(editor).toHaveCount(0);
 });
 
 test("the g prefix jumps to a view", async ({ page }) => {
@@ -238,7 +234,7 @@ test("Shift+G focuses the memory address box", async ({ page }) => {
   await page.goto(`/#/binaries/${binaryId}`);
   await expect(page.getByRole("heading", { name: "Binary Details", exact: true })).toBeVisible();
   await page.keyboard.press("Shift+G");
-  await expect(page.getByPlaceholder("0x401000")).toBeFocused();
+  await expect(page.getByLabel("Address", { exact: true })).toBeFocused();
 });
 
 test("f jumps from a binary page to its functions", async ({ page }) => {
@@ -260,12 +256,12 @@ test("Space on a diff toggles Disassembly and AI decompilation", async ({ page }
   );
   await expect(page.getByText(/Suggested names \(\d+\)/)).toBeVisible();
   const kind = page.getByLabel("Kind");
-  await expect(kind).toHaveValue("decomp");
-  await expect(kind.locator("option[value='decomp']")).toHaveText("AI Decompilation");
+  await expect(kind).toHaveValue("disasm");
+  await expect(kind.locator("option[value='decomp']")).toHaveText("Decompilation");
   await expect(kind.locator("option[value='disasm']")).toHaveText("Disassembly");
   await page.locator("#content").click();
   await page.keyboard.press("Space");
-  await expect(kind).toHaveValue("disasm");
-  await page.keyboard.press("Space");
   await expect(kind).toHaveValue("decomp");
+  await page.keyboard.press("Space");
+  await expect(kind).toHaveValue("disasm");
 });

@@ -37,6 +37,8 @@ module, when a module is owned twice, or when a module is owned by no page.
 | [format-analysis.md](format-analysis.md) | file-type detection, firmware carving, unpacking, Go build info and archive extraction | `filetypes.py`, `firmware.py`, `unpack.py`, `gobuildinfo.py`, `archive.py`, `zipcrypto.py` |
 | [static-scans.md](static-scans.md) | deterministic scans and their derived reports: behavior, capabilities, hardening, protocols, secrets, threat, attack surface, exploitability, remediation and external sources | `behavior.py`, `capabilities.py`, `hardening.py`, `protocols.py`, `secrets.py`, `threat.py`, `attack_surface.py`, `exploitability.py`, `remediation.py`, `external.py` |
 | [knowledge.md](knowledge.md) | document ingestion, guarded remote ingest, the derived graph and its pluggable backends | `knowledge.py`, `remote_ingest.py`, `graph.py`, `graph_backends.py` |
+| [corpus.md](corpus.md) | portable match corpora: named functions and listings exported from one workspace and imported into another as match candidates | `corpus.py` |
+| [repos.md](repos.md) | the workspace git checkouts: the guarded clone, the confined reads and writes, and the MCP tools exposing them | `repos.py` |
 | [tenancy-billing.md](tenancy-billing.md) | plans, credits, the usage ledger and Stripe billing | `plans.py`, `credits.py`, `metering.py`, `billing.py` |
 | [analytics.md](analytics.md) | the time-series analytics, activity and notification feeds | `analytics.py`, `activity.py`, `notifications.py` |
 | [operations.md](operations.md) | backup and restore, pre-flight readiness and the PDF report | `backup.py`, `doctor.py`, `pdf.py` |

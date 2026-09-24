@@ -67,8 +67,11 @@ function resultCode(response: Response): Promise<string | undefined> {
   );
 }
 
-export const test = base.extend<{ page: Page }>({
-  page: async ({ page }, use) => {
+export const test = base.extend<{ page: Page; expectedMissing: string[] }>({
+  // 404 codes a spec provokes on purpose (a detail route for a row that does
+  // not exist); a spec opts in with `test.use({ expectedMissing: [...] })`.
+  expectedMissing: [[], { option: true }],
+  page: async ({ page, expectedMissing }, use) => {
     const issues: PageIssues = {
       consoleErrors: [],
       pageErrors: [],
@@ -104,7 +107,11 @@ export const test = base.extend<{ page: Page }>({
     const emptyResultUrls = new Set<string>();
     for (const entry of responses) {
       const code = await entry.code;
-      if (entry.status === EMPTY_RESULT_STATUS && code !== undefined && EMPTY_RESULT_CODES.has(code)) {
+      if (
+        entry.status === EMPTY_RESULT_STATUS &&
+        code !== undefined &&
+        (EMPTY_RESULT_CODES.has(code) || expectedMissing.includes(code))
+      ) {
         emptyResultUrls.add(entry.url);
         continue;
       }

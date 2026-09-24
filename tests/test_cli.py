@@ -24,7 +24,18 @@ from conftest import (
 )
 from typer.testing import CliRunner
 
-from reportal import __version__, _paths, auth, cli, engines, jobs, llm, similarity, store
+from reportal import (
+    __version__,
+    _paths,
+    auth,
+    cli,
+    engines,
+    jobs,
+    llm,
+    rebrew_import,
+    similarity,
+    store,
+)
 from reportal._paths import DB_ENV
 
 runner = CliRunner()
@@ -270,6 +281,33 @@ class TestImportRebrew:
             expected = hashlib.sha256((project / "demo.exe").read_bytes()).hexdigest()
             assert conn.execute("SELECT sha256 FROM binaries").fetchone()[0] == expected
 
+    def test_build_db_builds_first_and_a_refusal_stops_the_import(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(DB_ENV, raising=False)
+        (tmp_path / "reportal.toml").write_text("[portal]\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        project = _make_rebrew_project(tmp_path)
+        built: list[Path] = []
+
+        class BuildingEngine(engines.RebrewEngine):
+            def build_coverage_db(self, project_dir: str | Path) -> None:
+                built.append(Path(project_dir))
+
+        engines.set_engine(BuildingEngine(enabled=True))
+        result = runner.invoke(cli.app, ["import-rebrew", str(project), "--build-db", "--json"])
+        assert result.exit_code == 0, result.output
+        assert built == [project]
+
+        class RefusingEngine(engines.RebrewEngine):
+            def build_coverage_db(self, project_dir: str | Path) -> None:
+                raise engines.EngineError("rebrew build-db failed: no sources")
+
+        engines.set_engine(RefusingEngine(enabled=True))
+        result = runner.invoke(cli.app, ["import-rebrew", str(project), "--build-db", "--json"])
+        assert result.exit_code == 1
+        assert "no sources" in result.stdout
+
     def test_import_twice_does_not_duplicate(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -397,8 +435,8 @@ class TestImportRebrew:
         stub = by_va[0x010030C6]
         assert stub["name"] == "ChooseFontW"
         assert stub["name_source"] == "import"
-        assert stub["status"] == cli.THUNK_STATUS
-        assert stub["size"] == cli.THUNK_SIZE == 6
+        assert stub["status"] == rebrew_import.THUNK_STATUS
+        assert stub["size"] == rebrew_import.THUNK_SIZE == 6
         assert stub["source_path"] == str(project.resolve())
 
     def test_import_stub_rows_are_not_matches(

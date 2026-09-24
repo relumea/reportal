@@ -86,6 +86,7 @@ _READ_ONLY_TOOLS = frozenset(
         "list_docs",
         "get_doc",
         "get_symbols",
+        "list_symbol_library",
         "list_conversation_runs",
         "get_conversation_run",
         "get_indirect_call_sites",
@@ -113,6 +114,9 @@ _READ_ONLY_TOOLS = frozenset(
         "list_collections",
         "get_collection",
         "list_binaries",
+        "list_repos",
+        "list_repo_files",
+        "read_repo_file",
         "get_binary",
         "list_functions",
         "get_function",
@@ -150,6 +154,7 @@ _READ_ONLY_TOOLS = frozenset(
         "get_hardening_scan",
         "get_unstrip",
         "get_matches",
+        "find_similar_functions",
         "get_lineage",
         "get_related_binaries",
         "get_composition",
@@ -212,6 +217,8 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "delete_tag",
         "import_symbols",
         "export_symbols",
+        "add_symbol_library",
+        "resolve_symbols",
         "run_conversation_agent",
         "confirm_conversation_run",
         "cancel_conversation_run",
@@ -350,6 +357,8 @@ _DESTRUCTIVE_TOOLS = frozenset(
         "register_binary",
         "clear_ai_artifact",
         "revert_journal_entry",
+        "clone_repo",
+        "write_repo_file",
     }
 )
 
@@ -491,9 +500,9 @@ class TestRegistry:
     def test_builtin_tools_cover_every_capability(self) -> None:
         names = {tool.name for tool in mcp_tools.tools()}
         assert names == _EXPECTED_TOOLS
-        assert len(names) == 275
-        assert len(_READ_ONLY_TOOLS) == 129
-        assert len(_DESTRUCTIVE_TOOLS) == 146
+        assert len(names) == 284
+        assert len(_READ_ONLY_TOOLS) == 134
+        assert len(_DESTRUCTIVE_TOOLS) == 150
 
     def test_every_tool_is_well_formed(self) -> None:
         for tool in mcp_tools.tools():
@@ -1043,7 +1052,7 @@ class TestReadTools:
         store.set_decompilation(conn, ids["second"], "void b(void)\n{\n  int x;\n}\n", "kuna")
         payload, is_error = _call(
             "diff_functions",
-            {"function_id": ids["first"], "candidate_function_id": ids["second"]},
+            {"function_id": ids["first"], "candidate_function_id": ids["second"], "kind": "decomp"},
         )
         assert is_error is False
         assert payload["kind"] == "decomp"

@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from conftest import REPORT, FakeEngine
 
-from reportal import gobuildinfo, mcp_tools, pdf, store
+from reportal import gobuildinfo, llm, mcp_tools, pdf, store
 from reportal._paths import DB_ENV
 
 PDFINFO = shutil.which("pdfinfo")
@@ -829,3 +829,130 @@ class TestPdfUnknownBinary:
         pdf._exploitability_section(layout, conn, 424242)
         pdf._renames_section(layout, conn, 424242)
         assert isinstance(layout.build(), bytes)
+
+
+STORED_SECTIONS = ("Family detection", "Related binaries", "Composition", "AI summaries")
+
+
+def _seed_stored_analysis(conn: sqlite3.Connection, analysis_id: int, binary_id: int) -> None:
+    """Store a detect, related and composition scan and one AI summary."""
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_DETECT,
+        {
+            "binary_id": binary_id,
+            "families_checked": 3,
+            "matches": [
+                {
+                    "family_id": 1,
+                    "name": "Emotet",
+                    "aliases": [],
+                    "confidence": "high",
+                    "signals": [{"kind": "imphash"}, {"kind": "strings"}],
+                    "similarity": 0.91,
+                }
+            ],
+            "count": 1,
+            "notes": [],
+        },
+    )
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_RELATED,
+        {
+            "binary_id": binary_id,
+            "candidates_considered": 4,
+            "related": [
+                {
+                    "binary_id": 9,
+                    "name": "sibling-dropper.exe",
+                    "classification": "variant",
+                    "confidence": "medium",
+                    "signals": [],
+                    "similarity": 0.72,
+                }
+            ],
+            "count": 1,
+            "notes": [],
+        },
+    )
+    store.set_scan(
+        conn,
+        analysis_id,
+        store.SCAN_KIND_COMPOSITION,
+        {
+            "binary_id": binary_id,
+            "total_functions": 10,
+            "matched_functions": 4,
+            "matched_percent": 40.0,
+            "categories": [
+                {"category": "library", "label": "Library", "count": 3, "percent": 30.0},
+                {"category": "unique", "label": "Unique", "count": 7, "percent": 70.0},
+            ],
+            "composition": [
+                {"binary_id": 9, "name": "zlib-reference.dll", "count": 4, "percent": 40.0}
+            ],
+        },
+    )
+    function_id = store.add_function(
+        conn, analysis_id=analysis_id, va=0x401000, name="decode_config", size=64
+    )
+    store.set_ai_artifact(
+        conn, function_id, llm.AI_KIND_SUMMARY, {"summary": "XOR-decodes the C2 list."}, "m"
+    )
+
+
+class TestStoredAnalysisSections:
+    def test_sections_render_when_stored(self, conn: sqlite3.Connection, tmp_path: Path) -> None:
+        binary_id, analysis_id = _binary(conn)
+        _seed_stored_analysis(conn, analysis_id, binary_id)
+        report = pdf.write_report(
+            conn, binary_id=binary_id, path=tmp_path / "r.pdf", generated=GENERATED
+        )
+        for heading in STORED_SECTIONS:
+            assert heading in report["sections"]
+        text = _render((tmp_path / "r.pdf").read_bytes(), tmp_path)
+        if text is None:
+            pytest.skip("pdftotext not installed")
+        for value in (
+            "Emotet",
+            "sibling-dropper.exe",
+            "variant",
+            "zlib-reference.dll",
+            "Library",
+            "decode_config",
+            "0x401000",
+            "XOR-decodes the C2 list.",
+        ):
+            assert value in text
+
+    def test_sections_are_omitted_when_absent(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        binary_id, analysis_id = _binary(conn)
+        store.add_function(conn, analysis_id=analysis_id, va=0x401000, name="main", size=8)
+        report = pdf.write_report(
+            conn, binary_id=binary_id, path=tmp_path / "r.pdf", generated=GENERATED
+        )
+        for heading in STORED_SECTIONS:
+            assert heading not in report["sections"]
+
+    def test_a_blank_summary_is_not_a_section(self, conn: sqlite3.Connection) -> None:
+        binary_id, analysis_id = _binary(conn)
+        function_id = store.add_function(conn, analysis_id=analysis_id, va=0x10, name="f")
+        store.set_ai_artifact(conn, function_id, llm.AI_KIND_SUMMARY, {"summary": "  "}, "m")
+        layout = pdf.PdfLayout(header="report")
+        pdf._ai_summary_section(layout, conn, binary_id)
+        assert "AI summaries" not in layout.sections
+
+    def test_summaries_of_another_binary_are_not_shown(self, conn: sqlite3.Connection) -> None:
+        binary_id, _ = _binary(conn)
+        other_id = store.add_binary(conn, sha256="cd" * 32, name="other.exe")
+        other_analysis = store.create_analysis(conn, binary_id=other_id, engine="manual")
+        function_id = store.add_function(conn, analysis_id=other_analysis, va=0x10, name="g")
+        store.set_ai_artifact(conn, function_id, llm.AI_KIND_SUMMARY, {"summary": "other"}, "m")
+        layout = pdf.PdfLayout(header="report")
+        pdf._ai_summary_section(layout, conn, binary_id)
+        assert "AI summaries" not in layout.sections

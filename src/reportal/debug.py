@@ -925,6 +925,7 @@ def _probe_dap(
         init = reader.read_response(seq)
         seq += 1
         transcript.append({"request": "initialize", "success": bool(init.get("success", True))})
+        # cordis-boundary: emission; terminateDebuggee and the finally kill compensate.
         process.stdin.write(
             _dap_request(seq, "launch", {"program": str(sample), "stopOnEntry": True})
         )
@@ -1333,6 +1334,7 @@ def _probe_mi(
 
         ok, _ = run("-break-insert main", "break")
         transcript.append({"request": "break-insert", "success": ok})
+        # cordis-boundary: emission; -exec-interrupt and -gdb-exit are the compensation.
         if stub is None:
             _mi_send(process.stdin, "-exec-run")
             stopped_text = _mi_wait_for_stop(

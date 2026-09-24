@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import { Link } from "react-router";
 
-import { BINARY_OPTIONS_PATH, api } from "../api";
+import { ApiError, BINARY_OPTIONS_PATH, abortDeadline, api } from "../api";
 import "./covmap.css";
 import "./verdict.css";
 import {
@@ -14,6 +14,7 @@ import {
   CodeBlock,
   ConfidenceBadge,
   ConfirmButton,
+  CopyButton,
   CopyValue,
   DataTable,
   EmptyState,
@@ -31,15 +32,29 @@ import {
   Readout,
   SegmentMeter,
   SeverityBadge,
+  Stamp,
   StatusCell,
   Toolbar,
   cellText,
   hex,
+  useViewTitle,
+  countOf,
 } from "../components";
+import { NameEditor } from "../detailParts";
 import { ENTROPY_MAX, PACKED_ENTROPY_THRESHOLD, qualityHue, statusEntity } from "../design";
 import type { HueFamily } from "../design";
+import { Icon } from "../icons";
 import { focusPanel } from "../keys";
-import { panelKey, refreshPanel, useLazyPanel, usePanel } from "../panelCache";
+import {
+  panelKey,
+  refreshBinaryPanels,
+  refreshPanel,
+  revalidatePanel,
+  useLazyPanel,
+  usePanel,
+} from "../panelCache";
+import type { PanelEntry } from "../panelCache";
+import { useBinaryScans } from "./ScansPanel";
 import { useAsync } from "../useAsync";
 import {
   BEHAVIOR_CONFIDENCES,
@@ -79,6 +94,7 @@ import {
 import type {
   AdditionalDetails,
   AnalysisList,
+  JobsPayload,
   ArtifactRatings,
   BehaviorScan,
   Binary,
@@ -110,6 +126,7 @@ import type {
   JobView,
   PdfReportResult,
   PdfStatus,
+  SymbolFileList,
   PeExport,
   PeInfo,
   PeSection,
@@ -280,6 +297,9 @@ const REPORT_SUMMARY_FIELDS = [
 
 // Friendly text per scan kind when a stored scan GET answers 404 `no-scan`:
 // nothing is stored yet, and the engine runs only from the run control.
+// The refusal a stored-only scan GET answers before the first run.
+const NO_SCAN = "no-scan";
+
 const NO_SCAN_MESSAGES = {
   triage: "No triage stored yet. Run the engine to produce one.",
   functionTriage:
@@ -287,7 +307,7 @@ const NO_SCAN_MESSAGES = {
   report: "No report stored yet. Run the engine to generate one.",
   crypto: "No crypto scan yet. Run the scan to detect crypto constants and APIs.",
   peInfo:
-    "No PE details stored yet. Run the scan to inspect the identity, sections and security flags.",
+    "No header scan stored yet. Scan headers to read the identity, sections and security flags.",
   filetype:
     "No file-type detection yet. Run the detector to match packer, protector and runtime signatures.",
   security: "No security scan yet. Run the scan to look for unsafe API use in the reversed sources.",
@@ -308,20 +328,275 @@ const NO_SCAN_MESSAGES = {
   debug: "No debug session yet. Probe the sample to record the entry stop, registers and memory.",
 } as const;
 
+/**
+ * A stored-only scan panel: once the binary's scan list is in and shows no
+ * *kind* scan, the panel answers the server's own `no-scan` refusal without
+ * asking, so an unscanned binary costs no request per panel.  A run's
+ * `refreshPanel` still lands, and an unreadable list falls back to the GET.
+ */
+function useScanPanel<T>(
+  binaryId: number,
+  kind: string,
+  key: string,
+  load: () => Promise<T>,
+): PanelEntry<T> | undefined {
+  const scans = useBinaryScans(binaryId);
+  const missing =
+    scans?.state === "ready" && !scans.data.scans.some((scan) => scan.kind === kind);
+  const entry = usePanel(key, load, scans !== undefined && scans.state !== "loading" && !missing);
+  if (entry !== undefined || !missing) return entry;
+  return { state: "error", error: new ApiError(NO_SCAN, `no ${kind} scan stored`) };
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
 }
 
+// How often the header re-reads an analysis job that is still queued or running.
+const ANALYSIS_POLL_MS = 2000;
+
+/**
+ * Where function discovery stands for a binary with no analysis context: the
+ * newest `analyse` job (queued on upload), polled while it is live, its reason
+ * when it failed, and the control that queues it again or for the first time.
+ * A finished job reloads the binary, whose context then replaces this line.
+ */
+function AnalysisStatus({ binaryId }: { binaryId: number }): ReactNode {
+  const jobsKey = panelKey("binary", binaryId, "analyse-job");
+  const loadJobs = (): Promise<JobsPayload> =>
+    api<JobsPayload>(`/jobs?binary_id=${binaryId}&kind=analyse&limit=1`);
+  const entry = usePanel(jobsKey, loadJobs);
+  const job = entry?.state === "ready" ? entry.data.jobs.at(0) : undefined;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const live = job?.live === true;
+  const done = job?.status === "done";
+
+  useEffect(() => {
+    if (!live) return undefined;
+    const handle = window.setInterval(() => revalidatePanel(jobsKey), ANALYSIS_POLL_MS);
+    return () => window.clearInterval(handle);
+  }, [live, jobsKey]);
+
+  useEffect(() => {
+    if (!done) return;
+    refreshPanel(panelKey("binary", binaryId), () => api<Binary>(`/binaries/${binaryId}`));
+  }, [done, binaryId]);
+
+  const analyse = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api("/jobs", { method: "POST", json: { kind: "analyse", binary_id: binaryId } });
+      refreshPanel(jobsKey, loadJobs);
+    } catch (failure) {
+      setError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const control = (
+    <Button tone="primary" size="sm" pending={busy} onClick={() => void analyse()}>
+      {job ? "Analyze again" : "Analyze"}
+    </Button>
+  );
+  if (live && job) {
+    return (
+      <Muted live>
+        Discovering functions: job #{job.id} is {job.status}.
+      </Muted>
+    );
+  }
+  return (
+    <div className="analysis-status">
+      {job?.status === "failed" ? (
+        <Note tone="error">
+          Analysis failed: {job.error.replace(/^\w+Error: /u, "") || "no reason recorded"}
+        </Note>
+      ) : (
+        <Muted>
+          Not analyzed yet: functions, disassembly and decompilation appear once analysis runs.
+        </Muted>
+      )}
+      {control}
+      {error ? <ErrorNote error={error} /> : null}
+    </div>
+  );
+}
+
+// Jobs the header reads to tell whether scans are still running on a binary.
+const LIVE_JOBS_LIMIT = 100;
+
+/**
+ * The binary's queued and running jobs (the scans an analysis queues, or any
+ * the analyst started), polled while there are any.  When the last one ends,
+ * every panel of the binary re-reads, so a scan that finished in the background
+ * shows without a reload.
+ */
+function LiveJobs({ binaryId }: { binaryId: number }): ReactNode {
+  const key = panelKey("binary", binaryId, "live-jobs");
+  const load = (): Promise<JobsPayload> =>
+    api<JobsPayload>(`/jobs?binary_id=${binaryId}&limit=${LIVE_JOBS_LIMIT}`);
+  const entry = usePanel(key, load);
+  const live = entry?.state === "ready" ? entry.data.jobs.filter((job) => job.live) : [];
+  const count = live.length;
+  const [seen, setSeen] = useState(count);
+
+  useEffect(() => {
+    if (count === 0) return undefined;
+    const handle = window.setInterval(() => revalidatePanel(key), ANALYSIS_POLL_MS);
+    return () => window.clearInterval(handle);
+  }, [count, key]);
+
+  if (seen !== count) {
+    setSeen(count);
+    if (count === 0 && seen > 0) refreshBinaryPanels(binaryId);
+  }
+  if (count === 0) return null;
+  const running = live.filter((job) => job.status === "running").map((job) => job.label);
+  return (
+    <p className="live-jobs" role="status">
+      <span className="live-jobs-dot" aria-hidden="true" />
+      {count} {count === 1 ? "job" : "jobs"} running or queued
+      {running.length > 0 ? `: ${running.join(", ")}` : ""}.{" "}
+      <a href={`#/jobs?binary_id=${binaryId}`}>Jobs</a>
+    </p>
+  );
+}
+
+/** The panel key both the header and the Report panel read the PDF status under. */
+function pdfStatusKey(binaryId: number): string {
+  return panelKey("binary", binaryId, "report-pdf");
+}
+
+function loadPdfStatus(binaryId: number): Promise<PdfStatus> {
+  return api<PdfStatus>(`/binaries/${binaryId}/report/pdf/status`);
+}
+
+/**
+ * The header's PDF control: a link once a report is stored, otherwise a
+ * Generate PDF action that renders it in place, so the header never links to
+ * the `no-pdf` refusal.
+ */
+function PdfAction({
+  binaryId,
+  onError,
+}: {
+  binaryId: number;
+  onError: (failure: unknown) => void;
+}): ReactNode {
+  const key = pdfStatusKey(binaryId);
+  const status = usePanel(key, () => loadPdfStatus(binaryId));
+  const [busy, setBusy] = useState(false);
+  if (status?.state === "ready" && status.data.exists) {
+    return (
+      <a className="btn btn-ghost" href={status.data.download_url}>
+        PDF
+      </a>
+    );
+  }
+  const generate = async (): Promise<void> => {
+    onError(null);
+    setBusy(true);
+    try {
+      await api<PdfReportResult>(`/binaries/${binaryId}/report/pdf`, { method: "POST" });
+      refreshPanel(key, () => loadPdfStatus(binaryId));
+    } catch (failure) {
+      onError(failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button
+      tone="ghost"
+      pending={busy || status === undefined || status.state === "loading"}
+      title="No PDF report is stored for this binary yet"
+      onClick={() => void generate()}
+    >
+      Generate PDF
+    </Button>
+  );
+}
+
+/** The header's symbol export: live once a symbol file is ingested, else disabled with why. */
+function SymbolsAction({ binaryId }: { binaryId: number }): ReactNode {
+  const files = usePanel(panelKey("binary", binaryId, "symbols"), () =>
+    api<SymbolFileList>(`/binaries/${binaryId}/symbols`),
+  );
+  if (files?.state === "ready") {
+    return (
+      <a className="btn btn-ghost" href={`/api/binaries/${binaryId}/symbols/export`}>
+        Symbols
+      </a>
+    );
+  }
+  return (
+    <Button
+      tone="ghost"
+      disabled
+      title={
+        files?.state === "error"
+          ? "No debug symbol file is ingested for this binary. Add one in Format, Debug Symbols."
+          : "Checking for an ingested symbol file"
+      }
+    >
+      Symbols
+    </Button>
+  );
+}
+
+// The decompiler rename scripts `GET /api/binaries/<id>/decompiler-script` renders.
+const RENAME_SCRIPTS = [
+  { format: "ghidra", label: "Ghidra script" },
+  { format: "ida", label: "IDA script" },
+  { format: "binja", label: "Binary Ninja JSON" },
+] as const;
+
+/** The stored renames as a script for another decompiler, one download per tool. */
+function ExportRenamesMenu({ binaryId }: { binaryId: number }): ReactNode {
+  const menu = useRef<HTMLDetailsElement>(null);
+  const close = (): void => {
+    if (menu.current) menu.current.open = false;
+  };
+  return (
+    <details
+      className="menu"
+      ref={menu}
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || !menu.current?.open) return;
+        event.preventDefault();
+        close();
+        menu.current.querySelector("summary")?.focus();
+      }}
+    >
+      <summary className="btn btn-ghost">Export renames</summary>
+      <ul className="menu-list">
+        {RENAME_SCRIPTS.map((script) => (
+          <li key={script.format}>
+            <a
+              href={`/api/binaries/${binaryId}/decompiler-script?format=${script.format}`}
+              download
+              onClick={close}
+            >
+              {script.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 /** Detail header of one binary: identity, key facts and the way back. */
 export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
-  const [name, setName] = useState(binary.name);
   const [notes, setNotes] = useState(binary.notes ?? "");
   const [formatOverride, setFormatOverride] = useState(binary.format_override ?? "");
   const [archOverride, setArchOverride] = useState(binary.arch_override ?? "");
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [actionError, setActionError] = useState<unknown>(null);
-  const skipBlur = useRef(false);
   const key = panelKey("binary", binary.id);
   const teams = useAsync(() => api<TeamsPayload>("/teams"), []);
 
@@ -345,13 +620,15 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
   };
 
   useEffect(() => {
-    setName(binary.name);
     setNotes(binary.notes ?? "");
     setFormatOverride(binary.format_override ?? "");
     setArchOverride(binary.arch_override ?? "");
-  }, [binary.name, binary.notes, binary.format_override, binary.arch_override]);
+  }, [binary.notes, binary.format_override, binary.arch_override]);
 
-  const save = async (): Promise<void> => {
+  useViewTitle(binary.name);
+
+  // The name editor passes its draft; the settings row saves under the stored name.
+  const save = async (name: string = binary.name): Promise<void> => {
     const trimmed = name.trim();
     const nextNotes = notes.trim();
     const nameChanged = Boolean(trimmed) && trimmed !== binary.name;
@@ -360,7 +637,6 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
     const archChanged = archOverride !== (binary.arch_override ?? "");
     if (!nameChanged && !notesChanged && !formatChanged && !archChanged) {
       setEditing(false);
-      setName(binary.name);
       return;
     }
     setActionError(null);
@@ -390,48 +666,36 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         <h2 className="detail-title">
           {binary.sha256 ? <HashIdenticon hash={binary.sha256} /> : null}
           {editing ? (
-            <input
-              aria-label="Binary name"
-              value={name}
-              disabled={busy}
-              onChange={(event) => setName(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  skipBlur.current = true;
-                  void save();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  skipBlur.current = true;
-                  setEditing(false);
-                  setName(binary.name);
-                }
-              }}
-              onBlur={() => {
-                if (skipBlur.current) {
-                  skipBlur.current = false;
-                  return;
-                }
-                void save();
-              }}
+            <NameEditor
+              label="Binary name"
+              initial={binary.name}
+              busy={busy}
+              onSave={(name) => void save(name)}
+              onCancel={() => setEditing(false)}
             />
           ) : (
             <button
               type="button"
               className="detail-title-name"
               title="Rename"
-              onClick={() => {
-                setName(binary.name);
-                setEditing(true);
-              }}
+              onClick={() => setEditing(true)}
             >
               {binary.name}
+              <Icon name="edit" />
             </button>
           )}
         </h2>
-        <p className="detail-subtitle">
-          Binary #{binary.id} · {binary.path || NA}
+        {/* The stored path is an operator detail (an upload's is `<sha256>.<ext>`):
+            one line with the path on hover and a copy control, not a wrapped string. */}
+        <p className="detail-subtitle copy-row">
+          Binary #{binary.id}
+          {binary.path ? (
+            <>
+              {" · "}
+              <span title={binary.path}>stored file</span>
+              <CopyButton text={binary.path} />
+            </>
+          ) : null}
         </p>
         <div className="detail-facts">
           <Badge tone="accent" mono title={binary.format_override ? "Format asserted by hand" : "Detected format"}>
@@ -440,28 +704,62 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
           <Badge mono title={binary.arch_override ? "ISA asserted by hand" : "Detected ISA"}>
             {binary.arch_override || binary.arch || NA}
           </Badge>
-          <Badge mono>{binary.language || NA}</Badge>
-          <Badge mono>{binary.compiler || NA}</Badge>
-          <Badge mono>{binary.size.toLocaleString()} bytes</Badge>
-          <Badge mono>{binary.function_count} functions</Badge>
+          {binary.language ? <Badge mono>{binary.language}</Badge> : null}
+          {binary.compiler ? <Badge mono>{binary.compiler}</Badge> : null}
+          {binary.size > 0 ? <Badge mono>{binary.size.toLocaleString()} bytes</Badge> : null}
+          <Badge mono>
+            {binary.function_count} function{binary.function_count === 1 ? "" : "s"}
+          </Badge>
           <Badge mono>
             {binary.visibility === "team" ? "team" : "public"}
           </Badge>
-          {binary.created_at ? <Badge mono>{binary.created_at}</Badge> : null}
+          <Stamp at={binary.created_at} />
         </div>
         <div className="detail-facts">
           <CopyValue value={binary.sha256} compact />
         </div>
-        {binary.rebrew_project === undefined ? null : binary.rebrew_project ? (
-          <Muted>analysis context ready</Muted>
-        ) : (
-          <Muted>
-            Analysis is still preparing this binary, so detailed reads answer
-            no-engine-context for now.
-          </Muted>
-        )}
+        {/* Only an unanalyzed binary has something to say here; an analyzed one
+            already shows its function count above. */}
+        {binary.rebrew_project !== undefined && !binary.rebrew_project ? (
+          <AnalysisStatus binaryId={binary.id} />
+        ) : null}
+        <LiveJobs binaryId={binary.id} />
       </div>
-      <div className="panel-actions">
+      <div className="detail-side panel-actions">
+        <a className="btn btn-primary" href={`#/binaries/${binary.id}/functions`}>
+          Functions
+        </a>
+        <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/download`}>
+          Download
+        </a>
+        <a
+          className="btn btn-ghost"
+          href={`/api/binaries/${binary.id}/binary-export`}
+          title="Download the stored binary with its current names rewritten into its symbol tables"
+        >
+          Export
+        </a>
+        <PdfAction binaryId={binary.id} onError={setActionError} />
+        <SymbolsAction binaryId={binary.id} />
+        <ExportRenamesMenu binaryId={binary.id} />
+        <Button
+          tone="ghost"
+          onClick={() => {
+            focusPanel("Analyses");
+          }}
+        >
+          Logs
+        </Button>
+        <Button
+          tone="ghost"
+          onClick={() => {
+            focusPanel("Tags");
+          }}
+        >
+          Tags
+        </Button>
+      </div>
+      <div className="detail-settings">
         <Field label="Notes">
           <input
             value={notes}
@@ -502,7 +800,6 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
         <Button
           pending={busy}
           disabled={
-            (!name.trim() || name.trim() === binary.name) &&
             notes.trim() === (binary.notes ?? "") &&
             formatOverride === (binary.format_override ?? "") &&
             archOverride === (binary.arch_override ?? "")
@@ -510,41 +807,6 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
           onClick={() => void save()}
         >
           Save
-        </Button>
-        <a className="btn btn-ghost" href={`#/binaries/${binary.id}/functions`}>
-          Functions
-        </a>
-        <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/download`}>
-          Download
-        </a>
-        <a
-          className="btn btn-ghost"
-          href={`/api/binaries/${binary.id}/binary-export`}
-          title="Download the stored binary with its current names rewritten into its symbol tables"
-        >
-          Export
-        </a>
-        <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/report/pdf`}>
-          PDF
-        </a>
-        <a className="btn btn-ghost" href={`/api/binaries/${binary.id}/symbols/export`}>
-          Symbols
-        </a>
-        <Button
-          tone="ghost"
-          onClick={() => {
-            focusPanel("Analyses");
-          }}
-        >
-          Logs
-        </Button>
-        <Button
-          tone="ghost"
-          onClick={() => {
-            focusPanel("Tags");
-          }}
-        >
-          Tags
         </Button>
         <Field label="Scope">
           <select
@@ -573,7 +835,7 @@ export function BinaryHeader({ binary }: { binary: Binary }): ReactNode {
 export function IdentityPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
   const path = `/binaries/${binaryId}/pe-info`;
-  const entry = usePanel(key, () => api<PeInfo>(path));
+  const entry = useScanPanel(binaryId, "pe-info", key, () => api<PeInfo>(path));
   const fingerprintKey = panelKey("binary", binaryId, "fingerprint");
   const fingerprint = usePanel(fingerprintKey, () =>
     api<Fingerprint>(`/binaries/${binaryId}/fingerprint`),
@@ -582,7 +844,7 @@ export function IdentityPanel({ binaryId }: { binaryId: number }): ReactNode {
   return (
     <Panel
       title="Binary Details"
-      subtitle="Identity, export hashes and the stored PE scan this page is built from."
+      subtitle="Identity, export hashes and the stored header scan this page is built from."
       actions={
         <Button
           tone="primary"
@@ -594,11 +856,11 @@ export function IdentityPanel({ binaryId }: { binaryId: number }): ReactNode {
             );
           }}
         >
-          Run PE details
+          Scan headers
         </Button>
       }
     >
-      <PanelBody entry={entry} hint="Loading the PE details" noScanHint={NO_SCAN_MESSAGES.peInfo}>
+      <PanelBody entry={entry} hint="Loading the header scan" noScanHint={NO_SCAN_MESSAGES.peInfo}>
         {(data) => (
           <IdentityBody
             binaryId={binaryId}
@@ -647,9 +909,20 @@ function IdentityBody({
     ["timestamp", result.timestamp_iso ?? NA],
     ["size", result.size ?? NA],
   ];
+  // An ELF or Mach-O header has none of these; seven "n/a" rows read as gaps.
+  const peOnly = new Set([
+    "type",
+    "checksum",
+    "number of resources",
+    "import hash",
+    "subsystem",
+    "timestamp",
+  ]);
+  const shown =
+    result.format && result.format !== "pe" ? rows.filter(([label]) => !peOnly.has(label)) : rows;
   return (
     <>
-      <KeyValue rows={rows} />
+      <KeyValue rows={shown} />
       {result.note ? <Muted>{result.note}</Muted> : null}
       <Muted>
         Debug directories: {debug.length > 0 ? debug.map((entry) => entry.type).join(", ") : "none"}
@@ -782,12 +1055,12 @@ export function BinaryAnalysesPanel({ binaryId }: { binaryId: number }): ReactNo
 
 export function SecurityMitigationsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
-  const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const entry = useScanPanel(binaryId, "pe-info", key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   return (
     <Panel
       title={
         <CountTitle
-          label="Security"
+          label="Loader mitigations"
           count={
             entry?.state === "ready" && entry.data.security_score
               ? `${entry.data.security_score.enabled}/${entry.data.security_score.total}`
@@ -795,7 +1068,7 @@ export function SecurityMitigationsPanel({ binaryId }: { binaryId: number }): Re
           }
         />
       }
-      subtitle="The loader checks the portal scores, with the raw DllCharacteristics flag behind each."
+      subtitle="Eleven loader mitigations scored present or absent, each with the raw DllCharacteristics flag behind it."
       hue="near"
       collapsible
     >
@@ -810,14 +1083,25 @@ export function SecurityMitigationsPanel({ binaryId }: { binaryId: number }): Re
   );
 }
 
+/**
+ * The empty state of a PE-only block: an ELF or Mach-O binary never has one,
+ * so it is told apart from a PE scan stored before the field existed, which a
+ * fresh scan fills.
+ */
+function MissingPeBlock({ result, what }: { result: PeInfo; what: string }): ReactNode {
+  return (
+    <EmptyState>
+      {result.format && result.format !== "pe"
+        ? `A ${result.format.toUpperCase()} binary has no ${what}; it is a PE structure.`
+        : `The stored header scan carries no ${what}. Scan headers to refresh it.`}
+    </EmptyState>
+  );
+}
+
 function SecurityMitigationsBody({ result }: { result: PeInfo }): ReactNode {
   const checklist = result.security;
   if (!checklist) {
-    return (
-      <EmptyState>
-        The stored PE details carry no security checklist. Run PE details to refresh them.
-      </EmptyState>
-    );
+    return <MissingPeBlock result={result} what="security checklist" />;
   }
   const score = result.security_score;
   const items = SECURITY_ITEMS.map(([key, label]) => ({
@@ -875,7 +1159,7 @@ function SecurityFlag({
 
 export function ExportsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
-  const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const entry = useScanPanel(binaryId, "pe-info", key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   return (
     <Panel
       title={
@@ -902,11 +1186,7 @@ function ExportsBody({ result, binaryId }: { result: PeInfo; binaryId: number })
   const [filter, setFilter] = useState("");
   const exports = Array.isArray(result.exports) ? result.exports : null;
   if (exports === null) {
-    return (
-      <EmptyState>
-        The stored PE details carry no export table. Run PE details to refresh them.
-      </EmptyState>
-    );
+    return <MissingPeBlock result={result} what="PE export table" />;
   }
   const needle = filter.trim().toLowerCase();
   const shown = exports.filter((entry) => matchesExport(entry, needle));
@@ -966,7 +1246,7 @@ export function SectionsPanel({
 }): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
   const coverageKey = panelKey("binary", binaryId, "section-coverage");
-  const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const entry = useScanPanel(binaryId, "pe-info", key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   // Stored-only, and a binary without a stored pe-info scan answers 404
   // no-scan; the coverage column is then simply absent rather than zero.
   const coverageEntry = usePanel(coverageKey, () =>
@@ -1055,7 +1335,7 @@ function SectionsBody({
                 ? NA
                 : `${coverage.totals.covered} / ${coverage.totals.size} bytes (${coverage.totals.coverage_pct}%)`
             }
-            title="Bytes inside a section that a stored function accounts for; reportal's own metric, not a portal field"
+            title="Bytes inside a section that a stored function accounts for"
           />
           <Muted>{coverage.note}</Muted>
         </>
@@ -1187,7 +1467,7 @@ function coverageCells(
 
 export function CoverageMapPanel({ binaryId }: { binaryId: number }): ReactNode {
   const peKey = panelKey("binary", binaryId, "pe-info");
-  const pe = usePanel(peKey, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const pe = useScanPanel(binaryId, "pe-info", peKey, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   const functionKey = panelKey("binary", binaryId, "functions");
   const functions = usePanel(functionKey, () =>
     api<FunctionListPage>(`/binaries/${binaryId}/functions`),
@@ -1195,7 +1475,7 @@ export function CoverageMapPanel({ binaryId }: { binaryId: number }): ReactNode 
   return (
     <Panel
       title="Coverage map"
-      subtitle="Every stored section as one cell per address range, coloured by the status of the function covering it: where this binary is reversed, and where it is still a stub."
+      subtitle="Every stored section as one cell per address range, colored by the verdict of the function covering it: where this binary is reversed, and where it is still a stub."
     >
       <PanelBody entry={pe} hint="Loading the section geometry" noScanHint={NO_SCAN_MESSAGES.peInfo}>
         {(info) => (
@@ -1233,7 +1513,7 @@ function CoverageMapBody({
     (section) => section.virtual_size > 0,
   );
   if (sections.length === 0) {
-    return <EmptyState>The stored PE details carry no section with a virtual size.</EmptyState>;
+    return <EmptyState>The stored header scan carries no section with a virtual size.</EmptyState>;
   }
   const imageBase = info.image_base ?? 0;
   // The cell walk below advances one pointer through the functions, so the
@@ -1242,6 +1522,58 @@ function CoverageMapBody({
   // A section cell's state comes from the function table, so the map is
   // undefined without one rather than a uniformly empty grid.
   const zeroFunctions = functions.length === 0;
+  interface Mapped {
+    section: (typeof sections)[number];
+    cells: ReturnType<typeof coverageCells>;
+  }
+  const renderSection = ({ section, cells }: Mapped): ReactNode => {
+    const covered = cells.filter((cell) => cell.fn !== null).length;
+    return (
+      <div className="covmap-section" key={section.name}>
+        <div className="covmap-head">
+          <span className="covmap-name">{section.name}</span>
+          <Muted>
+            {`${hex(imageBase + section.virtual_address)} ${section.virtual_size} bytes, ${covered} of ${cells.length} cells carry a stored function`}
+          </Muted>
+        </div>
+        <div className="covmap-grid" role="group" aria-label={`${section.name} coverage map`}>
+          {cells.map((cell) => {
+            const state = cell.fn === null ? "empty" : (statusEntity(cell.fn.status) ?? "idle");
+            const end = cell.va + cell.bytes;
+            const name = cell.fn === null ? "no stored function" : cell.fn.name || "unnamed";
+            return (
+              <Link
+                className="covmap-cell"
+                data-state={state}
+                key={cell.va}
+                // The grid is a map, not a list of tab stops: a section
+                // can carry hundreds of cells and the Sections table
+                // above is the keyboard path through the same addresses.
+                tabIndex={-1}
+                aria-label={`${name} at ${hex(cell.va)}`}
+                title={`${hex(cell.va)}..${hex(end)} ${name} (${state})`}
+                to={
+                  cell.fn === null
+                    ? `/binaries/${binaryId}?memory=${hex(cell.va)}`
+                    : `/functions/${cell.fn.id}`
+                }
+              />
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+  // Code sections lead: a data section (.rodata, .bss, an ELF's two dozen
+  // others) holds no function, and its all-empty grid buried the ones that do.
+  const mapped: Mapped[] = sections.map((section) => ({
+    section,
+    cells: coverageCells(section, imageBase, ordered),
+  }));
+  const holdsCode = ({ section, cells }: Mapped): boolean =>
+    section.execute === true || cells.some((cell) => cell.fn !== null);
+  const code = mapped.filter(holdsCode);
+  const rest = mapped.filter((entry) => !holdsCode(entry));
   return (
     <>
       {zeroFunctions ? (
@@ -1257,54 +1589,20 @@ function CoverageMapBody({
           </span>
         ))}
       </div>
-      <div className="covmap">
-        {sections.map((section) => {
-          const cells = coverageCells(section, imageBase, ordered);
-          const covered = cells.filter((cell) => cell.fn !== null).length;
-          return (
-            <div className="covmap-section" key={section.name}>
-              <div className="covmap-head">
-                <span className="covmap-name">{section.name}</span>
-                <Muted>
-                  {`${hex(imageBase + section.virtual_address)} ${section.virtual_size} bytes, ${covered} of ${cells.length} cells carry a stored function`}
-                </Muted>
-              </div>
-              <div className="covmap-grid" role="group" aria-label={`${section.name} coverage map`}>
-                {cells.map((cell) => {
-                  const state = cell.fn === null ? "empty" : (statusEntity(cell.fn.status) ?? "idle");
-                  const end = cell.va + cell.bytes;
-                  const name = cell.fn === null ? "no stored function" : cell.fn.name || "unnamed";
-                  return (
-                    <Link
-                      className="covmap-cell"
-                      data-state={state}
-                      key={cell.va}
-                      // The grid is a map, not a list of tab stops: a section
-                      // can carry hundreds of cells and the Sections table
-                      // above is the keyboard path through the same addresses.
-                      tabIndex={-1}
-                      aria-label={`${name} at ${hex(cell.va)}`}
-                      title={`${hex(cell.va)}..${hex(end)} ${name} (${state})`}
-                      to={
-                        cell.fn === null
-                          ? `/binaries/${binaryId}?memory=${hex(cell.va)}`
-                          : `/functions/${cell.fn.id}`
-                      }
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <div className="covmap">{code.map(renderSection)}</div>
+      {rest.length > 0 ? (
+        <details className="covmap-more">
+          <summary>{`${rest.length} section${rest.length === 1 ? "" : "s"} without code`}</summary>
+          <div className="covmap">{rest.map(renderSection)}</div>
+        </details>
+      ) : null}
     </>
   );
 }
 
 export function CodeSignaturePanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
-  const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const entry = useScanPanel(binaryId, "pe-info", key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   return (
     <Panel
       title={
@@ -1318,7 +1616,7 @@ export function CodeSignaturePanel({ binaryId }: { binaryId: number }): ReactNod
           }
         />
       }
-      subtitle="Authenticode state and the signers LIEF exposes."
+      subtitle="Authenticode state and the certificate signers."
       collapsible
     >
       <PanelBody entry={entry} hint="Loading the code signature" noScanHint={NO_SCAN_MESSAGES.peInfo}>
@@ -1331,7 +1629,7 @@ export function CodeSignaturePanel({ binaryId }: { binaryId: number }): ReactNod
 function CodeSignatureBody({ result }: { result: PeInfo }): ReactNode {
   const authenticode = result.authenticode;
   if (!authenticode) {
-    return <EmptyState>The stored PE details carry no signature state. Run PE details.</EmptyState>;
+    return <MissingPeBlock result={result} what="Authenticode signature" />;
   }
   const signers = Array.isArray(authenticode.signers) ? authenticode.signers : [];
   return (
@@ -1361,7 +1659,7 @@ function sectionProtections(section: PeSection): string {
 
 export function RelocationsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "pe-info");
-  const entry = usePanel(key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const entry = useScanPanel(binaryId, "pe-info", key, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   return (
     <Panel
       title={
@@ -1384,11 +1682,7 @@ function RelocationsBody({ result }: { result: PeInfo }): ReactNode {
   const present = result.presence?.relocations;
   const count = result.counts?.relocations;
   if (present === undefined && count === undefined) {
-    return (
-      <EmptyState>
-        The stored PE details carry no relocation directory. Run PE details.
-      </EmptyState>
-    );
+    return <MissingPeBlock result={result} what="relocation directory" />;
   }
   return (
     <KeyValue
@@ -1406,9 +1700,9 @@ function RelocationsBody({ result }: { result: PeInfo }): ReactNode {
 export function PackerPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "filetype");
   const path = `/binaries/${binaryId}/filetype`;
-  const entry = usePanel(key, () => api<FileTypeResult>(path));
+  const entry = useScanPanel(binaryId, "filetype", key, () => api<FileTypeResult>(path));
   const peKey = panelKey("binary", binaryId, "pe-info");
-  const pe = usePanel(peKey, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
+  const pe = useScanPanel(binaryId, "pe-info", peKey, () => api<PeInfo>(`/binaries/${binaryId}/pe-info`));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -1586,7 +1880,11 @@ export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNo
           </>
         )}
       </PanelBody>
-      <PanelBody entry={entry} hint="Loading the overlay and Rich header">
+      <PanelBody
+        entry={entry}
+        hint="Loading the overlay and Rich header"
+        noScanHint="The overlay and Rich header are read from the header scan. Scan headers in Binary Details first."
+      >
         {(data) => (
           <KeyValue
             rows={[
@@ -1737,7 +2035,7 @@ function RenameBenchmarkBody({ result }: { result: RenameBenchmarkResult }): Rea
   return (
     <>
       <Muted>
-        {result.labels.count} symbol name(s) against {result.proposals.count} stored proposal(s)
+        {countOf(result.labels.count, "symbol name")} against {countOf(result.proposals.count, "stored proposal")}
         from the {result.proposal_source} reading
       </Muted>
       <KeyValue
@@ -1887,8 +2185,8 @@ export function UnpackedFilesPanel({ binaryId }: { binaryId: number }): ReactNod
         <UnpackProvenanceRows provenance={entry.data} title="This binary was unpacked from" />
       ) : (
         <Note tone="info">
-          {entry.data.notes[0] ?? "This binary did not come from an unpack."} A packed file's own
-          bytes name the packer: the LZEXE stub at the entry point, or the UPX marker.
+          Not unpacked. Unpack rebuilds the image a packer replaced; the packed file's own bytes
+          name the packer: the LZEXE stub at the entry point, or the UPX marker.
         </Note>
       )}
       {result ? (
@@ -2002,7 +2300,7 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
       ) : (
         <>
           <Muted>
-            {data.rated} of {data.count} stored artifact(s) rated.
+            {data.rated} of {countOf(data.count, "stored artifact")} rated.
           </Muted>
           <table className="table" aria-label="Artifact ratings">
             <thead>
@@ -2240,7 +2538,7 @@ export function ImportsPanel({ binaryId }: { binaryId: number }): ReactNode {
         </Button>
       }
     >
-      <PanelBody entry={entry} hint="Loading imports">
+      <PanelBody entry={entry} hint="Loading imports" idle="Not loaded. Load imports to read the import table.">
         {(data) => <ImportsBody data={data} binaryId={binaryId} />}
       </PanelBody>
     </Panel>
@@ -2355,7 +2653,7 @@ export function StringsPanel({ binaryId }: { binaryId: number }): ReactNode {
           </select>
         </Field>
       </Toolbar>
-      <PanelBody entry={entry} hint="Loading strings">
+      <PanelBody entry={entry} hint="Loading strings" idle="Not loaded. Load strings to read the printable runs.">
         {(data) => <StringsBody data={data} binaryId={binaryId} />}
       </PanelBody>
     </Panel>
@@ -2525,7 +2823,12 @@ export function TriagePanel({ binaryId }: { binaryId: number }): ReactNode {
         </>
       }
     >
-      <PanelBody entry={entry} hint="Loading the triage dossier" noScanHint={NO_SCAN_MESSAGES.triage}>
+      <PanelBody
+        entry={entry}
+        hint="Loading the triage dossier"
+        noScanHint={NO_SCAN_MESSAGES.triage}
+        idle="Not loaded. View triage to read the stored dossier, or run it."
+      >
         {(data) => <TriageBody dossier={data} />}
       </PanelBody>
     </Panel>
@@ -2638,7 +2941,7 @@ function TriageBody({ dossier }: { dossier: TriageDossier }): ReactNode {
 export function FunctionTriagePanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "function-triage");
   const path = `/binaries/${binaryId}/function-triage`;
-  const entry = usePanel(key, () => api<FunctionTriageResult>(path));
+  const entry = useScanPanel(binaryId, "function-triage", key, () => api<FunctionTriageResult>(path));
   const [limit, setLimit] = useState(String(DEFAULT_FUNCTION_TRIAGE_LIMIT));
   const [busy, setBusy] = useState(false);
 
@@ -2744,6 +3047,7 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [queued, setQueued] = useState<number | null>(null);
   const path = `/binaries/${binaryId}/report`;
   const pdfPath = `${path}/pdf`;
+  const stored = usePanel(pdfStatusKey(binaryId), () => loadPdfStatus(binaryId));
   // The queued render: the job is the thing to watch, and the status route is
   // where the file and the job are read together.
   const jobStatus = useAsync(
@@ -2752,6 +3056,10 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
     queued !== null,
     (payload) => (payload?.job?.live ? 1500 : false),
   );
+  const queuedDone = jobStatus.data?.exists === true;
+  useEffect(() => {
+    if (queuedDone) refreshPanel(pdfStatusKey(binaryId), () => loadPdfStatus(binaryId));
+  }, [queuedDone, binaryId]);
   const queuePdf = async (): Promise<void> => {
     setPdfError(null);
     setBusy("queue");
@@ -2772,6 +3080,7 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
     setBusy("pdf");
     try {
       setPdf(await api<PdfReportResult>(pdfPath, { method: "POST" }));
+      refreshPanel(pdfStatusKey(binaryId), () => loadPdfStatus(binaryId));
     } catch (error) {
       setPdfError(error);
     } finally {
@@ -2808,13 +3117,24 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
           <Button pending={busy === "queue"} onClick={() => void queuePdf()}>
             Queue PDF
           </Button>
-          <a className="btn btn-ghost" href={`/api${pdfPath}`}>
-            Download PDF
-          </a>
+          {stored?.state === "ready" && stored.data.exists ? (
+            <a className="btn btn-ghost" href={`/api${pdfPath}`}>
+              Download PDF
+            </a>
+          ) : (
+            <Button tone="ghost" disabled title="No PDF report is stored for this binary yet">
+              Download PDF
+            </Button>
+          )}
         </>
       }
     >
-      <PanelBody entry={entry} hint="Loading the report" noScanHint={NO_SCAN_MESSAGES.report}>
+      <PanelBody
+        entry={entry}
+        hint="Loading the report"
+        noScanHint={NO_SCAN_MESSAGES.report}
+        idle="Not loaded. View report to read the stored report, or run it."
+      >
         {(data) => <ReportBody binaryId={binaryId} result={data} />}
       </PanelBody>
       {pdfError ? <ErrorNote error={pdfError} /> : null}
@@ -2823,13 +3143,13 @@ export function ReportPanel({ binaryId }: { binaryId: number }): ReactNode {
         <Muted>
           {`PDF job ${jobStatus.data.job.id}: ${jobStatus.data.job.status}`}
           {jobStatus.data.job.error ? ` (${jobStatus.data.job.error})` : ""}
-          {jobStatus.data.exists ? ` · ${jobStatus.data.pages} page(s) on disk` : ""}{" "}
+          {jobStatus.data.exists ? ` · ${countOf(jobStatus.data.pages, "page")} on disk` : ""}{" "}
           <a href={jobStatus.data.download_url}>Download PDF</a>
         </Muted>
       ) : null}
       {pdf ? (
         <Muted>
-          PDF ready: {pdf.pages} page(s), {pdf.bytes} bytes.{" "}
+          PDF ready: {countOf(pdf.pages, "page")}, {pdf.bytes} bytes.{" "}
           <a href={pdf.download_url}>Download PDF</a>
         </Muted>
       ) : null}
@@ -2873,7 +3193,7 @@ function ReportBody({ binaryId, result }: { binaryId: number; result: ReportResu
 export function CryptoPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "crypto");
   const path = `/binaries/${binaryId}/crypto-scan`;
-  const entry = usePanel(key, () => api<CryptoResult>(path));
+  const entry = useScanPanel(binaryId, "crypto", key, () => api<CryptoResult>(path));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -2912,12 +3232,12 @@ function CryptoBody({ result }: { result: CryptoResult }): ReactNode {
 export function SecurityPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "security");
   const path = `/binaries/${binaryId}/security-scan`;
-  const entry = usePanel(key, () => api<SecurityResult>(path));
+  const entry = useScanPanel(binaryId, "security", key, () => api<SecurityResult>(path));
   const [minSeverity, setMinSeverity] = useState<SecuritySeverity>(DEFAULT_SECURITY_SEVERITY);
   const [busy, setBusy] = useState(false);
   return (
     <Panel
-      title="Security"
+      title="Source security scan"
       subtitle="Unsafe API use and unsafe patterns in the reversed sources."
       actions={
         <Toolbar>
@@ -3043,7 +3363,7 @@ function ExploitabilitySection({ binaryId }: { binaryId: number }): ReactNode {
 export function CapabilitiesPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "capabilities");
   const path = `/binaries/${binaryId}/capabilities`;
-  const entry = usePanel(key, () => api<CapabilitiesResult>(path));
+  const entry = useScanPanel(binaryId, "capabilities", key, () => api<CapabilitiesResult>(path));
   const [busy, setBusy] = useState(false);
   const count =
     entry?.state === "ready"
@@ -3137,7 +3457,7 @@ export function BehaviorPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [domain, setDomain] = useState<BehaviorDomain>(DEFAULT_BEHAVIOR_DOMAIN);
   const key = panelKey("binary", binaryId, "behavior", domain);
   const path = `/binaries/${binaryId}/behavior/${domain}`;
-  const entry = usePanel(key, () => api<BehaviorScan>(path));
+  const entry = useScanPanel(binaryId, domain, key, () => api<BehaviorScan>(path));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -3197,7 +3517,7 @@ export function HardeningPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [domain, setDomain] = useState<HardeningDomain>(DEFAULT_HARDENING_DOMAIN);
   const key = panelKey("binary", binaryId, "hardening", domain);
   const path = `/binaries/${binaryId}/hardening/${domain}`;
-  const entry = usePanel(key, () => api<HardeningScan>(path));
+  const entry = useScanPanel(binaryId, domain, key, () => api<HardeningScan>(path));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -3285,7 +3605,7 @@ function HardeningBody({ result }: { result: HardeningScan }): ReactNode {
 export function SecretsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "secrets");
   const path = `/binaries/${binaryId}/secrets`;
-  const entry = usePanel(key, () => api<SecretsResult>(path));
+  const entry = useScanPanel(binaryId, "secrets", key, () => api<SecretsResult>(path));
   const [revealed, setRevealed] = useState<readonly number[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -3386,7 +3706,7 @@ function SecretsBody({
 export function ProtocolsPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "protocols");
   const path = `/binaries/${binaryId}/protocols`;
-  const entry = usePanel(key, () => api<ProtocolsResult>(path));
+  const entry = useScanPanel(binaryId, "protocols", key, () => api<ProtocolsResult>(path));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -3464,7 +3784,7 @@ function ProtocolsBody({ result }: { result: ProtocolsResult }): ReactNode {
 export function ThreatPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "threat");
   const path = `/binaries/${binaryId}/threat`;
-  const entry = usePanel(key, () => api<ThreatReport>(path));
+  const entry = useScanPanel(binaryId, "threat", key, () => api<ThreatReport>(path));
   const [narrative, setNarrative] = useState(false);
   const [busy, setBusy] = useState(false);
   return (
@@ -3552,7 +3872,7 @@ function AttackSurfaceGroup({
         columns={[
           { label: "Name", mono: true, render: (row) => row.name },
           { label: "Source", mono: true, render: (row) => row.source },
-          { label: "Confidence", render: (row) => row.confidence || "—" },
+          { label: "Confidence", render: (row) => row.confidence || NA },
           {
             label: "Evidence",
             numeric: true,
@@ -3596,7 +3916,7 @@ function ThreatYara({ binaryId }: { binaryId: number }): ReactNode {
   // the remediation scan, so this section reads that stored scan through the
   // same panel key the Remediation panel uses and links out for the rest.
   const key = panelKey("binary", binaryId, "remediation");
-  const entry = usePanel(key, () => api<RemediationResult>(`/binaries/${binaryId}/remediation`));
+  const entry = useScanPanel(binaryId, "remediation", key, () => api<RemediationResult>(`/binaries/${binaryId}/remediation`));
   if (!entry || entry.state === "loading" || entry.state === "error") return null;
   if (!entry.data.rule) return null;
   return (
@@ -3698,7 +4018,7 @@ function ThreatBody({ result, binaryId }: { result: ThreatReport; binaryId: numb
 export function RemediationPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "remediation");
   const path = `/binaries/${binaryId}/remediation`;
-  const entry = usePanel(key, () => api<RemediationResult>(path));
+  const entry = useScanPanel(binaryId, "remediation", key, () => api<RemediationResult>(path));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -4071,7 +4391,7 @@ function LineageBody({ comparison }: { comparison: LineageComparison }): ReactNo
           <div key={status}>
             <h3>{status}</h3>
             <Muted>
-              {rows.length} functions
+              {rows.length} function{rows.length === 1 ? "" : "s"}
               {shown.length < rows.length ? `, showing ${shown.length}` : ""}
             </Muted>
             <DataTable
@@ -4119,7 +4439,7 @@ function LineageBody({ comparison }: { comparison: LineageComparison }): ReactNo
 export function DetectPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "detect");
   const path = `/binaries/${binaryId}/detect`;
-  const entry = usePanel(key, () => api<DetectResult>(path));
+  const entry = useScanPanel(binaryId, "detect", key, () => api<DetectResult>(path));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -4210,7 +4530,7 @@ function DetectBody({ result }: { result: DetectResult }): ReactNode {
 export function RelatedPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "related");
   const path = `/binaries/${binaryId}/related`;
-  const entry = usePanel(key, () => api<RelatedResult>(path));
+  const entry = useScanPanel(binaryId, "related", key, () => api<RelatedResult>(path));
   const [busy, setBusy] = useState(false);
   return (
     <Panel
@@ -4268,7 +4588,7 @@ function RelatedBody({ result }: { result: RelatedResult }): ReactNode {
             label: "Binary",
             render: (row) => <a href={`#/binaries/${row.binary_id}`}>{row.name}</a>,
           },
-          { label: "Similarity", numeric: true, render: (row) => row.similarity.toFixed(3) },
+          { label: "Similarity", numeric: true, render: (row) => `${row.similarity.toFixed(1)}%` },
           {
             label: "Signals",
             render: (row) => (
@@ -4293,7 +4613,7 @@ function RelatedBody({ result }: { result: RelatedResult }): ReactNode {
 export function FirmwarePanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "firmware");
   const path = `/binaries/${binaryId}/firmware`;
-  const entry = usePanel(key, () => api<FirmwareScan>(path));
+  const entry = useScanPanel(binaryId, "firmware", key, () => api<FirmwareScan>(path));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -4350,7 +4670,7 @@ export function FirmwarePanel({ binaryId }: { binaryId: number }): ReactNode {
           return (
             <>
               <Muted>
-                {data.region_count} region(s) in {data.size} bytes, {data.signatures} signature(s)
+                {countOf(data.region_count, "region")} in {data.size} bytes, {countOf(data.signatures, "signature")}
                 matched; entropy sampled per {data.entropy_window} bytes, peak {peak.toFixed(2)}.
               </Muted>
               <DataTable
@@ -4758,7 +5078,7 @@ function DebugReport({ session }: { session: DebugSession }): ReactNode {
 export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode {
   const key = panelKey("binary", binaryId, "composition");
   const path = `/binaries/${binaryId}/composition`;
-  const entry = usePanel(key, () => api<CompositionResult>(path));
+  const entry = useScanPanel(binaryId, "composition", key, () => api<CompositionResult>(path));
   const [busy, setBusy] = useState(false);
   // The candidate scope, in the same vocabulary the Match Settings sheet uses:
   // a comma-separated id list each, empty meaning the whole register.
@@ -5119,14 +5439,18 @@ export function LibraryPanel({ binaryId }: { binaryId: number }): ReactNode {
   const download = async (): Promise<void> => {
     setActionError(null);
     setBusy("export");
+    const deadline = abortDeadline();
     try {
-      const response = await fetch(`/api/binaries/${binaryId}/sbom?format=${format}`);
+      const response = await fetch(`/api/binaries/${binaryId}/sbom?format=${format}`, {
+        signal: deadline.signal,
+      });
       if (!response.ok) throw new Error(`export failed: ${response.status}`);
       const text = await response.text();
       setExported(text.slice(0, 4000));
     } catch (failure) {
       setActionError(failure);
     } finally {
+      deadline.dispose();
       setBusy("");
     }
   };
@@ -5176,7 +5500,7 @@ export function LibraryPanel({ binaryId }: { binaryId: number }): ReactNode {
       ) : (
         <>
           <Muted>
-            {entry.data.candidates} identified function(s) in {entry.data.count} module(s).
+            {countOf(entry.data.candidates, "identified function")} in {countOf(entry.data.count, "module")}.
             {entry.data.already_annotated
               ? ` ${entry.data.already_annotated} already annotated.`
               : ""}

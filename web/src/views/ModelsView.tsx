@@ -11,7 +11,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Badge, Button, DataTable, ErrorNote, Field, Loading, Muted, Note, Panel, Toolbar } from "../components";
+import { Badge, Button, DataTable, ErrorNote, Field, Loading, Muted, Note, Panel, Toolbar, countOf } from "../components";
 import type { ModelEntry, ModelsPayload, UpgradeResult } from "../types";
 import { useAsync } from "../useAsync";
 
@@ -65,9 +65,9 @@ function UpgradeForm({ models }: { models: ModelEntry[] }): ReactNode {
             onChange={(event) => setAnalysisId(event.target.value)}
           />
         </Field>
-        <Field label="Model" hint="Only an llm model can re-run an artifact.">
+        <Field label="Model" hint="LLM models only">
           <select value={model} onChange={(event) => setModel(event.target.value)}>
-            <option value="">choose one</option>
+            <option value="">Choose one</option>
             {candidates.map((entry) => (
               <option key={entry.name} value={entry.name}>
                 {entry.name}
@@ -75,9 +75,9 @@ function UpgradeForm({ models }: { models: ModelEntry[] }): ReactNode {
             ))}
           </select>
         </Field>
-        <Field label="Functions">
+        <Field label="Functions" hint="1 to 200">
           <input
-            placeholder="bound"
+            placeholder="25"
             value={limit}
             onChange={(event) => setLimit(event.target.value)}
           />
@@ -91,7 +91,7 @@ function UpgradeForm({ models }: { models: ModelEntry[] }): ReactNode {
         <>
           <Note>
             {result.from || "no model recorded"} to {result.to}: {result.upgraded} of{" "}
-            {result.candidates} function(s) re-run. {result.note}
+            {countOf(result.candidates, "function")} re-run. {result.note}
           </Note>
           {result.applied.length ? (
             <DataTable

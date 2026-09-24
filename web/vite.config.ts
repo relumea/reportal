@@ -84,8 +84,13 @@ export default defineConfig({
       output: {
         // React and the router change when the SPA's dependencies change, and
         // the views change on every commit: one vendor chunk keeps a browser's
-        // cached copy of the framework across a deploy.
-        manualChunks: (id) => (id.includes("node_modules") ? "vendor" : undefined),
+        // cached copy of the framework across a deploy.  highlight.js serves the
+        // lazily loaded function detail view alone, so it stays in that view's
+        // chunk instead of loading on every page.
+        manualChunks: (id) =>
+          id.includes("node_modules") && !id.includes("node_modules/highlight.js/")
+            ? "vendor"
+            : undefined,
       },
     },
   },

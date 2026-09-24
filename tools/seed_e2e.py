@@ -183,6 +183,7 @@ def seed(workspace: Path) -> dict[str, object]:
         stored_types = [row["name"] for row in store.list_data_types(conn, int(ids["binary_id"]))]
         signatures.set_parameter(conn, int(ids["function_id"]), index=0, type_text="WIN_DWORD")
         large_binary_id = _seed_large_binary(conn)
+        similar = _seed_similar_pair(conn, int(ids["function_id"]))
         stale_run = _seed_stale_run(conn, large_binary_id)
         team = auth.create_team(conn, name=TEAM_NAME)
     return {
@@ -194,6 +195,7 @@ def seed(workspace: Path) -> dict[str, object]:
         "tag_name": smoke_spa.TAG_NAME,
         "large_binary_id": large_binary_id,
         "large_function_count": LARGE_FUNCTIONS,
+        "similar": similar,
         "stale_run": stale_run,
         "team": {"id": int(team["id"]), "name": str(team["name"])},
     }
@@ -241,6 +243,49 @@ def _seed_large_binary(conn: object) -> int:
     )
     conn.commit()
     return binary_id
+
+
+def _seed_similar_pair(conn: object, function_id: int) -> dict[str, object]:
+    """Cache the seeded function's listing on it and on its lineage copy.
+
+    The copy (`notepad-copy.exe`) holds the same function at the same VA and
+    size, so a similar-functions query for the seeded function ranks the copy
+    first at 100.  The listing is the engine's, the text the disassembly route
+    would cache on its own, so the Code panel shows what it always did.
+    Returns the queried function's id and the copy's id and name.
+    """
+    import sqlite3
+
+    from reportal import engines
+    from reportal import store as store_module
+
+    assert isinstance(conn, sqlite3.Connection)
+    function = store_module.get_function(conn, function_id)
+    assert function is not None
+    binary_id = int(function["binary_id"])
+    project_dir = store_module.get_rebrew_context(conn, binary_id)
+    assert project_dir is not None
+    listing = engines.get_engine().disassemble(
+        project_dir,
+        int(function["va"]),
+        int(function["size"]),
+        store_module.cached_disasm_format(conn, binary_id),
+    )
+    copy = conn.execute(
+        "SELECT f.id AS id, f.name AS name FROM functions f"
+        " JOIN analyses a ON a.id = f.analysis_id JOIN binaries b ON b.id = a.binary_id"
+        " WHERE b.name = ? AND f.va = ?",
+        (smoke_spa.LINEAGE_OTHER_NAME, int(function["va"])),
+    ).fetchone()
+    assert copy is not None
+    for target in (function_id, int(copy["id"])):
+        if not store_module.set_disasm(conn, target, listing):
+            raise RuntimeError(f"could not cache the listing of function {target}")
+    return {
+        "function_id": function_id,
+        "counterpart_id": int(copy["id"]),
+        "counterpart_name": str(copy["name"]),
+    }
 
 
 def _seed_stale_run(conn: object, binary_id: int) -> dict[str, int]:

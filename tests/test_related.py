@@ -329,6 +329,35 @@ class TestFindRelated:
         assert "import-overlap" in [s["kind"] for s in payload["related"][0]["signals"]]
         assert related.NO_ENGINE_NOTE not in payload["notes"]
 
+    def test_an_unreadable_candidate_is_compared_on_stored_data(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        target = _binary(conn, tmp_path, name="target.exe", sha="01" * 32)
+        _binary(conn, tmp_path, name="other.exe", sha="02" * 32)
+        _binary(conn, tmp_path, name="junk.bin", sha="03" * 32)
+        imports = {"imports": [_import("A"), _import("B"), _import("C")]}
+
+        class RefusingEngine(_MapEngine):
+            def fingerprint(self, binary: str | Path) -> dict[str, Any]:
+                if Path(str(binary)).name == "junk.bin":
+                    raise engines.EngineError("rebrew fingerprint failed: unknown format")
+                return super().fingerprint(binary)
+
+        engine = RefusingEngine(
+            {
+                "target.exe": {"fingerprint": {"sha256": "01" * 32}, "imports": imports},
+                "other.exe": {"fingerprint": {"sha256": "02" * 32}, "imports": imports},
+                "junk.bin": {"fingerprint": {}, "imports": {"imports": []}},
+            }
+        )
+        payload = related.find_related(conn, binary_id=target, engine=engine, limit=10)
+        assert [row["name"] for row in payload["related"]] == ["other.exe"]
+        assert payload["candidates_considered"] == 2
+        assert (
+            "1 binaries the engine could not read were compared on stored data"
+            in (payload["notes"])
+        )
+
     def test_sorts_by_classification_then_similarity_then_name(
         self, conn: sqlite3.Connection, tmp_path: Path
     ) -> None:

@@ -91,6 +91,7 @@ def _run_one_batch(
         engine=None,
         llm_client=None,
         db_path=db_path,
+        budget=auto_mode.RunBudget(params),
     )
     return run_id, task_id
 

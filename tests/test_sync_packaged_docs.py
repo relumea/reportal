@@ -82,3 +82,23 @@ def test_sync_mirrors_subdirectories_and_prunes_them(tmp_path: Path) -> None:
     (docs_src / "subsystems" / "README.md").unlink()
     mod.sync(dest=dest, docs_src=docs_src, changelog=changelog)  # type: ignore[attr-defined]
     assert not (dest / "subsystems").exists()
+
+
+def test_repository_only_pages_stay_out_of_the_wheel(tmp_path: Path) -> None:
+    """Business and research pages are for the repository, not the packaged manual."""
+    from reportal.docs import REPOSITORY_ONLY_PAGES
+
+    mod = _load()
+    docs_src = tmp_path / "docs"
+    changelog = tmp_path / "CHANGELOG.md"
+    _populate_required(docs_src, changelog)
+    (docs_src / "FUNDING.md").write_text("# Funding\n", encoding="utf-8")
+    dest = tmp_path / "manual"
+    # A copy an earlier sync packaged is removed, not left behind.
+    dest.mkdir()
+    (dest / "PARITY.md").write_text("# Parity\n", encoding="utf-8")
+    mod.sync(dest=dest, docs_src=docs_src, changelog=changelog)  # type: ignore[attr-defined]
+    assert {"FUNDING", "PARITY"} <= REPOSITORY_ONLY_PAGES
+    assert not (dest / "FUNDING.md").exists()
+    assert not (dest / "PARITY.md").exists()
+    assert (dest / "ERRORS.md").exists()

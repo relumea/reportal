@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from reportal.docs import CHANGELOG_FILE, PAGE_ORDER
+from reportal.docs import CHANGELOG_FILE, PAGE_ORDER, REPOSITORY_ONLY_PAGES
 
 REPO = Path(__file__).resolve().parents[1]
 DOCS_SRC = REPO / "docs"
@@ -32,7 +32,7 @@ def sync(dest: Path = DEST, docs_src: Path = DOCS_SRC, changelog: Path = CHANGEL
     wanted: dict[str, Path] = {}
     for pattern in ("*.md", "*/*.md"):
         for path in sorted(docs_src.glob(pattern)):
-            if path.is_file():
+            if path.is_file() and not (pattern == "*.md" and path.stem in REPOSITORY_ONLY_PAGES):
                 wanted[path.relative_to(docs_src).as_posix()] = path
     if changelog.is_file():
         wanted[changelog.name] = changelog

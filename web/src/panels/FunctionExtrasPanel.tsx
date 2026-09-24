@@ -14,6 +14,7 @@ import {
   Panel,
   PanelBody,
   Toolbar,
+  countOf,
 } from "../components";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import type {
@@ -251,7 +252,7 @@ export function AnalysisStringsPanel({ analysisId }: { analysisId: number }): Re
         method: "PUT",
         json: { strings: values },
       });
-      setStatus(`Stored ${report.strings.length} string(s).`);
+      setStatus(`Stored ${countOf(report.strings.length, "string")}.`);
       refreshPanel(key, load);
     } catch (failure) {
       setActionError(failure);
@@ -263,7 +264,7 @@ export function AnalysisStringsPanel({ analysisId }: { analysisId: number }): Re
   return (
     <Panel
       title="Analysis Strings"
-      subtitle="The whole list at once, as the hosted portal stores it; a revert puts the previous list back."
+      subtitle="The whole list at once; a revert puts the previous list back."
     >
       <StringsSection path={path} key={key} load={load} limit={1024} />
       <form
@@ -315,7 +316,7 @@ function CanonicalNamePanel({ functionId }: { functionId: number }): ReactNode {
       const skipped = report.skipped.length
         ? ` Skipped: ${report.skipped.map((row) => row.reason).join(", ")}.`
         : "";
-      setMessage(`Renamed ${report.applied_count} function(s).${skipped}`);
+      setMessage(`Renamed ${countOf(report.applied_count, "function")}.${skipped}`);
     } catch (failure) {
       setActionError(failure);
     } finally {
@@ -577,7 +578,7 @@ function CalleesPanel({ functionId }: { functionId: number }): ReactNode {
 
   return (
     <Panel
-      title="Callees"
+      title="Declared callees"
       subtitle="The names the stored decompilation mentions, and the edges an analyst declared."
     >
       <form

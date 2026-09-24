@@ -113,6 +113,9 @@ class TestAtomicWriters:
         finally:
             monkeypatch.setattr("os.close", real_close)
         assert closed
+        # The recorder only observed the close; put the kernel fd back so the
+        # observation itself leaves no descriptor behind.
+        real_close(closed[0])
 
     def test_replace_failure_removes_the_temp(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

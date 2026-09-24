@@ -239,7 +239,7 @@ export function BillingView(): ReactNode {
           </a>
         }
       >
-        Billing is scoped to an organisation, and this install has none. Create one in Users,
+        Billing is scoped to an organization, and this install has none. Create one in Users,
         then come back.
       </EmptyState>
     );
@@ -251,7 +251,7 @@ export function BillingView(): ReactNode {
   return (
     <>
       <Toolbar>
-        <Field label="Organisation">
+        <Field label="Organization">
           <select
             value={organisationId ?? ""}
             onChange={(event) => setOrganisationId(Number(event.target.value))}

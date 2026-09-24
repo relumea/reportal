@@ -9,15 +9,19 @@ interface ApiErrorBody {
 
 export class ApiError extends Error {
   readonly detail: string;
+  /** The HTTP status that carried the error; 0 for one raised in the browser. */
+  readonly status: number;
 
-  constructor(message: string, detail = "") {
+  constructor(message: string, detail = "", status = 0) {
     super(message);
     this.name = "ApiError";
     this.detail = detail;
+    this.status = status;
   }
 }
 
 export function errorText(error: unknown): string {
+  if (isApiErrorCode(error, LLM_UNAVAILABLE)) return NO_MODEL_MESSAGE;
   if (error instanceof ApiError) {
     return error.detail ? `${error.message}: ${error.detail}` : error.message;
   }
@@ -26,6 +30,11 @@ export function errorText(error: unknown): string {
 
 export function isApiErrorCode(error: unknown, code: string): boolean {
   return error instanceof ApiError && error.message === code;
+}
+
+/** True for a 404: the row the request named does not exist or is out of scope. */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
 }
 
 interface RequestOptions {
@@ -39,6 +48,32 @@ interface RequestOptions {
 const API_PREFIX = "/api";
 
 /**
+ * A JSON route on a loopback install answers in seconds; two minutes of
+ * silence is a wedged server.  The timer is this request's inverse: it aborts
+ * the fetch, and the `finally` below clears it the moment the response
+ * settles, so a finished request leaves no timer and a wedged one cannot pin
+ * a socket for the life of the page.  Multipart uploads carry a file of
+ * unbounded size, so they run without the cap.
+ */
+const JSON_TIMEOUT_MS = 120_000;
+
+/**
+ * One request's abort deadline: the timer aborts the signal at *timeoutMs*
+ * and `dispose` is the inverse the caller runs once the response has settled,
+ * so a finished request keeps no timer and a wedged one cannot pin the call
+ * for the life of the page.  Raw fetches outside `api()` take the same cap
+ * through this helper instead of growing their own.
+ */
+export function abortDeadline(timeoutMs: number = JSON_TIMEOUT_MS): {
+  signal: AbortSignal;
+  dispose: () => void;
+} {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  return { signal: controller.signal, dispose: () => window.clearTimeout(timer) };
+}
+
+/**
  * The whole binary register projected to `id` and `name`, which is what a
  * binary picker renders.  The full register row carries the sha256, the path,
  * the operator notes and both aggregate counts, so a picker that reads the
@@ -46,7 +81,7 @@ const API_PREFIX = "/api";
  */
 export const BINARY_OPTIONS_PATH = "/binaries?summary=true";
 
-import { COMMENT_AUTHOR_STORAGE_KEY } from "./constants";
+import { COMMENT_AUTHOR_STORAGE_KEY, LLM_UNAVAILABLE, NO_MODEL_MESSAGE } from "./constants";
 import { resetSessionCache } from "./panelCache";
 
 /** Where the browser keeps the bearer token an authenticated install needs. */
@@ -97,13 +132,28 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   if (token) {
     init.headers = { ...(init.headers as Record<string, string>), Authorization: `Bearer ${token}` };
   }
-  const response = await fetch(`${API_PREFIX}${path}`, init);
-  const payload: unknown = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const failure = payload as ApiErrorBody;
-    throw new ApiError(failure.error ?? `request failed: ${response.status}`, failure.detail ?? "");
+  const deadline = options.body instanceof FormData ? null : abortDeadline();
+  if (deadline !== null) init.signal = deadline.signal;
+  try {
+    const response = await fetch(`${API_PREFIX}${path}`, init);
+    const payload: unknown = await response.json().catch((failure: unknown) => {
+      // An abort mid-body must surface as the request's failure, not be
+      // mistaken for the empty payload a malformed answer becomes.
+      if (failure instanceof DOMException && failure.name === "AbortError") throw failure;
+      return {};
+    });
+    if (!response.ok) {
+      const failure = payload as ApiErrorBody;
+      throw new ApiError(
+        failure.error ?? `request failed: ${response.status}`,
+        failure.detail ?? "",
+        response.status,
+      );
+    }
+    // The wrapper trusts the server's declared response shape; the type argument
+    // names the contract of the route being called.
+    return payload as T;
+  } finally {
+    deadline?.dispose();
   }
-  // The wrapper trusts the server's declared response shape; the type argument
-  // names the contract of the route being called.
-  return payload as T;
 }

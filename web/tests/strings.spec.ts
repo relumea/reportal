@@ -10,7 +10,7 @@ import { expect, test } from "./fixtures";
 const state = e2eState();
 
 test("clicking a string opens the functions that reference it", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=format`);
   const strings = panelByTitle(page, "Strings");
   await strings.getByRole("button", { name: "Load strings" }).click();
   await expect(strings.locator("table.data-table tbody tr").first()).toBeVisible({

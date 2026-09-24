@@ -54,10 +54,6 @@ from reportal.auto_workers import (
 )
 from reportal.llm import clean_completion
 
-# Disassembly format requested; the same format the disassembly route caches,
-# so the worker reuses a listing the portal already showed.
-DISASM_FORMAT = "nasm"
-
 # Prompt-size bounds.  A listing or decompilation past these is truncated
 # rather than sent whole; the head carries the entry and the hot path.
 MAX_LISTING_CHARS = 24000
@@ -227,13 +223,19 @@ def gather_context(ctx: WorkerContext) -> tuple[str, str] | WorkerResult:
     if engine is None or not engine.available():
         return _skip(ctx, REASON_ENGINE_UNAVAILABLE)
     va = int(ctx.function["va"])
+    binary_id = ctx.function.get("binary_id")
+    listing_format = (
+        store.cached_disasm_format(ctx.conn, int(binary_id))
+        if binary_id is not None
+        else engines.listing_format("")
+    )
     try:
         if disasm is None:
             disasm, _filled = store.get_or_compute_disasm(
                 ctx.conn,
                 function_id,
                 lambda: engine.disassemble(
-                    str(ctx.project_dir), va, int(ctx.function["size"]), DISASM_FORMAT
+                    str(ctx.project_dir), va, int(ctx.function["size"]), listing_format
                 ),
                 extent_size=int(ctx.function["size"]),
                 project_dir=str(ctx.project_dir),

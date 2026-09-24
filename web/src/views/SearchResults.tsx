@@ -94,7 +94,9 @@ function hitMeta(hit: SearchHit): ReactNode {
     return (
       <>
         <span className="search-row-kind">{hit.kind}</span>
-        <span>{hit.row.binary_count} binaries</span>
+        <span>
+          {hit.row.binary_count} {hit.row.binary_count === 1 ? "binary" : "binaries"}
+        </span>
         <span className="muted">{hit.row.visibility || "public"}</span>
         {_tags([hit.row.description].filter(Boolean))}
         <span className="muted">{hit.row.created_at}</span>
@@ -106,7 +108,9 @@ function hitMeta(hit: SearchHit): ReactNode {
     return (
       <>
         <span className="search-row-kind">{hit.kind}</span>
-        <span>{hit.row.binary_count} binaries</span>
+        <span>
+          {hit.row.binary_count} {hit.row.binary_count === 1 ? "binary" : "binaries"}
+        </span>
       </>
     );
   }
@@ -114,15 +118,18 @@ function hitMeta(hit: SearchHit): ReactNode {
     <>
       <span className="search-row-kind">function</span>
       <span className="mono">{hex(hit.row.va)}</span>
+      <span>{hit.row.binary_name}</span>
       <span>{hit.row.status}</span>
-      <span>{hit.row.name}</span>
+      <span className="muted">matched {hit.row.match}</span>
     </>
   );
 }
 
 /** The full label a row's navigation link carries. */
 function hitTitle(hit: SearchHit): string {
-  if (hit.kind === "function") return `${hit.row.name} @ ${hex(hit.row.va)}`;
+  if (hit.kind === "function") {
+    return `${hit.row.name} @ ${hex(hit.row.va)} in ${hit.row.binary_name}`;
+  }
   if (hit.kind === "binary") return hit.row.name;
   if (hit.kind === "collection") return hit.row.name;
   return hit.row.name;

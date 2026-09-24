@@ -6,8 +6,21 @@ import type { DataTypeKind, MatchMetric, SearchKind, TransferMode } from "./type
 export const DECOMPILER_BACKENDS = ["kuna", "r2ghidra", "r2dec", "ghidra", "auto"] as const;
 export const DEFAULT_DECOMPILER_BACKEND = DECOMPILER_BACKENDS[0];
 
-export const DISASM_FORMATS = ["nasm", "hex"] as const;
-export type DisasmFormat = (typeof DISASM_FORMATS)[number];
+// What the Disassembly panel shows.  `listing` renders the NASM text (the
+// format the server caches for the stored-listing scans) as address, bytes and
+// instruction columns; `nasm` and `hex` show the engine's text as it came.  The
+// API's third format, `asm`, is the ISA-neutral match listing and has no view.
+export const DISASM_VIEWS = ["listing", "nasm", "hex"] as const;
+export type DisasmView = (typeof DISASM_VIEWS)[number];
+
+// The one ISA the engine's NASM source decodes; mirrors engines.NASM_ARCH.
+export const NASM_ARCH = "x86_32";
+
+export const DISASM_VIEW_LABELS: Record<DisasmView, string> = {
+  listing: "Listing",
+  nasm: "NASM source",
+  hex: "Hex",
+};
 
 // The two views of a function's code the Disassembly panel toggles between:
 // the engine's text listing and its basic-block control-flow graph.  The
@@ -143,14 +156,14 @@ export const CALLING_CONVENTIONS = ["cdecl", "stdcall", "fastcall", "thiscall", 
 // mirrors the API's 404 signature-not-found.
 export const SIGNATURE_NOT_FOUND = "signature-not-found";
 
-// Listing kinds the diff route accepts, decompilation first; mirrors
+// Listing kinds the diff route accepts, disassembly first; mirrors
 // diffview.DIFF_KINDS and diffview.DEFAULT_KIND.
-export const DIFF_KINDS = ["decomp", "disasm"] as const;
+export const DIFF_KINDS = ["disasm", "decomp"] as const;
 type DiffKind = (typeof DIFF_KINDS)[number];
 export const DEFAULT_DIFF_KIND: DiffKind = DIFF_KINDS[0];
 export const DIFF_KIND_LABELS: Record<DiffKind, string> = {
-  decomp: "AI Decompilation",
   disasm: "Disassembly",
+  decomp: "Decompilation",
 };
 
 // Whether the diff strips addresses, bytes and comments by default; mirrors
@@ -199,11 +212,6 @@ export const DEFAULT_AUTO_MAX_TASKS = 200;
 // knowledge.DEFAULT_SEARCH_LIMIT.
 export const DEFAULT_KNOWLEDGE_LIMIT = 10;
 
-// Detail the API answers while remote URL ingestion is disabled; mirrors
-// remote_ingest.DISABLED_DETAIL.  The URL field stays hidden in that state.
-export const REMOTE_INGEST_DISABLED_DETAIL =
-  "set REPORTAL_ALLOW_REMOTE_INGEST=1 or [knowledge] allow_remote = true to enable URL ingestion";
-
 // Node kinds a knowledge graph carries, in the order the API rebuilds them;
 // mirrors the API's graph.GRAPH_NODE_KINDS.
 export const GRAPH_NODE_KINDS = [
@@ -232,6 +240,15 @@ type BinaryOrder = (typeof BINARY_ORDERS)[number];
 // Mirrors store.DEFAULT_BINARY_ORDER.
 export const DEFAULT_BINARY_ORDER: BinaryOrder = "id";
 
+export const BINARY_ORDER_LABELS: Record<BinaryOrder, string> = {
+  id: "Oldest first",
+  newest: "Newest first",
+  name: "Name (A to Z)",
+  "name-desc": "Name (Z to A)",
+  size: "Size (small first)",
+  "size-desc": "Size (large first)",
+};
+
 // Orders the collections list accepts; the server sorts and echoes the value,
 // and `id` is the creation order it used before the control existed.  `owner`
 // sorts by the owning team's name, the personal collections first.
@@ -240,6 +257,14 @@ export type CollectionOrder = (typeof COLLECTION_ORDERS)[number];
 // Mirrors store.DEFAULT_COLLECTION_ORDER: the control falls back to the order
 // the route uses when none is named.
 export const DEFAULT_COLLECTION_ORDER: CollectionOrder = "id";
+
+export const COLLECTION_ORDER_LABELS: Record<CollectionOrder, string> = {
+  id: "Oldest first",
+  name: "Name (A to Z)",
+  size: "Most binaries first",
+  updated: "Recently updated",
+  owner: "Owning team",
+};
 
 // Statuses the Lineage panel groups into tables; unchanged rows are only
 // counted, since a version pair is usually mostly unchanged.
@@ -315,18 +340,24 @@ export const ANALYSIS_ORDERS = ["newest", "oldest", "name", "name-desc", "size",
 
 /** The labels the order control shows for those values. */
 export const ANALYSIS_ORDER_LABELS: Record<(typeof ANALYSIS_ORDERS)[number], string> = {
-  newest: "newest first",
-  oldest: "oldest first",
-  name: "name (A to Z)",
-  "name-desc": "name (Z to A)",
-  size: "size (small first)",
-  "size-desc": "size (large first)",
+  newest: "Newest first",
+  oldest: "Oldest first",
+  name: "Name (A to Z)",
+  "name-desc": "Name (Z to A)",
+  size: "Size (small first)",
+  "size-desc": "Size (large first)",
 };
 
 /** The workspace filter's labels; mirrors store.WORKSPACE_FILTERS.  The
  *  Analyses and Collections lists both filter by it. */
 export const WORKSPACE_FILTERS = ["personal", "team", "public"] as const;
 export type WorkspaceFilter = (typeof WORKSPACE_FILTERS)[number];
+
+export const WORKSPACE_FILTER_LABELS: Record<WorkspaceFilter, string> = {
+  personal: "Personal",
+  team: "Team",
+  public: "Public",
+};
 
 // Rows one analyses request asks for, and the most the route accepts; both
 // mirror store.DEFAULT_ANALYSIS_LIMIT and store.MAX_ANALYSIS_LIMIT.
@@ -358,13 +389,18 @@ const NAME_SOURCE_MAP: Record<string, (typeof FUNCTION_NAME_SOURCES)[number]> = 
 };
 const PLACEHOLDER_PREFIXES = ["sub_", "fcn_", "FUN_", "FUNC_"] as const;
 
+/** True for an empty or generated name (`fcn_…`, `sub_…`): it names nothing. */
+export function isPlaceholderName(name: string): boolean {
+  const stripped = name.trim();
+  return !stripped || PLACEHOLDER_PREFIXES.some((prefix) => stripped.startsWith(prefix));
+}
+
 /** Portal label for a stored function name and source. */
 export function nameSourceLabel(
   name: string,
   source: string,
 ): (typeof FUNCTION_NAME_SOURCES)[number] {
-  const stripped = name.trim();
-  if (!stripped || PLACEHOLDER_PREFIXES.some((prefix) => stripped.startsWith(prefix))) {
+  if (isPlaceholderName(name)) {
     return "No Debug Info";
   }
   const key = source.trim().toLowerCase();
@@ -544,3 +580,9 @@ export const MAX_UPLOAD_FILES = 64;
 
 // Roles a user may carry; mirrors auth.ROLES.
 export const ROLES = ["viewer", "analyst", "admin"] as const;
+
+// The API code every AI route answers while no model is configured
+// (`llm.UNAVAILABLE_DETAIL` names the settings for an operator), and the plain
+// sentence the SPA shows in its place.
+export const LLM_UNAVAILABLE = "llm-unavailable";
+export const NO_MODEL_MESSAGE = "No model is configured for this workspace.";

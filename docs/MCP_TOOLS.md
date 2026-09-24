@@ -2,7 +2,7 @@
 
 # MCP tool catalog
 
-The 275 tools the MCP registry exposes (129 read-only, 146 destructive).
+The 284 tools the MCP registry exposes (134 read-only, 150 destructive).
 `reportal mcp` serves them over stdio JSON-RPC; `POST /mcp` and `GET /mcp`
 serve the same registry over HTTP. A read-only tool runs at once; a
 destructive tool pauses an agent run for confirmation. Names must be unique
@@ -18,9 +18,10 @@ registry, its registration rules and the agent loop that drives it are on
 | Tool | What it does |
 |------|--------------|
 | `diff_functions` | Align two functions' disassembly or decompilation side by side, with the changed lines marked. |
-| `explain_function` | Match one explain domain (crypto, execution, filesystem or networking) against the imports and string literals a function's stored decompilation mentions: the hosted portal's per-function explain agents, as a deterministic text match. |
-| `export_decompiler_script` | Render a binary's stored renames as a runnable decompiler script: a Ghidra Python script, an IDA script or a Binary Ninja rename document. Stored-only; placeholders are left out, so only real names are carried. |
+| `explain_function` | Match one explain domain (crypto, execution, filesystem or networking) against the imports and string literals a function's stored decompilation mentions, as a deterministic text match rather than a model narrative. |
+| `export_decompiler_script` | Render a binary's stored analysis as a runnable decompiler script: a Ghidra Python script, an IDAPython script or a Binary Ninja JSON document. Carries renames by default; include adds analyst comments, AI summaries (as function comments) and complete stored prototypes. Stored-only; placeholders and declaration words are never carried as names. |
 | `export_sbom` | Render a binary's stored library reading as a bill of materials: CycloneDX or SPDX JSON, or a CSV component list. Stored-only; it runs no engine. |
+| `find_similar_functions` | Rank the stored functions whose cached disassembly is most similar to one stored function, a pasted assembly listing, or hex code bytes with their arch. Records nothing; a stored function needs a cached listing, and bytes are disassembled in process, never executed. |
 | `get_activity` | What was done here and by whom: the journaled actions with the actor that made each, plus the analysis-log entries. Derived, never stored. A non-admin caller only sees its own actions. |
 | `get_additional_details` | Read a binary's overlay, Rich header, debug entries and directory presence. |
 | `get_ai_comments` | Return the stored AI inline comments of a function; never calls the model. |
@@ -52,7 +53,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `get_details_status` | Report which scans the binary-detail reads have, and what fills a gap. |
 | `get_detect_scan` | Return a binary's stored family detection; fails when none was run. |
 | `get_die_info` | Identify a binary the way Detect-It-Easy does, from the stored scans. |
-| `get_disasm` | Return a function's NASM or hex disassembly through its rebrew project. |
+| `get_disasm` | Return a function's NASM, hex or asm disassembly through its rebrew project. |
 | `get_doc` | One documentation page parsed into blocks (headings, paragraphs, lists, code, quotes and tables) with the page before and after it in reading order; the slug is the file's stem, such as errors or cli. |
 | `get_doctor` | Check this install can serve before anything starts: workspace, database and schema, auth posture, engine, SPA build, optional paths and a free port. Every check is a read; nothing is written and no database is created. The port probe defaults to 8002, and 0 skips it. |
 | `get_exploitability` | Rank a binary's stored security findings by reachability: reachable when another stored function's decompilation mentions its function, with a network-adjacency flag. Stored-only; it runs no engine. |
@@ -122,7 +123,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `list_conversation_runs` | Every agent run of one conversation, newest first, with each run's status, tool calls and events. |
 | `list_conversations` | List conversations, optionally filtered by scope kind and id. |
 | `list_data_types` | List a binary's editable type model with each type's size, members and provenance (System, User, Auto Unstrip or AI), optionally filtered by that source and ordered by name or size. |
-| `list_docs` | Every documentation page the portal ships (the repository's docs/*.md and CHANGELOG.md), as a slug and title each. |
+| `list_docs` | Every page of the in-app manual (the repository's docs/*.md and CHANGELOG.md), as a slug and title each. |
 | `list_documents` | List knowledge documents, optionally filtered by scope kind and id, without their stored text. |
 | `list_external_sources` | The registered external sources with their kind, availability and the remote gate, plus whether a VirusTotal key resolves. |
 | `list_families` | List the locally registered malware families with their stored signature bundles. reportal bundles no external threat-intelligence feed. |
@@ -136,13 +137,17 @@ registry, its registration rules and the agent loop that drives it are on
 | `list_models` | Every registered model that can produce a stored result, with its kind, version and availability. |
 | `list_notifications` | The notification feed derived from the action journal and the analysis log, newest first; dismissal is the client's, keyed by each item's id. |
 | `list_organisations` | Every organisation with the teams it holds; an organisation groups teams and is not access control. |
+| `list_repo_files` | List one directory of a checkout as entries with name, kind (dir, file, link) and byte size, skipping .git; report truncated when the entry cap was hit. |
+| `list_repos` | List the git checkouts stored under the workspace's repos/ directory, names only, including one an operator cloned in by hand. |
 | `list_scans` | Every stored scan of a binary's newest analysis, newest first, with the inputs each one ran with (the decompiler, the severity floor, the other binary of a comparison). The result payload is left out. Read-only. |
 | `list_secrets` | Every stored credential the workspace or a team holds, redacted to its name, scope, byte length and a last-four hint; the value is never returned. |
 | `list_signatures` | List a binary's stored function signatures, ordered by name. |
+| `list_symbol_library` | Every debug symbol file in the workspace library with the identity it is keyed by (a PE debug GUID+age or an ELF GNU build id), its counts, origin and creation time; stored-only, it runs nothing. |
 | `list_team_invites` | Every invite a team minted, without code digests: who minted each, who redeemed it, when it expires, and whether it has expired. |
 | `list_teams` | The teams with their member counts; a team scopes the binaries and collections that carry its visibility. |
 | `list_users` | The local users with their roles and state, never their token digests; says whether token auth is required on this install. Admin (or auth-off local operator) only. |
 | `read_memory` | Read a window of a binary's bytes by address through the engine: an absolute virtual address, an RVA or a raw file offset. Defaults to 64 bytes, capped at 1024, and refuses an address not backed by the image's raw bytes. |
+| `read_repo_file` | Read one UTF-8 text file from a checkout and return its content, refusing paths that resolve outside the checkout, directories, oversized files and non-text bytes. |
 | `retrieve_knowledge` | Retrieve the best knowledge document snippets for a query, scoped to a binary or to the binary of a function; read-only. |
 | `search` | Search binaries, functions, collections and tags by substring (or by a bounded regular expression with regex), or by one typed query (sha256, binary, collection or tag). |
 | `search_knowledge` | Rank stored knowledge document chunks against a query and return the best snippets with their document and score. |
@@ -156,6 +161,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `add_feedback` | Store one feedback note about reportal itself, attributed to the caller; journaled and revertible. |
 | `add_function_edge` | Record one analyst-declared callee edge on a function, for a call the engine cannot resolve; journaled, and re-declaring the same edge updates it in place. |
 | `add_function_string` | Record one analyst string against a function, at function scope; journaled, and the value may not duplicate an entry already recorded there. |
+| `add_symbol_library` | Add debug symbol files to the workspace library: parse each with the stdlib readers, key it by its match identity and store it content-addressed under the workspace, as one journaled action. A file that parses but carries no identity is refused with no-identity. |
 | `add_team_member` | Add a user to a team; journaled and revertible. |
 | `add_user` | Create a user and return its bearer token once; only the token's digest is stored. Journaled and revertible. |
 | `append_analysis_log` | Append one log entry to an analysis; journaled and revertible. |
@@ -172,6 +178,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `cancel_job` | Cancel a job that has not started; a running one cannot be stopped. |
 | `canonicalize_function_names` | Rename many functions to the canonical name the store already recorded (a predicted name, else the newest rename), journaling every rename; apply=false only plans. |
 | `clear_ai_artifact` | Discard one stored AI artifact of a function (the rewrite by default, else a summary, its inline comments, its type suggestions or its rename suggestions). The artifact's rating, overrides and line comments live inside it and come back with the revert. Destructive. |
+| `clone_repo` | Shallow-clone an http(s) git repository into the workspace's repos/ directory under a checkout name (default: the url's last path segment minus .git); off while REPORTAL_ALLOW_REMOTE_INGEST is off, and refused when the checkout name is already taken. |
 | `confirm_conversation_run` | Approve or reject the tool call a paused agent run named and continue it; a rejection is fed back to the model as a refused call. |
 | `copy_signature` | Copy one function's signature onto others in the same analysis, journaling each target's previous signature and history. |
 | `create_api_key` | Mint one named extra key for a user; the token is returned once and counts toward the organisation plan's max_api_keys. Journaled. A read_only key refuses HTTP writes and /mcp. |
@@ -225,6 +232,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `rename_tag` | Rename one tag by id, keeping every binary and collection link to it. |
 | `replace_analysis_strings` | Replace an analysis's whole analyst string list in one journaled action, so one revert puts the previous list back. |
 | `requeue_analysis` | Put an analysis back to pending and queue a job for each stored scan that has a job kind; journaled and revertible. |
+| `resolve_symbols` | Match a binary to the workspace symbol library by the binary's own identity (the PE debug directory's CodeView GUID+age, or the ELF GNU build id) and apply the match as one journaled action, renaming the functions it names and adding its types. fetch=true asks the Microsoft public symbol server for a missing PDB (403 external-disabled while remote sources are off), fetch=false stays local, and omitting it fetches only when remote sources are already enabled; no match answers matched=false with the reason. |
 | `revert_auto_run` | Remove the files a stored auto run wrote, restore the statuses it changed and delete its rows. |
 | `revert_data_type_history` | Restore the type state one history row recorded, undoing that edit; the revert is itself journaled and a repeat is a no-op. |
 | `revert_journal_entry` | Revert one recorded action (by action id) or one journal entry (by entry id), replaying its stored inverses newest-first. |
@@ -258,7 +266,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `run_library` | Identify which libraries a binary is built from through the engine's signature match and store the reading; the binary needs a rebrew project context. |
 | `run_lineage` | Compare two binaries' functions and store the comparison on the left binary: what is unchanged, changed, added or removed. |
 | `run_match` | Rank a binary's functions against the local corpus under Match Settings and store the matches. The platform/architecture scope is a coarse filter over the stored fingerprint (else the suffix-derived format/arch columns), not a guarantee. |
-| `run_pe_info` | Inspect a binary's PE identity, sections and security metadata and store the result. |
+| `run_pe_info` | Inspect a binary's header (PE, ELF or Mach-O): identity, sections and security metadata, and store the result. |
 | `run_pipeline` | Run the AI decompilation pipeline over one function and store the run. |
 | `run_protocols_scan` | Infer the network protocols a binary speaks from its imports and strings and store the result. |
 | `run_related_binaries` | Rank the other binaries in the store against one binary by their hashes, imports, capabilities and size, and store the ranking. |
@@ -296,4 +304,5 @@ registry, its registration rules and the agent loop that drives it are on
 | `update_collection` | Rename a collection or set its description and scope; omitted fields stay. |
 | `update_comment` | Replace an analyst comment's body. |
 | `update_user` | Set one user's role, disabled flag or active team; journaled and revertible. |
-| `upgrade_analysis_model` | Re-run an analysis's stored LLM artifacts under a named llm model, journaling every artifact replaced; reportal never re-analyses the binary. |
+| `upgrade_analysis_model` | Re-run an analysis's stored LLM artifacts under a named llm model, journaling every artifact replaced; the binary is never re-analyzed. |
+| `write_repo_file` | Create or overwrite one text file in a checkout, creating missing parent directories; the write is atomic, stays inside the checkout and is capped at the same byte bound a read has. |

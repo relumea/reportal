@@ -388,6 +388,7 @@ def fetch(
     production fetch cannot fall through on pre-flight DNS alone.
     """
     current = url
+    # cordis-boundary: emission, withhold every write until the fetch validates.
     with httpx.Client(follow_redirects=False, timeout=timeout, trust_env=False) as client:
         for _hop in range(MAX_REDIRECTS + 1):
             normalized, _address = validate_target(current, allow_loopback=allow_loopback)

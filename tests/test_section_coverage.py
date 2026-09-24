@@ -106,7 +106,7 @@ class TestStore:
         assert coverage["totals"]["coverage_pct"] is None
         assert all(section["coverage_pct"] is None for section in coverage["sections"])
         assert "no stored functions" in coverage["note"]
-        assert "reportal" in coverage["note"]
+        assert coverage["note"].startswith("measured over the stored function table")
 
     def test_the_note_names_the_metric_as_reportal_s_own(self, conn: sqlite3.Connection) -> None:
         ids = _seed(conn)

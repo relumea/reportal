@@ -7,7 +7,8 @@ the string escaping.  Output is written with ``invariant=1`` and no page
 compression, so the same stored rows and the same date produce the same bytes
 and a test can still read the expected strings straight out of the stream.
 
-``render_report`` assembles the summary from the scans reportal already stored.
+``render_report`` assembles the summary from the scans and per-function AI summaries
+reportal already stored.
 The single engine call it may make is the optional coverage summary: it runs
 ``engine.report`` only when the stored ``report`` scan is absent and the caller
 supplied an engine, and a failed run is skipped with the section omitted like
@@ -39,6 +40,7 @@ from reportal import (
     gobuildinfo,
     hardening,
     lineage,
+    llm,
     store,
 )
 from reportal._paths import reports_dir, write_bytes_atomic
@@ -86,6 +88,10 @@ MAX_ROWS_PER_SECTION = 20
 MAX_TECHNIQUE_ROWS = 20
 MAX_IOC_ROWS = 12
 MAX_LINEAGE_ROWS = 10
+MAX_FAMILY_ROWS = 10
+MAX_RELATED_ROWS = 10
+MAX_COMPOSITION_ROWS = 10
+MAX_SUMMARY_ROWS = 20
 MAX_CELL_CHARS = 160
 RULE_BODY_LINE_CAP = 24
 
@@ -544,6 +550,28 @@ def _function_triage_section(layout: PdfLayout, conn: sqlite3.Connection, binary
     )
 
 
+def _ai_summary_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    summaries = store.ai_artifacts_for_binary(conn, binary_id, llm.AI_KIND_SUMMARY)
+    if not summaries:
+        return
+    functions = {int(row["id"]): row for row in store.list_functions(conn, binary_id=binary_id)}
+    rows = [
+        [
+            _truncate(functions[function_id].get("name"), 40),
+            hex(int(functions[function_id]["va"])),
+            _truncate(artifact["payload"].get("summary")),
+        ]
+        for function_id, artifact in summaries.items()
+        if function_id in functions and _text(artifact["payload"].get("summary")).strip()
+    ]
+    if not rows:
+        return
+    layout.heading("AI summaries")
+    layout.key_values([("functions", _text(len(rows)))])
+    layout.table(["function", "va", "summary"], rows[:MAX_SUMMARY_ROWS], [0.22, 0.13, 0.65])
+    layout.note("Model-written summaries as stored; not verified by reportal.")
+
+
 def _security_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
     scan = _scan(conn, binary_id, store.SCAN_KIND_SECURITY)
     if not scan:
@@ -587,6 +615,34 @@ def _threat_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int)
                 for entry in techniques[:MAX_TECHNIQUE_ROWS]
             ],
             [0.25, 0.55, 0.2],
+        )
+
+
+def _detect_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    scan = _scan(conn, binary_id, store.SCAN_KIND_DETECT)
+    if not scan:
+        return
+    layout.heading("Family detection")
+    layout.key_values(
+        [
+            ("families checked", _text(scan.get("families_checked"))),
+            ("matches", _text(scan.get("count"))),
+        ]
+    )
+    matches = _rows(scan.get("matches"))
+    if matches:
+        layout.table(
+            ["family", "confidence", "similarity", "signals"],
+            [
+                [
+                    _truncate(entry.get("name"), 48),
+                    entry.get("confidence"),
+                    entry.get("similarity"),
+                    len(_entries(entry.get("signals"))),
+                ]
+                for entry in matches[:MAX_FAMILY_ROWS]
+            ],
+            [0.4, 0.2, 0.2, 0.2],
         )
 
 
@@ -722,6 +778,68 @@ def _lineage_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int
     )
 
 
+def _related_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    scan = _scan(conn, binary_id, store.SCAN_KIND_RELATED)
+    if not scan:
+        return
+    layout.heading("Related binaries")
+    layout.key_values(
+        [
+            ("candidates considered", _text(scan.get("candidates_considered"))),
+            ("related", _text(scan.get("count"))),
+        ]
+    )
+    related = _rows(scan.get("related"))
+    if related:
+        layout.table(
+            ["binary", "classification", "confidence", "similarity"],
+            [
+                [
+                    _truncate(entry.get("name"), 40),
+                    entry.get("classification"),
+                    entry.get("confidence"),
+                    entry.get("similarity"),
+                ]
+                for entry in related[:MAX_RELATED_ROWS]
+            ],
+            [0.4, 0.2, 0.2, 0.2],
+        )
+
+
+def _composition_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
+    scan = _scan(conn, binary_id, store.SCAN_KIND_COMPOSITION)
+    if not scan:
+        return
+    layout.heading("Composition")
+    layout.key_values(
+        [
+            ("functions", _text(scan.get("total_functions"))),
+            ("matched", _text(scan.get("matched_functions"))),
+            ("matched %", _text(scan.get("matched_percent"))),
+        ]
+    )
+    categories = _rows(scan.get("categories"))
+    if categories:
+        layout.table(
+            ["category", "functions", "percent"],
+            [
+                [entry.get("label"), entry.get("count"), entry.get("percent")]
+                for entry in categories
+            ],
+            [0.5, 0.25, 0.25],
+        )
+    sources = _rows(scan.get("composition"))
+    if sources:
+        layout.table(
+            ["matched binary", "functions", "percent"],
+            [
+                [_truncate(entry.get("name"), 48), entry.get("count"), entry.get("percent")]
+                for entry in sources[:MAX_COMPOSITION_ROWS]
+            ],
+            [0.5, 0.25, 0.25],
+        )
+
+
 def _attack_surface_section(layout: PdfLayout, conn: sqlite3.Connection, binary_id: int) -> None:
     try:
         payload = attack_surface.attack_surface(conn, binary_id)
@@ -849,15 +967,19 @@ def _render(
     _capabilities_section(layout, conn, binary_id)
     _triage_section(layout, conn, binary_id)
     _function_triage_section(layout, conn, binary_id)
+    _ai_summary_section(layout, conn, binary_id)
     _security_section(layout, conn, binary_id)
     _crypto_section(layout, conn, binary_id)
     _threat_section(layout, conn, binary_id)
+    _detect_section(layout, conn, binary_id)
     _secrets_section(layout, conn, binary_id)
     _behavior_section(layout, conn, binary_id)
     _protocols_section(layout, conn, binary_id)
     _hardening_section(layout, conn, binary_id)
     _remediation_section(layout, conn, binary_id)
     _lineage_section(layout, conn, binary_id)
+    _related_section(layout, conn, binary_id)
+    _composition_section(layout, conn, binary_id)
     _attack_surface_section(layout, conn, binary_id)
     _exploitability_section(layout, conn, binary_id)
     _gobuildinfo_section(layout, conn, binary_id)

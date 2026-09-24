@@ -31,7 +31,12 @@ stay out of the entry chunk.  `isTypingTarget` lives in `keys.ts` so the
 shortcut layer does not pull `SearchModal` into the entry.  A `<Suspense>`
 boundary around the route content shows the shell's `Loading` line while a
 view's chunk arrives, and a `ViewLoadBoundary` reports a failed chunk instead
-of leaving the pane blank.
+of leaving the pane blank.  A panel that starts folded shows a chevron before
+its title that turns when open, and a lazy panel (references, cross-references,
+imports, strings, triage, report) says it is not loaded rather than drawing a
+loading skeleton before its first load (`PanelBody`'s `idle`).  A chunk the server no longer has (the SPA was
+rebuilt since the page loaded) reloads the page once, guarded by a
+`sessionStorage` stamp so a real fault still shows (`web/tests/stale-chunk.spec.ts`).
 
 `GET /` answers the entry page `no-cache` (so a deploy is picked up on the
 next load) and the hashed bundles under `/static/assets/` `immutable` with a
@@ -105,18 +110,32 @@ functions on `#/functions` cost 3,751 ms to the first row, 20,000 DOM rows,
 table pays for the payload and the fetch, and no longer for the DOM.
 
 `src/main.tsx` mounts `QueryClientProvider` and `HashRouter` around
-`src/App.tsx`, the shell: a grouped sidebar (`NAV_GROUPS` in `src/router.ts`:
-Overview, Targets, Analysis, Agent, System; the System group ends with Jobs,
-Models, Journal, Components, Integrations, Users, Billing and Docs), a topbar
-title, the theme picker and the health line.
+`src/App.tsx`, the shell: the relumea mark and wordmark, a grouped sidebar
+(`NAV_GROUPS` in `src/router.ts`: Overview, Corpus, Intelligence, Agent,
+Activity, Settings) with a footer pinned to its bottom (the theme picker and
+the health line), and a topbar with history, title, a Search button that opens
+the global search modal (it names the shortcut: `⌘K` on a Mac, `Ctrl+K`
+elsewhere) and notifications.
 Routing is react-router's: `App` holds one route table, `useRoutes` renders it,
+an unknown path renders a "Page not found" view with no sidebar entry marked
+(a detail route whose row answers 404, `#/binaries/<id>`, `#/functions/<id>` or
+`#/conversations/<id>`, renders `MissingNote` (`src/detailParts.tsx`, which holds the
+parts only lazy views use, so they stay out of the entry chunk) instead: the title reads
+"Binary not found" and so on, there is no Retry, and a link leads back to the list),
 and the same table is matched against the location for the topbar title and the
 sidebar's active section, so no path is written down twice.  Every view is
 composed from the primitives in `src/components.tsx` (Panel, Toolbar, Button,
 ConfirmButton, Badge, Field, EmptyState, Loading, ErrorNote, Note, CodeBlock,
 KeyValue, DataTable) over the token layer in `src/styles.css`.  `src/api.ts` is
 the typed fetch wrapper: JSON in and out, `FormData` for the binary upload, and
-an `ApiError` carrying `error`/`detail` from a non-2xx body.  `api.ts` also
+an `ApiError` carrying `error`/`detail` from a non-2xx body.  Every JSON request
+carries an abort deadline (`JSON_TIMEOUT_MS`, 120 seconds): the timer aborts the
+fetch and is cleared once the response settles, so a wedged server ends as a
+failed request instead of holding the call for the life of the page, and an
+abort during the body read fails the call rather than reading as an empty
+payload.  `FormData` uploads are exempt because a file has no fixed size, and a
+raw fetch outside the wrapper takes the same cap from `abortDeadline` (the SBOM
+export does).  `api.ts` also
 owns the bearer token: `storedToken`/`storeToken` read and write
 `localStorage["reportal.token"]` (`TOKEN_STORAGE_KEY`) and every request carries
 `Authorization: Bearer <token>` when one is stored, so an authenticated install
@@ -136,11 +155,12 @@ with a retry.  Heavy engine work never runs on render: stored scans load
 automatically and the run controls POST explicitly.
 
 The shell's own bindings (`src/App.tsx`) are the sidebar collapse
-(`Cmd/Ctrl+B`, a 64px rail whose preference is `SIDEBAR_STORAGE_KEY`), the
+(`Cmd/Ctrl+B`, a 64px rail of view icons from `src/icons.tsx`, the label kept as
+the link's accessible name; the preference is `SIDEBAR_STORAGE_KEY`), the
 per-tab view history on `Alt+Left`/`Alt+Right` and `{`/`}` (`HISTORY_STORAGE_KEY`
 in `sessionStorage`, fifty entries), `[`/`]` section cycling
 (`keys.cycleViewSection`) and `Space` flipping a function's Disassembly and
-Control Flow, or a diff's Disassembly and AI Decompilation
+Control Flow, or a diff's Disassembly and Decompilation
 (`toggleFunctionCodeView`, which the mounted `CodeSection` or `DiffView`
 publishes).  The router's own back and forward keep working beside the in-app
 history, and `stepHistory` marks its navigation so recording does not push the
@@ -187,7 +207,10 @@ highlighted hit with Enter or a click and returns focus to where it was on
 Escape; a 64-character hex query selects the SHA-256 Hash type.  A binary hit
 shows a 12-character SHA-256 with a copy control and the stored
 `created_at`.  A collection hit shows its member count, `visibility`
-(`public` or `team`) and `created_at`.
+(`public` or `team`) and `created_at`.  A function hit shows its VA, the name
+of the binary it belongs to (two binaries can hold the same VA) and the match
+kind: a literal query of hex digits, with or without `0x`, also matches the
+function at that exact address in every binary (`match: "va"`, ranked first).
 The Search view
 keeps its three-group tables, which is why the two surfaces share the hit
 model and helpers rather than a single component.
@@ -217,7 +240,19 @@ touch-slider input patterns with no desktop instrument equivalent.
 
 Below 900px the shell is one column: the sidebar becomes a sticky top bar and
 its nav keeps every group label and divider in a single horizontally scrollable
-strip, so the grouped information architecture survives at narrow widths.  The
+strip, so the grouped information architecture survives at narrow widths; the
+footer keeps only the theme select, beside the brand, and the links drop their
+icons.
+
+The visual system is the relumea brand (`../BRAND.md` in the parent
+repository): the `light` theme is its palette, verdict inks and chip, control
+and card radii (5, 9 and 14px); `dark` keeps its own grounds with the verdict
+green as the accent.  Archivo sets the interface and JetBrains Mono only data,
+self-hosted from `public/fonts/` (served at `/static/fonts/`, license `OFL.txt` beside them).  Coverage cells
+read the `--cell-*` fills, badges and table cells the `--st-*` inks.  One filled
+button per view: a panel header's primary action renders as accent ink on an
+accent outline, and a table row's destructive action stays muted until its row
+is hovered or focused.  The
 `src/styles.css` token layer carries the contrast contract: every 11-12px label
 clears 4.5:1 and every badge ink clears 4.5:1 over its soft fill on both
 `--surface` and `--surface-2` in every theme; `tools/audit_ui.py` measures the
@@ -235,6 +270,12 @@ listener.  Resolution is first match wins: the `?theme=` query parameter, then
 `localStorage["reportal.theme"]` (`THEME_STORAGE_KEY`), then the OS.  The
 topbar's `ThemePicker` writes the choice through `setTheme`, and
 `web/tests/theme.spec.ts` covers the four rules.
+
+`light` carries the relumea brand tokens exactly (`BRAND.md` at the monorepo root, mirrored from
+the landing page's `tokens.css`; `relumea.ai`'s `bun run check:brand` fails on any shared token
+that drifts). `dark` is the same palette on a dark ground: neutral ink greys with no blue cast,
+the brand green lifted to clear AA, and the verdict hues at dark-ground lightness. The primary
+button is filled ink in every theme (`--text` fill, `--surface` label, `--primary-hover`).
 
 `zine` is the Windows 2000 "Windows Standard" scheme, taken from the sibling
 zine project's `src/gui/win2k.css`: the registry defaults for
@@ -323,7 +364,9 @@ built from existing endpoints only: the row counts from `GET /api/health` with
 the aggregate coverage meter, one row per binary with its segmented match meter
 and status chips, the live auto-run card (progress meter plus current task), the
 per-section meters of the focused binary, the newest `GET /api/journal` entries
-and the quick-link strip.  Matched counts and latest auto runs need one request
+and the quick-link strip.  A workspace with no binary leads with a "Start with a
+binary" panel (upload, or the CLI imports), and a month with no activity reads as
+one line instead of three empty charts.  Matched counts and latest auto runs need one request
 per binary, so the view enriches the first `SUMMARY_CAP` binaries; the stored
 PE details and coverage report are two more requests each, so only the first
 `SECTION_CAP` binaries carry the section and byte meters, and the view states
@@ -356,8 +399,15 @@ which streams the stored bytes with a `Content-Disposition` filename), and a
 (behind an inline confirm) to the selection through `POST /api/binaries/bulk`
 and reports how many applied and how many were skipped.
 
-Binary detail (`#/binaries/<id>`) opens with the portal's binary-detail surface.
-header (name, sha256, format, arch, size, path, a display-name field and a
+Binary detail (`#/binaries/<id>`) opens with the portal's binary-detail surface:
+the header, then the panels on six tabs (`tabs.tsx`): Overview, Format,
+Memory and types, Security, Provenance and Review.  The route query's `tab`
+names the open one, so a reload or a shared link keeps it; a link carrying a
+memory jump or a data-type filter (`memory`, `search`, `kind`, ...) opens on
+Memory and types.  Every tab stays mounted and the closed ones are `hidden`,
+so a panel keeps its state across a switch, and a shortcut or header button
+that jumps to a panel (`focusPanel`) opens its tab first.
+Header (name, sha256, format, arch, size, path, a display-name field and a
 notes field that `PATCH /api/binaries/<id>` saves, and the rebrew project its engine-backed
 panels read, or the `import-rebrew` command that sets one when the binary has
 none); analyses (the binary's own runs from
@@ -365,19 +415,26 @@ none); analyses (the binary's own runs from
 finished times, status badge and the importer's log line, the scoped
 `count of total` line, an `All analyses` link to the workspace-wide view and a
 nothing-stored state for a binary no analysis exists for); binary header name
-is click-to-rename (Enter saves, Escape discards) and the header shows
+is click-to-rename (a pencil marks it; the `NameEditor` field takes the focus
+with the name selected, Enter or leaving the field saves, Escape discards) and the header shows
 the effective `format`/`arch` (the hand-set override first, badged as asserted
 by hand, else detection), recovered `language` and `compiler`, and
 `created_at`, Format/ISA override selects with Save writing
 `PATCH /api/binaries/<id>`, Download serves
 `GET /api/binaries/<id>/download`, Export serves
 `GET /api/binaries/<id>/binary-export` (the stored bytes with the current names
-rewritten into their slots), PDF serves
-`GET /api/binaries/<id>/report/pdf`, Symbols serves
-`GET /api/binaries/<id>/symbols/export`, Logs and Tags jump to those panels,
+rewritten into their slots), PDF reads
+`GET /api/binaries/<id>/report/pdf/status` and links
+`GET /api/binaries/<id>/report/pdf` once a report is stored, else offers
+Generate PDF (`POST` on the same route, errors in the header's error note),
+Symbols links `GET /api/binaries/<id>/symbols/export` once a symbol file is
+ingested and is otherwise disabled with the reason on hover, Export renames
+opens a menu of Ghidra script, IDA script and Binary Ninja JSON downloads
+(`GET /api/binaries/<id>/decompiler-script?format=`, an attachment named
+`<binary>_renames_<tool>.<ext>`), Logs and Tags jump to those panels,
 and Scope writes `PATCH /api/binaries/<id>/scope`; binary details (auto-loads the
 stored PE metadata and, for the build-identity rows, the fingerprint bundle; a
-`no-scan` response shows the nothing-stored message with a Run PE details
+`no-scan` response shows the nothing-stored message with a Scan headers
 control that posts and stores it; the identity table carries the PE type, base
 address and image base, a clickable entry point (the function at that VA, or
 the function list filtered to it), checksum, resource count, import hash and
@@ -405,7 +462,9 @@ coloured by the status entity of the stored function covering the cell's start,
 with a legend, a per-section covered-of-cells line and a cell that opens the
 function, or the memory dump at that address when no function covers it; a
 section past 512 cells widens them rather than drawing more, and a binary with
-no stored functions says so instead of reading as uniformly empty); code
+no stored functions says so instead of reading as uniformly empty; sections
+that are executable or hold a function lead, and the rest sit behind a
+`N sections without code` disclosure); code
 signature (Authenticode state,
 signature count and signers); relocations (the heading badges the stored
 count, plus directory presence from the pe-info scan); packer detection
@@ -555,7 +614,13 @@ present, a Download link to the raw read that serves that one format
 (`GET /api/binaries/<id>/remediation/<yara|snort|stix>`), or an
 artifact-specific empty state, then the Snort and YARA notes); and a link to the binary's functions.
 
-Function detail (`#/functions/<id>`) panels: header (id, VA, a click-to-rename
+Function detail (`#/functions/<id>`) leads with the best recorded candidate
+that carries a real name (a placeholder `fcn_…` names nothing), its similarity
+and an Apply name control (`POST /api/functions/<id>/apply-match`, mode
+`name`), and names the owning binary in its header.  It carries the same tabs, `tab` in the
+query: Code (the code panel and the decompilation side by side from a
+1600px viewport, stacked below it, then the signature), References,
+Matches and history, and AI and automation.  Panels: header (id, VA, a click-to-rename
 name, size, status, name_source, and the stored signature `prototype` with a
 copy control, or `Unknown signature` when none is stored; hover the
 prototype for the return type, parameters and calling convention, with
@@ -572,8 +637,14 @@ toggle revealing the function's signature-edit history: one row per recorded
 version with its id, source, the named user and how long ago beside the timestamp, the prototype that version
 replaced, `created this signature` for the row whose previous state was nothing,
 and a Revert that restores it and refreshes the signature panel); the code panel
-(auto-loaded, a Disassembly / Control Flow toggle; Disassembly renders the
-listing with the nasm/hex toggle wired to the `format` query and a Reload, and
+(auto-loaded, a Disassembly / Control Flow toggle; Disassembly has a View select
+and a Reload: Listing (the default) renders the NASM text as address, bytes,
+mnemonic and operand columns, with in-function branch targets labelled
+`loc_<va>` and jumping there, a call or jump to a function the binary has
+linking to it by name, and a click on a register or constant highlighting
+every use; NASM source and Hex show the engine's text as it came (the
+`format` query's `nasm` and `hex`; Listing reads `nasm`, the format the
+server caches for the stored-listing scans), and
 Control Flow renders the engine's basic-block graph through
 `GET /api/functions/<id>/cfg` as an address-ordered block list, each block
 naming its address, byte size, instruction count and first/last instruction
@@ -583,7 +654,12 @@ block, and a back edge carrying the warn ink plus a labelled `back edge` badge;
 `block_cap`, the engine's `note` renders as a note, and an empty block list
 renders its reason, never an empty diagram); decompilation (auto-loaded,
 backend `<select>`, `POST`
-Decompile or Recompute, stored backend shown); globals, callers and callees
+Decompile or Recompute, the code coloured by highlight.js's `c` grammar
+(`src/panels/CSource.tsx`, with the decompiler typedefs such as `undefined4`
+and `DWORD` added as types): keyword, type, string, number, preprocessor,
+function-name (a definition's name and the C library's functions; other calls
+stay plain) and comment colours from `listing.css`, under the backend that
+produced it); globals, callers and callees
 (three panels sharing one on-demand `references` load, each badged with its
 count; a caller's `from_va` and name, and a callee's target and name, link
 to that function detail
@@ -599,7 +675,12 @@ import slot and an empty state naming the address when nothing points at it);
 matches (Apply per row, a Diff link per row to
 `#/diff/<function-id>/<candidate-id>`, candidate linked to its function detail,
 the candidate's stored prototype, and View function matching opening
-`#/matches?function=<id>`)
+`#/matches?function=<id>`);
+similar functions (`SimilarFunctionsPanel`, idle until Find similar posts
+`POST /api/functions/<id>/similar`, then badged with the hit count and listing
+each hit's function linked to its detail, VA, binary linked to its page,
+similarity and a Diff link, with the compared-candidate count and whether they
+came from the index, and an empty state naming the similarity floor)
 and history (Revert per row), plus the same Comments panel with the function
 scope and a knowledge panel (`panels/KnowledgePanel.tsx`): a Query box and a
 Search documents control reading `GET /api/functions/<id>/knowledge`, which
@@ -641,9 +722,8 @@ The Data Types panel's neighbour is the Debug symbols panel: a file control, an
 `multipart/form-data` to `POST /api/binaries/<id>/symbols` and renders the
 result (kind, symbol count, type count, names applied) with the parse's own
 notes under the table of ingests; each row exports the parse as a C header or
-JSON through `GET .../symbols/export`, and as a runnable decompiler script
-(Ghidra, IDA or Binja links to `GET .../decompiler-script`) carrying the
-stored renames into the tool.  A binary with no ingest renders the
+JSON through `GET .../symbols/export`; the stored renames as a decompiler
+script are the header's Export renames menu.  A binary with no ingest renders the
 nothing-stored state from the route's 404 `no-symbols` rather than an error.
 
 The per-function extras render between the references tables and the matches
@@ -668,8 +748,8 @@ one-string-per-line Replace list box, which posts to `PUT
 of it reads the derived payloads as labelled derivations and never calls an
 engine or a model on render.
 An AI
-section groups the AI Decompilation, Summary, AI Comments, Type Suggestions and
-Renames panels.  The AI Decompilation panel is the whole-function rewrite: the
+section groups the AI rewrite, Summary, AI Comments, Type Suggestions and
+Renames panels.  The AI rewrite panel is the whole-function rewrite: the
 lines with their origin (`original`/`rewritten`/`added`) in a table, a per-token
 override input beside its kind, uses and lines, a rating selector with its note,
 and a comment editor for the line the analyst picks, all over the
@@ -677,12 +757,18 @@ and a comment editor for the line the analyst picks, all over the
 error in place.  The four flat artifacts each auto-load their stored-only `GET`
 and never call a model on render, a
 `no-artifact` answer shows a nothing-stored hint, and Generate (Suggest for
-Renames) posts to the AI route, surfacing 503 `llm-unavailable` in place.  The
+Renames, Rewrite for the AI rewrite) posts to the AI route.  The AI tab reads
+`GET /api/models` once (`modelReady.tsx`): with no available `llm` model it
+shows one notice linking `#/models` and those buttons are disabled with
+"No model is configured for this workspace." as their title; Run pipeline stays
+enabled because the pipeline runs its non-model steps without one.  A 503
+`llm-unavailable` that still arrives renders as that same sentence with a
+link to Models, never the settings the API detail names.  The
 rewrite panel and the shared flat-artifact panel each carry a Discard behind the
 confirm pattern once an artifact is stored (`DELETE` on the same route),
 which drops the artifact with everything inside it and leaves the nothing-stored
 hint; the action is journaled, so the journal's revert brings it back.  The
-Models view (System group) tabulates the model registry, `GET /api/models`, with
+Models view (Settings group) tabulates the model registry, `GET /api/models`, with
 each entry's kind, version, availability and reason, and carries the upgrade
 form: an analysis id, an `llm` model and an optional function bound, posting to
 `POST /api/analyses/<id>/upgrade` and rendering the per-function `applied` and
@@ -737,7 +823,10 @@ carrying the source and candidate function (both linked), the source
 name-source, the candidate's
 owning binary (linked), the similarity, its band, the confidence and the ISA
 pair (`source_arch` / `candidate_arch`, flagged when they differ).  A function
-with no recorded candidate is a `No match` row.  The list ranks by Show
+with no recorded candidate is a `No match` row.  The binary picked without a
+function is kept in `?binary=`, so a binary's matches can be linked to.  Rows
+whose candidate carries a placeholder name are hidden until `Show N unnamed
+candidates` is checked: applying one names nothing.  The list ranks by Show
 Similarity, Show Confidence or Show Difference.  Clicking a
 row (not a control) opens the diff; Ctrl/⌘-click opens it in a new
 tab.  Match settings opens the sheet the next run uses: the
@@ -804,7 +893,7 @@ also carries a declaration box with Create from declarations and
 Update from declarations, posting the pasted C to `POST` or `PUT
 /api/analyses/<id>/data-types` for the binary's latest analysis (the route is
 analysis-scoped) and rendering the created/updated/skipped counts.  The External view
-(Analysis group) lists the external-source registry with each source's kind and
+(Intelligence group) lists the external-source registry with each source's kind and
 availability and the two switches behind a remote one, and carries a pull form
 (analysis id and source, with Pull posting to `POST
 /api/analyses/<id>/external/<source>` and Read stored loading the `GET` on the
@@ -828,7 +917,8 @@ and the toolbar carries Run pipeline/Re-run and Revert run (which posts the
 revert route and refreshes the history panel).  The Functions view
 (`views/FunctionsView.tsx`, `#/functions` and `#/binaries/<id>/functions`)
 picks a binary, lists its functions with per-row Matches, History and Rename
-actions, a left border on the focused or checked row, Ctrl/⌘-click opening
+actions (Rename turns the name cell into the same `NameEditor` the detail
+headers use), a left border on the focused or checked row, Ctrl/⌘-click opening
 the function in a new tab, and carries a
 filter panel plus sortable headers: a coloured
 name-source dot beside each name, a name search whose placeholder states
@@ -849,7 +939,7 @@ replace-existing-prefix toggle that posts `POST /api/functions/bulk` for the
 selected rows (a checked row keeps a left border) and reports how many renamed
 and how many were skipped.
 
-The Tags view (`views/TagsView.tsx`, `#/tags`, in the Targets group) is the
+The Tags view (`views/TagsView.tsx`, `#/tags`, in the Corpus group) is the
 register's tag vocabulary: every tag with how many binaries and how many
 collections carry it, from `GET /api/tags`.  A tag is created where it is
 applied (the binary detail's Tags panel and a collection's tag field), so this
@@ -881,7 +971,7 @@ membership is readable and editable from the other side: the binary detail
 carries a Collections panel (below) that reads `GET /api/binaries/<id>/collections`
 and posts the same two routes.
 
-The Users view (`views/UsersView.tsx`, `#/users`, in the System group) renders
+The Users view (`views/UsersView.tsx`, `#/users`, in the Settings group) renders
 the identity the API reports: `GET /api/iam/me` as a key/value block (the auth
 mode, who this browser is, the role and its permission badges) beside a bearer
 token field that saves or clears what this browser sends, an `Active team`
@@ -896,7 +986,7 @@ disabled flag, New token rotates and shows the replacement once, and Delete
 goes through the confirm pattern.  With auth off the page says so and the API is
 the local operator's, which is the honest reading of an empty user table.
 
-The Billing view (`views/BillingView.tsx`, `#/billing`, in the System group)
+The Billing view (`views/BillingView.tsx`, `#/billing`, in the Settings group)
 reads the plan catalog (`GET /api/plans`), the organisations this install has,
 and each organisation's billing payload (`GET /api/organisations/<id>/billing`):
 plan, quota state per metered dimension, mirrored subscription and whether
@@ -1055,16 +1145,19 @@ and whether each code has expired, never the code itself. A used row stays.
 
 The Binaries view's upload panel (`views/BinariesView.tsx`) takes a batch one
 file at a time: a `Files` control and a dashed drop zone both queue files, each
-queued row carries its own name, tags, format, ISA and scope, a `Configure all`
-row applies a format, an ISA and a scope to every row at once, and a row nobody
-configured keeps the `auto` plan badge.  A row's scope is the team the binary
+queued row carries its own name, tags, format, ISA, compiler, scope and debug
+symbol file in one wrapping Plan cell (so a staged row fits the panel at a
+laptop width), a `Configure all` row applies a format, an ISA and a scope to
+every row at once, and a row nobody configured keeps the `auto` plan badge.
+The staged count, Clear list and the Upload action sit together directly above
+the queued rows.  A row's scope is the team the binary
 registers into (`Workspace` leaves it public and ownerless), sent as the entry's
 `visibility`/`team_id`, and the scope select starts on the caller's active team
 (`GET /api/iam/me`), so a caller who has picked one registers there without
 touching the control; each result line says which scope the binary landed in.  The batch posts as one multipart request with one
 options entry per part, so the whole request is one journal action; the result
 list opens with a duplicate banner and an error banner above the per-entry rows,
-each of which names what happened to that file.  The `Extract an archive` panel
+each of which names what happened to that file and links `Open binary #N`.  The `Extract an archive` panel
 below unpacks an already stored archive into a collection (or one named after
 it) with an optional password and reports each member with the binary it became
 or the reason it was skipped.
@@ -1109,7 +1202,7 @@ scope grounds a chat in reportal's own manual (TODO entry 16): the scope kind is
 `docs` knowledge scope on the first question.
 
 The Documentation view (`views/DocumentationView.tsx`, `#/docs`, `#/docs/:slug`
-and `#/changelog`, in the System group) is the portal's own manual, read from
+and `#/changelog`, in the Settings group) is the product manual, read from
 the workspace rather than from a checkout: `GET /api/docs` answers the index the
 view renders as cards and `GET /api/docs/<slug>` answers one page's title, its
 on-this-page headings and its blocks.  The server sends structure, never markup,
@@ -1196,7 +1289,7 @@ one `POST /api/analyses/bulk` action to the checked rows (add tag, remove tag,
 delete), states how many applied and how many were skipped, and links the
 journal entry the action recorded.  There
 is no owner column: reportal is a single-user loopback tool, the view says so,
-and it links to the Journal view, which is where who did what is recorded: that view lists each entry with its action, kind, status, actor, time and description, filters by the actor the server recorded and by page size (`#/journal?actor=&limit=`, both in the hash), and reverts one entry or a whole action behind the confirm pattern.  The
+and it links to the Journal view, which is where who did what is recorded: that view lists each entry as its description over a secondary line of entry id, kind and action link (the action id truncates, its full value on hover), then status, actor and time, so the revert actions stay in view at a laptop width, filters by the actor the server recorded and by page size (`#/journal?actor=&limit=`, both in the hash), and reverts one entry or a whole action behind the confirm pattern (both disabled on an entry already reverted).  The
 Binaries view carries a Browse analyses action beside Browse functions.
 The binary detail Report panel (`panels/BinaryPanels.tsx`) offers Generate PDF (the
 synchronous render) beside Queue PDF, which submits a `report-pdf` job and then
@@ -1237,8 +1330,9 @@ author this browser last used (kept in localStorage under
 Conversations panel whose Chat about this action posts `POST /api/conversations`
 for that scope and opens the new thread.  The Conversations view lists each
 thread's title, scope and message count, creates one from a scope kind and id,
-and the thread route renders the messages, sends from its composer (a 503
-`llm-unavailable` surfaces in place) and deletes the thread.
+and the thread route renders the messages, sends from its composer and deletes
+the thread; with no model configured it shows the same notice as the function
+AI tab and Send and Run agent are disabled with that reason.
 The Knowledge view (`views/KnowledgeView.tsx`, `#/knowledge`) picks a binary
 from a scope select, ingests a document from a file input (posting `FormData`
 to `POST /api/binaries/<id>/documents`) or from the paste area (posting JSON to

@@ -410,3 +410,22 @@ class TestMcp:
             journal.revert_action(conn, payload["journal_action"])
 
         assert not target.is_file(), "the revert removes the file the tool wrote"
+
+    def test_a_failed_write_leaves_the_previous_file_and_no_temp(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        source = tmp_path / "source.bin"
+        source.write_bytes(b"payload")
+        target = tmp_path / "target.zip"
+        target.write_bytes(b"previous")
+
+        def boom(*_args: Any, **_kwargs: Any) -> int:
+            raise OSError("no space left")
+
+        monkeypatch.setattr(zipcrypto, "write_protected_zip", boom)
+        with pytest.raises(OSError):
+            zipcrypto.write_protected_zip_file(source, target, "member.bin", "pw")
+
+        assert target.read_bytes() == b"previous", "a failed write keeps the previous bytes"
+        names = sorted(entry.name for entry in tmp_path.iterdir())
+        assert names == ["source.bin", "target.zip"], "no half-written temp may survive"

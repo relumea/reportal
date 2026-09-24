@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
-import { api } from "../api";
+import { api, isNotFound } from "../api";
 import "./conversations.css";
 import {
   Button,
@@ -15,9 +15,12 @@ import {
   Muted,
   Panel,
   Toolbar,
+  countOf,
 } from "../components";
+import { MissingNote } from "../detailParts";
 import { CONVERSATION_SCOPE_KINDS } from "../constants";
 import type { ConversationScopeKind } from "../constants";
+import { NoModelNote, useModelGate } from "../modelReady";
 import type {
   AgentRunEvent,
   AgentRunList,
@@ -75,6 +78,7 @@ function AgentPanel({ conversationId }: { conversationId: number }): ReactNode {
   );
   const [draft, setDraft] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
+  const modelGate = useModelGate();
   const [busy, setBusy] = useState("");
 
   const run = data?.runs[0];
@@ -102,7 +106,7 @@ function AgentPanel({ conversationId }: { conversationId: number }): ReactNode {
   return (
     <Panel
       title="Agent run"
-      subtitle="The model may call this portal's own tools. A read-only tool runs at once; a tool that changes the workspace waits for your approval."
+      subtitle="The model may call the workspace's own tools. A read-only tool runs at once; a tool that changes the workspace waits for your approval."
       actions={
         <Button size="sm" tone="ghost" onClick={reload}>
           Refresh
@@ -123,7 +127,13 @@ function AgentPanel({ conversationId }: { conversationId: number }): ReactNode {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
         />
-        <Button tone="primary" type="submit" pending={busy === "start"} disabled={!draft.trim()}>
+        <Button
+          tone="primary"
+          type="submit"
+          pending={busy === "start"}
+          disabled={!draft.trim() || modelGate.disabled}
+          title={modelGate.title}
+        >
           Run agent
         </Button>
       </form>
@@ -134,7 +144,7 @@ function AgentPanel({ conversationId }: { conversationId: number }): ReactNode {
       ) : (
         <>
           <Muted>
-            run {run.run_id}: {run.status} ({run.tool_calls} tool call(s))
+            run {run.run_id}: {run.status} ({countOf(run.tool_calls, "tool call")})
             {run.live ? ", live" : ""}
           </Muted>
           <ol className="list">
@@ -339,7 +349,7 @@ export function ConversationsView(): ReactNode {
   return (
     <Panel
       title="Conversations"
-      subtitle="Threads grounded in the portal's stored knowledge for one function or binary."
+      subtitle="Threads about one function or binary, answered from what the workspace stores."
       actions={
         <Button
           tone="primary"
@@ -437,6 +447,7 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
   const [removing, setRemoving] = useState(false);
   const [sources, setSources] = useState<KnowledgeHit[]>([]);
   const [replyId, setReplyId] = useState<number | null>(null);
+  const modelGate = useModelGate();
 
   useEffect(() => {
     setSources([]);
@@ -477,6 +488,9 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
     }
   };
 
+  if (isNotFound(error)) {
+    return <MissingNote what="Conversation" listHref="#/conversations" listLabel="conversations" />;
+  }
   if (error) return <ErrorNote error={error} onRetry={reload} />;
   if (!data) {
     return (
@@ -504,6 +518,7 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
         </>
       }
     >
+      <NoModelNote />
       <MessageList messages={data.messages} sources={sources} replyId={replyId} />
       <AgentPanel conversationId={conversationId} />
       <form
@@ -520,7 +535,13 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
         />
-        <Button tone="primary" type="submit" pending={sending} disabled={!draft.trim()}>
+        <Button
+          tone="primary"
+          type="submit"
+          pending={sending}
+          disabled={!draft.trim() || modelGate.disabled}
+          title={modelGate.title}
+        >
           Send
         </Button>
       </form>

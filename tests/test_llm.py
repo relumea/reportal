@@ -560,6 +560,29 @@ class TestStrictSchema:
         with pytest.raises(LlmError, match="comments"):
             llm.inline_comments(self.CODE)
 
+    def test_a_single_entry_object_is_one_entry(self, fake_llm: FakeLlmClient) -> None:
+        # The JSON-object response mode cannot answer a bare list, so a model
+        # with one finding answers that finding as the object itself.
+        fake_llm.response = (
+            '{"from": "sub_100249c", "to": "process_input_array", "kind": "function",'
+            ' "reason": "walks the array", "confidence": 0.85}'
+        )
+        assert llm.rename_suggestions(self.CODE) == {
+            "suggestions": [
+                {
+                    "from": "sub_100249c",
+                    "to": "process_input_array",
+                    "kind": "function",
+                    "reason": "walks the array",
+                    "confidence": 0.85,
+                }
+            ]
+        }
+        fake_llm.response = '{"line": 1, "comment": "checks the flag"}'
+        assert llm.inline_comments(self.CODE)["comments"][0]["comment"] == "checks the flag"
+        fake_llm.response = '{"name": "p", "type": "char *"}'
+        assert llm.suggest_types(self.CODE)["suggestions"][0]["type"] == "char *"
+
     def test_empty_but_valid_comments_still_parse(self, fake_llm: FakeLlmClient) -> None:
         fake_llm.response = '{"comments": []}'
         assert llm.inline_comments(self.CODE) == {"comments": []}
@@ -848,17 +871,21 @@ class TestLlmJsonParsing:
 
     def test_named_list_missing_is_an_error(self) -> None:
         with pytest.raises(llm.LlmError, match="no 'items' list"):
-            llm._entry_list({"other": 1}, keys=("items",), what="test")
+            llm._entry_list({"other": 1}, keys=("items",), what="test", entry_keys=("name",))
         with pytest.raises(llm.LlmError, match="non-list"):
-            llm._entry_list({"items": "nope"}, keys=("items",), what="test")
+            llm._entry_list({"items": "nope"}, keys=("items",), what="test", entry_keys=("name",))
         with pytest.raises(llm.LlmError, match="not a JSON object or list"):
-            llm._entry_list(42, keys=("items",), what="test")
+            llm._entry_list(42, keys=("items",), what="test", entry_keys=("name",))
 
     def test_named_list_returns_the_list(self) -> None:
-        assert llm._entry_list({"items": [1, 2]}, keys=("items",), what="test") == [1, 2]
-        assert llm._entry_list([1, 2], keys=("items",), what="test") == [1, 2]
+        assert llm._entry_list(
+            {"items": [1, 2]}, keys=("items",), what="test", entry_keys=("name",)
+        ) == [1, 2]
+        assert llm._entry_list([1, 2], keys=("items",), what="test", entry_keys=("name",)) == [1, 2]
         with pytest.raises(llm.LlmError, match="non-list 'a'"):
-            llm._entry_list({"a": 1, "items": [3]}, keys=("a", "items"), what="t")
+            llm._entry_list(
+                {"a": 1, "items": [3]}, keys=("a", "items"), what="t", entry_keys=("name",)
+            )
 
 
 class TestLlmCoercions:

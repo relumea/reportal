@@ -13,8 +13,9 @@ import {
   Muted,
   Panel,
   Toolbar,
+  countOf,
 } from "../components";
-import { DEFAULT_KNOWLEDGE_LIMIT, REMOTE_INGEST_DISABLED_DETAIL } from "../constants";
+import { DEFAULT_KNOWLEDGE_LIMIT } from "../constants";
 import { KnowledgeResults } from "../panels/KnowledgePanel";
 import type { BinaryOption, Document, KnowledgeConfig, KnowledgeSearch } from "../types";
 import { useAsync } from "../useAsync";
@@ -61,7 +62,7 @@ export function KnowledgeView(): ReactNode {
     setMessage(
       document.duplicate
         ? `Already stored as document #${document.id}.`
-        : `Ingested ${document.title} as document #${document.id} (${document.chunk_count} chunks).`,
+        : `Ingested ${document.title} as document #${document.id} (${countOf(document.chunk_count, "chunk")}).`,
     );
     documentsResult.reload();
   };
@@ -227,7 +228,12 @@ export function KnowledgeView(): ReactNode {
                 onChange={(event) => setSource(event.target.value)}
               />
             </Field>
-            <Button tone="primary" type="submit" pending={busy === "note"} disabled={!text.trim()}>
+            <Button
+              tone="primary"
+              type="submit"
+              pending={busy === "note"}
+              disabled={binaryId === null || !text.trim()}
+            >
               Save note
             </Button>
           </Toolbar>
@@ -260,7 +266,7 @@ export function KnowledgeView(): ReactNode {
             </Button>
           </form>
         ) : (
-          <Muted>URL ingestion is disabled: {REMOTE_INGEST_DISABLED_DETAIL}.</Muted>
+          <Muted>URL ingestion is turned off for this workspace. An administrator can turn it on in the server configuration.</Muted>
         )}
         <Muted live>{message}</Muted>
         {actionError ? <ErrorNote error={actionError} /> : null}
@@ -312,7 +318,7 @@ export function KnowledgeView(): ReactNode {
             <Field label="Query" hint="Enter searches">
               <input
                 type="search"
-                placeholder="semantic search over this scope"
+                placeholder="meaning or keyword"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
@@ -331,7 +337,11 @@ export function KnowledgeView(): ReactNode {
         ) : hits ? (
           <KnowledgeResults hits={hits} />
         ) : (
-          <Muted>Search this scope&apos;s documents by meaning or keyword.</Muted>
+          <Muted>
+            {documents?.length === 0
+              ? "Nothing to search yet: this scope holds no documents."
+              : "Results list here, best match first."}
+          </Muted>
         )}
       </Panel>
     </>

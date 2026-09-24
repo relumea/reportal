@@ -9,7 +9,7 @@ const state = e2eState();
 
 test("a UI write appears in the journal and its revert restores the state", async ({ page }) => {
   const name = uniqueName("e2e-journal");
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   const tags = panelByTitle(page, "Tags");
   await tags.getByLabel("Tag", { exact: true }).fill(name);
   await tags.getByRole("button", { name: "Add tag" }).click();
@@ -34,7 +34,7 @@ test("a UI write appears in the journal and its revert restores the state", asyn
 
   // Back to the binary through the SPA (a hash navigation, not a reload): the
   // tag panel must reflect the revert, not a cached list from before it.
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   const tagsAfter = panelByTitle(page, "Tags");
   await expect(tagsAfter.getByRole("button", { name: "Add tag" })).toBeVisible();
   await expect(rowContaining(tagsAfter, name)).toHaveCount(0);
@@ -43,7 +43,7 @@ test("a UI write appears in the journal and its revert restores the state", asyn
 test("the journal filters by actor and by page size", async ({ page }) => {
   // A write through the UI records the local operator as the entry's actor.
   const name = uniqueName("e2e-journal-actor");
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   const tags = panelByTitle(page, "Tags");
   await tags.getByLabel("Tag", { exact: true }).fill(name);
   await tags.getByRole("button", { name: "Add tag" }).click();
@@ -56,8 +56,7 @@ test("the journal filters by actor and by page size", async ({ page }) => {
   await expect(panel.getByRole("columnheader", { name: "Actor" })).toBeVisible();
 
   // The actor is read from the API rather than assumed, and every row the
-  // filter keeps carries it (the column is the fifth: Entry, Action, Kind,
-  // Status, Actor).
+  // filter keeps carries it (the column is the third: Change, Status, Actor).
   const listed = (await (await page.request.get("/api/journal?limit=100")).json()) as {
     actors: string[];
   };
@@ -66,7 +65,7 @@ test("the journal filters by actor and by page size", async ({ page }) => {
   await panel.getByRole("combobox", { name: /^Actor/ }).selectOption(actor);
   await expect(page).toHaveURL(new RegExp(`actor=${actor}`));
   await expect(rows.first()).toBeVisible();
-  const shown = await rows.locator("td:nth-child(5)").allTextContents();
+  const shown = await rows.locator("td:nth-child(3)").allTextContents();
   expect([...new Set(shown.map((text) => text.trim()))]).toEqual([actor]);
 
   // The page size is a filter too, and Clear filters resets both.

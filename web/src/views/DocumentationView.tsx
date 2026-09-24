@@ -15,7 +15,7 @@ import type { ReactNode } from "react";
 import { Link, useParams } from "react-router";
 
 import { api } from "../api";
-import { Button, ErrorNote, Loading, Muted, Panel } from "../components";
+import { Button, ErrorNote, Loading, Muted, Panel, countOf } from "../components";
 import type { DocBlock, DocIndex, DocListItem, DocPage, DocPageBody } from "../types";
 import { useAsync } from "../useAsync";
 import "./documentation.css";
@@ -162,7 +162,7 @@ export function DocsIndex(): ReactNode {
   return (
     <Panel
       title="Documentation"
-      subtitle={`${data.count} page(s), served from the workspace rather than a checkout.`}
+      subtitle={`${countOf(data.count, "page")}, served from the workspace rather than a checkout.`}
       actions={
         <Button tone="ghost" onClick={() => reload()}>
           Refresh
@@ -171,8 +171,8 @@ export function DocsIndex(): ReactNode {
     >
       <Muted>
         These are the repository's own documents, parsed server-side into headings, paragraphs,
-        lists, code, quotes and tables. Set REPORTAL_DOCS to read a different directory, which is
-        what makes this page useful once the portal runs somewhere the checkout is not.
+        lists, code, quotes and tables. Set REPORTAL_DOCS to read a different directory when the
+        server runs away from the checkout.
       </Muted>
       <div className="doc-index">
         {data.pages.map((page) => (

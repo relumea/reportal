@@ -130,7 +130,7 @@ class TestDecompDiff:
         ids = _seed(conn, decomp=True)
         engines.set_engine(engines.RebrewEngine(enabled=False))
         status, headers, body = wsgi_request(
-            "GET", f"/api/functions/{ids['left']}/diff/{ids['right']}"
+            "GET", f"/api/functions/{ids['left']}/diff/{ids['right']}?kind=decomp"
         )
         assert status.startswith("200")
         payload = json_body(body, headers)

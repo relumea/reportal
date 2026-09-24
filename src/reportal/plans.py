@@ -182,7 +182,7 @@ PLANS: tuple[Plan, ...] = (
     Plan(
         id="free",
         name="Free",
-        tagline="Evaluate the workbench on one binary.",
+        tagline="Evaluate the workspace on one binary.",
         price_cents=0,
         monthly_credits=260,
         monthly_auto_runs=5,
@@ -235,7 +235,7 @@ PLANS: tuple[Plan, ...] = (
             "500 auto runs / month",
             "200 binaries, 5 seats",
             "Shared collections and team scoping",
-            "Organisation metering and plan controls",
+            "Organization metering and plan controls",
         ),
         self_serve=True,
     ),

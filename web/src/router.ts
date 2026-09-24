@@ -33,23 +33,20 @@ interface NavGroup {
 
 // The sidebar's grouped information architecture.  `NAV_VIEWS` is derived from
 // it, so a view cannot exist without a group.
+// Ordered by an analyst's day: the corpus and its three core objects first,
+// what informs them next, the agent, then the activity record and settings.
 export const NAV_GROUPS = [
   { label: "Overview", views: ["dashboard", "search"] },
-  { label: "Targets", views: ["binaries", "analyses", "functions", "collections", "tags"] },
-  { label: "Analysis", views: ["matches", "graph", "knowledge", "external"] },
-  { label: "Agent", views: ["auto", "conversations"] },
   {
-    label: "System",
-    views: [
-      "jobs",
-      "models",
-      "journal",
-      "components",
-      "integrations",
-      "users",
-      "billing",
-      "docs",
-    ],
+    label: "Corpus",
+    views: ["binaries", "functions", "matches", "analyses", "collections", "tags"],
+  },
+  { label: "Intelligence", views: ["knowledge", "graph", "external"] },
+  { label: "Agent", views: ["auto", "conversations"] },
+  { label: "Activity", views: ["jobs", "journal"] },
+  {
+    label: "Settings",
+    views: ["models", "components", "integrations", "users", "billing", "docs"],
   },
 ] as const satisfies readonly NavGroup[];
 

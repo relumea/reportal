@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import mmap
 import sqlite3
 import struct
 from collections.abc import Iterable, Mapping, Sequence
@@ -42,6 +43,10 @@ from reportal import data_types, journal, pdb, store
 from reportal._paths import SYMBOLS_DIR, write_bytes_atomic
 
 ByteOrder = Literal["little", "big"]
+
+# What the byte parsers accept: bytes-like objects, so a mapped file passes
+# through without being read whole.
+Buffer = bytes | bytearray | mmap.mmap
 
 
 def _byteorder(value: object) -> ByteOrder:
@@ -82,8 +87,13 @@ PDB_MAGIC = pdb.CONTAINER_MAGIC
 # ELF constants the readers use.
 _SHT_SYMTAB = 2
 _SHT_DYNSYM = 11
+_SHT_NOTE = 7
 _STT_OBJECT = 1
 _STT_FUNC = 2
+
+# The note a GNU toolchain stamps the build identity into, and its owner.
+_NT_GNU_BUILD_ID = 3
+_GNU_NOTE_OWNER = b"GNU"
 
 
 class SymbolError(Exception):
@@ -181,7 +191,7 @@ def _result(
 class _Elf:
     """One parsed ELF container: its sections and its symbol table."""
 
-    def __init__(self, data: bytes | bytearray) -> None:
+    def __init__(self, data: Buffer) -> None:
         self.data = data
         if data[:4] != ELF_MAGIC:
             raise UnreadableSymbolError("not an ELF file")
@@ -347,6 +357,48 @@ def parse_elf(data: bytes) -> dict[str, Any]:
         key = (int(entry["va"] or 0), str(entry["name"]))
         found.setdefault(key, entry)
     return _result(kind=SOURCE_ELF, symbols=list(found.values()), types=types, notes=notes)
+
+
+def build_id(data: Buffer) -> str:
+    """The GNU build id of an ELF file as lowercase hex, or ``""``.
+
+    Every ``SHT_NOTE`` section is read for an ``NT_GNU_BUILD_ID`` note whose
+    owner is ``GNU``; the note header follows the file's own endianness.  A
+    truncated note, an ELF without section headers and a file that is not ELF
+    all answer ``""`` rather than a guessed id: this value is the match key a
+    symbol library looks a debug file up by, so a wrong one imports the wrong
+    names silently.
+    """
+    try:
+        elf = _Elf(data)
+    except UnreadableSymbolError:
+        return ""
+    for section in elf.sections:
+        if int(section["type"]) != _SHT_NOTE:
+            continue
+        try:
+            blob = elf.section_data(section)
+        except UnreadableSymbolError:
+            continue
+        found = _note_build_id(blob, elf.endian)
+        if found:
+            return found
+    return ""
+
+
+def _note_build_id(blob: bytes, endian: str) -> str:
+    """The build id inside one note section, or ``""`` for any other note."""
+    at = 0
+    while at + 12 <= len(blob):
+        namesz, descsz, note_type = struct.unpack_from(f"{endian}III", blob, at)
+        desc_at = at + 12 + ((namesz + 3) & ~3)
+        if namesz > len(blob) - at - 12 or desc_at + descsz > len(blob):
+            return ""
+        owner = blob[at + 12 : at + 12 + namesz].rstrip(b"\x00")
+        if note_type == _NT_GNU_BUILD_ID and owner == _GNU_NOTE_OWNER and descsz:
+            return blob[desc_at : desc_at + descsz].hex()
+        at = desc_at + ((descsz + 3) & ~3)
+    return ""
 
 
 # ── DWARF ──────────────────────────────────────────────────────────

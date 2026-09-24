@@ -14,6 +14,7 @@ import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router";
 
+import { Icon } from "../icons";
 import { api } from "../api";
 import {
   Button,
@@ -21,6 +22,7 @@ import {
   ErrorNote,
   Loading,
   SeverityBadge,
+  Stamp,
   focusableElements,
   trapTabKey,
   useDialogShellGuard,
@@ -54,6 +56,9 @@ function writeDismissed(ids: string[]): void {
   }
 }
 
+// The bell's count stops here; the dialog states the exact number.
+const MAX_BELL_COUNT = 99;
+
 export function NotificationsBell(): ReactNode {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState<string[]>(() => readDismissed());
@@ -77,13 +82,21 @@ export function NotificationsBell(): ReactNode {
   return (
     <>
       <Button
-        tone={unseen.length > 0 ? "primary" : "ghost"}
+        size="icon"
+        tone="ghost"
+        aria-label={unseen.length > 0 ? `Notifications, ${unseen.length} new` : "Notifications"}
+        title={unseen.length > 0 ? `Notifications: ${unseen.length} new` : "Notifications"}
         onClick={() => {
           setOpen(true);
           reload();
         }}
       >
-        {unseen.length > 0 ? `Notifications (${unseen.length})` : "Notifications"}
+        <Icon name="bell" />
+        {unseen.length > 0 ? (
+          <span className="bell-count" aria-hidden="true">
+            {unseen.length > MAX_BELL_COUNT ? `${MAX_BELL_COUNT}+` : unseen.length}
+          </span>
+        ) : null}
       </Button>
       <NotificationsDialog
         open={open}
@@ -209,7 +222,9 @@ function NotificationsDialog({
           {shown.map((item) => (
             <div className="notification-row" key={item.id}>
               <SeverityBadge level={item.severity} />
-              <span className="notification-when">{item.at}</span>
+              <span className="notification-when">
+                <Stamp at={item.at} />
+              </span>
               <span className="notification-text">{item.message}</span>
               {item.binary_id ? (
                 <Link to={`/binaries/${item.binary_id}`} onClick={onClose}>

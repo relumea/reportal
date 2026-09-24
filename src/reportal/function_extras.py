@@ -60,7 +60,7 @@ MAX_NOTE_CHARS = 500
 
 # Where the derived entries came from, and the note every payload carries.
 DERIVATION = (
-    "derived from rows reportal already stored: the cached disassembly, the"
+    "derived from rows already stored: the cached disassembly, the"
     " stored decompilation and the recorded matches; no engine run and no model"
     " call"
 )
@@ -379,8 +379,8 @@ def function_explain(conn: sqlite3.Connection, function_id: int, domain: str) ->
         "derivation": (
             "matched against the imports and string literals this function's"
             " stored decompilation mentions, with the same rule table the"
-            " binary-level behavior scan uses; a deterministic text match, not"
-            " the hosted portal's model narrative"
+            " binary-level behavior scan uses; a deterministic text match, not a"
+            " model narrative"
         ),
     }
 

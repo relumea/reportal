@@ -54,7 +54,7 @@ SOURCE_XOR = "xor"
 
 # The note the merged read carries about the derived and decoded halves.
 DERIVED_NOTE = (
-    "the derived entries are the quoted literals reportal found in the function's"
+    "the derived entries are the quoted literals found in the function's"
     " stored decompilation; the decoded entries are stack-built or single-byte-XOR"
     " strings recovered from its stored NASM listing; both are text scans, not"
     " engine output"

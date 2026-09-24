@@ -86,6 +86,7 @@ from reportal import (
     remediation,
     remote_ingest,
     renames,
+    repos,
     sandbox,
     secret_store,
     secrets,
@@ -93,6 +94,7 @@ from reportal import (
     similarity,
     store,
     surface,
+    symbol_library,
     symbols,
     threat,
     unpack,
@@ -100,7 +102,13 @@ from reportal import (
     user_strings,
     zipcrypto,
 )
-from reportal._paths import WorkspaceNotFound, reports_dir, under_workspace, write_text_atomic
+from reportal._paths import (
+    WorkspaceNotFound,
+    reports_dir,
+    under_workspace,
+    write_bytes_atomic,
+    write_text_atomic,
+)
 from reportal.plugins import RegistryError as RegistryError
 from reportal.surface import classified as _classified
 from reportal.surface import journaled_data_type_write as _journal_data_type_write
@@ -135,10 +143,6 @@ TOOL_ENTRY_POINT_GROUP = "reportal.mcp_tools"
 
 # Origin label a built-in registration reports.
 BUILTIN_ORIGIN = plugins.BUILTIN_ORIGIN
-
-# The only disassembly format `disasm_cache` holds, so only this format is
-# cached; a `hex` request runs the engine and leaves the cache untouched.
-CACHEABLE_DISASM_FORMAT = store.CACHEABLE_DISASM_FORMAT
 
 # Functions decompiled by a struct recovery run when the caller names no limit.
 DEFAULT_STRUCT_LIMIT = 50
@@ -1918,6 +1922,45 @@ def _tool_get_matches(arguments: dict[str, Any]) -> dict[str, Any]:
         return {"matches": store.list_matches(conn, function_id)}
 
 
+def _tool_find_similar_functions(arguments: dict[str, Any]) -> dict[str, Any]:
+    body = {key: value for key, value in arguments.items() if value is not None}
+    function_id = body.pop("function_id", None)
+    stored = function_id is not None
+    try:
+        query = matching.parse_similar_query(body, stored=stored)
+    except matching.InvalidSettingsError as exc:
+        raise ToolError(exc.error, exc.detail) from exc
+    if not similarity.available():
+        raise ToolError(
+            "similarity-unavailable", "install the optional extra: uv sync --extra similarity"
+        )
+    with contextlib.closing(_open()) as conn:
+        if stored:
+            function = _require_function(conn, _check_int("function_id", function_id))
+            listing = matching.stored_listing(conn, function, None)
+            if not listing:
+                raise ToolError(
+                    "no-disasm",
+                    f"function {function['id']} has no cached listing; read its disassembly first",
+                )
+        else:
+            try:
+                listing = matching.query_listing(query, _engine())
+            except matching.InvalidSettingsError as exc:
+                raise ToolError(exc.error, exc.detail) from exc
+            except engines.EngineError as exc:
+                raise ToolError("engine-error", str(exc)) from exc
+        payload = matching.find_similar(
+            conn,
+            listing,
+            min_similarity=query.min_similarity,
+            limit=query.limit,
+            exclude_function_id=int(function_id) if stored else None,
+            visible_to=_mcp_caller(conn),
+        )
+    return {"function_id": function_id, **payload}
+
+
 def _tool_get_lineage(arguments: dict[str, Any]) -> dict[str, Any]:
     binary_id = _arg_int(arguments, "binary_id")
     with contextlib.closing(_open()) as conn:
@@ -2050,7 +2093,7 @@ def _tool_get_disasm(arguments: dict[str, Any]) -> dict[str, Any]:
         project_dir = _project_context(conn, binary_id)
         va = int(function["va"])
         size = int(function["size"])
-        if fmt == CACHEABLE_DISASM_FORMAT:
+        if fmt == store.cached_disasm_format(conn, binary_id):
             disasm, _filled = store.get_or_compute_disasm(
                 conn,
                 function_id,
@@ -2789,7 +2832,8 @@ def _tool_export_decompiler_script(arguments: dict[str, Any]) -> dict[str, Any]:
         )
     with contextlib.closing(_open()) as conn:
         try:
-            return decompiler_scripts.script(conn, binary_id, fmt=fmt)
+            include = decompiler_scripts.parse_include(_arg_str_list(arguments, "include"))
+            return decompiler_scripts.script(conn, binary_id, fmt=fmt, include=include)
         except decompiler_scripts.ScriptError as exc:
             raise ToolError(exc.code, exc.detail) from None
 
@@ -3863,6 +3907,53 @@ def _tool_export_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"path": path, "format": kind, "bytes": len(text)}
 
 
+def _tool_list_symbol_library(arguments: dict[str, Any]) -> dict[str, Any]:
+    with contextlib.closing(_open()) as conn:
+        entries = symbol_library.list_entries(conn)
+    return {"symbol_library": entries, "count": len(entries)}
+
+
+def _tool_add_symbol_library(arguments: dict[str, Any]) -> dict[str, Any]:
+    paths = _arg_str_list(arguments, "paths")
+    if not paths:
+        raise ToolError("invalid params", "paths must name at least one file")
+    prepared: list[tuple[bytes, dict[str, Any], str, str]] = []
+    for path in paths:
+        try:
+            data, parsed = symbols.parse_file(path)
+            identity = symbol_library.file_identity(data)
+        except (symbols.SymbolError, symbol_library.SymbolLibraryError) as exc:
+            raise ToolError(exc.code, f"{path}: {exc.detail}") from exc
+        prepared.append((data, parsed, identity, path))
+    with (
+        contextlib.closing(_open()) as conn,
+        journal.journaled(conn, journal.new_action()) as log,
+    ):
+        rows = [
+            symbol_library.store_entry(
+                conn, log, data, parsed=parsed, identity=identity, origin=origin
+            )
+            for data, parsed, identity, origin in prepared
+        ]
+        return log.attach({"symbol_library": rows, "count": len(rows)})
+
+
+def _tool_resolve_symbols(arguments: dict[str, Any]) -> dict[str, Any]:
+    binary_id = _arg_int(arguments, "binary_id")
+    fetch: bool | None = None
+    if "fetch" in arguments and arguments["fetch"] is not None:
+        fetch = _arg_optional_bool(arguments, "fetch", True)
+    with contextlib.closing(_open()) as conn:
+        _binary_or_error(conn, binary_id)
+        try:
+            report = symbol_library.resolve(conn, binary_id, fetch=fetch)
+        except symbol_library.SymbolLibraryError as exc:
+            raise ToolError(exc.code, exc.detail) from exc
+        except external.ExternalError as exc:
+            raise _external_failure(exc) from exc
+    return report
+
+
 def _tool_list_docs(arguments: dict[str, Any]) -> dict[str, Any]:
     try:
         listing = docs.pages()
@@ -4243,6 +4334,9 @@ def _tool_run_auto(arguments: dict[str, Any]) -> dict[str, Any]:
                 max_tasks=_arg_optional_int(arguments, "max_tasks", auto_mode.DEFAULT_MAX_TASKS),
                 disabled=disabled,
                 goal=_arg_optional_str(arguments, "goal", ""),
+                max_tokens=_arg_optional_int(arguments, "max_tokens", 0),
+                max_usd=_arg_optional_number(arguments, "max_usd", 0.0),
+                usd_per_mtok=_arg_optional_number(arguments, "usd_per_mtok", 0.0),
             )
         except ValueError as exc:
             raise ToolError("invalid params", str(exc)) from exc
@@ -4424,8 +4518,7 @@ def _tool_export_zipped_binary(arguments: dict[str, Any]) -> dict[str, Any]:
         with journal.journaled(conn, action) as log:
             previous = journal.read_bounded(target) if target.is_file() else None
             target.parent.mkdir(parents=True, exist_ok=True)
-            with source.open("rb") as reader, target.open("wb") as writer:
-                written = zipcrypto.write_protected_zip(writer, member, reader, password)
+            written = zipcrypto.write_protected_zip_file(source, target, member, password)
             journal.journaled_file(log, target, previous=previous)
             return log.attach(
                 {
@@ -4459,7 +4552,7 @@ def _tool_export_binary(arguments: dict[str, Any]) -> dict[str, Any]:
         with journal.journaled(conn, action) as log:
             previous = journal.read_bounded(target) if target.is_file() else None
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(payload)
+            write_bytes_atomic(target, payload)
             journal.journaled_file(log, target, previous=previous)
             return log.attach({**report, "path": str(target), "bytes": len(payload)})
 
@@ -6412,6 +6505,51 @@ def _tool_run_detect(arguments: dict[str, Any]) -> dict[str, Any]:
             raise ToolError("engine-error", str(exc)) from exc
 
 
+# ── Workspace checkouts ────────────────────────────────────────────
+
+
+def _repo_payload(operation: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run one checkout call, mapping its refusals to the MCP error channel.
+
+    ``repos.RepoError`` and ``remote_ingest.RemoteIngestError`` (the guard
+    ``repos.clone`` runs behind) both carry ``code`` and ``detail``, which is
+    exactly what a tool error reports.
+    """
+    try:
+        return operation()
+    except (repos.RepoError, remote_ingest.RemoteIngestError) as exc:
+        raise ToolError(exc.code, exc.detail) from exc
+
+
+def _tool_list_repos(arguments: dict[str, Any]) -> dict[str, Any]:
+    return _repo_payload(repos.list_repos)
+
+
+def _tool_clone_repo(arguments: dict[str, Any]) -> dict[str, Any]:
+    url = _arg_str(arguments, "url")
+    name = _arg_optional_str(arguments, "name")
+    return _repo_payload(lambda: repos.clone(url, name=name or None))
+
+
+def _tool_list_repo_files(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    path = _arg_optional_str(arguments, "path")
+    return _repo_payload(lambda: repos.tree(name, path))
+
+
+def _tool_read_repo_file(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    path = _arg_str(arguments, "path")
+    return _repo_payload(lambda: repos.read_file(name, path))
+
+
+def _tool_write_repo_file(arguments: dict[str, Any]) -> dict[str, Any]:
+    name = _arg_str(arguments, "name")
+    path = _arg_str(arguments, "path")
+    content = _arg_str(arguments, "content")
+    return _repo_payload(lambda: repos.write_file(name, path, content))
+
+
 # ── Schema helpers ─────────────────────────────────────────────────
 
 
@@ -6852,6 +6990,26 @@ def builtin_tools() -> tuple[Tool, ...]:
             _tool_get_matches,
         ),
         Tool(
+            "find_similar_functions",
+            "Rank the stored functions whose cached disassembly is most similar to one stored"
+            " function, a pasted assembly listing, or hex code bytes with their arch. Records"
+            " nothing; a stored function needs a cached listing, and bytes are disassembled"
+            " in process, never executed.",
+            _object(
+                {
+                    "function_id": _int("Stored function to query with; omit for a pasted query."),
+                    "listing": _str("Assembly listing to query with."),
+                    "bytes": _str("Hex code bytes to disassemble and query with."),
+                    "arch": _enum("ISA of the code bytes.", matching.QUERY_ARCHES),
+                    "va": _int("Address the code bytes load at (default 0)."),
+                    "min_similarity": _number("Minimum similarity percent for a hit (default 85)."),
+                    "limit": _int("Maximum hits (1-100, default 10)."),
+                },
+            ),
+            _READ,
+            _tool_find_similar_functions,
+        ),
+        Tool(
             "get_lineage",
             "Return a stored lineage comparison of two binaries, or every comparison"
             " stored for one binary when no other binary id is given.",
@@ -6917,11 +7075,14 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "get_disasm",
-            "Return a function's NASM or hex disassembly through its rebrew project.",
+            "Return a function's NASM, hex or asm disassembly through its rebrew project.",
             _object(
                 {
                     "function_id": _FUNCTION_ID,
-                    "format": _enum("Output format.", ("nasm", "hex")),
+                    "format": _enum(
+                        "Output format: nasm (32-bit x86 only), hex, or asm (any ISA).",
+                        ("nasm", "hex", "asm"),
+                    ),
                 },
                 ("function_id",),
             ),
@@ -7582,7 +7743,10 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "run_pe_info",
-            "Inspect a binary's PE identity, sections and security metadata and store the result.",
+            (
+                "Inspect a binary's header (PE, ELF or Mach-O): identity, sections and"
+                " security metadata, and store the result."
+            ),
             _object({"binary_id": _BINARY_ID}, ("binary_id",)),
             _WRITE,
             _tool_run_pe_info,
@@ -7792,13 +7956,19 @@ def builtin_tools() -> tuple[Tool, ...]:
         ),
         Tool(
             "export_decompiler_script",
-            "Render a binary's stored renames as a runnable decompiler script: a Ghidra"
-            " Python script, an IDA script or a Binary Ninja rename document.  Stored-only;"
-            " placeholders are left out, so only real names are carried.",
+            "Render a binary's stored analysis as a runnable decompiler script: a Ghidra"
+            " Python script, an IDAPython script or a Binary Ninja JSON document.  Carries"
+            " renames by default; include adds analyst comments, AI summaries (as function"
+            " comments) and complete stored prototypes.  Stored-only; placeholders and"
+            " declaration words are never carried as names.",
             _object(
                 {
                     "binary_id": _BINARY_ID,
                     "format": _enum("Script shape.", decompiler_scripts.SCRIPT_FORMATS),
+                    "include": _array(
+                        "What the script carries; default [renames].",
+                        _enum("One kind.", decompiler_scripts.INCLUDE_KINDS),
+                    ),
                 },
                 ("binary_id",),
             ),
@@ -8240,6 +8410,13 @@ def builtin_tools() -> tuple[Tool, ...]:
                         "Free-form objective a goal-directed worker works toward; plans every"
                         " function of the binary, not only the unmatched ones."
                     ),
+                    "max_tokens": _int(
+                        "Stop starting attempts after this many model tokens; 0 is none."
+                    ),
+                    "max_usd": _number(
+                        "Stop starting attempts after this spend; needs usd_per_mtok."
+                    ),
+                    "usd_per_mtok": _number("Model price in USD per million tokens, for max_usd."),
                 },
                 ("binary_id",),
             ),
@@ -9359,8 +9536,54 @@ def builtin_tools() -> tuple[Tool, ...]:
             _tool_export_symbols,
         ),
         Tool(
+            "list_symbol_library",
+            "Every debug symbol file in the workspace library with the identity it is keyed by"
+            " (a PE debug GUID+age or an ELF GNU build id), its counts, origin and creation"
+            " time; stored-only, it runs nothing.",
+            _object({}, ()),
+            _READ,
+            _tool_list_symbol_library,
+        ),
+        Tool(
+            "add_symbol_library",
+            "Add debug symbol files to the workspace library: parse each with the stdlib"
+            " readers, key it by its match identity and store it content-addressed under the"
+            " workspace, as one journaled action.  A file that parses but carries no identity"
+            " is refused with no-identity.",
+            _object(
+                {
+                    "paths": _array(
+                        "Paths of the PDB or ELF/DWARF files to add.",
+                        _str("One file path."),
+                    ),
+                },
+                ("paths",),
+            ),
+            _WRITE,
+            _tool_add_symbol_library,
+        ),
+        Tool(
+            "resolve_symbols",
+            "Match a binary to the workspace symbol library by the binary's own identity (the"
+            " PE debug directory's CodeView GUID+age, or the ELF GNU build id) and apply the"
+            " match as one journaled action, renaming the functions it names and adding its"
+            " types.  fetch=true asks the Microsoft public symbol server for a missing PDB"
+            " (403 external-disabled while remote sources are off), fetch=false stays local,"
+            " and omitting it fetches only when remote sources are already enabled; no match"
+            " answers matched=false with the reason.",
+            _object(
+                {
+                    "binary_id": _BINARY_ID,
+                    "fetch": _bool("Tri-state: true forces the fetch, false forbids it."),
+                },
+                ("binary_id",),
+            ),
+            _WRITE,
+            _tool_resolve_symbols,
+        ),
+        Tool(
             "list_docs",
-            "Every documentation page the portal ships (the repository's docs/*.md and"
+            "Every page of the in-app manual (the repository's docs/*.md and"
             " CHANGELOG.md), as a slug and title each.",
             _object({}, ()),
             _READ,
@@ -9395,8 +9618,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "explain_function",
             "Match one explain domain (crypto, execution, filesystem or networking) against the"
-            " imports and string literals a function's stored decompilation mentions: the hosted"
-            " portal's per-function explain agents, as a deterministic text match.",
+            " imports and string literals a function's stored decompilation mentions, as a"
+            " deterministic text match rather than a model narrative.",
             _object(
                 {
                     "function_id": _FUNCTION_ID,
@@ -9651,7 +9874,7 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "upgrade_analysis_model",
             "Re-run an analysis's stored LLM artifacts under a named llm model, journaling"
-            " every artifact replaced; reportal never re-analyses the binary.",
+            " every artifact replaced; the binary is never re-analyzed.",
             _object(
                 {
                     "analysis_id": _ANALYSIS_ID,
@@ -9828,5 +10051,74 @@ def builtin_tools() -> tuple[Tool, ...]:
             ),
             _WRITE,
             _tool_revert_journal_entry,
+        ),
+        Tool(
+            "list_repos",
+            "List the git checkouts stored under the workspace's repos/ directory, names"
+            " only, including one an operator cloned in by hand.",
+            _object({}),
+            _READ,
+            _tool_list_repos,
+        ),
+        Tool(
+            "list_repo_files",
+            "List one directory of a checkout as entries with name, kind (dir, file, link)"
+            " and byte size, skipping .git; report truncated when the entry cap was hit.",
+            _object(
+                {
+                    "name": _str("Checkout name under repos/."),
+                    "path": _str("Directory inside the checkout; empty is its root."),
+                },
+                ("name",),
+            ),
+            _READ,
+            _tool_list_repo_files,
+        ),
+        Tool(
+            "read_repo_file",
+            "Read one UTF-8 text file from a checkout and return its content, refusing"
+            " paths that resolve outside the checkout, directories, oversized files and"
+            " non-text bytes.",
+            _object(
+                {
+                    "name": _str("Checkout name under repos/."),
+                    "path": _str("File path inside the checkout."),
+                },
+                ("name", "path"),
+            ),
+            _READ,
+            _tool_read_repo_file,
+        ),
+        Tool(
+            "clone_repo",
+            "Shallow-clone an http(s) git repository into the workspace's repos/"
+            " directory under a checkout name (default: the url's last path segment"
+            " minus .git); off while REPORTAL_ALLOW_REMOTE_INGEST is off, and refused"
+            " when the checkout name is already taken.",
+            _object(
+                {
+                    "url": _str("http(s) url of the repository to clone."),
+                    "name": _str("Checkout name; defaults to the url's last segment."),
+                },
+                ("url",),
+            ),
+            _WRITE,
+            _tool_clone_repo,
+        ),
+        Tool(
+            "write_repo_file",
+            "Create or overwrite one text file in a checkout, creating missing parent"
+            " directories; the write is atomic, stays inside the checkout and is capped"
+            " at the same byte bound a read has.",
+            _object(
+                {
+                    "name": _str("Checkout name under repos/."),
+                    "path": _str("File path inside the checkout."),
+                    "content": _str("Full new text content of the file."),
+                },
+                ("name", "path", "content"),
+            ),
+            _WRITE,
+            _tool_write_repo_file,
         ),
     )

@@ -54,6 +54,7 @@ def _config(project: Path) -> SimpleNamespace:
     """A stand-in project config, shaped like rebrew's ProjectConfig."""
     return SimpleNamespace(
         root=project,
+        arch="x86_32",
         target_binary=project / "original" / "demo.exe",
         reversed_dir=project / "src",
         metadata_dir=None,
@@ -88,6 +89,9 @@ _CALLS: dict[str, Callable[[engines.RebrewEngine, Path, Path], Any]] = {
     "structs": lambda engine, project, target: engine.structs(project),
     "security_scan": lambda engine, project, target: engine.security_scan(project),
     "test_source": lambda engine, project, target: engine.test_source(project, "FN.c"),
+    "intake": lambda engine, project, target: engine.intake(target, project / "new", target="demo"),
+    "build_coverage_db": lambda engine, project, target: engine.build_coverage_db(project),
+    "library_functions": lambda engine, project, target: engine.library_functions(target),
 }
 
 
@@ -623,6 +627,86 @@ class TestInProcessEngineCalls:
         assert listing == "bits 32\norg 0x1000\n"
         assert seen == {"code": b"\x90\x90", "base_va": 0x1000, "label": "func_00001000"}
 
+    def test_library_functions_lists_each_object_s_functions(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        library = tmp_path / "LIBC.LIB"
+        library.write_bytes(b"!<arch>\n")
+        members = [
+            ("coff.obj", b"L\x01coff"),
+            ("elf.o", b"\x7fELFelf"),
+            ("x64.o", b"\x7fELFx64"),
+            ("omf.obj", b"\x80omf"),
+        ]
+        arches = {
+            b"L\x01coff": ("x86_32", "little"),
+            b"\x7fELFelf": ("x86_32", "little"),
+            b"\x7fELFx64": ("x86_64", "little"),
+        }
+        parsed: list[str] = []
+
+        def coff(obj: bytes) -> list[tuple[str, bytes, set[int]]]:
+            parsed.append("coff")
+            return [("_strlen", b"\x55\xc3", set()), ("_empty", b"", set())]
+
+        def elf(obj: bytes, *, include_local: bool) -> list[tuple[str, bytes, set[int]]]:
+            assert include_local, "a library pack wants file-static functions too"
+            parsed.append("elf")
+            if obj.endswith(b"x64"):
+                # push rbp; mov rbp, rsp; ret
+                return [("memset", b"\x55\x48\x89\xe5\xc3", set())]
+            return [("memcpy", b"\xc3", set())]
+
+        def nasm(code: bytes, va: int, label: str | None) -> tuple[str, dict[str, Any]]:
+            return ("" if not code else f"; {len(code)} bytes at {va}\n"), {}
+
+        _stub(
+            monkeypatch,
+            "gen_flirt_pat",
+            parse_archive=lambda path: iter(members),
+            parse_coff_obj=coff,
+            parse_elf_obj=elf,
+        )
+        _stub(monkeypatch, "asm", disassemble_to_nasm=nasm)
+        monkeypatch.setattr("rebrew.binary_loader.object_arch", arches.get)
+        functions = engines.RebrewEngine(enabled=True).library_functions(library)
+        # The OMF object is an unknown machine and never parsed.
+        assert parsed == ["coff", "elf", "elf"]
+        assert functions == [
+            {"name": "_strlen", "size": 2, "arch": "x86_32", "listing": "; 2 bytes at 0\n"},
+            {"name": "memcpy", "size": 1, "arch": "x86_32", "listing": "; 1 bytes at 0\n"},
+            {
+                "name": "memset",
+                "size": 5,
+                "arch": "x86_64",
+                "listing": "push rbp\nmov rbp, rsp\nret\n",
+            },
+        ]
+
+    def test_build_coverage_db_regenerates_and_replaces(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        project = _rebrew_project(tmp_path)
+        seen: dict[str, Any] = {}
+
+        def build_db(root: Path, **kwargs: Any) -> None:
+            seen.update(kwargs, root=root)
+
+        _stub(monkeypatch, "build_db", build_db=build_db)
+        engines.RebrewEngine(enabled=True).build_coverage_db(project)
+        assert seen == {"root": project.resolve(), "regen": True, "force": True}
+
+    def test_disassemble_refuses_nasm_for_a_target_it_cannot_decode(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        project = _rebrew_project(tmp_path)
+        sixteen_bit = _config(project)
+        sixteen_bit.arch = "x86_16"
+        _stub(monkeypatch, "config", load_config=lambda root: sixteen_bit)
+        refusal = "covers x86_32 only and this target is x86_16"
+        with pytest.raises(engines.EngineError, match=refusal):
+            engines.RebrewEngine(enabled=True).disassemble(project, 0x10, 8)
+
     def test_disassemble_defaults_to_nasm(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -640,6 +724,39 @@ class TestInProcessEngineCalls:
         _stub(monkeypatch, "asm", disassemble_to_nasm=to_nasm)
         engines.RebrewEngine(enabled=True).disassemble(project, 0x10, 8)
         assert seen["label"] == "func_00000010"
+
+    @pytest.mark.parametrize(
+        ("arch", "code", "expected"),
+        [
+            ("x86_64", b"\x55\x48\x89\xe5\xc3", "push rbp\nmov rbp, rsp\nret\n"),
+            ("arm64", b"\xc0\x03\x5f\xd6", "ret\n"),
+        ],
+    )
+    def test_disassemble_lists_any_isa_as_asm(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, arch: str, code: bytes, expected: str
+    ) -> None:
+        from rebrew.analysis import resolve_capstone
+        from rebrew.config import _ARCH_PRESETS
+
+        project = _rebrew_project(tmp_path)
+        cfg = _config(project)
+        cfg.arch = arch
+        cfg.capstone_arch = resolve_capstone(_ARCH_PRESETS[arch]["capstone_arch"])
+        cfg.capstone_mode = resolve_capstone(_ARCH_PRESETS[arch]["capstone_mode"])
+        _stub(monkeypatch, "config", load_config=lambda root: cfg)
+        monkeypatch.setattr(
+            "rebrew.binary_loader.extract_raw_bytes", lambda path, va, size: code[:size]
+        )
+        listing = engines.RebrewEngine(enabled=True).disassemble(project, 0x1000, len(code), "asm")
+        assert listing == expected
+
+    def test_listing_format_is_nasm_only_for_its_isa(self) -> None:
+        assert [engines.listing_format(arch) for arch in ("x86_32", "", "x86_64", "mips32")] == [
+            "nasm",
+            "nasm",
+            "asm",
+            "asm",
+        ]
 
     def test_disassemble_returns_the_hex_text(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

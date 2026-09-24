@@ -132,9 +132,7 @@ VIRUSTOTAL_FIELDS: tuple[str, ...] = (
 
 # The scale a payload carries: the local one is reportal's own derivation, the
 # remote one is a third party's, and a reader must be able to tell them apart.
-LOCAL_NOTE = (
-    "reportal's own derivation over the rows it already stored; no engine run and no network call"
-)
+LOCAL_NOTE = "derived from the rows already stored; no engine run and no network call"
 VIRUSTOTAL_NOTE = (
     "the VirusTotal API v3 file report, normalized: the per-engine results are"
     f" capped at {MAX_ENGINE_RESULTS} entries and the vendor links are not stored"
@@ -443,7 +441,7 @@ def local_source() -> Source:
     return Source(
         name=LOCAL_SOURCE,
         kind=KIND_OFFLINE,
-        description="the local evidence reportal already stored for the binary",
+        description="Local evidence already stored for the binary",
         retrieve=local_payload,
     )
 
@@ -506,6 +504,7 @@ def fetch_virustotal(
     client, owned = _open_client(timeout)
     response: httpx.Response | None = None
     try:
+        # cordis-boundary: emission, compensate by storing derived verdict fields only.
         response = client.get(
             url,
             headers={
@@ -573,7 +572,7 @@ def virustotal_source() -> Source:
     return Source(
         name=VIRUSTOTAL_SOURCE,
         kind=KIND_REMOTE,
-        description="the VirusTotal API v3 file report for the binary's sha256",
+        description="VirusTotal API v3 file report for the binary's SHA-256",
         retrieve=retrieve,
         available=available,
         unavailable_reason=reason,

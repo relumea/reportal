@@ -27,7 +27,8 @@ action journal, and no artifact needs a model endpoint except the ones that ask 
   store's own `SCAN_KIND_*` constants, `RATINGS` is (`up`, `down`), `MAX_NOTE_CHARS` 500. Error
   codes `invalid rating` and `no-artifact`.
 - `decompiler_scripts.SCRIPT_FORMATS` (`ghidra`, `ida`, `binja`) with `MEDIA_TYPES` and
-  `FILENAMES`; `collect`, `render`, `script`; `PLACEHOLDER_PREFIXES` names are left out.
+  `FILENAMES`; `INCLUDE_KINDS` (default `renames`; `comments`, `signatures`, `summaries`);
+  `collect`, `render`, `script`; `safe_prototype` carries complete, plain-C signatures only.
 
 ## Wiring
 
@@ -54,7 +55,8 @@ action journal, and no artifact needs a model endpoint except the ones that ask 
   (`tests/test_renames.py`).
 - A rating needs a stored scan of that kind and setting it again replaces it through `journaled_set`
   (`tests/test_ratings.py`).
-- Scripts carry only real names, never a `PLACEHOLDER_PREFIXES` name
+- Scripts carry only real names, never a `PLACEHOLDER_PREFIXES` name or a
+  `lineage.DECLARATION_KEYWORDS` word; stored text reaches Python only through `python_literal`
   (`tests/test_decompiler_scripts.py`).
 - With no endpoint, triage keeps the heuristic score and a one-line summary, and a rename suggest
   raises `LlmUnavailable` (`tests/test_function_triage.py`, `tests/test_renames.py`).

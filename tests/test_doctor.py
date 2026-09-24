@@ -85,6 +85,33 @@ class TestChecks:
         assert _check(payload, "engine")["status"] == "ok"
         assert _check(payload, "port")["status"] == "ok"
 
+    def test_the_decompiler_check_names_what_kuna_lacks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tools = {"kuna": "/usr/bin/kuna"}
+        monkeypatch.setattr(doctor.shutil, "which", tools.get)
+        monkeypatch.setattr(doctor.engines, "kuna_spec_dir", lambda: None)
+        row = doctor._decompiler_check()
+        assert (row["status"], row["detail"]) == (
+            "warn",
+            "kuna at /usr/bin/kuna, no SLEIGH specs found",
+        )
+        monkeypatch.setattr(doctor.engines, "kuna_spec_dir", lambda: "/specs/x86")
+        row = doctor._decompiler_check()
+        assert (row["status"], row["detail"]) == (
+            "ok",
+            "kuna at /usr/bin/kuna, specs at /specs/x86",
+        )
+        tools.clear()
+        assert doctor._decompiler_check()["detail"] == "no kuna on PATH"
+
+    def test_the_discovery_check_needs_rizin(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(doctor.shutil, "which", lambda name: None)
+        row = doctor._discovery_check()
+        assert (row["status"], row["hint"]) == ("warn", doctor.RIZIN_HINT)
+        monkeypatch.setattr(doctor.shutil, "which", lambda name: f"/usr/bin/{name}")
+        assert doctor._discovery_check()["status"] == "ok"
+
     def test_the_schema_check_counts_the_rows(
         self, portal_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -303,6 +330,8 @@ class TestCli:
             "auth",
             "engine",
             "spa",
+            "decompiler",
+            "discovery",
             "optional",
             "backup",
             "port",

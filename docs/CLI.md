@@ -8,10 +8,29 @@ worked examples.
 
 ```bash
 reportal init [--dir PATH]                 # write reportal.toml + reportal.db + the workspace folders
-reportal import-rebrew <project-dir> [--json]
+reportal import-rebrew <project-dir> [--build-db] [--json]
                                            # ingest a rebrew workspace (idempotent; stores its context)
-                                           #   plus the target binary's import stubs as THUNK rows
+                                           #   plus the target binary's import stubs as THUNK rows;
+                                           #   --build-db first builds the project's coverage.db
+                                           #   from its sources (replacing an outdated one); a
+                                           #   name that is a declaration word or prototype
+                                           #   becomes its declarator, the undecorated symbol,
+                                           #   else sub_<va>
+reportal corpus-export <path> [--binary ID]... [--json]
+                                           # write named functions and their listings as a
+                                           #   portable match corpus (gzip JSON); thunks,
+                                           #   placeholder and ordinal names are left out
+reportal corpus-from-libs <path> <lib>... [--json]
+                                           # write the named functions of static libraries
+                                           #   (.lib / .a, any ISA rebrew decodes; one ISA per
+                                           #   library) as a match corpus: the known-library
+                                           #   half that names linked-in CRT and libc code
+reportal corpus-import <path> [--json]     # register a pack's functions as match candidates
+                                           #   (idempotent; a binary already held here is skipped)
+reportal corpus-info <path> [--json]       # what a pack holds, without importing it
 reportal add-binary <path> [--name TEXT] [--team ID] [--compiler TEXT] [--json]   # register a binary by sha256 (dedupe)
+                                           #   (an upload queues its analysis; from the CLI,
+                                           #   `reportal job-submit analyse <id> --run` runs it)
 reportal download <binary-id> [--analysis] [--output PATH] [--force] [--zip] [--password TEXT] [--json]
                                            # write the stored binary's bytes to a path (default:
                                            #   the stored name in the current directory), copying
@@ -92,7 +111,9 @@ reportal config [--json]                  # what this install can do, and every
                                            #   exits 1 on a file it cannot parse
 reportal doctor [--port|-p N] [--json]     # readiness before a start: workspace,
                                            #   database, schema, auth, engine, SPA
-                                           #   build, optional paths, free port; exits
+                                           #   build, decompiler (kuna + its specs),
+                                           #   discovery (rizin), optional paths,
+                                           #   backups, free port; exits
                                            #   1 on a failure, 0 on a warning
 reportal deploy-units [--write|-w DIR] [--json]
                                            # print the systemd unit templates this
@@ -128,11 +149,30 @@ reportal symbols-export <binary-id> [--format c|json] [--output PATH] [--file-id
                                            # render one parse as a C header (through
                                            #   the type model's renderer) or as JSON;
                                            #   --json without --output wraps the body
-reportal decompiler-script <binary-id> [--format ghidra|ida|binja] [--output PATH] [--json]
-                                           # render the stored renames as a runnable
-                                           #   decompiler script; stored-only,
-                                           #   placeholders are left out; --json
-                                           #   without --output wraps the body
+reportal symbols-library [--json]          # the workspace symbol library: every stored
+                                           #   file with the identity it is keyed by
+reportal symbols-library-add <path>... [--json]
+                                           # add PDB or ELF/DWARF files to the
+                                           #   workspace library: parse each, key it by
+                                           #   its match identity and store it, as one
+                                           #   journal action; a file carrying no
+                                           #   identity is refused
+reportal symbols-resolve <binary-id> [--fetch] [--local] [--json]
+                                           # match a binary to the library by the
+                                           #   identity its own bytes carry and apply
+                                           #   the match as one journal action; --fetch
+                                           #   forces the public symbol server lookup
+                                           #   (needs remote sources enabled) and
+                                           #   --local forbids the network
+reportal decompiler-script <binary-id> [--format ghidra|ida|binja]
+    [--include renames,comments,signatures,summaries] [--output PATH] [--json]
+                                           # render the stored analysis as a runnable
+                                           #   decompiler script (renames by default;
+                                           #   --include adds comments, safe prototypes
+                                           #   and AI summaries as function comments);
+                                           #   stored-only, placeholders are never
+                                           #   renamed; --json without --output wraps
+                                           #   the body
 reportal enrich <binary-id> [--json]       # compute and store a rebrew fingerprint
 reportal fingerprint <binary-id> [--json]  # print the stored fingerprint, else compute
                                            #   one live without storing it
@@ -310,13 +350,15 @@ reportal integrations [--json]             # list every plugin seam with the par
                                            #   currently holds
 reportal auto <binary-id> [--worker offline|llm_c_source|llm_goal] [--goal TEXT] [--execute]
              [--concurrency N] [--functions-per-task N] [--max-attempts N] [--max-tasks N]
-             [--recover] [--json]
+             [--max-tokens N] [--max-usd X --usd-per-mtok X] [--recover] [--json]
                                            # decompose a binary's functions into batches, work them
                                            #   and report the coverage delta; dry-run by default,
                                            #   --execute writes C files into the rebrew project and
                                            #   compiles them, --goal is the objective llm_goal works
                                            #   toward (and plans matched functions too), --recover
-                                           #   closes the binary's latest stale run first
+                                           #   closes the binary's latest stale run first; the
+                                           #   budget flags stop new attempts once the model has
+                                           #   used that many tokens or dollars (0: no cap)
 reportal auto-recover <run-id> [--json]    # close a run a dead process left `running`, merging the
                                            #   writes its unfinished tasks recorded into its plan
 reportal auto-revert <run-id> [--json]     # remove the files one stored auto run wrote, restore the
@@ -421,10 +463,11 @@ reportal strings <binary-id> [--sort value|length] [--order asc|desc] [--json]
                                            # list a binary's strings, sorted server-side
 reportal imports <binary-id> [--json]      # list a binary's import table (library,
                                            #   function, IAT), read from the engine on demand
-reportal disasm <function-id> [--format nasm|hex] [--json]
+reportal disasm <function-id> [--format nasm|hex|asm] [--json]
                                            # print one function's disassembly through its
-                                           #   binary's rebrew project context; the nasm
-                                           #   listing is cached the way the route caches it;
+                                           #   binary's rebrew project context; nasm is 32-bit
+                                           #   x86 only, asm any ISA; the binary's cached
+                                           #   format is read the way the route reads it;
                                            #   human mode writes the listing to stdout
 reportal section-coverage <binary-id> [--json]
                                            # report per-section byte coverage over the stored
@@ -443,7 +486,24 @@ reportal match <binary-id> [--min-similarity 80] [--min-confidence 0]
                                            #   and the platform, architecture,
                                            #   binary, collection and name-source
                                            #   scopes, each repeatable; an unknown
-                                           #   scope id or an out-of-range value exits 1
+                                           #   scope id or an out-of-range value exits 1;
+                                           #   above --min-similarity 80 each function's
+                                           #   candidates come from the LSH index, with
+                                           #   the same recorded rows
+reportal match-index [status|rebuild] [--json]
+                                           # report the LSH candidate index (indexed
+                                           #   functions, buckets, cached listings not yet
+                                           #   indexed), or drop and rebuild it from every
+                                           #   valid cached listing (needs the similarity
+                                           #   extra); status is the default and writes nothing
+reportal similar [<function-id>] [--listing PATH] [--bytes HEX --arch A [--va N]]
+             [--min-similarity 85] [--limit 10] [--json]
+                                           # rank the stored functions whose cached listing
+                                           #   is most similar to one stored function (its
+                                           #   listing filled through the engine when not
+                                           #   cached), a listing file ('-' reads stdin) or
+                                           #   code bytes disassembled in process; exactly
+                                           #   one query; records nothing
 reportal triage <binary-id> [--json]       # store the rebrew one-shot dossier
 reportal function-triage <binary-id> [--limit N] [--function ID]... [--json]
                                            # score and summarize the binary's selected

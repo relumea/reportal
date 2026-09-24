@@ -126,9 +126,16 @@ export function DiffView({
         <div className="diff-summary">
           <Badge tone="accent">similarity {similarity}</Badge>
           <Badge>equal {diff.summary.equal}</Badge>
-          <Badge tone="insert">changed {diff.summary.changed}</Badge>
-          <Badge tone="insert">insert {diff.summary.insert}</Badge>
-          <Badge tone="delete">delete {diff.summary.delete}</Badge>
+          {/* A zero count is not a change: it stays neutral, not green or red. */}
+          <Badge tone={diff.summary.changed > 0 ? "insert" : undefined}>
+            changed {diff.summary.changed}
+          </Badge>
+          <Badge tone={diff.summary.insert > 0 ? "insert" : undefined}>
+            insert {diff.summary.insert}
+          </Badge>
+          <Badge tone={diff.summary.delete > 0 ? "delete" : undefined}>
+            delete {diff.summary.delete}
+          </Badge>
         </div>
         <div className="table-scroll">
           <table

@@ -207,12 +207,22 @@ export function isMac(): boolean {
   return /mac|iphone|ipad/i.test(navigator.userAgent);
 }
 
+// Arrow keys as a cheatsheet reads them, not as `KeyboardEvent.key` spells them.
+const ARROW_NAMES: Record<string, string> = {
+  arrowleft: "Left",
+  arrowright: "Right",
+  arrowup: "Up",
+  arrowdown: "Down",
+};
+
 function displayToken(token: string, mac: boolean): string {
   if (token === "mod") return mac ? "⌘" : "Ctrl";
   if (token === "alt") return mac ? "⌥" : "Alt";
   if (token === "shift") return mac ? "⇧" : "Shift";
   if (token === "escape") return "Esc";
   if (token === "space") return "Space";
+  const arrow = ARROW_NAMES[token];
+  if (arrow !== undefined) return arrow;
   return token.length === 1 ? token.toUpperCase() : token;
 }
 
@@ -254,6 +264,35 @@ export function focusViewFilters(): boolean {
   return true;
 }
 
+/** The jump the page is currently holding in view; a second jump replaces it. */
+let landing: ResizeObserver | null = null;
+
+/**
+ * Scroll *element* to the top of the window and hold it there while the page
+ * settles.  A jump lands before every panel has rendered, and their bodies grow
+ * as their reads return, which drags the target back out of view; this follows
+ * that growth while the target is off screen.  A reader who scrolls away stays
+ * where they put it: only a layout change re-anchors, never a scroll.
+ */
+function landOn(element: HTMLElement, behavior: ScrollBehavior = "instant"): void {
+  landing?.disconnect();
+  const land = (): void => element.scrollIntoView({ behavior, block: "start" });
+  land();
+  const content = document.getElementById("content");
+  if (content === null) return;
+  const observer = new ResizeObserver(() => {
+    const rect = element.getBoundingClientRect();
+    if (rect.bottom < 0 || rect.top > window.innerHeight) land();
+  });
+  observer.observe(content);
+  landing = observer;
+  window.setTimeout(() => {
+    observer.disconnect();
+    if (landing === observer) landing = null;
+    // A view whose panels stream for longer than this is followed this long.
+  }, 5000);
+}
+
 /**
  * Scroll to the *delta*th panel in the content area, relative to the first one
  * whose top is at or below the viewport: `]` steps to the next section, `[`
@@ -268,7 +307,7 @@ export function cycleViewSection(delta: number): boolean {
   // step from a scrolled page moves to the next one rather than jumping back.
   const current = tops.reduce((found, top, index) => (top <= 96 ? index : found), 0);
   const next = Math.min(panels.length - 1, Math.max(0, current + delta));
-  panels[next].scrollIntoView({ behavior: "smooth", block: "start" });
+  landOn(panels[next], "smooth");
   panels[next].focus({ preventScroll: true });
   return true;
 }
@@ -286,8 +325,13 @@ export function focusPanel(title: string): boolean {
     return heading === needle || heading.startsWith(needle);
   });
   if (panel === undefined) return false;
+  // A panel on a closed tab (tabs.tsx) opens that tab first; the tab's click
+  // handler switches synchronously, so the panel is laid out before landing.
+  const tabPanel = panel.closest<HTMLElement>('[role="tabpanel"][hidden]');
+  const labelledBy = tabPanel?.getAttribute("aria-labelledby");
+  if (labelledBy) document.getElementById(labelledBy)?.click();
   const heading = panel.querySelector<HTMLElement>(".panel-title") ?? panel;
-  heading.scrollIntoView({ behavior: "instant", block: "start" });
+  landOn(heading);
   panel.focus({ preventScroll: true });
   return true;
 }
@@ -298,14 +342,10 @@ export function focusPanel(title: string): boolean {
  */
 export function focusMemoryGoto(): boolean {
   if (!focusPanel("Memory")) return false;
-  const panel = Array.from(
-    document.querySelectorAll<HTMLElement>("#content section.panel"),
-  ).find((entry) => {
-    const heading = entry.querySelector(".panel-title")?.textContent?.trim().toLowerCase() ?? "";
-    return heading === "memory" || heading.startsWith("memory");
-  });
-  const field = panel?.querySelector<HTMLInputElement>('input[type="text"]');
-  if (field === undefined || field === null) return false;
+  // The address box of whichever memory mode is open, rather than the first
+  // text field in a panel: the mode's own markup marks the one control.
+  const field = document.querySelector<HTMLInputElement>("#content input[data-memory-goto]");
+  if (field === null) return false;
   field.focus();
   return true;
 }

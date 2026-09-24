@@ -312,6 +312,59 @@ class TestSearchRoute:
         assert [row["name"] for row in payload["functions"]] == ["parse_alpha"]
 
 
+class TestFunctionAddressSearch:
+    def _two_binaries(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """The seed plus a second binary holding a function at the same VA."""
+        ids = _seed(conn)
+        analysis = store.create_analysis(conn, binary_id=ids["beta"], engine="manual")
+        store.add_function(conn, analysis_id=analysis, va=0x1000, name="beta_entry")
+        store.add_function(conn, analysis_id=analysis, va=0x1001AE3, name="sub_far")
+        return ids
+
+    def test_hex_with_prefix_matches_the_va_in_every_binary(self, conn: sqlite3.Connection) -> None:
+        self._two_binaries(conn)
+        rows = store.search(conn, "0x1000")["functions"]
+        assert sorted((row["binary_name"], row["name"], row["match"]) for row in rows) == [
+            ("alpha.dll", "parse_alpha", "va"),
+            ("beta.exe", "beta_entry", "va"),
+        ]
+
+    def test_bare_hex_matches_the_va_case_insensitively(self, conn: sqlite3.Connection) -> None:
+        self._two_binaries(conn)
+        rows = store.search(conn, "1001AE3")["functions"]
+        assert [(row["name"], row["va"], row["match"]) for row in rows] == [
+            ("sub_far", 0x1001AE3, "va")
+        ]
+        assert [row["name"] for row in store.search(conn, "0x1001ae3")["functions"]] == ["sub_far"]
+
+    def test_a_va_hit_ranks_before_a_name_hit(self, conn: sqlite3.Connection) -> None:
+        ids = self._two_binaries(conn)
+        analysis = store.create_analysis(conn, binary_id=ids["alpha"], engine="manual")
+        store.add_function(conn, analysis_id=analysis, va=0x10, name="call_1000_times")
+        rows = store.search(conn, "1000")["functions"]
+        assert [row["match"] for row in rows] == ["va", "va", "name"]
+
+    def test_a_name_query_is_not_read_as_an_address(self, conn: sqlite3.Connection) -> None:
+        self._two_binaries(conn)
+        rows = store.search(conn, "0x1000zz")["functions"]
+        assert rows == []
+
+    def test_an_address_past_sqlite_range_matches_nothing(self, conn: sqlite3.Connection) -> None:
+        self._two_binaries(conn)
+        assert store.search(conn, "f" * 17)["functions"] == []
+
+    def test_a_regex_query_is_never_an_address(self, conn: sqlite3.Connection) -> None:
+        self._two_binaries(conn)
+        assert store.search(conn, "1000", regex=True)["functions"] == []
+
+    def test_the_route_answers_the_binary_name(self, conn: sqlite3.Connection) -> None:
+        self._two_binaries(conn)
+        status, headers, body = wsgi_request("GET", "/api/search?q=0x1001ae3")
+        assert status == "200 OK"
+        rows = json_body(body, headers)["functions"]
+        assert [(row["binary_name"], row["match"]) for row in rows] == [("beta.exe", "va")]
+
+
 class TestSearchNeedle:
     def test_literal_match_uses_casefold(self) -> None:
         needle = store._Match("straße")

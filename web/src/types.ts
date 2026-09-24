@@ -146,6 +146,27 @@ export interface MatchRow {
   settings: MatchRunSettings | null;
 }
 
+/** One hit of a similar-functions query, best similarity first. */
+export interface SimilarHit {
+  function_id: number;
+  name: string;
+  va: number;
+  binary_id: number;
+  binary_name: string;
+  similarity: number;
+}
+
+/** `POST /api/functions/<id>/similar`: ranked hits and how the candidates were drawn. */
+export interface SimilarResult {
+  function_id: number | null;
+  min_similarity: number;
+  limit: number;
+  /** `index` (the LSH buckets) or `pairwise` (every cached listing). */
+  candidate_source: "index" | "pairwise";
+  compared: number;
+  hits: SimilarHit[];
+}
+
 /** One recorded edge of a binary, as `GET /api/binaries/<id>/matches` returns it. */
 export interface BinaryMatchRow {
   source_function_id: number;
@@ -1402,6 +1423,8 @@ export interface SearchFunctionRow {
   name: string;
   status: string;
   binary_id: number;
+  /** The binary the function belongs to, so equal VAs in two binaries stay apart. */
+  binary_name: string;
   match: string;
 }
 
@@ -1469,6 +1492,8 @@ export interface UploadFileEntry {
   visibility: string;
   owner_team_id: number | null;
   error: { error: string; detail: string; status?: number } | null;
+  /** The analysis the upload queued for a binary it created; null when the queue was full. */
+  analysis_job?: { id: number; status: string } | null;
 }
 
 /** The response of a batch upload; one entry per `file` part. */
@@ -1638,6 +1663,15 @@ export interface AutoRun {
   skipped: number;
   coverage_before: AutoCoverage;
   coverage_after: AutoCoverage;
+  /** The model spend the run recorded; absent on a run stored before budgets. */
+  budget?: {
+    tokens?: number;
+    usd?: number;
+    max_tokens?: number;
+    max_usd?: number;
+    usd_per_mtok?: number;
+    exhausted?: boolean;
+  };
   tree: AutoTask[];
 }
 

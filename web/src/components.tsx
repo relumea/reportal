@@ -19,6 +19,8 @@ import {
 import type { KeyboardEvent, MouseEvent, ReactElement, ReactNode } from "react";
 
 import { errorText, isApiErrorCode } from "./api";
+import { LLM_UNAVAILABLE } from "./constants";
+import { Icon } from "./icons";
 import {
   METER_SEGMENTS,
   RAMP_STEPS,
@@ -35,14 +37,63 @@ export const NA = "n/a";
 /** Value shown in place of one the source does not provide (rule 25). */
 export const UNAVAILABLE = "Unavailable";
 
+/** `count` with the noun in the matching number: "1 binary", "2 binaries". */
+export function countOf(count: number, one: string, many = `${one}s`): string {
+  return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+}
+
+/** A stored byte size; 0 means none was recorded, since uploads refuse an empty file. */
+export function byteSize(bytes: number): string {
+  return bytes > 0 ? bytes.toLocaleString() : NA;
+}
+
 export function hex(value: number): string {
   return `0x${Number(value).toString(16)}`;
+}
+
+/** A keyed table cell: a stored `*_at` timestamp reads like every other Stamp. */
+function keyedCell(key: PropertyKey | undefined, value: unknown): ReactNode {
+  if (typeof key === "string" && key.endsWith("_at") && typeof value === "string") {
+    return <Stamp at={value} />;
+  }
+  return cellText(value);
 }
 
 export function cellText(value: unknown): ReactNode {
   if (value === null || value === undefined) return null;
   if (typeof value === "string" || typeof value === "number") return value;
   return String(value);
+}
+
+/**
+ * A stored timestamp, shown as the date and the clock time it was recorded
+ * with.  The raw value stays on hover and in `dateTime`, so a reader who needs
+ * the zone reads it there and two rows always compare on one clock.
+ */
+export function Stamp({ at }: { at: string | null | undefined }): ReactNode {
+  if (!at) return null;
+  return (
+    <time className="stamp" dateTime={at} title={at}>
+      {at.replace("T", " ").slice(0, 16)}
+    </time>
+  );
+}
+
+/**
+ * The shell title a loaded row owns.  A detail view publishes the name it
+ * loaded, so the shell says `notepad.exe` rather than `Binary #3`; the shell
+ * falls back to its route title while that name is unknown.
+ */
+export const ViewTitle = createContext<((title: string | null) => void) | null>(null);
+
+/** Publish *title* as the shell title for as long as this view is mounted. */
+export function useViewTitle(title: string | null | undefined): void {
+  const setTitle = useContext(ViewTitle);
+  useEffect(() => {
+    if (setTitle === null) return;
+    setTitle(title || null);
+    return () => setTitle(null);
+  }, [setTitle, title]);
 }
 
 /** One removable chip naming an active list filter or scope setting. */
@@ -242,7 +293,8 @@ export function Button({
   children: ReactNode;
   onClick?: () => void;
   tone?: ButtonTone;
-  size?: "sm" | "md";
+  /** `icon`: a square control holding one icon; `aria-label` names it. */
+  size?: "sm" | "md" | "icon";
   type?: "button" | "submit";
   disabled?: boolean;
   /** Show a spinner and disable the control while work is in flight. */
@@ -254,6 +306,7 @@ export function Button({
   const classes = ["btn"];
   if (tone !== "default") classes.push(`btn-${tone}`);
   if (size === "sm") classes.push("btn-sm");
+  if (size === "icon") classes.push("btn-icon");
   if (pending) classes.push("btn-pending");
   return (
     <button
@@ -272,22 +325,25 @@ export function Button({
   );
 }
 
-function CopyButton({ text }: { text: string }): ReactNode {
+export function CopyButton({ text }: { text: string }): ReactNode {
   const [status, setStatus] = useState<"idle" | "copied" | "failed">("idle");
   useEffect(() => {
     if (status === "idle") return undefined;
     const handle = window.setTimeout(() => setStatus("idle"), 1500);
     return () => window.clearTimeout(handle);
   }, [status]);
+  const label = status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : "Copy";
   return (
     <Button
-      size="sm"
+      size="icon"
       tone="ghost"
+      aria-label={label}
+      title={label}
       onClick={() => {
         void writeClipboard(text).then((ok) => setStatus(ok ? "copied" : "failed"));
       }}
     >
-      {status === "copied" ? "Copied" : status === "failed" ? "Copy failed" : "Copy"}
+      <Icon name={status === "copied" ? "check" : "copy"} />
     </Button>
   );
 }
@@ -512,20 +568,22 @@ export function SegmentMeter({
         <span className="meter-label">{label}</span>
         <span className="meter-value">{value === null ? missing : (readout ?? `${percent}%`)}</span>
       </div>
-      <div className="meter-track" aria-hidden="true">
-        {Array.from({ length: METER_SEGMENTS }, (_unused, index) => {
-          const on = index < lit;
-          return (
-            <span
-              key={index}
-              className="meter-seg"
-              data-lit={on ? "true" : undefined}
-              data-step={on && !hue ? String(rampStep(index)) : undefined}
-              data-band={inBand(index, band) ? "true" : undefined}
-            />
-          );
-        })}
-      </div>
+      {value === null ? null : (
+        <div className="meter-track" aria-hidden="true">
+          {Array.from({ length: METER_SEGMENTS }, (_unused, index) => {
+            const on = index < lit;
+            return (
+              <span
+                key={index}
+                className="meter-seg"
+                data-lit={on ? "true" : undefined}
+                data-step={on && !hue ? String(rampStep(index)) : undefined}
+                data-band={inBand(index, band) ? "true" : undefined}
+              />
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -634,7 +692,7 @@ export function Field({
         </label>
         {control}
         {hint ? (
-          <span id={hintId} className="field-hint">
+          <span id={hintId} className="field-hint" title={hint}>
             {hint}
           </span>
         ) : null}
@@ -648,7 +706,7 @@ export function Field({
         {children}
       </label>
       {hint ? (
-        <span id={hintId} className="field-hint">
+        <span id={hintId} className="field-hint" title={hint}>
           {hint}
         </span>
       ) : null}
@@ -728,6 +786,13 @@ export function ErrorNote({
           </a>
         </p>
       ) : null}
+      {isApiErrorCode(error, LLM_UNAVAILABLE) ? (
+        <p className="note-text">
+          <a className="back-link" href="#/models">
+            Open Models to see what this workspace can run.
+          </a>
+        </p>
+      ) : null}
       {onRetry ? (
         <Button size="sm" tone="ghost" onClick={onRetry}>
           Retry
@@ -761,6 +826,8 @@ export function CodeBlock({ text, title }: { text: string; title?: string }): Re
       title="Click to copy"
       onClick={(event) => {
         if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+        // A drag that selected part of the listing is the reader copying that part.
+        if (window.getSelection()?.isCollapsed === false) return;
         void writeClipboard(text);
       }}
     >
@@ -987,7 +1054,7 @@ export function DataTable<T>({
                   <td key={column.label} className={classes.length ? classes.join(" ") : undefined}>
                     {column.render
                       ? column.render(row, index)
-                      : cellText(column.key ? row[column.key] : null)}
+                      : keyedCell(column.key, column.key ? row[column.key] : null)}
                   </td>
                 );
               })}
@@ -1043,6 +1110,7 @@ export function Panel({
                 aria-expanded={open}
                 onClick={() => setOpen((value) => !value)}
               >
+                <Icon name="forward" />
                 {title}
               </button>
             ) : (
@@ -1097,15 +1165,19 @@ export function PanelBody<T>({
   entry,
   hint,
   noScanHint,
+  idle,
   onRetry,
   children,
 }: {
   entry: PanelEntry<T> | undefined;
   hint: string;
   noScanHint?: string;
+  /** What a lazy panel shows before its first load: nothing is loading yet. */
+  idle?: ReactNode;
   onRetry?: () => void;
   children: (data: T) => ReactNode;
 }): ReactNode {
+  if (!entry && idle !== undefined) return <EmptyState>{idle}</EmptyState>;
   if (!entry || entry.state === "loading") return <Loading label={hint || "Loading"} />;
   if (entry.state === "error") {
     if (noScanHint && isApiErrorCode(entry.error, "no-scan")) {

@@ -18,6 +18,7 @@ BOUNDARY = "----reportal-batch-test"
 # Keys the legacy single-file response carries; the batch branch must not
 # change that shape.
 LEGACY_RESPONSE_KEYS = {
+    "analysis_job",
     "id",
     "sha256",
     "name",

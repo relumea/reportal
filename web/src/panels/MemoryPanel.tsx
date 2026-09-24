@@ -263,6 +263,7 @@ function WindowMode({ binaryId }: { binaryId: number }): ReactNode {
         <Field label="Address">
           <input
             type="text"
+            data-memory-goto
             placeholder={placeholder}
             value={address}
             onChange={(event) => setAddress(event.target.value)}
@@ -478,6 +479,7 @@ function FileMode({ binaryId }: { binaryId: number }): ReactNode {
         <Field label="Go to">
           <input
             type="text"
+            data-memory-goto
             placeholder={placeholder}
             value={goto}
             onChange={(event) => setGoto(event.target.value)}
@@ -1062,6 +1064,7 @@ function ContinuousMode({
           <input
             ref={gotoRef}
             type="text"
+            data-memory-goto
             aria-label="Go to address"
             placeholder={column === "file" ? "0x600" : placeholder}
             value={goto}

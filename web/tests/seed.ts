@@ -35,10 +35,19 @@ export interface SeedResult {
   large_binary_id: number;
   /** How many functions it holds, so a spec can name the last row. */
   large_function_count: number;
+  /** The seeded function and its lineage copy, both with the same cached listing. */
+  similar: SimilarPair;
   /** A run on that binary a dead process left `running`, for the recovery control. */
   stale_run: StaleRun;
   /** The team an upload can be registered into. */
   team: SeedTeam;
+}
+
+/** A queried function and the counterpart its similarity query ranks first. */
+export interface SimilarPair {
+  function_id: number;
+  counterpart_id: number;
+  counterpart_name: string;
 }
 
 /** A team the seeder created, so a scope control has a real choice. */

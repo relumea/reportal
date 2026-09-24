@@ -444,3 +444,45 @@ class TestPagerSurfaces:
 
         assert result.exit_code == 0
         assert "Next: Beta (beta)" in result.output
+
+
+def test_repository_only_pages_are_neither_listed_nor_served(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A business or research page in docs/ stays out of the in-app manual."""
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "docs" / "FUNDING.md").write_text("# Funding\n\nGrants.\n", encoding="utf-8")
+    (root / "docs" / "subsystems").mkdir()
+    (root / "docs" / "subsystems" / "funding.md").write_text("# Nested\n", encoding="utf-8")
+    slugs = [page["slug"] for page in docs.pages()]
+    assert "funding" not in slugs
+    # Only the top-level page is repository-only; a nested one of the same name is served.
+    assert "subsystems/funding" in slugs
+    with pytest.raises(docs.UnknownDocError):
+        docs.page("funding")
+    status, _headers, _body = wsgi_request("GET", "/api/docs/funding")
+    assert status.startswith("404")
+
+
+def test_an_index_row_for_a_repository_only_page_is_not_rendered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The docs index keeps its rows for repository readers; the manual drops them."""
+    root = _workspace(tmp_path, monkeypatch)
+    (root / "docs" / "index.md").write_text(
+        "# Index\n\n"
+        "| Document | What |\n|---|---|\n"
+        "| [ALPHA.md](alpha.md) | the alpha page |\n"
+        "| [FUNDING.md](FUNDING.md) | grants and investors |\n\n"
+        "- [TODO.md](TODO.md#now) for the backlog\n\n"
+        "- [beta](beta.md) stays\n",
+        encoding="utf-8",
+    )
+    rendered = docs.page("index")["blocks"]
+    tables = [block for block in rendered if block["kind"] == "table"]
+    lists = [block for block in rendered if block["kind"] == "list"]
+    assert [row[1] for row in tables[0]["rows"]] == ["the alpha page"]
+    # The list that only pointed at the backlog is gone; the other stays.
+    assert [[item["text"] for item in block["items"]] for block in lists] == [
+        ["[beta](beta.md) stays"]
+    ]

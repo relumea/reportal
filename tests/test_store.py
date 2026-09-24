@@ -671,9 +671,17 @@ class TestMatches:
 
 
 class TestDisasmCache:
-    def test_only_nasm_is_the_cacheable_format(self) -> None:
-        # The route, the MCP tool and the CLI read the cache under this one rule.
-        assert store.CACHEABLE_DISASM_FORMAT == "nasm"
+    @pytest.mark.parametrize(
+        ("arch", "override", "expected"),
+        [("x86_32", "", "nasm"), ("", "", "nasm"), ("x86_64", "", "asm"), ("", "arm64", "asm")],
+    )
+    def test_the_cached_format_follows_the_binary_s_arch(
+        self, conn: sqlite3.Connection, arch: str, override: str, expected: str
+    ) -> None:
+        binary_id = store.add_binary(conn, sha256="ab" * 32, name="a.bin", arch=arch)
+        store.set_binary_format_override(conn, binary_id, arch_override=override)
+        assert store.cached_disasm_format(conn, binary_id) == expected
+        assert store.cached_disasm_format(conn, binary_id + 1) == "nasm"
 
     def test_round_trip_and_overwrite(self, conn: sqlite3.Connection) -> None:
         function_id = _seed_function(conn)

@@ -22,8 +22,15 @@ import {
   Loading,
   Panel,
   Toolbar,
+  NA,
 } from "../components";
-import { COLLECTION_ORDERS, DEFAULT_COLLECTION_ORDER, WORKSPACE_FILTERS } from "../constants";
+import {
+  COLLECTION_ORDERS,
+  COLLECTION_ORDER_LABELS,
+  DEFAULT_COLLECTION_ORDER,
+  WORKSPACE_FILTERS,
+  WORKSPACE_FILTER_LABELS,
+} from "../constants";
 import type { CollectionOrder, WorkspaceFilter } from "../constants";
 import type { Collection, CollectionDetail } from "../types";
 import { useAsync } from "../useAsync";
@@ -329,7 +336,7 @@ export function CollectionsView({
             >
               {COLLECTION_ORDERS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {COLLECTION_ORDER_LABELS[value]}
                 </option>
               ))}
             </select>
@@ -339,10 +346,10 @@ export function CollectionsView({
               value={filters.workspace}
               onChange={(event) => apply({ workspace: event.target.value as WorkspaceFilter | "" })}
             >
-              <option value="">any scope</option>
+              <option value="">Any scope</option>
               {WORKSPACE_FILTERS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {WORKSPACE_FILTER_LABELS[value]}
                 </option>
               ))}
             </select>
@@ -358,10 +365,10 @@ export function CollectionsView({
               { label: "ID", key: "id", numeric: true },
               { label: "Name", key: "name" },
               { label: "Description", key: "description" },
-              { label: "Scope", key: "scope" },
+              { label: "Scope", render: (row) => row.scope || NA },
               {
                 label: "Owner",
-                render: (row) => row.owner_team_name ?? "-",
+                render: (row) => row.owner_team_name ?? NA,
               },
               { label: "Binaries", key: "binary_count", numeric: true },
             ]}

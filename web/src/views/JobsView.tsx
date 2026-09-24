@@ -41,8 +41,15 @@ function jobTone(status: string): BadgeTone {
 
 function jobSummary(job: JobView): string {
   if (job.error) return job.error;
-  if (job.status === "done") return "finished";
+  // The status badge already says done; the stored message would only repeat it.
+  if (job.status === "done") return "";
   return job.message;
+}
+
+/** The kind's label, plus the domain for the kinds that scan one. */
+function jobOperation(job: JobView): string {
+  const { domain } = job.params;
+  return typeof domain === "string" && domain ? `${job.label}: ${domain}` : job.label;
 }
 
 function JobDetail({ job }: { job: JobView }): ReactNode {
@@ -177,7 +184,7 @@ export function JobsView({
             value={filters.status}
             onChange={(event) => apply({ status: event.target.value })}
           >
-            <option value="">any status</option>
+            <option value="">Any status</option>
             {(data?.statuses ?? []).map((value) => (
               <option key={value} value={value}>
                 {value}
@@ -187,7 +194,7 @@ export function JobsView({
         </Field>
         <Field label="Kind filter">
           <select value={filters.kind} onChange={(event) => apply({ kind: event.target.value })}>
-            <option value="">any kind</option>
+            <option value="">Any kind</option>
             {(data?.kinds ?? []).map((entry) => (
               <option key={entry.name} value={entry.name}>
                 {entry.label}
@@ -224,7 +231,7 @@ export function JobsView({
       <Toolbar>
         <Field label="Operation">
           <select value={kind} onChange={(event) => setKind(event.target.value)}>
-            <option value="">choose one</option>
+            <option value="">Choose one</option>
             {(data?.kinds ?? []).map((entry) => (
               <option key={entry.name} value={entry.name}>
                 {entry.label}
@@ -241,7 +248,7 @@ export function JobsView({
         </Field>
         <Field label="Domain">
           <input
-            placeholder="behavior or hardening domain"
+            placeholder="e.g. networking"
             value={domain}
             onChange={(event) => setDomain(event.target.value)}
           />
@@ -271,7 +278,7 @@ export function JobsView({
         <DataTable
           columns={[
             { label: "Id", key: "id", numeric: true },
-            { label: "Operation", key: "label" },
+            { label: "Operation", render: jobOperation },
             { label: "Binary", key: "binary_id", numeric: true },
             {
               label: "Status",
@@ -279,7 +286,9 @@ export function JobsView({
             },
             {
               label: "Progress",
-              render: (job) => `${job.progress}/${job.steps_total}`,
+              // `progress` is a percent; `steps_total` a count (1 for a one-step kind).
+              render: (job) =>
+                job.steps_total > 1 ? `${job.progress}% of ${job.steps_total}` : `${job.progress}%`,
             },
             { label: "Created", key: "created_at" },
             { label: "Message", render: (job) => jobSummary(job) },

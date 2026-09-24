@@ -29,17 +29,18 @@ under the hyphenated heading.
 
 ## Contents
 
-- Request shape: [invalid-body](#invalid-body), [invalid-json-body](#invalid-json-body), [request-body-must-be-a-json-object](#request-body-must-be-a-json-object), [invalid-params](#invalid-params), [invalid-bulk-request](#invalid-bulk-request), [invalid-data-type](#invalid-data-type), [invalid-scope-id](#invalid-scope-id), [invalid-scope-kind](#invalid-scope-kind), [invalid-size-range](#invalid-size-range), [invalid-kind](#invalid-kind), [invalid-limit](#invalid-limit), [invalid-hash](#invalid-hash), [short-hash](#short-hash), [ambiguous-hash](#ambiguous-hash), [invalid-url](#invalid-url), [invalid-binary](#invalid-binary)
+- Request shape: [invalid-body](#invalid-body), [invalid-json-body](#invalid-json-body), [request-body-must-be-a-json-object](#request-body-must-be-a-json-object), [invalid-params](#invalid-params), [invalid-bulk-request](#invalid-bulk-request), [invalid-data-type](#invalid-data-type), [invalid-scope-id](#invalid-scope-id), [invalid-scope-kind](#invalid-scope-kind), [invalid-size-range](#invalid-size-range), [invalid-kind](#invalid-kind), [invalid-limit](#invalid-limit), [invalid-similar-query](#invalid-similar-query), [invalid-hash](#invalid-hash), [short-hash](#short-hash), [ambiguous-hash](#ambiguous-hash), [invalid-url](#invalid-url), [invalid-binary](#invalid-binary)
 - Uploads and archives: [no-file](#no-file), [not-a-file](#not-a-file), [unreadable-file](#unreadable-file), [empty-file](#empty-file), [file-too-large](#file-too-large), [too-many-files](#too-many-files), [unsupported-format](#unsupported-format), [external-tool-required](#external-tool-required), [password-required](#password-required), [bad-password](#bad-password), [corrupt-archive](#corrupt-archive), [archive-too-large](#archive-too-large), [too-many-members](#too-many-members), [binary-not-on-disk](#binary-not-on-disk), [too-many-documents](#too-many-documents)
 - Not found: [edge-not-found](#edge-not-found), [string-not-found](#string-not-found), [binary-not-found](#binary-not-found), [function-not-found](#function-not-found), [collection-not-found](#collection-not-found), [family-not-found](#family-not-found), [comment-not-found](#comment-not-found), [conversation-not-found](#conversation-not-found), [data-type-not-found](#data-type-not-found), [document-not-found](#document-not-found), [member-not-found](#member-not-found), [node-not-found](#node-not-found), [project-not-found](#project-not-found), [run-not-found](#run-not-found), [tag-not-found](#tag-not-found), [format-not-found](#format-not-found), [domain-not-found](#domain-not-found), [component-not-found](#component-not-found), [action-not-found](#action-not-found), [entry-not-found](#entry-not-found), [history-not-found](#history-not-found), [analysis-not-found](#analysis-not-found), [candidate-not-found](#candidate-not-found), [signature-not-found](#signature-not-found), [not-found](#not-found)
-- Debug symbols: [symbols-unreadable](#symbols-unreadable), [no-symbols](#no-symbols)
+- Debug symbols: [symbols-unreadable](#symbols-unreadable), [no-symbols](#no-symbols), [no-identity](#no-identity)
 - Go binaries: [not-go](#not-go), [unreadable](#unreadable)
 - Agent artifacts: [no-artifact](#no-artifact), [unknown-artifact-kind](#unknown-artifact-kind)
-- Stored-only reads: [no-scan](#no-scan), [no-flirt-scan](#no-flirt-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-such-match](#no-such-match), [no-match](#no-match), [no-engine-context](#no-engine-context), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
+- Stored-only reads: [no-scan](#no-scan), [no-flirt-scan](#no-flirt-scan), [no-artifact](#no-artifact), [no-run](#no-run), [no-graph](#no-graph), [no-report](#no-report), [no-pdf](#no-pdf), [no-decompilation](#no-decompilation), [no-proposal](#no-proposal), [no-strings](#no-strings), [no-disasm](#no-disasm), [no-such-match](#no-such-match), [no-match](#no-match), [no-engine-context](#no-engine-context), [last-analysis](#last-analysis), [no-workspace](#no-workspace)
 - FLIRT: [no-signature-dir](#no-signature-dir), [manual-name](#manual-name)
 - Conflicts: [signature-conflict](#signature-conflict), [export-exists](#export-exists), [corrupt-undo-plan](#corrupt-undo-plan), [duplicate-name](#duplicate-name), [duplicate-member](#duplicate-member), [duplicate-parameter](#duplicate-parameter), [duplicate-family](#duplicate-family), [not-reloadable](#not-reloadable), [not-withdrawable](#not-withdrawable), [not-active](#not-active), [component-missing](#component-missing)
 - Engines and models: [engine-error](#engine-error), [engine-unavailable](#engine-unavailable), [llm-error](#llm-error), [llm-unavailable](#llm-unavailable), [mcp-unavailable](#mcp-unavailable), [pipeline-unavailable](#pipeline-unavailable), [similarity-unavailable](#similarity-unavailable), [backend-unavailable](#backend-unavailable), [query-unsupported](#query-unsupported), [unmapped-address](#unmapped-address), [write-failed](#write-failed), [journal-error](#journal-error), [internal-server-error](#internal-server-error), [internal-error](#internal-error)
 - Remote ingestion: [remote-ingest-disabled](#remote-ingest-disabled), [fetch-failed](#fetch-failed), [unresolvable-host](#unresolvable-host), [blocked-target](#blocked-target), [unsupported-content-type](#unsupported-content-type), [too-many-redirects](#too-many-redirects)
+- Workspace checkouts: [clone-failed](#clone-failed), [repo-exists](#repo-exists), [repo-not-found](#repo-not-found), [path-outside-repo](#path-outside-repo)
 - Transfer and graph targets: [same-binary](#same-binary), [tag-not-on-binary](#tag-not-on-binary), [unknown-binary](#unknown-binary), [unknown-collection](#unknown-collection), [candidate-has-no-name](#candidate-has-no-name), [candidate-has-no-signature](#candidate-has-no-signature), [transfers-must-be-a-non-empty-list](#transfers-must-be-a-non-empty-list), [too-many-transfers](#too-many-transfers)
 - Identity: [unauthorized](#unauthorized), [forbidden](#forbidden), [invalid-user](#invalid-user), [user-exists](#user-exists), [user-not-found](#user-not-found)
 - Firmware: [invalid-region](#invalid-region), [region-not-found](#region-not-found)
@@ -78,7 +79,9 @@ the wrong type (`narrative must be a boolean`, `limit must be an integer`,
 a value outside its closed vocabulary (`invalid params` for the auto-mode
 bounds, `invalid override`, `invalid rating`, `invalid line-comment`,
 `invalid kind`, `invalid backend`, `invalid severity`, `invalid format`
-(a component list asked for a shape the exporter does not carry), `invalid doc`
+(a component list asked for a shape the exporter does not carry), `invalid include`
+(a decompiler-script include kind that is not one of `renames`, `comments`,
+`signatures`, `summaries`), `invalid doc`
 (a documentation slug that is not a page's), `invalid regex`
 (a search pattern that does not compile or is too long), and the rest).
 `detail` names the field and the accepted values. Send a value inside the range
@@ -119,6 +122,16 @@ diff kind. Send one of the names the route documents.
 
 `400` (also `invalid limit`). A limit is not an integer, is not positive, or is
 above the route's cap. Send a positive integer inside the documented bound.
+
+### invalid-similar-query
+
+`400`. A similar-functions query (`POST /api/functions/similar`,
+`POST /api/functions/<id>/similar`, the `find_similar_functions` MCP tool) is
+malformed or empty: an empty `listing`, both or neither of `listing` and `bytes`,
+bytes that are not hex or decode to no instruction, an `arch` outside
+`matching.QUERY_ARCHES`, a `min_similarity` outside 0-100, a `limit` outside 1-100,
+or an unknown field. `detail` names the field. A body that is not JSON at all is
+still `400` [invalid-json-body](#invalid-json-body).
 
 ### invalid-password
 
@@ -209,6 +222,14 @@ instead.
 stored parse to read or export. It is not an error state: a binary whose names
 came from the engine has no symbol file and needs none.
 
+### no-identity
+
+`400`. The file parses as a symbol file but carries no match identity: an ELF
+with no GNU build id, or a PDB whose info stream predates the GUID. Nothing was
+stored, because a library entry no binary could ever be matched against would
+be dead weight; the same file can still be ingested for one known binary with
+`reportal symbols`.
+
 ### not-go
 
 `400`. The stored file carries no `go.buildinfo` magic, so it is not a Go
@@ -220,13 +241,6 @@ use the file-type scan when the question is only which runtime produced it.
 `400`. The stored file could not be read while recovering Go build
 information. The row exists but its bytes do not, so there is nothing to
 scan; re-register the binary rather than retrying the scan.
-
-### unsafe-name
-
-`400`. A stored rename holds both quote styles, so no Python quoting renders
-it as text rather than code in a Ghidra or IDA script. Rename the function
-to a name with at most one quote style, or take the Binja document, which
-needs no quoting.
 
 ### no-file
 
@@ -535,6 +549,13 @@ Decompile it first.
 `404`. A scan needed the binary's string table and the engine returned none.
 Nothing was stored over an existing result.
 
+### no-disasm
+
+MCP tool error only; no HTTP route answers it. `find_similar_functions` was given
+a stored function with no cached listing, and the read-only tool never runs the
+engine. Read the function's disassembly first (`GET /api/functions/<id>/disasm`,
+`get_disasm`), or query through `POST /api/functions/<id>/similar`, which fills the cache.
+
 ### secret-not-found
 
 `404`. No stored credential carries the requested name at the requested scope. A
@@ -790,6 +811,37 @@ or a document type reportal can extract.
 
 `400`. The fetch followed more redirects than the guard allows. Send the final
 URL.
+
+## Workspace checkouts
+
+The git checkouts under the workspace `repos/` directory (`repos.py`, exposed
+as the `clone_repo`, `list_repos`, `list_repo_files`, `read_repo_file` and
+`write_repo_file` MCP tools). These codes reach the caller as an MCP tool
+error, not an HTTP body.
+
+### clone-failed
+
+`git clone` failed or timed out. `detail` carries git's own answer, bounded;
+the partial checkout was removed. Retry, or clone the repository by hand into
+the workspace `repos/` directory.
+
+### repo-exists
+
+`clone_repo` refused: that checkout name is already taken under `repos/`.
+Reportal never overwrites a checkout. Pass another `name`, or remove the
+existing directory yourself.
+
+### repo-not-found
+
+A checkout tool named a repository that is not under the workspace `repos/`
+directory. List the checkouts with `list_repos`, create one with `clone_repo`,
+or correct the `name`.
+
+### path-outside-repo
+
+A path resolved outside its checkout: an absolute path, a `..` step, or a
+symbolic link pointing out. Every path a checkout tool accepts stays inside the
+checkout it is resolved against; pass the path relative to the checkout root.
 
 ## Transfer and graph targets
 

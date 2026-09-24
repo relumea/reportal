@@ -100,7 +100,7 @@ class TestRoute:
         status, headers, chunks = on_request("GET", "/pricing")
         assert status.startswith("200")
         assert "text/html" in headers["Content-Type"]
-        assert b"reportal" in b"".join(chunks)
+        assert b"relumea" in b"".join(chunks)
 
     def test_it_is_cacheable(self, portal_db: Path) -> None:
         _, headers, _ = on_request("GET", "/pricing")
@@ -113,7 +113,7 @@ class TestRoute:
         assert headers.get("Content-Encoding") == "gzip"
         assert headers.get("Vary") == "Accept-Encoding"
         assert headers.get("ETag")
-        assert b"reportal" in gzip.decompress(body)
+        assert b"relumea" in gzip.decompress(body)
 
     def test_it_revalidates_with_etag(self, portal_db: Path) -> None:
         _, headers, _ = on_request("GET", "/pricing", headers={"Accept-Encoding": "gzip"})

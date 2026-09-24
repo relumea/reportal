@@ -111,6 +111,7 @@ from reportal import (
     similarity,
     store,
     surface,
+    symbol_library,
     symbols,
     threat,
     unpack,
@@ -187,12 +188,6 @@ _require_binary = partial(surface.require_binary, fail=_fail)
 
 router = APIRouter()
 _log = logging.getLogger(__name__)
-
-# The disassembly format `disasm_cache` holds.  The cache key is the function
-# id alone, so only this format is cached; a `hex` request runs the engine and
-# leaves the cache untouched rather than risk serving the wrong listing.
-# Only the nasm listing is cached; the rule lives with the cache it names.
-CACHEABLE_DISASM_FORMAT = store.CACHEABLE_DISASM_FORMAT
 
 # Functions decompiled by a struct recovery run when the caller names no limit.
 # Struct recovery decompiles each function, so a live request needs a
@@ -4517,6 +4512,107 @@ def post_functions_matches(request: Request, body: dict[str, Any] = Depends(json
     return json_response(rows)
 
 
+_SIMILARITY_UNAVAILABLE_DETAIL = "install the optional extra: uv sync --extra similarity"
+
+
+def _similar_answer(
+    conn: sqlite3.Connection,
+    request: Request,
+    listing: str,
+    query: matching.SimilarQuery,
+    *,
+    exclude_function_id: int | None,
+) -> Response:
+    """Rank *listing* against the corpus and wrap the answer as the route's response."""
+    try:
+        payload = matching.find_similar(
+            conn,
+            listing,
+            min_similarity=query.min_similarity,
+            limit=query.limit,
+            exclude_function_id=exclude_function_id,
+            visible_to=_caller(request),
+        )
+    except similarity.SimilarityUnavailable:
+        return json_error(
+            503, error="similarity-unavailable", detail=_SIMILARITY_UNAVAILABLE_DETAIL
+        )
+    return json_response({"function_id": exclude_function_id, **payload})
+
+
+@router.post("/api/functions/similar")
+def similar_to_listing(request: Request, body: dict[str, Any] = Depends(json_body)) -> Response:
+    """Rank the stored functions most similar to a pasted listing or code bytes.
+
+    The body carries ``listing`` (assembly text) or ``bytes`` (hex) with
+    ``arch`` and an optional ``va``, plus optional ``min_similarity`` (0-100,
+    default 85) and ``limit`` (1-100, default 10).  Bytes are disassembled in
+    process, never executed.  A malformed or empty query is 400
+    ``invalid-similar-query``.  Nothing is recorded.
+    """
+    try:
+        query = matching.parse_similar_query(body, stored=False)
+    except matching.InvalidSettingsError as exc:
+        return json_error(400, error=exc.error, detail=exc.detail)
+    if not similarity.available():
+        return json_error(
+            503, error="similarity-unavailable", detail=_SIMILARITY_UNAVAILABLE_DETAIL
+        )
+    try:
+        listing = matching.query_listing(query, _engine())
+    except matching.InvalidSettingsError as exc:
+        return json_error(400, error=exc.error, detail=exc.detail)
+    except engines.EngineUnavailable:
+        return json_error(503, error="engine-unavailable", detail=engines.ENGINE_UNAVAILABLE_HINT)
+    except engines.EngineError as exc:
+        return json_error(500, error="engine-error", detail=str(exc))
+    with contextlib.closing(_open()) as conn:
+        return _similar_answer(conn, request, listing, query, exclude_function_id=None)
+
+
+@router.post("/api/functions/{function_id}/similar")
+def similar_to_function(
+    request: Request, function_id: int, body: dict[str, Any] = Depends(optional_json_body)
+) -> Response:
+    """Rank the stored functions most similar to one stored function.
+
+    The function's listing comes from ``disasm_cache``, else the engine
+    through its binary's rebrew context.  The optional body carries
+    ``min_similarity`` and ``limit`` as for ``POST /api/functions/similar``; any
+    other field, or a value out of range, is 400 ``invalid-similar-query``.
+    The function itself is never a hit.  Nothing is recorded.
+    """
+    try:
+        query = matching.parse_similar_query(body, stored=True)
+    except matching.InvalidSettingsError as exc:
+        return json_error(400, error=exc.error, detail=exc.detail)
+    with contextlib.closing(_open()) as conn:
+        function = store.get_function(conn, function_id)
+        if function is None:
+            return json_error(
+                404, error="function not found", detail=f"no function with id {function_id}"
+            )
+        if not similarity.available():
+            return json_error(
+                503, error="similarity-unavailable", detail=_SIMILARITY_UNAVAILABLE_DETAIL
+            )
+        try:
+            listing = matching.stored_listing(conn, function, _engine())
+        except engines.EngineUnavailable:
+            return json_error(
+                503, error="engine-unavailable", detail=engines.ENGINE_UNAVAILABLE_HINT
+            )
+        except engines.EngineError as exc:
+            return json_error(500, error="engine-error", detail=str(exc))
+        if not listing:
+            return json_error(
+                400,
+                error="no-engine-context",
+                detail=f"function {function_id} has no cached listing and no analysis context",
+            )
+        return _similar_answer(conn, request, listing, query, exclude_function_id=function_id)
+
+
 @router.post("/api/functions/canonical-names")
 def canonicalize_function_names(
     request: Request, body: dict[str, Any] = Depends(json_body)
@@ -4773,7 +4869,7 @@ def function_disasm(request: Request, function_id: int) -> Response:
             )
         va = int(function["va"])
         size = int(function["size"])
-        if fmt == CACHEABLE_DISASM_FORMAT:
+        if fmt == store.cached_disasm_format(conn, binary_id):
             try:
                 disasm, _filled = store.get_or_compute_disasm(
                     conn,
@@ -6187,6 +6283,9 @@ def _auto_params(body: dict[str, Any]) -> auto_mode.AutoParams:
             max_attempts=_optional_int(body, "max_attempts", auto_mode.DEFAULT_MAX_ATTEMPTS),
             max_tasks=_optional_int(body, "max_tasks", auto_mode.DEFAULT_MAX_TASKS),
             goal=_optional_str(body, "goal", ""),
+            max_tokens=_optional_int(body, "max_tokens", 0),
+            max_usd=_optional_number(body, "max_usd", 0.0),
+            usd_per_mtok=_optional_number(body, "usd_per_mtok", 0.0),
         )
     except ValueError as exc:
         raise json_error(400, error="invalid params", detail=str(exc)) from exc
@@ -8708,6 +8807,12 @@ def _upload_batch(
         with journal.journaled(conn, action) as log:
             for upload, entry, scope in zip(files, options, scopes, strict=True):
                 results.append(_upload_entry(conn, log, request, upload, entry, directory, scope))
+        for entry in results:
+            binary_id = entry.get("binary_id")
+            entry["analysis_job"] = None
+            if entry.get("error") is None and not entry.get("duplicate") and binary_id:
+                symbol_library.auto_resolve(conn, int(binary_id))
+                entry["analysis_job"] = _queue_analysis(conn, request, int(binary_id))
         payload = log.attach(
             {
                 "files": results,
@@ -8717,6 +8822,30 @@ def _upload_batch(
             }
         )
     return json_response(payload)
+
+
+def _queue_analysis(
+    conn: sqlite3.Connection, request: Request, binary_id: int
+) -> dict[str, Any] | None:
+    """Queue function discovery for a binary an upload just created.
+
+    Answers the job row (``id`` and ``status``) the caller follows, or None when
+    the queue is full: the binary is stored either way, and the binary detail
+    view offers the same analysis by hand.
+    """
+    caller = _caller(request)
+    try:
+        job = jobs.submit(
+            conn,
+            kind=jobs.ANALYSE_KIND,
+            binary_id=binary_id,
+            submitted_by="" if caller is None else str(caller["name"]),
+            submitted_by_user_id=_caller_id(request),
+        )
+    except ValueError:
+        return None
+    jobs.ensure_worker()
+    return {"id": job["id"], "status": job["status"]}
 
 
 @router.post("/api/binaries")
@@ -8781,7 +8910,7 @@ def _register_uploads(
         with contextlib.closing(_open()) as conn:
             existing = store.find_binary_by_sha256(conn, sha256)
             if existing is not None:
-                return json_response({**existing, "duplicate": True})
+                return json_response({**existing, "duplicate": True, "analysis_job": None})
             suffix = upload_suffix(raw_name)
             target = directory / f"{sha256}{suffix}"
             os.replace(temp, target)
@@ -8806,7 +8935,12 @@ def _register_uploads(
                     journal.row_delete_descriptor("binaries", binary_id),
                 )
             row = store.get_binary(conn, binary_id)
-            payload = log.attach({**(row or {}), "duplicate": False})
+            # A fresh binary gets its local symbol-library resolve now: no
+            # network, and an unreadable header is a reason in the report
+            # rather than a failed upload.
+            symbol_library.auto_resolve(conn, binary_id)
+            job = _queue_analysis(conn, request, binary_id)
+            payload = log.attach({**(row or {}), "duplicate": False, "analysis_job": job})
         return json_response(payload)
     finally:
         # Still present on empty/duplicate/error; gone after a successful replace.
@@ -10310,14 +10444,163 @@ def export_symbols(binary_id: int, request: Request) -> Response:
     )
 
 
+# ── Symbol library ─────────────────────────────────────────────────
+#
+# The workspace-wide store of vendor and system debug symbol files (libcmt,
+# DirectX, anything the operator collects), keyed by the identity a binary
+# carries: the PE debug directory's CodeView GUID+age or the ELF GNU build id.
+# The store and the local resolve are offline; only an explicit fetch asks the
+# public symbol server, and that obeys the external-source gate.
+
+
+@router.get("/api/symbols/library")
+def list_symbol_library() -> Response:
+    """Every symbol file in the workspace library, newest first.
+
+    The row carries the identity it is keyed by, its origin (the file it was
+    added from or the URL it was fetched from), the counts and the notes-free
+    identity facts, but not the stored parse: a library entry's parse is up to
+    ``symbols.MAX_SYMBOLS`` entries, and the per-binary read that carries it is
+    ``GET /api/binaries/<id>/symbols`` after a resolve.
+    """
+    with contextlib.closing(_open()) as conn:
+        entries = symbol_library.list_entries(conn)
+    return json_response({"symbol_library": entries, "count": len(entries)})
+
+
+@router.post("/api/symbols/library")
+async def add_symbol_library(request: Request) -> Response:
+    """Add symbol files to the workspace library: parse, key, store, journal.
+
+    The body is a multipart upload with one or more ``file`` parts (a PDB or
+    an ELF with DWARF, each carrying an identity).  Every part is parsed and
+    identified before the first write, so one refusal answers 400
+    (``no-file``, ``too-many-files``, ``empty-file``, ``symbols-unreadable``,
+    ``no-identity``) with nothing stored; the writes are one journaled action
+    and a re-upload of already stored bytes answers that row with
+    ``duplicate: true`` instead of storing it twice.
+    """
+    form = await _request_form(request)
+    if isinstance(form, Response):
+        return form
+    files = [part for part in form.getlist("file") if isinstance(part, UploadFile)]
+    if not files:
+        return json_error(400, error="no-file", detail="multipart body needs a 'file' part")
+    if len(files) > MAX_UPLOAD_FILES:
+        return json_error(
+            400,
+            error="too-many-files",
+            detail=f"a library add carries at most {MAX_UPLOAD_FILES} files",
+        )
+    return await run_in_threadpool(_add_symbol_library, files)
+
+
+def _add_symbol_library(files: list[UploadFile]) -> Response:
+    """Store the parts of one library add (the blocking half of the route)."""
+    directory = _paths.project_root() / symbols.SYMBOLS_DIR
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return json_error(500, error="write-failed", detail=str(exc))
+    prepared: list[tuple[bytes, dict[str, Any], str, str]] = []
+    for index, upload in enumerate(files):
+        label = str(upload.filename or "") or f"part {index + 1}"
+        temp: Path | None = None
+        try:
+            try:
+                temp, _sha256, size = _stream_upload(upload, directory)
+                if size == 0:
+                    return json_error(400, error="empty-file", detail=f"{label} is empty")
+                data = temp.read_bytes()
+            except _PartError as exc:
+                return json_error(exc.status, error=exc.error, detail=f"{label}: {exc.detail}")
+            except OSError as exc:
+                return json_error(500, error="write-failed", detail=str(exc))
+        finally:
+            if temp is not None:
+                temp.unlink(missing_ok=True)
+        try:
+            parsed = symbols.parse(data, filename=label)
+            identity = symbol_library.file_identity(data)
+        except (symbols.SymbolError, symbol_library.SymbolLibraryError) as exc:
+            return json_error(400, error=exc.code, detail=f"{label}: {exc.detail}")
+        prepared.append((data, parsed, identity, label))
+    with contextlib.closing(_open()) as conn:
+        action = journal.new_action()
+        with journal.journaled(conn, action) as log:
+            rows = [
+                symbol_library.store_entry(
+                    conn, log, data, parsed=parsed, identity=identity, origin=label
+                )
+                for data, parsed, identity, label in prepared
+            ]
+    return json_response(
+        log.attach(
+            {
+                "symbol_library": rows,
+                "count": len(rows),
+                "added": sum(1 for row in rows if not row["duplicate"]),
+                "duplicates": sum(1 for row in rows if row["duplicate"]),
+            }
+        )
+    )
+
+
+@router.post("/api/binaries/{binary_id}/symbols/resolve")
+def resolve_binary_symbols(binary_id: int, request: Request) -> Response:
+    """Match the binary against the symbol library by identity and apply it.
+
+    The identity comes from the binary's own bytes (mapped, never executed):
+    the PE debug directory's CodeView GUID+age, or the ELF GNU build id.  A
+    match is applied as one journaled action through the same import the
+    upload uses, and the report carries it under ``ingest``.  No match is a
+    200 with ``matched: false`` and the reason, because "this binary has no
+    library entry" is an answer rather than a failure.
+
+    ``?fetch=`` decides the symbol-server half: absent asks for the automatic
+    choice (fetch a missing PDB only when remote sources are already
+    enabled), ``true`` forces the fetch and answers the gate's 403
+    ``external-disabled`` when they are off, ``false`` stays local; any other
+    value is 400 ``fetch must be a boolean``.  A fetch failure answers the
+    external source's own status (502 ``external-fetch-failed``,
+    ``external-bad-response``, ``external-too-large``).
+    """
+    raw = _query_text(request, "fetch")
+    fetch: bool | None = None
+    if raw is not None:
+        value = raw.strip().lower()
+        if value in _QUERY_TRUE:
+            fetch = True
+        elif value in _QUERY_FALSE and value != "":
+            fetch = False
+        else:
+            raise json_error(400, error="fetch must be a boolean")
+    with contextlib.closing(_open()) as conn:
+        if not _visible_binary(conn, binary_id, _caller(request)):
+            return json_error(
+                404, error="binary not found", detail=f"no binary with id {binary_id}"
+            )
+        try:
+            report = symbol_library.resolve(conn, binary_id, fetch=fetch)
+        except symbol_library.SymbolLibraryError as exc:
+            status = 404 if exc.code == "binary not found" else 400
+            return json_error(status, error=exc.code, detail=exc.detail)
+        except external.ExternalError as exc:
+            return _external_failure(exc)
+    return json_response(report)
+
+
 @router.get("/api/binaries/{binary_id}/decompiler-script")
 def export_decompiler_script(binary_id: int, request: Request) -> Response:
-    """Render the stored renames as a runnable decompiler script.
+    """Render the stored analysis as a runnable decompiler script.
 
     ``?format=ghidra`` (the default) answers a Ghidra Python script,
-    ``?format=ida`` an IDA script and ``?format=binja`` a JSON rename
-    document.  Stored-only: placeholders are left out, so the script only
-    carries names a decompiler would not already show.
+    ``?format=ida`` an IDAPython script and ``?format=binja`` a JSON document.
+    ``?include=`` is a comma list of ``renames`` (the default), ``comments``,
+    ``signatures`` and ``summaries``.  Stored-only: placeholders are left out,
+    so the script only carries names a decompiler would not already show.
+    The answer is an attachment named after the binary
+    (``notepad_renames_ghidra.py``).
     """
     fmt = (_query_text(request, "format") or decompiler_scripts.FORMAT_GHIDRA).lower()
     if fmt not in decompiler_scripts.SCRIPT_FORMATS:
@@ -10326,15 +10609,22 @@ def export_decompiler_script(binary_id: int, request: Request) -> Response:
             error="invalid format",
             detail=f"format must be one of {', '.join(decompiler_scripts.SCRIPT_FORMATS)}",
         )
+    try:
+        include = decompiler_scripts.parse_include(_query_text(request, "include"))
+    except decompiler_scripts.ScriptError as exc:
+        return json_error(400, error=exc.code, detail=exc.detail)
     with contextlib.closing(_open()) as conn:
         try:
-            payload = decompiler_scripts.script(conn, binary_id, fmt=fmt)
+            payload = decompiler_scripts.script(conn, binary_id, fmt=fmt, include=include)
         except decompiler_scripts.ScriptError as exc:
             return json_error(404, error=exc.code, detail=exc.detail)
+        binary = _require_binary(conn, binary_id)
+    stem = Path(download_filename(binary)).stem
+    filename = f"{stem}_{decompiler_scripts.FILENAMES[fmt]}"
     return Response(
         content=payload["text"],
         media_type=decompiler_scripts.MEDIA_TYPES[fmt],
-        headers={"Content-Disposition": f'inline; filename="{decompiler_scripts.FILENAMES[fmt]}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

@@ -12,7 +12,7 @@ const state = e2eState();
 test("the attack surface renders the seeded threat URL in the network group", async ({
   page,
 }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=security`);
   const panel = panelByTitle(page, "Attack surface");
 
   await expect(panel.getByText("Network", { exact: false }).first()).toBeVisible();
@@ -24,7 +24,7 @@ test("the attack surface renders the seeded threat URL in the network group", as
 test("the attack surface states its sources with the commands that fill them", async ({
   page,
 }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=security`);
   const panel = panelByTitle(page, "Attack surface");
 
   await expect(panel.getByText("Sources:", { exact: false })).toBeVisible();

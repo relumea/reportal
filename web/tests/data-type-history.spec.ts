@@ -25,7 +25,7 @@ function panelTypes(page: Page) {
 
 test("a rename records a version the panel can revert", async ({ page }) => {
   const renamed = renamedType();
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
 
   // The card title names only the card's own type; member tables in the
@@ -77,7 +77,7 @@ test("a rename records a version the panel can revert", async ({ page }) => {
 });
 
 test("a member save shows in the history without a reload", async ({ page }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
   const types = panelTypes(page);
   const card = types
     .locator(".card")

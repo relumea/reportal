@@ -151,6 +151,14 @@ REASON_BUSY = "busy"
 
 # Reason a task that a recovery found unfinished records.
 REASON_INTERRUPTED = "interrupted"
+# A function the run did not try because its token or spend budget was used up.
+REASON_BUDGET = "budget-exhausted"
+
+# Bounds on a run's budget knobs.  Zero means no budget on that axis; the caps
+# only refuse a typo that would read as unlimited.
+MAX_BUDGET_TOKENS = 1_000_000_000
+MAX_BUDGET_USD = 100_000.0
+MAX_USD_PER_MTOK = 10_000.0
 
 # Live attempt threads, including ones abandoned after a timeout.  Without a
 # ceiling a wedged worker would leave a daemon behind on every attempt and the
@@ -177,6 +185,11 @@ class AutoParams:
     task_timeout: float
     keep_failures: bool = KEEP_FAILED_SOURCES
     goal: str = ""
+    # Budget: stop starting attempts once this many model tokens, or this many
+    # dollars at `usd_per_mtok`, are spent.  Zero is no limit.
+    max_tokens: int = 0
+    max_usd: float = 0.0
+    usd_per_mtok: float = 0.0
 
     def as_config(self) -> dict[str, Any]:
         """The JSON object stored in the run's ``config_json``."""
@@ -191,6 +204,55 @@ class AutoParams:
             "task_timeout": self.task_timeout,
             "keep_failures": self.keep_failures,
             "goal": self.goal,
+            "max_tokens": self.max_tokens,
+            "max_usd": self.max_usd,
+            "usd_per_mtok": self.usd_per_mtok,
+        }
+
+
+class RunBudget:
+    """What one run has spent on the model, and whether its budget is used up.
+
+    Attempts run on their own threads and report each completion's token counts
+    here (:func:`llm.recording_usage`), so the counters are guarded by a lock.
+    The check is between attempts: an attempt already running finishes, so a
+    run can end slightly over its budget but never starts work past it.
+    """
+
+    def __init__(self, params: AutoParams) -> None:
+        self._max_tokens = params.max_tokens
+        self._max_usd = params.max_usd
+        self._usd_per_mtok = params.usd_per_mtok
+        self._lock = threading.Lock()
+        self._tokens = 0
+
+    def add(self, prompt: int, completion: int, _model: str) -> None:
+        """Count one completion (the usage sink's signature)."""
+        with self._lock:
+            self._tokens += max(prompt, 0) + max(completion, 0)
+
+    def _usd(self, tokens: int) -> float:
+        return tokens / 1_000_000 * self._usd_per_mtok
+
+    def exhausted(self) -> bool:
+        """True once either limit that is set has been reached."""
+        with self._lock:
+            tokens = self._tokens
+        if self._max_tokens and tokens >= self._max_tokens:
+            return True
+        return bool(self._max_usd) and self._usd(tokens) >= self._max_usd
+
+    def snapshot(self) -> dict[str, Any]:
+        """The spend and limits the run's stats record."""
+        with self._lock:
+            tokens = self._tokens
+        return {
+            "tokens": tokens,
+            "usd": round(self._usd(tokens), 6),
+            "max_tokens": self._max_tokens,
+            "max_usd": self._max_usd,
+            "usd_per_mtok": self._usd_per_mtok,
+            "exhausted": self.exhausted(),
         }
 
 
@@ -216,6 +278,15 @@ def _bounded_timeout(value: float) -> float:
     return timeout
 
 
+def _bounded_amount(name: str, value: float, maximum: float) -> float:
+    """Return *value* as a non-negative number up to *maximum*, else raise."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a number")
+    if not 0 <= value <= maximum:  # also refuses NaN, which compares false either way
+        raise ValueError(f"{name} must be between 0 and {maximum:g}")
+    return float(value)
+
+
 def _goal_text(value: str) -> str:
     """Return *value* stripped, inside :data:`MAX_GOAL_CHARS`, else raise."""
     if not isinstance(value, str):
@@ -237,6 +308,9 @@ def build_params(
     disabled: Iterable[str] = (),
     task_timeout: float | None = None,
     goal: str = "",
+    max_tokens: int = 0,
+    max_usd: float = 0.0,
+    usd_per_mtok: float = 0.0,
 ) -> AutoParams:
     """Validate one run's inputs; raises :class:`ValueError` naming the field.
 
@@ -253,6 +327,10 @@ def build_params(
     disabled_names = frozenset(str(name) for name in disabled)
     if worker in disabled_names:
         raise ValueError(f"worker {worker!r} is disabled")
+    max_usd = _bounded_amount("max_usd", max_usd, MAX_BUDGET_USD)
+    usd_per_mtok = _bounded_amount("usd_per_mtok", usd_per_mtok, MAX_USD_PER_MTOK)
+    if max_usd and not usd_per_mtok:
+        raise ValueError("max_usd needs usd_per_mtok to price the tokens")
     return AutoParams(
         worker=worker,
         execute=execute,
@@ -270,6 +348,9 @@ def build_params(
             DEFAULT_TASK_TIMEOUT_SECONDS if task_timeout is None else task_timeout
         ),
         goal=_goal_text(goal),
+        max_tokens=_bounded_int("max_tokens", max_tokens, 0, MAX_BUDGET_TOKENS),
+        max_usd=max_usd,
+        usd_per_mtok=usd_per_mtok,
     )
 
 
@@ -466,7 +547,11 @@ def _retry_delay(attempt: int) -> float:
 
 
 def _call_with_timeout(
-    worker: auto_workers.Worker, ctx: WorkerContext, timeout: float, db_path: Path
+    worker: auto_workers.Worker,
+    ctx: WorkerContext,
+    timeout: float,
+    db_path: Path,
+    budget: RunBudget,
 ) -> WorkerResult:
     """Run one worker call under *timeout*; a stall is a failed attempt.
 
@@ -481,7 +566,11 @@ def _call_with_timeout(
     the thread that made it, so handing the worker the batch thread's one would
     fail the moment it touched the store.
     """
-    if not _attempt_slots.acquire(blocking=False):
+    # The release binds to the instance this acquire took, not to whatever the
+    # module global holds when the attempt ends: a swapped-in slot the thread
+    # never acquired must not receive its release.
+    slots = _attempt_slots
+    if not slots.acquire(blocking=False):
         return _failed_attempt(
             ctx,
             REASON_BUSY,
@@ -492,14 +581,17 @@ def _call_with_timeout(
 
     def target() -> None:
         try:
-            with contextlib.closing(_connect(db_path)) as attempt_conn:
+            with (
+                contextlib.closing(_connect(db_path)) as attempt_conn,
+                llm.recording_usage(budget.add),
+            ):
                 ctx.conn = attempt_conn
                 box["result"] = worker.run(ctx)
         except BaseException as exc:  # a worker crash is a failed attempt, not a run crash
             box["error"] = f"{type(exc).__name__}: {exc}"
         finally:
             finished.set()
-            _attempt_slots.release()
+            slots.release()
 
     try:
         thread = threading.Thread(
@@ -507,7 +599,7 @@ def _call_with_timeout(
         )
         thread.start()
     except BaseException:
-        _attempt_slots.release()
+        slots.release()
         raise
     if not _wait_for(finished, timeout):
         return _failed_attempt(ctx, REASON_TIMEOUT)
@@ -581,6 +673,7 @@ def _run_function(
     engine: Any,
     llm_client: llm.LlmClient | None,
     db_path: Path,
+    budget: RunBudget,
 ) -> dict[str, Any]:
     """Run one function through up to ``max_attempts`` worker calls.
 
@@ -601,6 +694,10 @@ def _run_function(
     written: list[str] = []
     status_changes: list[dict[str, Any]] = []
     for attempt in range(1, params.max_attempts + 1):
+        if budget.exhausted():
+            if attempts == 0:
+                outcome, reason = WORKER_SKIPPED, REASON_BUDGET
+            break
         ctx = WorkerContext(
             conn=conn,
             function=function,
@@ -618,7 +715,7 @@ def _run_function(
         planned = _planned_file_intents(worker, ctx, owned)
         if planned:
             auto_store.reserve_auto_task_intents(conn, task_id, planned)
-        result = _call_with_timeout(worker, ctx, params.task_timeout, db_path)
+        result = _call_with_timeout(worker, ctx, params.task_timeout, db_path, budget)
         attempts += 1
         if result.written_files:
             auto_store.confirm_auto_task_intents(
@@ -687,6 +784,7 @@ def _run_batch(
     engine: Any,
     llm_client: llm.LlmClient | None,
     db_path: Path,
+    budget: RunBudget,
 ) -> None:
     """Run every function of one batch and close its task row."""
     worker = auto_workers.get_worker(params.worker)
@@ -717,6 +815,7 @@ def _run_batch(
             engine=engine,
             llm_client=llm_client,
             db_path=db_path,
+            budget=budget,
         )
         for function in functions
     ]
@@ -759,6 +858,7 @@ def _worker_loop(
     params: AutoParams,
     engine: Any,
     llm_client: llm.LlmClient | None,
+    budget: RunBudget,
 ) -> None:
     """Drain the batch queue on this thread's own SQLite connection.
 
@@ -783,6 +883,7 @@ def _worker_loop(
                     engine=engine,
                     llm_client=llm_client,
                     db_path=db_path,
+                    budget=budget,
                 )
             except Exception as exc:  # one bad batch must not strand the run
                 _log.exception("auto batch %s crashed", task_id)
@@ -845,6 +946,7 @@ def _execute_batches(
     engine: Any,
     llm_client: llm.LlmClient | None,
     batches: Sequence[tuple[int, list[dict[str, Any]]]],
+    budget: RunBudget,
 ) -> None:
     """Fan the batches out over bounded daemon worker threads."""
     if not batches:
@@ -863,6 +965,7 @@ def _execute_batches(
                 "params": params,
                 "engine": engine,
                 "llm_client": llm_client,
+                "budget": budget,
             },
             name=f"auto-worker-{index}",
             daemon=True,
@@ -1281,6 +1384,7 @@ def execute_auto_run(
     batches = planned_batches(conn, run_id)
     active_engine = engine if engine is not None else engines.get_engine()
     client = llm_client if llm_client is not None else llm.get_client()
+    budget = RunBudget(params)
     _execute_batches(
         db_path=db_path,
         run_id=run_id,
@@ -1289,6 +1393,7 @@ def execute_auto_run(
         engine=active_engine,
         llm_client=client,
         batches=batches,
+        budget=budget,
     )
     tasks = auto_store.list_auto_tasks(conn, run_id)
     root_id = next(
@@ -1317,7 +1422,12 @@ def execute_auto_run(
         conn,
         run_id,
         status=status,
-        stats={**counters, "coverage_before": before, "coverage_after": coverage_after},
+        stats={
+            **counters,
+            "coverage_before": before,
+            "coverage_after": coverage_after,
+            "budget": budget.snapshot(),
+        },
     )
     return run_summary(conn, run_id)
 
@@ -1345,6 +1455,7 @@ def run_summary(conn: sqlite3.Connection, run_id: int) -> dict[str, Any]:
         "skipped": int(stats.get("skipped", 0)),
         "coverage_before": stats.get("coverage_before", {}),
         "coverage_after": stats.get("coverage_after", {}),
+        "budget": stats.get("budget", {}),
         "tree": auto_store.auto_task_tree(conn, run_id),
     }
 
@@ -1364,6 +1475,9 @@ def run_auto(
     llm_client: llm.LlmClient | None = None,
     task_timeout: float | None = None,
     goal: str = "",
+    max_tokens: int = 0,
+    max_usd: float = 0.0,
+    usd_per_mtok: float = 0.0,
 ) -> dict[str, Any]:
     """Decompose one binary's outstanding functions, work them, report the delta.
 
@@ -1374,8 +1488,10 @@ def run_auto(
     gates every write into the rebrew project; without it nothing is compiled
     and no function status changes.  A non-empty *goal* is the run's free-form
     objective, handed to every worker and planned over every function rather
-    than only the unmatched ones.  Raises :class:`ValueError` for a bad input
-    and :class:`KeyError` for an unknown binary.
+    than only the unmatched ones.  *max_tokens* and *max_usd* (priced at
+    *usd_per_mtok*) cap the model spend; zero is no cap.  Raises
+    :class:`ValueError` for a bad input and :class:`KeyError` for an unknown
+    binary.
     """
     params = build_params(
         worker=worker,
@@ -1387,6 +1503,9 @@ def run_auto(
         disabled=disabled,
         task_timeout=task_timeout,
         goal=goal,
+        max_tokens=max_tokens,
+        max_usd=max_usd,
+        usd_per_mtok=usd_per_mtok,
     )
     if store.get_binary(conn, binary_id) is None:
         raise KeyError(f"no binary with id {binary_id}")

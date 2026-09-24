@@ -621,3 +621,98 @@ class TestOpenMatchesEdges:
         rows = {int(row["function_id"]): row for row in payload["functions"]}
         assert rows[source]["matched_binary_id"] == first_id
         _ = second_id
+
+
+class TestAttribution:
+    """Labels on the matched binaries and the attribution rollup they feed."""
+
+    def test_rollup_rows_carry_their_labels_in_kind_order(self, conn: sqlite3.Connection) -> None:
+        left, right, _source = _matched_pair(conn)
+        tag_id = store.create_tag(conn, "known-bad")
+        store.add_binary_tag(conn, right, tag_id)
+        collection_id = store.create_collection(conn, name="refs")
+        store.add_collection_binary(conn, collection_id, right)
+        store.add_family(
+            conn, name="Demo", aliases=[], notes="", reference_binary_id=right, signatures={}
+        )
+        payload = composition.compute_composition(conn, binary_id=left)
+        assert payload["composition"][0]["labels"] == [
+            {"kind": composition.LABEL_TAG, "name": "known-bad"},
+            {"kind": composition.LABEL_COLLECTION, "name": "refs"},
+            {"kind": composition.LABEL_FAMILY, "name": "Demo"},
+        ]
+        assert payload["attribution"] == [
+            {"kind": composition.LABEL_TAG, "name": "known-bad", "binaries": 1, "functions": 1},
+            {"kind": composition.LABEL_COLLECTION, "name": "refs", "binaries": 1, "functions": 1},
+            {"kind": composition.LABEL_FAMILY, "name": "Demo", "binaries": 1, "functions": 1},
+        ]
+        assert any("labels on a matched binary" in note for note in payload["notes"])
+
+    def test_a_stored_detect_match_is_a_family_label(self, conn: sqlite3.Connection) -> None:
+        left, right, _source = _matched_pair(conn)
+        analysis_id = store.latest_analysis_for_binary(conn, right)
+        assert analysis_id is not None
+        store.set_scan(
+            conn,
+            analysis_id,
+            store.SCAN_KIND_DETECT,
+            {"binary_id": right, "matches": [{"name": "Ghost", "confidence": "high"}], "count": 1},
+        )
+        payload = composition.compute_composition(conn, binary_id=left)
+        labels = payload["composition"][0]["labels"]
+        assert {"kind": composition.LABEL_FAMILY, "name": "Ghost"} in labels
+
+    def test_a_label_sums_every_binary_that_carries_it(
+        self, conn: sqlite3.Connection, tmp_path: Path
+    ) -> None:
+        target = _binary(conn, tmp_path, name="target.exe", sha=SHA)
+        analysis_id = _analysis(conn, target)
+        tag_id = store.create_tag(conn, "openssl")
+        for index, name in enumerate(("one.dll", "two.dll")):
+            candidate, (function,) = _candidate_binary(
+                conn, tmp_path, name=name, sha=f"{index + 2:02x}" * 32, vases=[0x2000 + index]
+            )
+            store.add_binary_tag(conn, candidate, tag_id)
+            source = _function(conn, analysis_id, va=0x1000 + index, name=f"sub_{index:x}")
+            store.record_match(
+                conn,
+                function_id=source,
+                candidate_function_id=function,
+                similarity=99.0,
+                confidence=0.9,
+            )
+        payload = composition.compute_composition(conn, binary_id=target)
+        assert payload["attribution"] == [
+            {"kind": composition.LABEL_TAG, "name": "openssl", "binaries": 2, "functions": 2}
+        ]
+
+    def test_an_unlabelled_candidate_keeps_its_row_with_no_labels(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        left, right, _source = _matched_pair(conn)
+        payload = composition.compute_composition(conn, binary_id=left)
+        assert payload["composition"][0]["binary_id"] == right
+        assert payload["composition"][0]["labels"] == []
+        assert payload["attribution"] == []
+
+    def test_a_collection_the_caller_cannot_see_is_not_disclosed(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        left, right, _source = _matched_pair(conn)
+        owner, _token = auth.add_user(conn, name="owner", role="admin")
+        team_id = int(auth.create_team(conn, name="blue")["id"])
+        auth.add_member(conn, team_id, int(owner["id"]))
+        _outsider, _token = auth.add_user(conn, name="bob", role=auth.ROLE_ANALYST)
+        stranger = auth.find_user(conn, "bob")
+        assert stranger is not None
+        collection_id = store.create_collection(conn, name="secret-refs")
+        store.set_collection_scope(conn, collection_id, visibility="team", owner_team_id=team_id)
+        store.add_collection_binary(conn, collection_id, right)
+
+        payload = composition.compute_composition(conn, binary_id=left, visible_to=stranger)
+        assert payload["matched_functions"] == 1
+        assert payload["composition"][0]["labels"] == []
+        member = composition.compute_composition(conn, binary_id=left, visible_to=owner)
+        assert member["composition"][0]["labels"] == [
+            {"kind": composition.LABEL_COLLECTION, "name": "secret-refs"}
+        ]

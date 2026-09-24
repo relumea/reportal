@@ -31,7 +31,7 @@ holds and records a note.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -137,6 +137,10 @@ class RelatedIO(Protocol):
     def imports(self, binary: str | Path) -> dict[str, Any]: ...
 
     def strings(self, binary: str | Path) -> dict[str, Any]: ...
+
+
+# Said when the engine refuses the target itself: its signals are the stored ones.
+TARGET_UNREADABLE_NOTE = "the engine could not read this binary; it is compared on stored data"
 
 
 def _normalized(value: Any) -> str | None:
@@ -307,6 +311,15 @@ def _entries(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
     return [entry for entry in raw if isinstance(entry, dict)]
 
 
+def _engine_read(call: Callable[[], Any], failures: list[str]) -> Any:
+    """One engine read for a bundle, or None with its reason recorded when the engine refuses."""
+    try:
+        return call()
+    except engines.EngineError as exc:
+        failures.append(str(exc))
+        return None
+
+
 def _bundle(
     conn: sqlite3.Connection, binary: dict[str, Any], *, io: RelatedIO | None
 ) -> dict[str, Any]:
@@ -316,25 +329,27 @@ def _bundle(
     the engine supplies imports and strings when it is usable, and a stored
     ``capabilities`` scan stands in for them when it is not.  None of these
     calls is required: whatever the store already holds is used and anything
-    missing stays empty.
+    missing stays empty, including a read the engine refuses (a format it
+    cannot parse): ``unreadable`` then says the bundle holds stored data only.
     """
     binary_id = int(binary["id"])
+    failures: list[str] = []
     path = Path(str(binary["path"]))
     usable = io is not None and io.available() and path.is_file()
 
     fingerprint = store.get_fingerprint(conn, binary_id)
     if fingerprint is None and usable and io is not None:
-        fingerprint = io.fingerprint(path)
+        fingerprint = _engine_read(lambda: io.fingerprint(path), failures)
     resolved = fingerprint if isinstance(fingerprint, dict) else {}
 
     import_names: list[str] = []
     capability_names = _stored_capabilities(conn, binary_id)
     if usable and io is not None:
-        imports_payload = io.imports(path)
+        imports_payload = _engine_read(lambda: io.imports(path), failures)
         if isinstance(imports_payload, dict):
             import_names = families.import_names(imports_payload)
             if not capability_names:
-                strings_payload = io.strings(path)
+                strings_payload = _engine_read(lambda: io.strings(path), failures)
                 raw_strings = (
                     strings_payload.get("strings") if isinstance(strings_payload, dict) else None
                 )
@@ -357,6 +372,7 @@ def _bundle(
         "format": _normalized(resolved.get("format")) or _normalized(binary.get("format")),
         "arch": _normalized(resolved.get("arch")) or _normalized(binary.get("arch")),
         "size": size,
+        "unreadable": bool(failures),
     }
 
 
@@ -419,8 +435,11 @@ def find_related(
         }
 
     target = _bundle(conn, binary, io=resolved)
+    if target["unreadable"]:
+        notes.append(TARGET_UNREADABLE_NOTE)
     considered = 0
     missing_paths = 0
+    unreadable = 0
     results: list[dict[str, Any]] = []
     for candidate in store.list_binaries(conn):
         candidate_id = int(candidate["id"])
@@ -432,7 +451,9 @@ def find_related(
             missing_paths += 1
             continue
         considered += 1
-        scored = relationship(target, _bundle(conn, candidate, io=resolved))
+        bundle = _bundle(conn, candidate, io=resolved)
+        unreadable += bool(bundle["unreadable"])
+        scored = relationship(target, bundle)
         if scored["classification"] == CLASSIFICATION_UNRELATED and not include_unrelated:
             continue
         results.append(
@@ -453,6 +474,10 @@ def find_related(
         notes.append(f"showing {limit} of {matched} matching binaries")
     if missing_paths:
         notes.append(f"{missing_paths} binaries with no file on disk were skipped")
+    if unreadable:
+        notes.append(
+            f"{unreadable} binaries the engine could not read were compared on stored data"
+        )
 
     payload = {
         "binary_id": binary_id,

@@ -16,7 +16,7 @@ const SEEDED_TYPE = "packed-executable";
 test("the threat report renders the software type, the score and the MITRE link", async ({
   page,
 }) => {
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=security`);
   const threat = panelByTitle(page, "Threat Report");
 
   const verdict = threat.locator(".verdict");
@@ -35,7 +35,7 @@ test("the threat report renders the software type, the score and the MITRE link"
   // reportal's own heuristic, said in the rendered output (the raw JSON below
   // the panel repeats it, so the note is matched as the verdict's paragraph).
   await expect(
-    threat.locator("p.muted", { hasText: "reportal's own deterministic heuristic" }).first(),
+    threat.locator("p.muted", { hasText: "a deterministic heuristic over the stored scans" }).first(),
   ).toBeVisible();
 
   // The stored row keeps a plain technique id; only the rendered output links.

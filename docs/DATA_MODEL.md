@@ -83,11 +83,21 @@ blob keyed by `binary_id`), written by `POST /api/binaries/<id>/fingerprint`,
 `import-rebrew` and read by the disassembly route as its working directory.
 Storing it is not engine-gated: an import succeeds without an engine installed.
 
-`disasm_cache` stores one NASM listing per function, keyed by function id,
-written by the disassembly route and by matching's default disassembler.
+`disasm_cache` stores one listing per function, keyed by function id, in
+`store.cached_disasm_format` for its binary (NASM for 32-bit x86, `asm` for any
+other ISA), written by every disassembly reader and by a corpus import.
 Each row also records the `extent_size` and `project_dir` the listing was
 produced from; a read whose live function size or rebrew context no longer
 matches drops the row instead of serving it.
+`lsh_fingerprints` and `lsh_buckets` are the LSH candidate index
+(`match_index.py`), a derived cache over those listings: one fingerprint row per
+indexed function with the SHA-256 of the listing it was built from, and one
+bucket row per `(function_id, band)` (`LSH_BANDS`, 64, per function) holding that
+band's key, looked up by `idx_lsh_buckets_band_bucket`.  Buckets cascade with
+their fingerprint row, and the fingerprint row with its function.  Every
+`disasm_cache` write or clear drops the function's fingerprint row, so the index
+never answers for a listing the cache no longer holds; `reportal match-index
+rebuild` refills it whole.
 `decompilations` stores one decompiled source per function, keyed by function
 id and carrying the backend that produced it plus whether symbol names were
 applied (`named`), written by `reportal decompile` and
@@ -562,6 +572,16 @@ whole parse: its symbols, its types and the reader's notes) and the `symbols`,
 of the same bytes lands on the same path and adds one more row; the names and
 types an ingest applied are journaled like every other write, and a binary
 delete cascades the rows away with the rest.
+
+`symbol_library` is the workspace-wide library, owned by `symbol_library.py`
+and created by its own lazy `ensure_schema`.  One row is one stored file, not
+tied to a binary: the `sha256` (UNIQUE), byte `size`, `kind`, the `origin` it
+was added from (a path, or the symbol-server URL a fetch used), the `identity`
+that keys a match (`pe:<guid>-<age>` or `elf:<build-id>` with an index on it),
+the `pdb_name` the image's debug record named, `parsed_json` and the `symbols`
+and `types` counts.  The bytes share the content-addressed `symbols/`
+directory with `symbol_files`, and an add is journaled so a revert removes the
+row.
 
 `function_edges` and `user_strings` are the two per-function extras that carry
 rows of their own, each owned by its module (`function_extras.py`,

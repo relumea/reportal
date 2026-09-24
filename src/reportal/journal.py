@@ -251,7 +251,13 @@ class Journal:
         return self._recorded + len(self._pending)
 
     def flush(self) -> int:
-        """Write the pending entries to the table; returns how many landed."""
+        """Write the pending entries to the table; returns how many landed.
+
+        cordis-boundary: a refused flush leaves the store writes this block
+        already committed (the store commits per call) with no journal row;
+        the exception surfaces the failure, a scan span records it, and those
+        writes keep no revert path.
+        """
         if not self._pending:
             return 0
         stamp = now()

@@ -27,6 +27,7 @@ length are computed, then the spool is encrypted into the target.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import struct
 import tempfile
@@ -34,6 +35,7 @@ import unicodedata
 import zlib
 from collections.abc import Iterator
 from io import BytesIO
+from pathlib import Path
 from typing import Protocol
 
 # The password a caller that does not name one gets, the malware-analysis
@@ -319,6 +321,26 @@ def build_protected_zip(
     buffer = BytesIO()
     write_protected_zip(buffer, name, BytesIO(data), password, header=header)
     return buffer.getvalue()
+
+
+def write_protected_zip_file(source: Path, target: Path, member: str, password: str) -> int:
+    """Write *source* as an encrypted zip at *target*, returning the bytes written.
+
+    The archive lands in a temporary file beside the target and is moved into
+    place with ``os.replace``, so a failure leaves no half-written target and
+    no spent previous one behind.
+    """
+    handle, temp_name = tempfile.mkstemp(dir=target.parent, prefix=".download-zip-")
+    os.close(handle)
+    temp = Path(temp_name)
+    try:
+        with source.open("rb") as reader, temp.open("wb") as writer:
+            written = write_protected_zip(writer, member, reader, password)
+        os.replace(temp, target)
+        return written
+    finally:
+        with contextlib.suppress(OSError):
+            temp.unlink()
 
 
 def stream_protected_zip(

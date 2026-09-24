@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createSearchParams, useNavigate } from "react-router";
 import type { ReactNode } from "react";
 
+import { Icon } from "../icons";
 import { BINARY_OPTIONS_PATH, api } from "../api";
 import {
   Button,
@@ -17,6 +18,7 @@ import {
   Toolbar,
   hex,
 } from "../components";
+import { NameEditor } from "../detailParts";
 import {
   DEFAULT_FUNCTION_ORDER,
   DEFAULT_FUNCTION_SORT,
@@ -143,19 +145,19 @@ function SortHeader({
 }): ReactNode {
   const active = sort === column;
   const direction = order === "asc" ? "ascending" : "descending";
+  // A header, not a button among the others: it reads as the column label and
+  // only the sort arrow shows it is the active order.
   return (
-    <Button
-      size="sm"
-      tone="ghost"
+    <button
+      type="button"
+      className={active ? "sort-header active" : "sort-header"}
       title={`Sort by ${label}${active ? ` (${direction})` : ""}`}
       aria-label={`Sort by ${label}${active ? `, currently ${direction}` : ""}`}
       onClick={() => onSort(column)}
     >
       {label}
-      {active ? (
-        <span aria-hidden="true">{order === "asc" ? " ▲" : " ▼"}</span>
-      ) : null}
-    </Button>
+      {active ? <Icon name={order === "asc" ? "ascending" : "descending"} /> : null}
+    </button>
   );
 }
 
@@ -181,6 +183,8 @@ export function FunctionsView({
   const [bulkMessage, setBulkMessage] = useState("");
   const [bulkError, setBulkError] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
+  // The row whose name cell is the inline editor.
+  const [renaming, setRenaming] = useState<number | null>(null);
   const [drafts, setDrafts] = useState({
     minSize: filters.minSize,
     maxSize: filters.maxSize,
@@ -366,9 +370,10 @@ export function FunctionsView({
     }
   };
 
-  const rename = async (row: FunctionRow): Promise<void> => {
-    const name = window.prompt("New function name", row.name || "");
-    if (!name) return;
+  const rename = async (row: FunctionRow, draft: string): Promise<void> => {
+    const name = draft.trim();
+    setRenaming(null);
+    if (!name || name === row.name) return;
     setActionError(null);
     setBusy(`rename-${row.id}`);
     try {
@@ -401,7 +406,7 @@ export function FunctionsView({
     <>
       <Panel
         title="Functions"
-        subtitle="Reversed functions of one binary, filtered and sorted from the server."
+        subtitle="Every function of one binary, filtered and sorted on the server."
         actions={
           binaries && binaries.length > 0 ? (
             <Field label="Binary">
@@ -425,7 +430,7 @@ export function FunctionsView({
               value={filters.nameSource}
               onChange={(event) => apply({ nameSource: event.target.value })}
             >
-              <option value="">Any Source</option>
+              <option value="">Any source</option>
               {FUNCTION_NAME_SOURCES.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -438,7 +443,7 @@ export function FunctionsView({
               value={filters.capability}
               onChange={(event) => apply({ capability: event.target.value })}
             >
-              <option value="">Any Capability</option>
+              <option value="">Any capability</option>
               {FUNCTION_CAPABILITIES.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -451,7 +456,7 @@ export function FunctionsView({
               value={filters.match}
               onChange={(event) => apply({ match: event.target.value })}
             >
-              <option value="">Any Match State</option>
+              <option value="">Any match state</option>
               {FUNCTION_MATCH_VALUES.map((value) => (
                 <option key={value} value={value}>
                   {value}
@@ -462,7 +467,7 @@ export function FunctionsView({
           <Field label="Name" hint="a substring; Enter applies">
             <input
               type="search"
-              placeholder={total ? `Search ${total} functions...` : "sub_1000"}
+              placeholder={total ? `Search ${total} functions` : "sub_1000"}
               value={drafts.name}
               onChange={(event) => setDrafts({ ...drafts, name: event.target.value })}
               onKeyDown={(event) => {
@@ -503,9 +508,9 @@ export function FunctionsView({
               }}
             />
           </Field>
-          <Field label="Strings">
+          <Field label="Strings" hint="Enter adds one">
             <input
-              placeholder="in the stored decompilation; Enter adds one"
+              placeholder="text in the decompilation"
               value={drafts.string}
               onChange={(event) => setDrafts({ ...drafts, string: event.target.value })}
               onKeyDown={(event) => {
@@ -648,12 +653,21 @@ export function FunctionsView({
                       onSort={toggleSort}
                     />
                   ),
-                  render: (row) => (
-                    <span className="toolbar">
-                      <NameSourceDot label={nameSourceLabel(row.name, row.name_source)} />
-                      {row.name}
-                    </span>
-                  ),
+                  render: (row) =>
+                    renaming === row.id ? (
+                      <NameEditor
+                        label={`New name for function #${row.id}`}
+                        initial={row.name}
+                        busy={busy === `rename-${row.id}`}
+                        onSave={(name) => void rename(row, name)}
+                        onCancel={() => setRenaming(null)}
+                      />
+                    ) : (
+                      <span className="toolbar">
+                        <NameSourceDot label={nameSourceLabel(row.name, row.name_source)} />
+                        {row.name}
+                      </span>
+                    ),
                 },
                 {
                   label: "Size",
@@ -702,7 +716,7 @@ export function FunctionsView({
                       <Button
                         size="sm"
                         pending={busy === `rename-${row.id}`}
-                        onClick={() => void rename(row)}
+                        onClick={() => setRenaming(row.id)}
                       >
                         Rename
                       </Button>

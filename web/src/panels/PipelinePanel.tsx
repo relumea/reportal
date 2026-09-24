@@ -16,6 +16,7 @@ import {
   Panel,
   StatusCell,
   Toolbar,
+  countOf,
 } from "../components";
 import { PIPELINE_NO_RUN } from "../constants";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
@@ -179,7 +180,7 @@ export function PipelinePanel({
       const result = await api<PipelineRevertResult>(`/pipeline/runs/${runId}/revert`, {
         method: "POST",
       });
-      setNotice(`Reverted ${result.reverted.length} artifact(s).`);
+      setNotice(`Reverted ${countOf(result.reverted.length, "artifact")}.`);
       reload();
     } catch (failure) {
       setActionError(failure);

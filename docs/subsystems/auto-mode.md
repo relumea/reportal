@@ -13,6 +13,9 @@ its undo plan before the write is lost.
   `functions_per_task`, `max_attempts`, `max_tasks`, `task_timeout`, `disabled`, `goal`). Bounds:
   `DEFAULT_CONCURRENCY` 4 within `MIN_CONCURRENCY`..`MAX_CONCURRENCY` (32), `functions_per_task`
   1..64, `max_attempts` 1..10, `max_tasks` 1..5000, `goal` at most `MAX_GOAL_CHARS` (2000).
+- Budget: `max_tokens`, `max_usd` (priced by `usd_per_mtok`), 0 is none. `RunBudget` counts
+  attempt tokens via `llm.recording_usage`; once spent, the rest skip (`REASON_BUDGET`) and the
+  summary reports `budget`.
 - `Worker` (`name`, `description`, `run`, optional `planned_paths`) and `WorkerContext`
   (`conn`, `function`, `project_dir`, `engine`, `llm_client`, `execute`, `keep_failures`,
   `previous`, `goal`).

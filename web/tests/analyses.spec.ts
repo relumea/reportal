@@ -122,7 +122,7 @@ test("a row's tags are added and removed inline", async ({ page }) => {
   // agrees, which is what makes the two surfaces one store.
   await row.getByLabel(`Remove tag ${name}`).click();
   await expect(row.getByText(name, { exact: true })).toHaveCount(0);
-  await page.goto(`/#/binaries/${state.ids.binary_id}`);
+  await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
   await expect(panelByTitle(page, "Tags").getByText(name, { exact: true })).toHaveCount(0);
 });
 

@@ -11,7 +11,9 @@ failure is a stored `failed` job, never an exception out of the worker.
 - `JobKind`: `name`, `label`, `scan_kinds` (a `scans` kind, per-domain map, or `None`), `run`,
   `params`, optional `perform` / `perform_progress`. `scan_kind_for(params)` resolves domains.
 - `JOB_KINDS` from `builtin_kinds()`; `job_kind_for_scan` and `queue_stored_scans` map stored
-  scans onto it. `ProgressPerform` is a `perform` with a `(done, total)` sink.
+  scans onto it. `analyse` (`ANALYSE_KIND`, queued by an upload) ends by queueing
+  `analysis_follow_ups(format)`: `ANALYSIS_FOLLOW_UPS` (ending with function triage and the
+  match, for any ISA) always, `_PE` for a PE. `ProgressPerform` is a `perform` with a `(done, total)` sink.
 - Statuses: `STATUS_QUEUED`, `STATUS_RUNNING`, `STATUS_DONE`, `STATUS_FAILED`,
   `STATUS_CANCELLED`; `LIVE_STATUSES` is queued/running.
 - `jobs` columns: `kind`, `binary_id`, `status`, `progress`, `steps_total`, `message`,

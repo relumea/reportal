@@ -21,6 +21,7 @@ and are not named here.
 | 6 | Concurrent quota check can overshoot one call | Abuse | Two SaaS HTTP starts may each pass `quota_check` before either charges | `_refuse_over_quota` / `_refuse_over_credits` on auto and credit-priced AI routes | Overshoot bounded by one call; personal profile, CLI and MCP skip the HTTP refuse |
 | 7 | SSRF-shaped URL ingest (opt-in) | 5 | Caller-chosen URL leaves the process | Off by default; `remote_ingest.validate_target` + peer check | Residual TOCTOU; handshake bytes may leave before block |
 | 8 | Agent / LLM bridge as untrusted actuator | 6 | Model sees workspace text; destructive MCP tools run after one analyst confirm | Bridge off without endpoint; destructive tools pause for `POST .../confirm` (`agent.py`) | Read-only tools run unbound by analyst intent; results leave to the configured endpoint |
+| 9 | Caller-chosen git clone into the workspace (opt-in) | 11 | A clone URL leaves the process and its files land where the agent reads and writes | Same off-by-default remote flag; `validate_target` pre-flight before `git clone`; destructive tools pause for confirm; every path confined to the checkout (`repos.py`) | `git` resolves and connects itself, so there is no peer check; git runs as the portal OS user |
 
 ## Posture
 
@@ -214,6 +215,22 @@ it is written out in full below.
     `WEBHOOK_PATH` with no bearer check (`server.py`); only
     `billing.verify_webhook` authenticates the caller.  A leaked webhook
     secret forges entitlement events until rotated.
+11. **Caller-chosen git clone and checkout writes (opt-in).**  `repos.clone`
+    shares the remote-ingest guard: off with `REPORTAL_ALLOW_REMOTE_INGEST` /
+    `[knowledge] allow_remote` (boundary 5), and when on it runs
+    `git clone --depth 1` with `GIT_TERMINAL_PROMPT=0` against a
+    `validate_target`-admitted http(s) url, into `repos/` only, never over an
+    existing checkout, after the local checks so a refused call opens no
+    socket.  In an agent run `clone_repo` and `write_repo_file` carry
+    `destructive_hint`, so they pause at boundary 6 for
+    `POST .../confirm` before running.  Every path a checkout tool accepts is
+    resolved against the checkout root first (`repos._resolve`), so `..`, an
+    absolute path and a link pointing out answer `path-outside-repo`.  The
+    cloned files are untrusted content that reportal only reads as bytes and
+    writes as text; nothing in `repos.py` executes them.  Residual: `git`
+    resolves and connects to the host itself, so there is no peer check like
+    `remote_ingest.fetch`'s, only the pre-flight `validate_target`, and git
+    runs with the portal's OS user.
 
 ## Attack surface and entry points
 
@@ -228,11 +245,14 @@ it is written out in full below.
 | Binary upload | Network client; arbitrary bytes and filename | `api.upload_binary`, `api._stream_upload` |
 | Archive / firmware member extract | Stored archive or carved region bytes | `archive.extract` (member/path/bomb caps), `firmware.py`, `api.firmware_extract_binary` |
 | Document upload and paste | Network client; untrusted text | `api.py` knowledge routes, `knowledge.ingest_document` |
+| Similar-functions query | Network client or MCP client; a pasted listing (at most 1 MiB) or hex code bytes (at most 64 KiB) with an arch from a closed set | `matching.parse_similar_query`, `RebrewEngine.disassemble_bytes` (Capstone/NASM decode in process, never executed), `matching.find_similar` (hits scoped by `auth.visible_clause`) |
 | URL ingest | Network client; caller-chosen URL | `api.py` ingest-url route, `remote_ingest.validate_target` / `fetch` |
+| Workspace git clone and checkout writes (opt-in) | Agent tool call or MCP client; caller-chosen URL, path and file content | `repos.clone` (behind `remote_ingest.require_enabled` / `validate_target`), `repos._resolve`, `repos.write_file` |
 | Authenticated API client | Network client; bearer token header | `server._reportal_headers` + `server.authenticate`, `auth.authenticate` |
 | Team-scoped object request | Network client; object id in the path | `server._scoped_object`, `server._enforce_scope`, `auth.visible_clause` |
 | Tenant response redaction | Assembled JSON before serialize | `disclosure.redact_payload`, `server.json_response` |
 | External-source pull (opt-in) | External service (only when enabled and keyed); the binary's hash | `api.py` external routes, `external.virustotal_source`, `external.fetch_virustotal` |
+| Symbol-server PDB fetch (opt-in) | External service (only while remote sources are enabled); the image's own PDB file name and GUID+age | `symbol_library.fetch_pdb` behind `external.require_enabled`: fixed `msdl.microsoft.com` host, `_SERVER_NAME`-validated name, no followed redirect, bounded body |
 | External-source plugin | Third-party package on the host | `external.refresh_sources`, `reportal.external_sources` |
 | Graph backend sync / query | Operator-chosen backend; binary graph payload | `graph_backends.sync_graph` / `run_query`; optional Cognee push (`graph_backends.cognee_sync`) leaves the process when the `cognee` extra is installed |
 | FLIRT signature catalog | Operator path via `REPORTAL_FLIRT_SIGS_DIR`; `.sig` files on disk | `flirt_sigs.refresh`, `flirt_sigs.run_flirt`, `flirt_sigs.apply_proposal`; paths refused outside the checkout (`flirt_sigs._blob_paths`) |

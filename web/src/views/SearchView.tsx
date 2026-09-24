@@ -14,6 +14,7 @@ import {
   StatusCell,
   Toolbar,
   CopyValue,
+  byteSize,
   hex,
 } from "../components";
 import { SEARCH_KIND_LABELS, SEARCH_KINDS } from "../constants";
@@ -55,10 +56,10 @@ export function SearchView({
       subtitle="Names, hashes, tags and paths across the whole workspace."
       actions={
         <Toolbar>
-          <Field label="Query" hint="Enter searches, or prefix with tag:, binary:, collection:, sha256:">
+          <Field label="Query" hint="Enter searches">
             <input
               type="search"
-              placeholder="name, hash, path, tag:foo"
+              placeholder="name, hash or tag:foo"
               value={draft}
               onChange={(event) => {
                 const next = event.target.value;
@@ -100,7 +101,7 @@ export function SearchView({
       }
     >
       {query === "" ? (
-        <EmptyState>Search binaries, functions and collections. Try a name, a hash prefix, or a tag.</EmptyState>
+        <EmptyState>Search binaries, functions and collections by name, hash prefix or tag. Narrow one query with a prefix: tag:, binary:, collection: or sha256:.</EmptyState>
       ) : resultsResult.error ? (
         <ErrorNote error={resultsResult.error} onRetry={resultsResult.reload} />
       ) : !results ? (
@@ -123,7 +124,7 @@ export function SearchView({
                   },
                   { label: "Format", key: "format", mono: true },
                   { label: "Arch", key: "arch", mono: true },
-                  { label: "Size", numeric: true, render: (row) => row.size.toLocaleString() },
+                  { label: "Size", numeric: true, render: (row) => byteSize(row.size) },
                   {
                     label: "SHA-256",
                     render: (row) => <CopyValue value={row.sha256} compact />,
@@ -154,6 +155,10 @@ export function SearchView({
                     render: (row) => <Link to={functionHref(row.id)}>{hex(row.va)}</Link>,
                   },
                   { label: "Name", key: "name" },
+                  {
+                    label: "Binary",
+                    render: (row) => <Link to={binaryHref(row.binary_id)}>{row.binary_name}</Link>,
+                  },
                   { label: "Status", render: (row) => <StatusCell status={row.status} /> },
                 ]}
                 rows={results.functions}

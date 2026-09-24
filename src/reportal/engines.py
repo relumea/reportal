@@ -12,9 +12,11 @@ whose rebrew package cannot be imported reports :meth:`RebrewEngine.available`
 false and every call raises :class:`EngineUnavailable`, so a broken engine
 degrades to a named error instead of a traceback.
 
-Every method is in-process: the engine's own entry points (``rebrew.asm``,
-``rebrew.test``, ...) are imported inside the method, so a missing package
-fails at call time with :class:`EngineUnavailable`, never at import time.
+Every method is in-process but one: the engine's own entry points
+(``rebrew.asm``, ``rebrew.test``, ...) are imported inside the method, so a
+missing package fails at call time with :class:`EngineUnavailable`, never at
+import time.  :meth:`RebrewEngine.intake` runs ``rebrew intake`` as a child
+process, because that command works in its working directory.
 
 ``rebrew`` exposes no raw byte-read entry point, so
 :meth:`RebrewEngine.read_memory` takes its section map from the engine's own
@@ -28,7 +30,11 @@ import functools
 import importlib
 import importlib.machinery
 import importlib.util
+import json
 import os
+import re
+import subprocess
+import sys
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -46,8 +52,32 @@ ENGINE_UNAVAILABLE_HINT = "analysis engine unavailable; reinstall reportal (uv s
 # diagnostic; the API and CLI surface the message, so it is bounded.
 ERROR_MESSAGE_CHARS = 400
 
-# Output formats `disassemble` accepts; the engine serves both in process.
-DISASM_FORMATS = frozenset({"nasm", "hex"})
+# Output formats `disassemble` accepts; the engine serves all three in process.
+# `asm` is one `mnemonic operands` line per instruction for any ISA: the listing
+# matching compares where NASM source cannot be had.
+DISASM_FORMATS = frozenset({"nasm", "hex", "asm"})
+
+# The one ISA the engine's NASM source decodes (it is reassemblable 32-bit x86);
+# every other target reads its listing through the `hex` or `asm` format.
+NASM_ARCH = "x86_32"
+
+
+def listing_format(arch: str) -> str:
+    """The format matching lists a function of *arch* in: NASM source for
+    :data:`NASM_ARCH` and for an unknown arch (rebrew's default), else ``asm``.
+    One binary's functions share it, so candidates compare like with like."""
+    return "nasm" if arch in ("", NASM_ARCH) else "asm"
+
+
+def _asm_listing(code: bytes, va: int, cs_arch: int, cs_mode: int) -> str:
+    """The ``asm`` format text of *code* at *va*."""
+    from rebrew.analysis import disasm_insns
+
+    return "".join(
+        f"{insn.mnemonic} {insn.op_str}".rstrip() + "\n"
+        for insn in disasm_insns(code, va, cs_arch, cs_mode)
+    )
+
 
 # Decompiler backends `rebrew decompile --decompiler` accepts, plus `auto`
 # for the engine's own backend selection.  `kuna` is rebrew's default.
@@ -74,6 +104,10 @@ MEMORY_PAGE_MAX = 4096
 # Space the full-file view lays out between byte rows.  Exposed so the SPA and
 # the engine agree on row geometry without duplicating the section math.
 MEMORY_BYTES_PER_ROW = 16
+
+# Wall-clock bound on one `rebrew intake` (function discovery over the whole
+# binary).  A few seconds for a typical PE; the bound only stops a wedged run.
+INTAKE_TIMEOUT_SECONDS = 600
 
 # Address kinds `read_memory` accepts: an absolute virtual address, an RVA
 # (relative to the image base) or a raw file offset.
@@ -125,6 +159,32 @@ def _call[T](what: str, call: Callable[[], T]) -> T:
     except Exception as exc:  # the engine is a trust boundary; nothing leaks out
         message = _bounded(str(exc)) or type(exc).__name__
         raise EngineError(f"rebrew {what} failed: {message}") from None
+
+
+# The timestamp, zone, level and logger rebrew's log lines start with
+# (`2026-09-23 16:50:55 UTC WARNING rebrew.discover: `).
+_LOG_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \w+ \w+ [\w.]+: ")
+
+
+def _intake_refusal(done: subprocess.CompletedProcess[str]) -> str:
+    """The reason a failed ``rebrew intake --json`` gives, bounded.
+
+    The command answers ``{"error": ...}`` on stdout; its last stderr line is
+    the engine's own diagnosis (an unknown format, a missing tool), so both are
+    kept.  Anything else is reported as it came.
+    """
+    try:
+        answer = json.loads(done.stdout)
+    except json.JSONDecodeError:
+        answer = None
+    reason = (
+        str(answer["error"])
+        if isinstance(answer, dict) and "error" in answer
+        else done.stdout.strip()
+    )
+    last_log = _LOG_PREFIX.sub("", done.stderr.strip().rsplit("\n", 1)[-1])
+    detail = "; ".join(part for part in (reason, last_log) if part)
+    return _bounded(detail) or f"exit code {done.returncode}"
 
 
 def _require_file(binary: str | Path) -> str:
@@ -874,12 +934,13 @@ class RebrewEngine:
 
     @_maps_missing_engine
     def disassemble(self, project_dir: str | Path, va: int, size: int, fmt: str = "nasm") -> str:
-        """Return the NASM (or hex) listing of *va* from a rebrew project.
+        """Return the NASM (or hex, or asm) listing of *va* from a rebrew project.
 
         The project is resolved from ``rebrew-project.toml`` in *project_dir*.
         Output is the engine's text listing, not JSON: ``nasm`` is the NASM
         source ``rebrew asm --format nasm`` prints, ``hex`` the hex dump
-        ``--format hex`` prints.
+        ``--format hex`` prints, ``asm`` one ``mnemonic operands`` line per
+        instruction in the target's own ISA.
         """
         self._require_available()
         if fmt not in DISASM_FORMATS:
@@ -894,15 +955,28 @@ class RebrewEngine:
 
             return _call("asm", lambda: hex_disassembly(cfg, va, size))
 
-        from rebrew.asm import disassemble_to_nasm
-
-        def _nasm() -> str:
+        def _code() -> bytes:
             from rebrew.binary_loader import extract_raw_bytes
 
             code = extract_raw_bytes(cfg.target_binary, va, size)
             if code is None:
                 raise EngineError(f"Could not extract {size} bytes at VA 0x{va:08X}")
-            source, _stats = disassemble_to_nasm(code, va, f"func_{va:08X}")
+            return code
+
+        if fmt == "asm":
+            return _call(
+                "asm", lambda: _asm_listing(_code(), va, cfg.capstone_arch, cfg.capstone_mode)
+            )
+
+        if cfg.arch != NASM_ARCH:
+            raise EngineError(
+                f"NASM source covers {NASM_ARCH} only and this target is {cfg.arch};"
+                " use the hex listing"
+            )
+        from rebrew.asm import disassemble_to_nasm
+
+        def _nasm() -> str:
+            source, _stats = disassemble_to_nasm(_code(), va, f"func_{va:08X}")
             return source + "\n"
 
         return _call("asm", _nasm)
@@ -1000,10 +1074,150 @@ class RebrewEngine:
 
         return _call("lzexe", rebuild)
 
+    @_maps_missing_engine
+    def intake(self, binary: str | Path, project_dir: str | Path, *, target: str) -> dict[str, Any]:
+        """Onboard *binary* into a rebrew project at *project_dir* and build its coverage db.
+
+        The engine copies the binary into the project, discovers its functions
+        and documents each one; the coverage database the import reads is then
+        regenerated in process.  Re-running on the same directory re-discovers
+        instead of starting over.  Output is the engine's onboarding report
+        (``target``, ``profile``, ``family``, ``functions``, ``notes``, ...).
+        """
+        path = _require_file(binary)
+        self._require_available()
+        root = Path(project_dir)
+        root.mkdir(parents=True, exist_ok=True)
+        # `rebrew intake` onboards the project in its working directory and has
+        # no entry point that takes a root, while this process runs jobs on
+        # threads that share one cwd: it is the one engine call made in a child
+        # process, with its own cwd, its arguments as a list and no shell.
+        try:
+            done = subprocess.run(
+                [sys.executable, "-m", "rebrew.main", "intake", "--json", "--target", target, path],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=INTAKE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise EngineError(
+                f"rebrew intake did not finish within {INTAKE_TIMEOUT_SECONDS} seconds"
+            ) from None
+        if done.returncode != 0:
+            raise EngineError(f"rebrew intake failed: {_intake_refusal(done)}")
+        try:
+            report = json.loads(done.stdout)
+        except json.JSONDecodeError:
+            raise EngineError("rebrew intake answered no JSON report") from None
+        if not isinstance(report, dict):
+            raise EngineError("rebrew intake answered a report that is not an object")
+        self.build_coverage_db(root)
+        return report
+
+    @_maps_missing_engine
+    def build_coverage_db(self, project_dir: str | Path) -> None:
+        """(Re)build a rebrew project's coverage database from its sources, in process.
+
+        What ``rebrew catalog --data-json && rebrew build-db`` produce, without
+        the intermediate files; the database lands where the project's config
+        names it (``db/coverage.db`` by default).  An existing database is
+        replaced, whatever schema version it was written in.
+        """
+        root = _require_project(project_dir)
+        self._require_available()
+        from rebrew.build_db import build_db
+
+        # force: a rebuild replaces a database an older rebrew wrote in another schema.
+        _call("build-db", lambda: build_db(root.resolve(), regen=True, force=True))
+
+    @_maps_missing_engine
+    def library_functions(self, library: str | Path) -> list[dict[str, Any]]:
+        """The named functions of a static library, each with its listing.
+
+        *library* is an ``ar`` archive (an MSVC COFF ``.lib`` or a GNU ``.a``);
+        each member object's function symbols, file-static ones included (they
+        are linked into a target like the rest), come with their code bytes,
+        disassembled at offset 0 (an object is not linked yet) in the object's
+        own ISA and the :func:`listing_format` for it, so the listing compares
+        with a linked binary's.  Output is ``[{"name", "size", "arch",
+        "listing"}]`` in archive order; an object of an unknown machine and a
+        function the disassembler yields nothing for are left out.
+        """
+        path = _require_file(library)
+        self._require_available()
+        from rebrew.asm import disassemble_to_nasm
+        from rebrew.binary_loader import BinaryInfo, capstone_config_for, object_arch
+        from rebrew.gen_flirt_pat import parse_archive, parse_coff_obj, parse_elf_obj
+
+        def extract() -> list[dict[str, Any]]:
+            functions: list[dict[str, Any]] = []
+            for _member, obj in parse_archive(path):
+                machine = object_arch(obj)
+                if machine is None:
+                    continue
+                arch, endian = machine
+                cs_arch, cs_mode = capstone_config_for(
+                    BinaryInfo(path=Path(path), format="", arch=arch, endian=endian)
+                )
+                members = (
+                    parse_elf_obj(obj, include_local=True)
+                    if obj.startswith(b"\x7fELF")
+                    else parse_coff_obj(obj)
+                )
+                for name, code, _relocs in members:
+                    if listing_format(arch) == "nasm":
+                        listing, _stats = disassemble_to_nasm(code, 0, None)
+                    else:
+                        listing = _asm_listing(code, 0, cs_arch, cs_mode)
+                    if listing.strip():
+                        functions.append(
+                            {"name": name, "size": len(code), "arch": arch, "listing": listing}
+                        )
+            return functions
+
+        return _call("library functions", extract)
+
+    def disassemble_bytes(self, code: bytes, va: int, arch: str) -> str:
+        """The listing of raw *code* at *va* for *arch*, in :func:`listing_format`.
+
+        NASM source for ``x86_32`` (the text a stored function's cached listing
+        holds), the ``asm`` format for any other ISA, so a pasted function
+        compares like with like.  *arch* is a rebrew arch token (``x86_64``,
+        ``arm64``, ``mips32`` ...); the engine maps it onto Capstone.  Code that
+        decodes to nothing yields an empty listing.
+        """
+        self._require_available()
+        from rebrew.asm import disassemble_to_nasm
+        from rebrew.binary_loader import BinaryInfo, capstone_config_for
+
+        def listing() -> str:
+            if listing_format(arch) == "nasm":
+                source, _stats = disassemble_to_nasm(code, va, f"func_{va:08X}")
+                return source + "\n"
+            cs_arch, cs_mode = capstone_config_for(
+                BinaryInfo(path=Path(), format="", arch=arch, endian="")
+            )
+            return _asm_listing(code, va, cs_arch, cs_mode)
+
+        return _call("asm", listing)
+
     def _require_available(self) -> None:
         """Raise :class:`EngineUnavailable` when the engine is not importable."""
         if not self.available():
             raise EngineUnavailable(ENGINE_UNAVAILABLE_HINT)
+
+
+def kuna_spec_dir() -> str | None:
+    """The SLEIGH spec dir the engine's kuna backend reads (an explicit
+    ``KUNA_SPECS`` or the one it discovers), or None when there is none or the
+    engine is not importable."""
+    try:
+        from rebrew.decompiler import kuna_spec_dir as resolve
+    except ImportError:
+        return None
+    return resolve()
 
 
 _engine: RebrewEngine | None = None

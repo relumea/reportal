@@ -62,7 +62,9 @@ class TestDiffCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
     ) -> None:
         ids = _seed(tmp_path, monkeypatch, decomp=True)
-        result = runner.invoke(cli.app, ["diff", str(ids["left"]), str(ids["right"]), "--json"])
+        result = runner.invoke(
+            cli.app, ["diff", str(ids["left"]), str(ids["right"]), "--kind", "decomp", "--json"]
+        )
         assert result.exit_code == 0, result.output
         payload = json.loads(result.stdout)
         assert payload["kind"] == "decomp"
@@ -75,7 +77,9 @@ class TestDiffCommand:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_engine: FakeEngine
     ) -> None:
         ids = _seed(tmp_path, monkeypatch, decomp=True)
-        result = runner.invoke(cli.app, ["diff", str(ids["left"]), str(ids["right"])])
+        result = runner.invoke(
+            cli.app, ["diff", str(ids["left"]), str(ids["right"]), "--kind", "decomp"]
+        )
         assert result.exit_code == 0, result.output
         assert "diff decomp" in result.output
         assert "similarity 77.0" in result.output

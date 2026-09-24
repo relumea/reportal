@@ -16,22 +16,31 @@ test("a list rename records history naming its actor with a relative age", async
   const nameCell = row.locator("td").nth(3);
   const seeded = (await nameCell.innerText()).trim();
 
-  page.once("dialog", (dialog) => void dialog.accept(`${seeded}_e2e`));
+  // Rename edits the name cell in place: the field takes the focus with the
+  // current name selected, so typing replaces it and Enter saves.
   await row.getByRole("button", { name: "Rename", exact: true }).click();
+  const editor = row.getByRole("textbox", { name: /^New name for function #/ });
+  await expect(editor).toBeFocused();
+  await expect(editor).toHaveValue(seeded);
+  await page.keyboard.type(`${seeded}_e2e`);
+  await page.keyboard.press("Enter");
   await expect(nameCell).toHaveText(`${seeded}_e2e`);
 
   await row.getByRole("button", { name: "History", exact: true }).click();
   const history = page.locator(".panel").filter({
     has: page.getByRole("heading", { name: /Rename history/, exact: false }),
   });
-  // Each row names its actor with a relative age, like the detail panel.
-  await expect(history.getByText("spa, just now", { exact: false })).toBeVisible();
+  // Each row names its actor with a relative age, like the detail panel; the
+  // newest row is this rename (earlier specs may have left rows of their own).
+  await expect(history.locator("table.data-table tbody tr").first()).toContainText("spa, just now");
 
   // Restore the seeded name so the shared workspace keeps its shape.  The
   // open history reloads with the rename instead of keeping the old list, so
   // the newest row's New cell already reads the restored name.
-  page.once("dialog", (dialog) => void dialog.accept(seeded));
   await row.getByRole("button", { name: "Rename", exact: true }).click();
+  await expect(editor).toBeFocused();
+  await editor.fill(seeded);
+  await editor.press("Enter");
   await expect(nameCell).toHaveText(seeded);
   const newest = history.locator("table.data-table tbody tr").first();
   await expect(newest.locator("td").nth(2)).toHaveText(seeded);
@@ -92,7 +101,7 @@ test("a filter narrows the row set and states the counts", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}/functions`);
   const panel = panelByTitle(page, "Functions");
   await expect(panel.getByText("6 of 6 functions")).toBeVisible();
-  await expect(panel.getByPlaceholder("Search 6 functions...")).toBeVisible();
+  await expect(panel.getByPlaceholder("Search 6 functions")).toBeVisible();
   await expect(panel.locator(".name-source-dot").first()).toBeVisible();
   await panel.locator("table.data-table input[type='checkbox']").first().check();
   await expect(panel.locator("tr.row-selected")).toHaveCount(1);
