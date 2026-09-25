@@ -1,11 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 19 19" role="img" aria-label="relumea">
-  <!-- The relumea mark (BRAND.md section 2): an outline square holding the
-       accent verdict cell.  The outline follows the tab bar's scheme so it
-       reads on a light and a dark browser alike. -->
-  <style>
-    .outline { stroke: #0a0a0b; }
-    @media (prefers-color-scheme: dark) { .outline { stroke: #fafafa; } }
-  </style>
-  <rect class="outline" x="0.85" y="0.85" width="17.3" height="17.3" rx="4" fill="none" stroke-width="1.7"/>
-  <rect x="7.2" y="7.2" width="10.9" height="10.9" rx="2.6" fill="#0f7a42"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24">
+  <!-- The relumea mark (BRAND.md section 2). Ink and unlit cells follow the tab bar scheme. -->
+  <style>.i{fill:#0a0a0b}.u{fill:#d5d8de}@media (prefers-color-scheme:dark){.i{fill:#ededef}.u{fill:#3a3a42}}</style>
+  <rect class="i" x="1.5" y="1.5" width="6" height="6" rx="1.5" /><rect class="i" x="9" y="1.5" width="6" height="6" rx="1.5" /><rect fill="#0f7a42" x="16.5" y="1.5" width="6" height="6" rx="1.5" />
+  <rect class="i" x="1.5" y="9" width="6" height="6" rx="1.5" /><rect class="u" x="9" y="9" width="6" height="6" rx="1.5" /><rect class="u" x="16.5" y="9" width="6" height="6" rx="1.5" />
+  <rect class="i" x="1.5" y="16.5" width="6" height="6" rx="1.5" /><rect class="u" x="9" y="16.5" width="6" height="6" rx="1.5" /><rect class="u" x="16.5" y="16.5" width="6" height="6" rx="1.5" />
 </svg>

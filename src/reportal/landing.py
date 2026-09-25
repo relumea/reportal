@@ -79,9 +79,11 @@ header .wrap {
   font-weight: 700; font-size: 18px; letter-spacing: -0.03em; color: var(--text);
   text-decoration: none;
 }
-.brand-mark { display: inline-flex; flex: none; width: 19px; height: 19px; color: var(--text); }
+.brand-mark { display: inline-flex; flex: none; width: 20px; height: 20px; color: var(--text); }
 .brand-mark svg { display: block; width: 100%; height: 100%; }
+.brand-mark-ink { fill: currentColor; }
 .brand-mark-cell { fill: var(--accent); }
+.brand-mark-off { fill: var(--border-strong); }
 .brand-ver {
   font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--faint);
   letter-spacing: 0;
@@ -422,10 +424,16 @@ def render() -> str:
 <header><div class="wrap">
   <a class="brand" href="/">
     <span class="brand-mark" aria-hidden="true">
-      <svg viewBox="0 0 19 19" focusable="false">
-        <rect x="0.85" y="0.85" width="17.3" height="17.3" rx="4" fill="none"
-              stroke="currentColor" stroke-width="1.7"/>
-        <rect class="brand-mark-cell" x="7.2" y="7.2" width="10.9" height="10.9" rx="2.6"/>
+      <svg viewBox="0 0 24 24" focusable="false">
+        <rect class="brand-mark-ink" x="1.5" y="1.5" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-ink" x="9" y="1.5" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-cell" x="16.5" y="1.5" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-ink" x="1.5" y="9" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-off" x="9" y="9" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-off" x="16.5" y="9" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-ink" x="1.5" y="16.5" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-off" x="9" y="16.5" width="6" height="6" rx="1.5"/>
+        <rect class="brand-mark-off" x="16.5" y="16.5" width="6" height="6" rx="1.5"/>
       </svg>
     </span>
     <span>relumea</span>

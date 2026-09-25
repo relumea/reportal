@@ -212,6 +212,14 @@ interface RouteHandle {
 
 type AppRoute = RouteObject & { handle: RouteHandle };
 
+/** The brand mark (BRAND.md section 2): a lowercase r in 3×3 coverage cells on a
+ * 24-unit grid, as [x, y, class suffix]. The arm's end is the one lit cell. */
+const MARK_CELLS: ReadonlyArray<readonly [number, number, "ink" | "cell" | "off"]> = [
+  [1.5, 1.5, "ink"], [9, 1.5, "ink"], [16.5, 1.5, "cell"],
+  [1.5, 9, "ink"], [9, 9, "off"], [16.5, 9, "off"],
+  [1.5, 16.5, "ink"], [9, 16.5, "off"], [16.5, 16.5, "off"],
+];
+
 /** Route elements: each reads its own parameters and hands its view the props. */
 /** A route no view owns: a stale or mistyped link says so, rather than landing
  * silently on the dashboard as if it had worked. */
@@ -822,18 +830,10 @@ export function App(): ReactNode {
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 19 19" focusable="false">
-              <rect
-                x="0.85"
-                y="0.85"
-                width="17.3"
-                height="17.3"
-                rx="4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.7"
-              />
-              <rect className="brand-mark-cell" x="7.2" y="7.2" width="10.9" height="10.9" rx="2.6" />
+            <svg viewBox="0 0 24 24" focusable="false">
+              {MARK_CELLS.map(([x, y, kind]) => (
+                <rect key={`${x}-${y}`} className={`brand-mark-${kind}`} x={x} y={y} width="6" height="6" rx="1.5" />
+              ))}
             </svg>
           </span>
           <span className="brand-name">relumea</span>
