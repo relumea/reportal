@@ -35,7 +35,7 @@ const DISMISSED_KEY = "reportal.notifications.dismissed";
 
 /** Items the dialog asks for, and the interval it refreshes on while mounted. */
 const FEED_LIMIT = 25;
-const REFRESH_MS = 20000;
+const REFRESH_MS = 20_000;
 
 function readDismissed(): string[] {
   try {

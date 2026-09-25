@@ -66,7 +66,7 @@ const HEALTH_POLL_MS = 2000;
 const RUN_POLL_MS = 1000;
 const COVERAGE_POLL_MS = 4000;
 const JOURNAL_POLL_MS = 5000;
-const SUMMARY_REFRESH_MS = 30000;
+const SUMMARY_REFRESH_MS = 30_000;
 
 // Task states that mean the task is finished, whatever the outcome.
 const TERMINAL_TASK_STATUSES = new Set(["done", "failed", "skipped"]);

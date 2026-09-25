@@ -563,7 +563,11 @@ class TestReport:
     def test_an_unknown_binary_is_404(
         self, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # A runner is available, so the answer is about the binary, not a host
+        # without bwrap (which is 503 before the binary is looked up).
+        fake = sandbox.register_runner(_FakeRunner())
         monkeypatch.setenv(sandbox.ENABLED_ENV, "enabled")
+        monkeypatch.setenv(sandbox.RUNNER_ENV, fake.name)
 
         assert _post("/api/binaries/4242/dynamic-execution")[0].startswith("404")
         assert _get("/api/binaries/4242/dynamic-execution")[0].startswith("404")
@@ -600,7 +604,9 @@ class TestReport:
         self, conn: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         ids = _seed(conn, tmp_path)
+        fake = sandbox.register_runner(_FakeRunner())
         monkeypatch.setenv(sandbox.ENABLED_ENV, "enabled")
+        monkeypatch.setenv(sandbox.RUNNER_ENV, fake.name)
 
         for body in ({"timeout": 0}, {"timeout": "x"}, {"memory_mb": True}):
             status, payload = _post(f"/api/binaries/{ids['binary']}/dynamic-execution", body)
