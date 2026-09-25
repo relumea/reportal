@@ -6,14 +6,17 @@ __pycache__/
 
 # Workspace runtime state: the portal database and its SQLite sidecars (the DB
 # is `[portal] db` in the marker, `reportal.db` by default), the content-addressed
-# uploaded binaries and the
-# generated report sites.  Local state, never source.
+# uploaded binaries, imported debug symbols, agent repo checkouts, generated
+# rebrew projects and generated report sites.  Local state, never source.
 *.db
 *.db-journal
 *.db-shm
 *.db-wal
 /binaries/
 /reports/
+/symbols/
+/repos/
+/projects/
 
 # Agent scratch (throwaway probes, seeded e2e workspaces, captures)
 .scratch/

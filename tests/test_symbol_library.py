@@ -44,6 +44,16 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
+def _workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run in a throwaway workspace: stored symbol bytes land under its
+    ``symbols/``, never the checkout's (which is a workspace too)."""
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "reportal.toml").write_text("", encoding="utf-8")
+    monkeypatch.chdir(root)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_http() -> Iterator[None]:
     """Leave no injected symbol-server client between tests."""
     external.set_http_client(None)
