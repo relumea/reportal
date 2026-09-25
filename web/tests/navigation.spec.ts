@@ -70,3 +70,21 @@ test("a stored collapse does not fold the narrow top bar", async ({ page }) => {
   await expect(page.locator('.nav-link[data-view="dashboard"] .nav-link-text')).toBeVisible();
   await expect(page.locator(".sidebar-toggle")).toBeHidden();
 });
+
+test("a phone header keeps history, title, search and the bell on one row", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.goto("/#/");
+  const header = page.locator("header.topbar");
+  const search = header.getByRole("button", { name: /Search/u });
+  await expect(search).toBeVisible();
+  // The shortcut hint means nothing on a touch screen.
+  await expect(search.locator("kbd")).toBeHidden();
+  const [history, bell] = await Promise.all([
+    header.getByRole("group", { name: "View history" }).boundingBox(),
+    header.getByRole("button", { name: /Notifications/u }).boundingBox(),
+  ]);
+  expect(history).not.toBeNull();
+  expect(bell).not.toBeNull();
+  if (history === null || bell === null) return;
+  expect(Math.abs(history.y + history.height / 2 - (bell.y + bell.height / 2))).toBeLessThanOrEqual(4);
+});

@@ -504,7 +504,7 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
   return (
     <Panel
       title={data.title}
-      subtitle={`${data.scope_kind} ${data.scope_id} · created ${stampText(data.created_at)}`}
+      subtitle={`${data.scope_kind.charAt(0).toUpperCase()}${data.scope_kind.slice(1)} ${data.scope_id} · created ${stampText(data.created_at)}`}
       actions={
         <>
           <a className="back-link" href="#/conversations">

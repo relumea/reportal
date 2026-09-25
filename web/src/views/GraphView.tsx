@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { BINARY_OPTIONS_PATH, api, isApiErrorCode } from "../api";
+import "./graph.css";
 import {
   Badge,
   Button,
@@ -134,7 +135,7 @@ function GraphPanel({ binaryId }: { binaryId: number }): ReactNode {
           <Toolbar>
             <Field label="Kind">
               <select value={kind} onChange={(event) => setKind(event.target.value)}>
-                <option value={ALL_KINDS}>all kinds</option>
+                <option value={ALL_KINDS}>All kinds</option>
                 {GRAPH_NODE_KINDS.map((name) => (
                   <option key={name} value={name}>
                     {name}
@@ -143,7 +144,7 @@ function GraphPanel({ binaryId }: { binaryId: number }): ReactNode {
               </select>
             </Field>
             <CheckboxField
-              label="include documents"
+              label="Include documents"
               checked={includeDocuments}
               onChange={setIncludeDocuments}
             />
@@ -227,8 +228,8 @@ function GraphPanel({ binaryId }: { binaryId: number }): ReactNode {
                 <Badge mono>{detail.node.kind}</Badge> <strong>{detail.node.label}</strong>{" "}
                 <span className="mono">{detail.node.id}</span>
               </p>
-              <Groups title="incoming" groups={detail.incoming} />
-              <Groups title="outgoing" groups={detail.outgoing} />
+              <Groups title="Incoming" groups={detail.incoming} />
+              <Groups title="Outgoing" groups={detail.outgoing} />
               {Object.keys(detail.incoming).length === 0 &&
               Object.keys(detail.outgoing).length === 0 ? (
                 <Muted>No neighbors.</Muted>
@@ -371,36 +372,43 @@ export function GraphView(): ReactNode {
   const activeId = selectedId || (binaries[0] ? String(binaries[0].id) : "");
   const binaryId = activeId === "" ? null : Number(activeId);
 
+  const scope = (
+    <Panel
+      title="Binary"
+      subtitle="The graph is built per binary from that binary's stored rows."
+      actions={
+        binaries.length > 0 ? (
+          <Field label="Binary">
+            <select value={activeId} onChange={(event) => setSelectedId(event.target.value)}>
+              {binaries.map((binary) => (
+                <option key={binary.id} value={binary.id}>
+                  {binary.name} (#{binary.id})
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null
+      }
+    >
+      {binariesResult.error ? (
+        <ErrorNote error={binariesResult.error} onRetry={binariesResult.reload} />
+      ) : null}
+      {binaries.length === 0 ? (
+        <EmptyState>
+          No binaries yet. Upload one to build a graph.
+        </EmptyState>
+      ) : null}
+    </Panel>
+  );
+  if (binaryId === null) return scope;
+  // The scope and the backends are one short row each; the graph gets the width.
   return (
     <>
-      <Panel
-        title="Binary"
-        subtitle="The graph is built per binary from that binary's stored rows."
-        actions={
-          binaries.length > 0 ? (
-            <Field label="Binary">
-              <select value={activeId} onChange={(event) => setSelectedId(event.target.value)}>
-                {binaries.map((binary) => (
-                  <option key={binary.id} value={binary.id}>
-                    {binary.name} (#{binary.id})
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : null
-        }
-      >
-        {binariesResult.error ? (
-          <ErrorNote error={binariesResult.error} onRetry={binariesResult.reload} />
-        ) : null}
-        {binaries.length === 0 ? (
-          <EmptyState>
-            No binaries yet. Upload one to build a graph.
-          </EmptyState>
-        ) : null}
-      </Panel>
-      {binaryId !== null ? <GraphPanel key={binaryId} binaryId={binaryId} /> : null}
-      {binaryId !== null ? <GraphBackendPanel key={`backends-${binaryId}`} binaryId={binaryId} /> : null}
+      <div className="panel-pair">
+        {scope}
+        <GraphBackendPanel key={`backends-${binaryId}`} binaryId={binaryId} />
+      </div>
+      <GraphPanel key={binaryId} binaryId={binaryId} />
     </>
   );
 }

@@ -248,7 +248,7 @@ test("f jumps from a binary page to its functions", async ({ page }) => {
 test("Space on a diff toggles Disassembly and AI decompilation", async ({ page }) => {
   const { function_id, candidate_function_id } = e2eState().ids;
   await page.goto(`/#/diff/${function_id}/${candidate_function_id}`);
-  await expect(page.getByRole("button", { name: "Transfer Symbol" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Transfer symbol" })).toBeVisible();
   await expect(page.locator(".diff-table thead .copy-row").first()).toBeVisible();
   await expect(page.getByRole("link", { name: /binary #/ }).first()).toHaveAttribute(
     "href",

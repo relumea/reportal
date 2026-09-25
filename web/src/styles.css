@@ -767,6 +767,25 @@ p.muted[role="status"]:not(:empty) {
   color: var(--text-muted);
 }
 
+/* A phone header stays one row: no shortcut hint on a touch screen, and a long
+   title truncates instead of pushing the controls to a second line. */
+@media (max-width: 600px) {
+  .topbar {
+    flex-wrap: nowrap;
+    gap: var(--space-2);
+  }
+
+  .topbar-search .key {
+    display: none;
+  }
+
+  .topbar h1 {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
 .theme-picker {
   display: flex;
   align-items: center;
@@ -1927,6 +1946,11 @@ input[type="file"]::file-selector-button:hover {
   min-width: 0;
 }
 
+/* A journal description is server text that starts lower-case. */
+.journal-row > a::first-letter {
+  text-transform: uppercase;
+}
+
 .journal-row:last-child {
   border-bottom: none;
 }
@@ -2405,20 +2429,6 @@ pre.code {
 
 /* The function header's best named candidate: the answer a stripped
    function's page leads with, one Apply away. */
-.covmap-more {
-  margin-top: var(--space-3);
-}
-
-.covmap-more > summary {
-  cursor: pointer;
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-}
-
-.covmap-more[open] > summary {
-  margin-bottom: var(--space-3);
-}
-
 .best-match {
   display: flex;
   flex-wrap: wrap;
@@ -2594,7 +2604,6 @@ pre.code {
 .task-tree,
 .task-children,
 .task-attempts,
-.neighbors,
 .hits {
   list-style: none;
   margin: 0;
@@ -2722,20 +2731,6 @@ pre.code {
 .hit-text {
   margin: var(--space-2) 0;
   white-space: pre-wrap;
-}
-
-.neighbor-group {
-  margin-top: var(--space-3);
-}
-
-.neighbor-group p {
-  margin: var(--space-1) 0 0;
-  font-size: var(--text-sm);
-}
-
-.neighbors li {
-  padding: 2px 0;
-  font-size: var(--text-sm);
 }
 
 details {
@@ -3137,6 +3132,9 @@ kbd.key {
     /* minmax(0, 1fr) lets the track shrink below the nav strip's min-content
        width; a bare 1fr would size the whole page to that strip. */
     grid-template-columns: minmax(0, 1fr);
+    /* The strip keeps its own height; the page row takes the rest of the
+       screen, so a short (or still loading) page cannot stretch the strip. */
+    grid-template-rows: auto 1fr;
   }
 
   .sidebar {

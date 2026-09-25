@@ -27,6 +27,7 @@ import {
   NA,
   Note,
   Panel,
+  Stamp,
   Toolbar,
 } from "../components";
 import { countOf } from "../labels";
@@ -824,7 +825,7 @@ function ActivityPanel(): ReactNode {
       ) : (
         <DataTable
           columns={[
-            { label: "When", key: "at", mono: true },
+            { label: "When", render: (row) => <Stamp at={row.at} /> },
             { label: "Actor", render: (row) => row.actor || "n/a" },
             { label: "Kind", render: (row) => <Badge mono>{row.kind}</Badge> },
             { label: "Description", key: "description" },
@@ -939,8 +940,12 @@ function SecretsPanel(): ReactNode {
       {error ? <ErrorNote error={error} /> : null}
       {note ? <Note>{note}</Note> : null}
       <Toolbar>
-        <Field label="Name" hint="A lowercase dotted path, e.g. virustotal.api_key.">
-          <input value={name} onChange={(event) => setName(event.target.value)} />
+        <Field label="Name" hint="Lowercase, dotted">
+          <input
+            placeholder="virustotal.api_key"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
         </Field>
         <Field label="Value">
           <input

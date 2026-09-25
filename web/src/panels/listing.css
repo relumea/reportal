@@ -200,3 +200,16 @@
     column-gap: 1.5ch;
   }
 }
+
+/* At phone width the operands matter more than the encoding: the bytes column
+   goes (the Hex view still shows them) and the mnemonic follows the address. */
+@media (max-width: 600px) {
+  .listing-row {
+    grid-template-columns: max-content minmax(5ch, max-content) minmax(0, 1fr);
+    column-gap: 1.5ch;
+  }
+
+  .listing-row .asm-bytes {
+    display: none;
+  }
+}

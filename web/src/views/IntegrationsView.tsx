@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
+import "./integrations.css";
 import {
   Badge,
   Button,
@@ -43,20 +44,23 @@ function flagCell(part: IntegrationPart, key: keyof IntegrationPart): ReactNode 
   return value ? "yes" : "no";
 }
 
+/** One registry, folded to its name, part count and what it contributes; the
+ *  parts table opens on demand, so nine registries fit on a screen. */
 function SeamCard({ seam }: { seam: IntegrationSeam }): ReactNode {
   return (
-    <Card
-      title={
-        <>
+    <details className="card seam-card">
+      <summary className="seam-head">
+        <span className="card-title seam-name">
           {seam.name} <Badge mono>{seam.count}</Badge>
-        </>
-      }
-    >
+        </span>
+        <span className="seam-contributes">{seam.contributes}</span>
+      </summary>
       <Muted>
-        {seam.contributes}. Registered through <span className="mono">{seam.group}</span>; the
-        built-ins are declared in <span className="mono">{seam.module}</span>.
+        Registered through <span className="mono">{seam.group}</span>; the built-ins are declared
+        in <span className="mono">{seam.module}</span>.
       </Muted>
       <DataTable
+        label={seam.name}
         columns={[
           { label: "Part", mono: true, render: (part) => part.name },
           { label: "Detail", render: (part) => part.detail },
@@ -91,7 +95,7 @@ function SeamCard({ seam }: { seam: IntegrationSeam }): ReactNode {
         rowKey={(part) => `${seam.name}:${part.name}`}
         empty={<Muted>No part is registered in this seam.</Muted>}
       />
-    </Card>
+    </details>
   );
 }
 
@@ -136,14 +140,18 @@ function InstanceCard(): ReactNode {
           ...features,
         ]}
       />
-      <DataTable
-        columns={[
-          { label: "Limit", mono: true, render: (row) => row.name },
-          { label: "Value", numeric: true, render: (row) => row.value.toLocaleString() },
-        ]}
-        rows={Object.entries(data.limits).map(([name, value]) => ({ name, value }))}
-        rowKey={(row) => row.name}
-      />
+      <details>
+        <summary>Limits ({Object.keys(data.limits).length})</summary>
+        <DataTable
+          label="Limits"
+          columns={[
+            { label: "Limit", mono: true, render: (row) => row.name },
+            { label: "Value", numeric: true, render: (row) => row.value.toLocaleString() },
+          ]}
+          rows={Object.entries(data.limits).map(([name, value]) => ({ name, value }))}
+          rowKey={(row) => row.name}
+        />
+      </details>
     </Card>
   );
 }

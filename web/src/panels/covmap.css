@@ -123,3 +123,18 @@ a.covmap-cell:focus-visible {
 .entropy-strip-cell[data-packed="true"] {
   background: var(--hue-ink, var(--status-fail));
 }
+
+/* The collapsed list of sections without code under the coverage map. */
+.covmap-more {
+  margin-top: var(--space-3);
+}
+
+.covmap-more > summary {
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.covmap-more[open] > summary {
+  margin-bottom: var(--space-3);
+}

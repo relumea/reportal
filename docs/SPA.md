@@ -71,8 +71,8 @@ grows past its budget.
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-65,237 bytes (just under a 65,536-byte smoke budget), the entry CSS 48,854
-bytes (under a 49,152-byte smoke budget), and the vendor chunk about 289 kB
+about 65 kB (within a few hundred bytes of its 65,536-byte smoke budget), the entry CSS about 48.8 kB
+(under a 49,152-byte smoke budget), and the vendor chunk about 289 kB
 (91 kB gzip, ~78 kB brotli), with the view and shell-dialog chunks behind them.
 On the wire that is what `ui.py` actually sends when compression is accepted;
 without it the browser downloads the raw sizes.  `make run`, `make ui` and
@@ -245,7 +245,10 @@ Below 900px the shell is one column: the sidebar becomes a sticky top bar and
 its nav keeps every group label and divider in a single horizontally scrollable
 strip, so the grouped information architecture survives at narrow widths; the
 footer keeps only the theme select, beside the brand, and the links drop their
-icons.
+icons.  The page grid pins the strip to its own height (`grid-template-rows:
+auto 1fr`), so a short or loading page cannot stretch it.  Below 600px the page
+header stays one row (the Search shortcut hint goes, a long title truncates),
+and a disassembly listing drops its bytes column so the operands fit.
 
 The visual system is the relumea brand (`../BRAND.md` in the parent
 repository): the `light` theme is its palette, verdict inks and chip, control
@@ -337,11 +340,12 @@ metric or the dashboard follows these names:
   card marks).  Every threshold and interval is a named module constant.
 
 The Integrations view (`views/IntegrationsView.tsx`, `#/integrations`) reads
-`GET /api/integrations` for every plugin seam and its parts, and ends with an
+`GET /api/integrations` for every plugin seam and its parts (each seam a fold
+showing its name, part count and what it contributes until opened), and ends with an
 Instance card from `GET /api/config`: the version, the engine's availability and
 origin, its decompiler backends, the LLM bridge's state and model, the
 database's table count, the feature flags and the MCP tool counts, over the
-table of every cap the server enforces.  A Readiness card from `GET /api/doctor`
+table of every cap the server enforces (folded under Limits).  A Readiness card from `GET /api/doctor`
 sits beside it: the report status, workspace, failures and warnings over the
 per-check table (name, status, detail and hint), which is the same pre-flight
 report a unit file gates on.  The Components view (`views/ComponentsView.tsx`,
@@ -1362,7 +1366,8 @@ the URL field renders: with remote ingestion enabled a URL input posts to
 the inline reason (`REMOTE_INGEST_DISABLED_DETAIL`), so the URL path is never
 offered when the server would refuse it.
 
-The Graph view (`views/GraphView.tsx`, `#/graph`) picks a binary, rebuilds its
+The Graph view (`views/GraphView.tsx`, `#/graph`; the binary scope and the
+Backends panel share a row from 1360px) picks a binary, rebuilds its
 graph through `POST /api/binaries/<id>/graph` and loads the stored payload
 through its stored-only `GET` (a `no-graph` answer shows the build hint and the
 control).  It renders the node counts by kind, a node table (kind, label,

@@ -7,6 +7,13 @@ view renders it from here.
 
 ## Unreleased
 
+- Integrations folds each registry to its name, part count and what it contributes (the page is
+  half as tall) and folds the instance limits; registry text reads in sentence case. Graph pairs
+  its binary scope with the Backends panel. On a phone the top strip no longer stretches over a
+  short page, the page header stays one row, and a disassembly listing drops its bytes column so
+  the operands fit. The Users activity shows formatted times, the dashboard's journal lines
+  start with a capital, and the Diff view's button reads "Transfer symbol".
+
 - Decompiled code reads with current names: a placeholder such as `sub_401159`, `FUN_00401159` or
   `fcn.00401159` whose address is a named function of the same analysis shows that name in the
   decompilation GET and POST responses and the `get_decompilation` MCP tool, so a rename or a match

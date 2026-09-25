@@ -333,7 +333,7 @@ def sqlite_backend() -> GraphBackend:
     """The built-in backend over the local SQLite graph."""
     return GraphBackend(
         name=SQLITE_BACKEND_NAME,
-        description="the local deterministic graph in the workspace's SQLite store (default)",
+        description="The local deterministic graph in the workspace's SQLite store (default)",
         available=sqlite_available,
         sync=sqlite_sync,
         query=sqlite_query,
@@ -467,7 +467,7 @@ def cognee_backend() -> GraphBackend:
     """The optional Cognee backend: no query, and unavailable until installed."""
     return GraphBackend(
         name=COGNEE_BACKEND_NAME,
-        description="push the graph into a Cognee dataset (optional cognee extra)",
+        description="Pushes the graph into a Cognee dataset (the optional cognee extra)",
         available=cognee_available,
         sync=cognee_sync,
         unavailable_reason=cognee_unavailable_reason,

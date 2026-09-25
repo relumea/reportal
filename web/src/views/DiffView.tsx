@@ -210,7 +210,7 @@ export function DiffView({
             </select>
           </Field>
           <Button pending={busy} onClick={() => void transfer()}>
-            Transfer Symbol
+            Transfer symbol
           </Button>
           <Button onClick={result.reload}>Reload</Button>
         </Toolbar>
