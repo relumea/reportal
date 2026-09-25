@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
@@ -32,7 +32,7 @@ export function BinaryCollectionsPanel({ binaryId }: { binaryId: number }): Reac
   const allEntry = usePanel(panelKey("collections", "list"), () =>
     api<{ collections: Collection[] }>("/collections"),
   );
-  const [pick, setPick] = useState("");
+  const [picked, setPick] = useState("");
   const [actionError, setActionError] = useState<unknown>(null);
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState("");
@@ -42,12 +42,9 @@ export function BinaryCollectionsPanel({ binaryId }: { binaryId: number }): Reac
   const candidates = (allEntry?.state === "ready" ? allEntry.data.collections : []).filter(
     (row) => !memberIds.has(row.id),
   );
-
-  useEffect(() => {
-    // A row that joined or left changes the candidate list, so keep the select
-    // pointing at a collection that is still on offer.
-    if (pick !== "" && !candidates.some((row) => String(row.id) === pick)) setPick("");
-  }, [candidates, pick]);
+  // A row that joined or left changes the candidate list; a choice no longer
+  // on offer reads as none, so the select never points at a missing row.
+  const pick = candidates.some((row) => String(row.id) === picked) ? picked : "";
 
   const refresh = (): void => {
     refreshPanel(key, load);
