@@ -19,8 +19,9 @@ import {
   Panel,
   Toolbar,
   TypeNameLink,
-  countOf,
+  Stamp,
 } from "../components";
+import { countOf } from "../labels";
 import {
   DATA_TYPE_KIND_LABELS,
   DATA_TYPE_KIND_TAGS,
@@ -395,7 +396,7 @@ export function DataTypesPanel({
 
   return (
     <Panel
-      title="Data Types"
+      title="Data types"
       subtitle="The editable type model of this binary: its structs, unions, enums, aliases and function types, plus the prototypes exported from the signature model."
       actions={
         <Toolbar>
@@ -1197,7 +1198,7 @@ function DataTypeHistorySection({
                 ) : null}
                 <Muted>
                   {version.source || "manual"} ({version.actor_name ?? version.actor ?? "manual"}
-                  ){version.age ? `, ${version.age}` : ""} · {version.created_at}
+                  ){version.age ? `, ${version.age}` : ""} · <Stamp at={version.created_at} />
                 </Muted>
                 <ConfirmButton
                   label="Revert"

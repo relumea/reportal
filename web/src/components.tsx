@@ -37,16 +37,6 @@ export const NA = "n/a";
 /** Value shown in place of one the source does not provide (rule 25). */
 export const UNAVAILABLE = "Unavailable";
 
-/** `count` with the noun in the matching number: "1 binary", "2 binaries". */
-export function countOf(count: number, one: string, many = `${one}s`): string {
-  return `${count.toLocaleString()} ${count === 1 ? one : many}`;
-}
-
-/** A stored byte size; 0 means none was recorded, since uploads refuse an empty file. */
-export function byteSize(bytes: number): string {
-  return bytes > 0 ? bytes.toLocaleString() : NA;
-}
-
 export function hex(value: number): string {
   return `0x${Number(value).toString(16)}`;
 }
@@ -65,6 +55,11 @@ export function cellText(value: unknown): ReactNode {
   return String(value);
 }
 
+/** A stored timestamp as the date and minute: `2026-09-24 05:34`. */
+export function stampText(at: string): string {
+  return at.replace("T", " ").slice(0, 16);
+}
+
 /**
  * A stored timestamp, shown as the date and the clock time it was recorded
  * with.  The raw value stays on hover and in `dateTime`, so a reader who needs
@@ -74,7 +69,7 @@ export function Stamp({ at }: { at: string | null | undefined }): ReactNode {
   if (!at) return null;
   return (
     <time className="stamp" dateTime={at} title={at}>
-      {at.replace("T", " ").slice(0, 16)}
+      {stampText(at)}
     </time>
   );
 }

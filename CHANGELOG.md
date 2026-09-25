@@ -7,6 +7,30 @@ view renders it from here.
 
 ## Unreleased
 
+- Decompiled code reads with current names: a placeholder such as `sub_401159`, `FUN_00401159` or
+  `fcn.00401159` whose address is a named function of the same analysis shows that name in the
+  decompilation GET and POST responses and the `get_decompilation` MCP tool, so a rename or a match
+  transfer shows in callers without recomputing. The stored text keeps the decompiler's names. A
+  called function's name in the decompiled code is a link to it (`links` in the response).
+- Panel titles use sentence case ("Binary details", "Threat report"), timestamps read as
+  `2026-09-24 05:34` everywhere, an ELF binary no longer lists the PE-only debug directories and
+  Rich header, and the sidebar version line is smaller.
+- A function's References tab loads its globals, callers and callees when it opens, with one
+  Reload instead of three Load buttons; the Renames panel enables Apply only when there is a
+  suggestion to apply; multi-word field labels no longer run together.
+- Screen space: from a 1360px window the function page puts the listing and the decompilation
+  side by side, each as tall as the window allows (scrolling tables grow the same way), and the
+  binary tabs pair their short panels; the function header drops its duplicate Binary and
+  Function list buttons and the code panels their filler subtitles. Security opens on the Threat
+  report, whose score is labelled a heuristic. A non-PE binary no longer shows the PE-only
+  Exports, Relocations, Code signature and Loader mitigations panels. Methodology notes fold
+  under "How this was derived"; heuristic function triage rows say why they ranked instead of
+  restating their own columns (the run stores `reasons`). Eight hand-built tables take the
+  shared table style, and comments show "1 comment" and formatted times. Match bands and name
+  sources read in sentence case ("Strong match", "No debug info") and the metric toggle reads
+  Similarity / Confidence / Difference; an unmatched row says "No match" once. The Knowledge
+  view pairs Scope with Search and Ingest with Documents, so it fits one laptop screen.
+
 - `import-rebrew` no longer names a function `__declspec`, `__stdcall` or another declaration
   word: a coverage.db name that is one, or a whole prototype, becomes the prototype's declarator,
   else the undecorated `symbol`, else `sub_<va>`. The SPA smoke seeds its functions from the

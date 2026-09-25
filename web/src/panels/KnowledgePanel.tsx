@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Button, EmptyState, ErrorNote, Field, Loading, Muted, Panel, Toolbar, countOf } from "../components";
+import { Button, EmptyState, ErrorNote, Field, Loading, Muted, Panel, Toolbar } from "../components";
+import { countOf } from "../labels";
 import type { KnowledgeHit, KnowledgeSearch } from "../types";
 import { useAsync } from "../useAsync";
 
@@ -57,7 +58,7 @@ export function FunctionKnowledgePanel({ functionId }: { functionId: number }): 
         <Field label="Query">
           <input
             value={query}
-            placeholder="blank searches the function's name"
+            placeholder="the function's name"
             onChange={(event) => setQuery(event.target.value)}
           />
         </Field>

@@ -220,19 +220,19 @@ test("{ and } step this tab's view history", async ({ page }) => {
 test("o and m jump to Binary details and Memory on a binary page", async ({ page }) => {
   const binaryId = e2eState().ids.binary_id;
   await page.goto(`/#/binaries/${binaryId}`);
-  await expect(page.getByRole("heading", { name: "Binary Details", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeVisible();
   await expect(page.locator(".detail-head .hash-identicon")).toHaveCount(1);
   await expect(page.locator(".detail-head .copy-row .mono")).toHaveText(/…$/);
   await page.keyboard.press("m");
   await expect(page.getByRole("heading", { name: "Memory", exact: true })).toBeInViewport();
   await page.keyboard.press("o");
-  await expect(page.getByRole("heading", { name: "Binary Details", exact: true })).toBeInViewport();
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeInViewport();
 });
 
 test("Shift+G focuses the memory address box", async ({ page }) => {
   const binaryId = e2eState().ids.binary_id;
   await page.goto(`/#/binaries/${binaryId}`);
-  await expect(page.getByRole("heading", { name: "Binary Details", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeVisible();
   await page.keyboard.press("Shift+G");
   await expect(page.getByLabel("Address", { exact: true })).toBeFocused();
 });
@@ -240,7 +240,7 @@ test("Shift+G focuses the memory address box", async ({ page }) => {
 test("f jumps from a binary page to its functions", async ({ page }) => {
   const binaryId = e2eState().ids.binary_id;
   await page.goto(`/#/binaries/${binaryId}`);
-  await expect(page.getByRole("heading", { name: "Binary Details", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Binary details", exact: true })).toBeVisible();
   await page.keyboard.press("f");
   await expect(page).toHaveURL(new RegExp(`#/binaries/${binaryId}/functions`));
 });

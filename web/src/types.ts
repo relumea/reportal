@@ -468,6 +468,8 @@ export interface FunctionTriageEntry {
   summary: string;
   capabilities: string[];
   method: FunctionTriageMethod;
+  /** The heuristic's signals; empty for a model answer, absent on a run stored before them. */
+  reasons?: string[];
 }
 
 /** One selected function a triage run could not summarize, and why. */
@@ -1181,6 +1183,8 @@ export interface DecompilationResult {
   backend: string;
   named: boolean;
   code: string;
+  /** Names in `code` that are exactly one other function of the analysis, to its id. */
+  links: Record<string, number>;
 }
 
 export interface AiSummaryPayload {

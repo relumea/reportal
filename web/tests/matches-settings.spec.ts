@@ -28,7 +28,9 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
   await expect(page.getByText("Found: 2 matches")).toBeVisible();
   await expect(page.getByText("Matched: 1 / 6 (17%)")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Show Similarity", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "Show" }).getByRole("button", { name: "Similarity", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: /System/ }).click();
   await expect(page.getByRole("button", { name: /System/ })).toHaveAttribute(
     "data-selected",
@@ -50,7 +52,7 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
   await expect(popup).toHaveURL(/#\/diff\/\d+\/\d+/);
   await popup.close();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
-  await page.getByRole("button", { name: /No Match/ }).click();
+  await page.getByRole("button", { name: /No match/ }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
   await expect(page.getByText("No match").first()).toBeVisible();
   // Hosted filter header reads N / M with a Clear all that resets the panel.
@@ -58,7 +60,7 @@ test("a platform scope narrows the recorded match rows to none", async ({ page }
   await page.getByRole("button", { name: "Clear all", exact: true }).click();
   await expect(page.getByText("7 / 7 rows match the filters")).toBeVisible();
   await expect(page.getByRole("button", { name: "Clear all", exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: /No Match/ }).click();
+  await page.getByRole("button", { name: /No match/ }).click();
   await expect(page.getByText("2 candidates recorded", { exact: false })).toBeVisible();
 
   await page.getByRole("button", { name: "Settings" }).click();

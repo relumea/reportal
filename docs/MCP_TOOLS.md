@@ -49,7 +49,7 @@ registry, its registration rules and the agent loop that drives it are on
 | `get_debug_proposals` | Rename proposals from the newest session's frame names, joined by address; a person-authored name is never proposed. Read-only. |
 | `get_debug_session` | The newest read-only debug transcript of a binary's newest analysis. Read-only. |
 | `get_debug_status` | Whether this install can run a read-only debug session (the opt-in and the installed backend) and when it last did. Read-only. |
-| `get_decompilation` | Return a function's stored decompilation, else compute one live through rebrew without storing it. |
+| `get_decompilation` | Return a function's stored decompilation, else compute one live through rebrew without storing it; placeholder names of renamed functions read as their current names. |
 | `get_details_status` | Report which scans the binary-detail reads have, and what fills a gap. |
 | `get_detect_scan` | Return a binary's stored family detection; fails when none was run. |
 | `get_die_info` | Identify a binary the way Detect-It-Easy does, from the stored scans. |

@@ -494,7 +494,7 @@ export function App(): ReactNode {
         combo: "o",
         scope: "view",
         description: "Jump to Overview",
-        handler: () => focusPanel("Binary Details"),
+        handler: () => focusPanel("Binary details"),
       }),
       registerShortcut({
         combo: "f",
@@ -516,7 +516,7 @@ export function App(): ReactNode {
       registerShortcut({
         combo: "t",
         scope: "view",
-        description: "Jump to Data Types",
+        description: "Jump to Data types",
         handler: () => focusPanel("Data types"),
       }),
       registerShortcut({
@@ -616,7 +616,7 @@ export function App(): ReactNode {
       registerShortcut({
         combo: "space",
         scope: "view",
-        description: "Toggle Disassembly and Control Flow or AI decompilation",
+        description: "Toggle Disassembly and Control flow or AI decompilation",
         handler: () => toggleFunctionCodeView(),
       }),
       registerShortcut({

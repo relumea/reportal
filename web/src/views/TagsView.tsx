@@ -20,8 +20,8 @@ import {
   Loading,
   Panel,
   Toolbar,
-  countOf,
 } from "../components";
+import { countOf } from "../labels";
 import type { TagRow } from "../types";
 import { useAsync } from "../useAsync";
 

@@ -16,8 +16,8 @@ import {
   Panel,
   Toolbar,
   TypeNameLink,
-  countOf,
 } from "../components";
+import { countOf } from "../labels";
 import { CALLING_CONVENTIONS, PARAMETER_KINDS, SIGNATURE_NOT_FOUND } from "../constants";
 import type { ParameterKind } from "../constants";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";

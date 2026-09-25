@@ -5,3 +5,13 @@
   flex-wrap: wrap;
   gap: var(--space-1);
 }
+
+/* A row of toggle chips standing in for a field's control keeps the control
+   height, so its label lines up with the selects beside it. */
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: var(--control-h);
+}

@@ -38,8 +38,8 @@ import {
   cellText,
   hex,
   useViewTitle,
-  countOf,
 } from "../components";
+import { countOf, sentenceLabel } from "../labels";
 import { NameEditor } from "../detailParts";
 import { ENTROPY_MAX, PACKED_ENTROPY_THRESHOLD, qualityHue, statusEntity } from "../design";
 import type { HueFamily } from "../design";
@@ -117,6 +117,7 @@ import type {
   FirmwareScan,
   FunctionListPage,
   FunctionRow,
+  FunctionTriageEntry,
   FunctionTriageResult,
   HardeningScan,
   ImportEntry,
@@ -166,6 +167,25 @@ import type {
 // Strings rendered per load; the engine can return tens of thousands.  The
 // panel always states the true total.
 const MAX_STRINGS_SHOWN = 500;
+
+/**
+ * How a scan reached its result, folded under one summary: the server's
+ * methodology notes are provenance, not findings, so they wait for a reader
+ * who asks rather than trailing every panel as loose paragraphs.
+ */
+function MethodNotes({ notes }: { notes: readonly string[] }): ReactNode {
+  if (notes.length === 0) return null;
+  return (
+    <details className="method-notes">
+      <summary>How this was derived</summary>
+      <ul>
+        {notes.map((note) => (
+          <li key={note}>{note}</li>
+        ))}
+      </ul>
+    </details>
+  );
+}
 
 function CountTitle({ label, count }: { label: string; count: ReactNode }): ReactNode {
   return (
@@ -538,7 +558,7 @@ function SymbolsAction({ binaryId }: { binaryId: number }): ReactNode {
       disabled
       title={
         files?.state === "error"
-          ? "No debug symbol file is ingested for this binary. Add one in Format, Debug Symbols."
+          ? "No debug symbol file is ingested for this binary. Add one in Format, Debug symbols."
           : "Checking for an ingested symbol file"
       }
     >
@@ -843,7 +863,7 @@ export function IdentityPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [busy, setBusy] = useState(false);
   return (
     <Panel
-      title="Binary Details"
+      title="Binary details"
       subtitle="Identity, export hashes and the stored header scan this page is built from."
       actions={
         <Button
@@ -918,18 +938,24 @@ function IdentityBody({
     "subsystem",
     "timestamp",
   ]);
-  const shown =
-    result.format && result.format !== "pe" ? rows.filter(([label]) => !peOnly.has(label)) : rows;
+  const notPe = Boolean(result.format) && result.format?.toLowerCase() !== "pe";
+  const shown = notPe ? rows.filter(([label]) => !peOnly.has(label)) : rows;
   return (
     <>
       <KeyValue rows={shown} />
       {result.note ? <Muted>{result.note}</Muted> : null}
-      <Muted>
-        Debug directories: {debug.length > 0 ? debug.map((entry) => entry.type).join(", ") : "none"}
-      </Muted>
-      <Muted>
-        Rich header: {richHeader?.present ? `present (${richEntries.length} entries)` : "absent"}
-      </Muted>
+      {/* Debug directories and the Rich header are PE structures; the note above says so. */}
+      {notPe ? null : (
+        <>
+          <Muted>
+            Debug directories:{" "}
+            {debug.length > 0 ? debug.map((entry) => entry.type).join(", ") : "none"}
+          </Muted>
+          <Muted>
+            Rich header: {richHeader?.present ? `present (${richEntries.length} entries)` : "absent"}
+          </Muted>
+        </>
+      )}
       <RawJson value={result} />
     </>
   );
@@ -1038,7 +1064,7 @@ export function BinaryAnalysesPanel({ binaryId }: { binaryId: number }): ReactNo
                   { label: "ID", key: "id", numeric: true },
                   { label: "Engine", key: "engine" },
                   { label: "Created", key: "created_at", mono: true },
-                  { label: "Finished", render: (row) => row.finished_at ?? NA },
+                  { label: "Finished", render: (row) => (row.finished_at ? <Stamp at={row.finished_at} /> : NA) },
                   { label: "Status", render: (row) => <StatusCell status={row.status} /> },
                   { label: "Note", render: (row) => cellText(row.log) },
                 ]}
@@ -1607,7 +1633,7 @@ export function CodeSignaturePanel({ binaryId }: { binaryId: number }): ReactNod
     <Panel
       title={
         <CountTitle
-          label="Code Signature"
+          label="Code signature"
           count={
             entry?.state === "ready"
               ? (entry.data.authenticode?.signature_count ??
@@ -1706,7 +1732,7 @@ export function PackerPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [busy, setBusy] = useState(false);
   return (
     <Panel
-      title="Packer Detection"
+      title="Packer detection"
       subtitle="Packer verdict, peak section entropy, section count and the toolchain signature."
       actions={
         <Button
@@ -1795,9 +1821,7 @@ function PackerBody({ result, peInfo }: { result: FileTypeResult; peInfo?: PeInf
           rowKey={(match, index) => `${match.category}-${match.name}-${index}`}
         />
       )}
-      {notes.map((note) => (
-        <Muted key={note}>{note}</Muted>
-      ))}
+      <MethodNotes notes={notes} />
       <RawJson value={result} />
     </>
   );
@@ -1852,7 +1876,7 @@ export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNo
   const die = usePanel(dieKey, () => api<DieInfo>(`/binaries/${binaryId}/die-info`));
   return (
     <Panel
-      title="Detail Coverage"
+      title="Detail coverage"
       subtitle="Which stored scans back the detail reads, the overlay past the last section and the Rich header."
     >
       <PanelBody entry={status} hint="Loading the detail coverage">
@@ -1883,7 +1907,7 @@ export function DetailCoveragePanel({ binaryId }: { binaryId: number }): ReactNo
       <PanelBody
         entry={entry}
         hint="Loading the overlay and Rich header"
-        noScanHint="The overlay and Rich header are read from the header scan. Scan headers in Binary Details first."
+        noScanHint="The overlay and Rich header are read from the header scan. Scan headers in Binary details first."
       >
         {(data) => (
           <KeyValue
@@ -1975,7 +1999,7 @@ export function BenchmarkPanel({ binaryId }: { binaryId: number }): ReactNode {
         <Toolbar>
           <Field
             label="Partner"
-            hint="Candidates come from this binary; labels come from the two binaries' shared real names."
+            hint="Candidates from this binary"
           >
             <BinaryOptionSelect
               value={partner}
@@ -2153,7 +2177,7 @@ export function UnpackedFilesPanel({ binaryId }: { binaryId: number }): ReactNod
 
   return (
     <Panel
-      title="Unpacked Files"
+      title="Unpacked files"
       subtitle="Rebuild the image a packer replaced and register it as a binary of its own. Nothing is executed."
       actions={
         <Button tone="primary" pending={busy} onClick={() => void run()}>
@@ -2288,7 +2312,7 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
 
   return (
     <Panel
-      title="Agent Feedback"
+      title="Agent feedback"
       subtitle="Thumbs up or down on a stored agent artifact; the verdict survives a re-run of the scan."
     >
       {error ? <ErrorNote error={error} onRetry={reload} /> : null}
@@ -2302,7 +2326,8 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
           <Muted>
             {data.rated} of {countOf(data.count, "stored artifact")} rated.
           </Muted>
-          <table className="table" aria-label="Artifact ratings">
+          <div className="table-scroll">
+          <table className="data-table" aria-label="Artifact ratings">
             <thead>
               <tr>
                 <th>Artifact</th>
@@ -2399,6 +2424,7 @@ export function ArtifactRatingsPanel({ binaryId }: { binaryId: number }): ReactN
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </Panel>
@@ -2732,7 +2758,7 @@ function StringsBody({ data, binaryId }: { data: StringTable; binaryId: number }
 /**
  * The hosted portal's per-agent thumbs up/down, inlined in the scan panel's
  * own header.  Reads the stored verdict and writes through the same endpoint
- * the Agent Feedback panel uses; an artifact that was never produced (a 404
+ * the Agent feedback panel uses; an artifact that was never produced (a 404
  * on the rating read) renders nothing rather than a control that errors.
  */
 function ArtifactRateButtons({
@@ -2885,7 +2911,7 @@ function ThreatVerdict({
         {score ? (
           <div className="verdict-cell">
             <SegmentMeter
-              label="Threat score"
+              label="Threat score (heuristic)"
               value={score.score === null ? null : score.score / max}
               readout={`${score.score ?? NA} / ${max}`}
               level={bandLevel}
@@ -2905,9 +2931,7 @@ function ThreatVerdict({
           rowKey={(row) => row.name}
         />
       ) : null}
-      {notes.map((note) => (
-        <Muted key={note}>{note}</Muted>
-      ))}
+      <MethodNotes notes={notes} />
     </>
   );
 }
@@ -2958,7 +2982,7 @@ export function FunctionTriagePanel({ binaryId }: { binaryId: number }): ReactNo
 
   return (
     <Panel
-      title="Function Triage"
+      title="Function triage"
       subtitle="Scores and summarizes the binary's functions, most interesting first."
       actions={
         <Toolbar>
@@ -2993,10 +3017,11 @@ function FunctionTriageBody({ result }: { result: FunctionTriageResult }): React
   const skipped = Array.isArray(result.skipped) ? result.skipped : [];
   const notes = Array.isArray(result.notes) ? result.notes : [];
   const byMethod = result.by_method ?? {};
+  const withCapabilities = entries.some((row) => row.capabilities.length > 0);
   return (
     <>
       <Muted>
-        llm {byMethod.llm ?? 0}, heuristic {byMethod.heuristic ?? 0}
+        {`${countOf(byMethod.heuristic ?? 0, "function")} scored by the heuristic, ${byMethod.llm ?? 0} by the model`}
       </Muted>
       {entries.length === 0 ? (
         <Muted>No functions triaged.</Muted>
@@ -3004,16 +3029,32 @@ function FunctionTriageBody({ result }: { result: FunctionTriageResult }): React
         <DataTable
           columns={[
             { label: "Score", numeric: true, render: (row) => row.score.toFixed(2) },
-            { label: "Name", key: "name" },
+            {
+              label: "Name",
+              render: (row) => <a href={`#/functions/${row.function_id}`}>{row.name || hex(row.va)}</a>,
+            },
             { label: "VA", mono: true, render: (row) => hex(row.va) },
             { label: "Size", key: "size", numeric: true },
             { label: "Status", render: (row) => <StatusCell status={row.status} /> },
             { label: "Method", render: (row) => <StatusCell status={row.method} /> },
-            { label: "Summary", key: "summary" },
             {
-              label: "Capabilities",
-              render: (row) => (row.capabilities.length === 0 ? NA : row.capabilities.join(", ")),
+              // A heuristic row's summary restates the name, size and status the
+              // columns beside it already show; its signals are the part to read.
+              label: "Why",
+              render: (row) =>
+                row.method === "heuristic" && row.reasons?.length
+                  ? row.reasons.join(" · ")
+                  : row.summary,
             },
+            ...(withCapabilities
+              ? [
+                  {
+                    label: "Capabilities",
+                    render: (row: FunctionTriageEntry) =>
+                      row.capabilities.length === 0 ? NA : row.capabilities.join(", "),
+                  },
+                ]
+              : []),
           ]}
           rows={entries}
           rowKey={(row) => row.function_id}
@@ -3031,9 +3072,7 @@ function FunctionTriageBody({ result }: { result: FunctionTriageResult }): React
           </ul>
         </details>
       ) : null}
-      {notes.map((note) => (
-        <Muted key={note}>{note}</Muted>
-      ))}
+      <MethodNotes notes={notes} />
     </>
   );
 }
@@ -3595,9 +3634,7 @@ function HardeningBody({ result }: { result: HardeningScan }): ReactNode {
           rowKey={(_row, index) => index}
         />
       )}
-      {notes.map((note) => (
-        <Muted key={note}>{note}</Muted>
-      ))}
+      <MethodNotes notes={notes} />
     </>
   );
 }
@@ -3789,7 +3826,7 @@ export function ThreatPanel({ binaryId }: { binaryId: number }): ReactNode {
   const [busy, setBusy] = useState(false);
   return (
     <Panel
-      title="Threat Report"
+      title="Threat report"
       subtitle="Indicators of compromise extracted from strings, imports and references."
       actions={
         <Toolbar>
@@ -3912,7 +3949,7 @@ function AttackSurfaceBody({ result }: { result: AttackSurface }): ReactNode {
 }
 
 function ThreatYara({ binaryId }: { binaryId: number }): ReactNode {
-  // The hosted Threat Report carries its YARA rule; locally the rule lives in
+  // The hosted Threat report carries its YARA rule; locally the rule lives in
   // the remediation scan, so this section reads that stored scan through the
   // same panel key the Remediation panel uses and links out for the rest.
   const key = panelKey("binary", binaryId, "remediation");
@@ -4856,7 +4893,7 @@ export function DebugPanel({ binaryId }: { binaryId: number }): ReactNode {
   };
   return (
     <Panel
-      title="Debug Session"
+      title="Debug session"
       subtitle="Probe the sample under the debugger: entry stop, threads, registers and a memory window, then disconnect."
       actions={
         <>
@@ -5094,7 +5131,7 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
   };
   return (
     <Panel
-      title="Composition Analysis"
+      title="Composition analysis"
       subtitle="How this binary's functions match the other registered binaries, from the stored matches."
       actions={
         <Toolbar>
@@ -5103,7 +5140,7 @@ export function CompositionPanel({ binaryId }: { binaryId: number }): ReactNode 
               className="btn btn-ghost"
               href={`#/matches?function=${entry.data.functions[0].function_id}`}
             >
-              Open Matching View
+              Open matching view
             </a>
           ) : null}
           <Button
@@ -5230,7 +5267,7 @@ function CompositionBreakdown({
       {entries.map((entry) => {
         const meter = (
           <SegmentMeter
-            label={entry.label}
+            label={sentenceLabel(entry.label)}
             value={entry.percent === null ? null : entry.percent / 100}
             readout={`${entry.count}${entry.percent === null ? "" : ` (${entry.percent}%)`}`}
             hue={hueFor?.(entry.label) ?? undefined}
@@ -5316,14 +5353,14 @@ function CompositionBody({ result }: { result: CompositionResult }): ReactNode {
         ]}
       />
       <CompositionBreakdown
-        title="Function Name Sources"
+        title="Function name sources"
         entries={result.name_sources}
         hrefFor={(label) =>
           `#/binaries/${result.binary_id}/functions?name_source=${encodeURIComponent(label)}`
         }
       />
       <CompositionBreakdown
-        title="Match Quality"
+        title="Match quality"
         entries={result.match_quality}
         hueFor={qualityHue}
         onSelect={(label) => setBand(band === label ? "" : label)}
@@ -5375,7 +5412,7 @@ function CompositionBody({ result }: { result: CompositionResult }): ReactNode {
           {
             label: "Band",
             render: (row) => (
-              <Badge hue={qualityHue(row.band) ?? undefined}>{row.band}</Badge>
+              <Badge hue={qualityHue(row.band) ?? undefined}>{sentenceLabel(row.band)}</Badge>
             ),
           },
           {
@@ -5467,7 +5504,7 @@ export function LibraryPanel({ binaryId }: { binaryId: number }): ReactNode {
     >
       {actionError ? <ErrorNote error={actionError} /> : null}
       <Toolbar>
-        <Field label="Minimum confidence" hint="0 keeps every candidate the engine reports.">
+        <Field label="Minimum confidence" hint="0 keeps them all">
           <input
             type="number"
             min="0"
@@ -5505,9 +5542,7 @@ export function LibraryPanel({ binaryId }: { binaryId: number }): ReactNode {
               ? ` ${entry.data.already_annotated} already annotated.`
               : ""}
           </Muted>
-          {(entry.data.notes ?? []).map((note) => (
-            <Muted key={note}>{note}</Muted>
-          ))}
+          <MethodNotes notes={entry.data.notes ?? []} />
           <DataTable
             columns={[
               { label: "Module", key: "module", mono: true },

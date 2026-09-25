@@ -231,6 +231,12 @@ class TestHeuristicRun:
         assert entry["method"] == METHOD_HEURISTIC
         assert entry["function_id"] == function_ids[0]
         assert entry["summary"].startswith("sub_1000 (STUB, 512 bytes, 0 stored matches):")
+        assert entry["reasons"] == [
+            "size 512 bytes",
+            "status STUB is not a byte match",
+            "stored decompilation",
+            "placeholder name 'sub_1000'",
+        ]
         assert entry["capabilities"] == []
         assert result["notes"] == [HEURISTIC_NOTE]
 

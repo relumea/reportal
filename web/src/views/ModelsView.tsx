@@ -11,7 +11,8 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Badge, Button, DataTable, ErrorNote, Field, Loading, Muted, Note, Panel, Toolbar, countOf } from "../components";
+import { Badge, Button, DataTable, ErrorNote, Field, Loading, Muted, Note, Panel, Toolbar } from "../components";
+import { countOf } from "../labels";
 import type { ModelEntry, ModelsPayload, UpgradeResult } from "../types";
 import { useAsync } from "../useAsync";
 

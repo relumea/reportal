@@ -14,9 +14,9 @@ import {
   StatusCell,
   Toolbar,
   CopyValue,
-  byteSize,
   hex,
 } from "../components";
+import { byteSize } from "../labels";
 import { SEARCH_KIND_LABELS, SEARCH_KINDS } from "../constants";
 import type { SearchKind, SearchResults } from "../types";
 import { useAsync } from "../useAsync";

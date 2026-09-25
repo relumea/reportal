@@ -15,7 +15,8 @@ import type { ReactNode } from "react";
 import { Link, useParams } from "react-router";
 
 import { api } from "../api";
-import { Button, ErrorNote, Loading, Muted, Panel, countOf } from "../components";
+import { Button, ErrorNote, Loading, Muted, Panel } from "../components";
+import { countOf } from "../labels";
 import type { DocBlock, DocIndex, DocListItem, DocPage, DocPageBody } from "../types";
 import { useAsync } from "../useAsync";
 import "./documentation.css";

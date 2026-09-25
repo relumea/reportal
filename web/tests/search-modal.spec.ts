@@ -38,7 +38,7 @@ test("Ctrl+K opens the modal and Enter opens the highlighted hit", async ({ page
   const row = hit(page, "binary").filter({ hasText: "notepad.exe" }).first();
   await expect(row).toBeVisible();
   await expect(row.locator(".mono").first()).toBeVisible();
-  await expect(row.getByText(/T\d{2}:\d{2}/)).toBeVisible();
+  await expect(row.getByText(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/u)).toBeVisible();
   await expect(row).toHaveAttribute("aria-selected", "true");
 
   await page.keyboard.press("Enter");

@@ -21,7 +21,7 @@
 }
 
 .listing-rows {
-  max-height: 640px;
+  max-height: var(--code-pane-max-height);
   overflow: auto;
   padding: var(--space-2) 0;
   font: var(--text-sm) / 1.55 var(--font-mono);
@@ -132,7 +132,7 @@
   align-items: start;
 }
 
-@media (min-width: 1600px) {
+@media (min-width: 1360px) {
   .code-split {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
@@ -140,7 +140,7 @@
 
 /* Decompiled C (CSource.tsx): highlight.js scopes on the listing's hues. */
 .c-source {
-  max-height: 640px;
+  max-height: var(--code-pane-max-height);
   cursor: text;
 }
 
@@ -174,4 +174,29 @@
 .asm-comment {
   color: var(--text-faint);
   font-style: italic;
+}
+
+/* A called function's name in decompiled C: it keeps the token's colour and
+   reads as a link only on hover, so the listing stays a listing. */
+.c-source-link {
+  color: inherit;
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-faint);
+  text-underline-offset: 2px;
+}
+
+.c-source-link:hover,
+.c-source-link:focus-visible {
+  color: var(--accent);
+  text-decoration-style: solid;
+  text-decoration-color: currentColor;
+}
+
+/* A half-width listing gives the operands the room: the bytes column keeps its
+   first five bytes (the rest behind its ellipsis) until the pane is wide again. */
+@media (min-width: 1360px) and (max-width: 1799px) {
+  .code-split .listing-row {
+    grid-template-columns: max-content 14ch minmax(6ch, max-content) minmax(0, 1fr);
+    column-gap: 1.5ch;
+  }
 }

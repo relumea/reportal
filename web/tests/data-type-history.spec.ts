@@ -20,7 +20,7 @@ function renamedType(): string {
 }
 
 function panelTypes(page: Page) {
-  return panelByTitle(page, "Data Types");
+  return panelByTitle(page, "Data types");
 }
 
 test("a rename records a version the panel can revert", async ({ page }) => {

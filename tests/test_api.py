@@ -1153,6 +1153,34 @@ class TestDecompilation:
         assert status.startswith("200")
         assert json_body(body, headers)["code"] == "int f(void) {}"
 
+    def test_read_shows_current_names_and_keeps_the_stored_text(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        ids = _seed(conn)
+        raw = (
+            "int sub_1000(void)\n{\n  sub_2000();\n  FUN_00002000();\n"
+            "  fcn.00002000();\n  sub_3000();\n  return 0;\n}"
+        )
+        store.set_decompilation(conn, ids["function"], raw, "kuna")
+        store.rename_function(conn, ids["second"], new_name="parse_header", actor="tester")
+
+        status, headers, body = wsgi_request(
+            "GET", f"/api/functions/{ids['function']}/decompilation"
+        )
+
+        assert status.startswith("200")
+        # The unrenamed function keeps its placeholder, and an address with no
+        # function (0x3000) is never given a name.
+        assert json_body(body, headers)["code"] == (
+            "int sub_1000(void)\n{\n  parse_header();\n  parse_header();\n"
+            "  parse_header();\n  sub_3000();\n  return 0;\n}"
+        )
+        # Only a named function other than this one is linked; placeholders never are.
+        assert json_body(body, headers)["links"] == {"parse_header": ids["second"]}
+        stored = store.get_decompilation(conn, ids["function"])
+        assert stored is not None
+        assert str(stored["code"]) == raw
+
 
 class TestMatchRoute:
     def _seed_with_context(self, conn: sqlite3.Connection) -> dict[str, int]:

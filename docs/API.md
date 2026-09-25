@@ -232,8 +232,8 @@ scope as its own 404; `docs/THREAT_MODEL.md` carries the residuals.
 | `/api/functions/<id>/diff/<candidate_id>` | GET | side-by-side alignment against one candidate (`?kind=disasm|decomp&normalize=`); 400 `no-such-match` when the pair is not a recorded match |
 | `/api/functions/<id>/disasm` | GET | Listing through the binary's rebrew project context (`?format=nasm`, 32-bit x86 only; `hex`; or `asm`, one `mnemonic operands` line per instruction in any ISA); the binary's `store.cached_disasm_format` is cached in `disasm_cache` |
 | `/api/functions/<id>/cfg` | GET | the function's basic-block control-flow graph through the same project context: `rebrew.asm.build_cfg_payload(cfg, va, size)`, the object `rebrew asm --format cfg --json` prints, with every address converted to an int. The payload carries `blocks` (`va`, `size`, `instruction_count`, `first`, `last`), `edges` (`from`, `to`, `back_edge`), the extent's `va`/`size`, and the honesty fields `block_count` (returned), `block_total` (the engine's true count), `block_cap` (the engine's per-function cap), `truncated` and `note` (the engine's reason when it resolved no extent; an empty block list always carries one). The stored size is passed when positive, zero otherwise so the engine resolves the extent itself; a malformed row is dropped rather than rendered as a fabricated address. Never cached and never stored; 404 unknown function, 400 `no-engine-context`, 503 `engine-unavailable`, 500 `engine-error` (a non-x86 target included) |
-| `/api/functions/<id>/decompilation` | GET | stored decompiled C source, else a live `rebrew decompile` that is not stored (`?backend=kuna&named=true`); stored rows answer without an engine |
-| `/api/functions/<id>/decompilation` | POST | decompile and store; body `{"backend": ..., "named": ...}`, both optional |
+| `/api/functions/<id>/decompilation` | GET | stored decompiled C source, else a live `rebrew decompile` that is not stored (`?backend=kuna&named=true`); stored rows answer without an engine. A placeholder (`sub_401159`, `FUN_00401159`, `fcn.00401159`) whose address is a function of the same analysis with a real stored name reads as that name; the stored text keeps the decompiler's names. `links` maps each name in the code that is exactly one other function of the analysis to its id |
+| `/api/functions/<id>/decompilation` | POST | decompile and store; body `{"backend": ..., "named": ...}`, both optional; the response carries current names and `links` as the GET does |
 | `/api/functions/<id>/xrefs` | GET | live cross-references to a function through its rebrew project context; a repeated `?kind=` keeps only those kinds |
 | `/api/functions/<id>/references` | GET | the function's globals, callers and callees from one `rebrew describe` call (through its rebrew project context): each global names its `address`, the engine `kind`, the `access` (`read`/`write`, or `null` when the instruction does not make it clear) and the owning `section` from the stored `pe-info` scan (or `null`); each caller names its `from_va` and the containing function's `name`; each callee names its `to_va`, `name`, `kind` and an `indirect` flag for an import-slot call with no resolved name; `counts` reports the row counts and `count_note` states that callers counts call sites while callees counts (target, kind) pairs; 404 `function not found`, 400 `no-engine-context`, 503 `engine-unavailable`, 500 `engine-error` |
 | `/api/functions/<id>/summary` | GET | stored AI summary; 404 `no-artifact` without one; never calls the LLM |
@@ -765,7 +765,9 @@ back to the deterministic heuristic, records `model: ""` and a note, and still
 stores the artifacts and the aggregate.  A function whose context cannot be
 resolved (no stored decompilation and no engine, no rebrew project context, or
 a non-positive size) is recorded in the payload's `skipped` list with a reason
-instead of failing the request.  Its GET is stored-only like the other scans
+instead of failing the request.  Each entry carries `reasons`, the heuristic's
+signals (`size 512 bytes`, `status STUB is not a byte match`, ...), empty for an
+LLM answer.  Its GET is stored-only like the other scans
 and answers 404 `no-scan` with the run hint.
 
 The AI routes follow the same error contract.  A `POST` to

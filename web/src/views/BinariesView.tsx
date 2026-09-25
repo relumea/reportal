@@ -16,12 +16,10 @@ import {
   Muted,
   Panel,
   Toolbar,
-  byteSize,
-  countOf,
 } from "../components";
+import { BINARY_ORDER_LABELS, byteSize, countOf } from "../labels";
 import {
   BINARY_ORDERS,
-  BINARY_ORDER_LABELS,
   DEFAULT_BINARY_ORDER,
   MAX_UPLOAD_FILES,
   UPLOAD_ARCHITECTURES,

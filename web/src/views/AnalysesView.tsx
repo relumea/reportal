@@ -2,18 +2,18 @@
 // tags, an on-demand log drawer and a journalled delete.
 //
 // The filters live in the URL hash (`#/analyses?status=...&order=...`), the
-  // convention the router already encodes route state with, so a filtered list is
-  // shareable and survives a reload.  Owner is the owning team (or personal);
-  // who changed what is what the Journal view records, which this view links to.
-  
-  import { useEffect, useState } from "react";
-  import { createSearchParams, useNavigate } from "react-router";
-  import type { ReactNode } from "react";
-  
-  import { api } from "../api";
-  import "./analyses.css";
-  import {
-    Badge,
+// convention the router already encodes route state with, so a filtered list is
+// shareable and survives a reload.  Owner is the owning team (or personal);
+// who changed what is what the Journal view records, which this view links to.
+
+import { useEffect, useState } from "react";
+import { createSearchParams, useNavigate } from "react-router";
+import type { ReactNode } from "react";
+
+import { api } from "../api";
+import "./analyses.css";
+import {
+  Badge,
   Button,
   ConfirmButton,
   CopyValue,
@@ -27,17 +27,17 @@
   Loading,
   Muted,
   NA,
-  byteSize,
   Panel,
+  Stamp,
   StatusCell,
   Toolbar,
 } from "../components";
+import { byteSize, WORKSPACE_FILTER_LABELS } from "../labels";
 import {
   ANALYSIS_ORDER_LABELS,
   ANALYSIS_ORDERS,
   ANALYSIS_STATUSES,
   WORKSPACE_FILTERS,
-  WORKSPACE_FILTER_LABELS,
   DEFAULT_ANALYSIS_LIMIT,
   DEFAULT_ANALYSIS_LOG_LIMIT,
   MAX_ANALYSIS_LIMIT,
@@ -160,8 +160,8 @@ function Lifecycle({ analysisId, onChanged }: { analysisId: number; onChanged: (
               data.terminal ? <Badge tone="ok">{data.status}</Badge> : <Badge tone="warn">{data.status}</Badge>,
             ],
             ["engine", data.engine || NA],
-            ["created", data.created_at],
-            ["finished", data.finished_at ?? NA],
+            ["created", <Stamp at={data.created_at} />],
+            ["finished", data.finished_at ? <Stamp at={data.finished_at} /> : NA],
             ["scans", Object.entries(data.scans_by_status).map(([key, count]) => `${key} ${count}`).join(", ") || NA],
             ["logs", Object.entries(data.logs_by_severity).map(([key, count]) => `${key} ${count}`).join(", ") || NA],
           ]}

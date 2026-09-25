@@ -1,5 +1,5 @@
 // Module state for the function code-view toggle.  Kept in its own file so the
-// shell's `Space` binding can flip Disassembly / Control Flow without pulling
+// shell's `Space` binding can flip Disassembly / Control flow without pulling
 // FunctionPanels (and its panels) into the entry bundle: CodeSection registers
 // the live switch while mounted, and App only imports this tiny seam.
 

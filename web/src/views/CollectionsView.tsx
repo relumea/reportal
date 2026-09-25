@@ -24,12 +24,11 @@ import {
   Toolbar,
   NA,
 } from "../components";
+import { COLLECTION_ORDER_LABELS, WORKSPACE_FILTER_LABELS } from "../labels";
 import {
   COLLECTION_ORDERS,
-  COLLECTION_ORDER_LABELS,
   DEFAULT_COLLECTION_ORDER,
   WORKSPACE_FILTERS,
-  WORKSPACE_FILTER_LABELS,
 } from "../constants";
 import type { CollectionOrder, WorkspaceFilter } from "../constants";
 import type { Collection, CollectionDetail } from "../types";

@@ -528,11 +528,9 @@ function JournalTail({
                 changed.has(`journal-${entry.id}`) ? "journal-row flash" : "journal-row"
               }
             >
-              <div>
-                <a href={`#/journal/${entry.action}`}>{entry.description}</a>
-                <div className="journal-action muted">{entry.action}</div>
-              </div>
+              <a href={`#/journal/${entry.action}`}>{entry.description}</a>
               <div className="journal-meta">
+                <span className="journal-action">{entry.action}</span>
                 {/* Active is the normal state; only a reverted or failed entry needs a badge. */}
                 {entry.status === "active" ? null : <StatusCell status={entry.status} />}
                 <Stamp at={entry.created_at} />

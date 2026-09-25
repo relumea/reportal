@@ -10,7 +10,7 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import { hex } from "../components";
+import { Stamp, hex } from "../components";
 import type {
   SearchBinaryRow,
   SearchCollectionRow,
@@ -85,7 +85,9 @@ function hitMeta(hit: SearchHit): ReactNode {
         <span>{hit.row.size.toLocaleString()} B</span>
         <span>{[hit.row.format, hit.row.arch].filter(Boolean).join(" / ") || "n/a"}</span>
         {_tags(hit.row.tags)}
-        <span className="muted">{hit.row.created_at}</span>
+        <span className="muted">
+          <Stamp at={hit.row.created_at} />
+        </span>
         <span className="muted">matched {hit.row.match}</span>
       </>
     );
@@ -99,7 +101,9 @@ function hitMeta(hit: SearchHit): ReactNode {
         </span>
         <span className="muted">{hit.row.visibility || "public"}</span>
         {_tags([hit.row.description].filter(Boolean))}
-        <span className="muted">{hit.row.created_at}</span>
+        <span className="muted">
+          <Stamp at={hit.row.created_at} />
+        </span>
         <span className="muted">matched {hit.row.match}</span>
       </>
     );

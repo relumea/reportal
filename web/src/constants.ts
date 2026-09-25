@@ -30,7 +30,7 @@ export type FunctionCodeView = (typeof FUNCTION_CODE_VIEWS)[number];
 export const DEFAULT_FUNCTION_CODE_VIEW: FunctionCodeView = "disassembly";
 export const FUNCTION_CODE_VIEW_LABELS: Record<FunctionCodeView, string> = {
   disassembly: "Disassembly",
-  cfg: "Control Flow",
+  cfg: "Control flow",
 };
 
 // Minimum confidence an Auto-unstrip run accepts; mirrors the API's
@@ -236,18 +236,9 @@ export const MAX_GRAPH_ROWS_SHOWN = 500;
 // and `id` is the insertion order it always used.  The names match the
 // analyses list's, where the two controls mean the same thing.
 export const BINARY_ORDERS = ["id", "newest", "name", "name-desc", "size", "size-desc"] as const;
-type BinaryOrder = (typeof BINARY_ORDERS)[number];
+export type BinaryOrder = (typeof BINARY_ORDERS)[number];
 // Mirrors store.DEFAULT_BINARY_ORDER.
 export const DEFAULT_BINARY_ORDER: BinaryOrder = "id";
-
-export const BINARY_ORDER_LABELS: Record<BinaryOrder, string> = {
-  id: "Oldest first",
-  newest: "Newest first",
-  name: "Name (A to Z)",
-  "name-desc": "Name (Z to A)",
-  size: "Size (small first)",
-  "size-desc": "Size (large first)",
-};
 
 // Orders the collections list accepts; the server sorts and echoes the value,
 // and `id` is the creation order it used before the control existed.  `owner`
@@ -257,14 +248,6 @@ export type CollectionOrder = (typeof COLLECTION_ORDERS)[number];
 // Mirrors store.DEFAULT_COLLECTION_ORDER: the control falls back to the order
 // the route uses when none is named.
 export const DEFAULT_COLLECTION_ORDER: CollectionOrder = "id";
-
-export const COLLECTION_ORDER_LABELS: Record<CollectionOrder, string> = {
-  id: "Oldest first",
-  name: "Name (A to Z)",
-  size: "Most binaries first",
-  updated: "Recently updated",
-  owner: "Owning team",
-};
 
 // Statuses the Lineage panel groups into tables; unchanged rows are only
 // counted, since a version pair is usually mostly unchanged.
@@ -352,12 +335,6 @@ export const ANALYSIS_ORDER_LABELS: Record<(typeof ANALYSIS_ORDERS)[number], str
  *  Analyses and Collections lists both filter by it. */
 export const WORKSPACE_FILTERS = ["personal", "team", "public"] as const;
 export type WorkspaceFilter = (typeof WORKSPACE_FILTERS)[number];
-
-export const WORKSPACE_FILTER_LABELS: Record<WorkspaceFilter, string> = {
-  personal: "Personal",
-  team: "Team",
-  public: "Public",
-};
 
 // Rows one analyses request asks for, and the most the route accepts; both
 // mirror store.DEFAULT_ANALYSIS_LIMIT and store.MAX_ANALYSIS_LIMIT.

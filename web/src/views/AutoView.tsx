@@ -19,8 +19,8 @@ import {
   SegmentMeter,
   StatusCell,
   UNAVAILABLE,
-  countOf,
 } from "../components";
+import { countOf } from "../labels";
 import {
   AUTO_CONCURRENCY_MAX,
   AUTO_CONCURRENCY_MIN,

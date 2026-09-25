@@ -49,7 +49,7 @@ test("a file-offset read renders the window's own bytes", async ({ page }) => {
 
 test("filtering the type list narrows it and counts stay exact", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}?tab=memory`);
-  const types = panelByTitle(page, "Data Types");
+  const types = panelByTitle(page, "Data types");
   const total = state.types.length;
 
   await expect(types.getByText(`of ${total} types`, { exact: false })).toBeVisible();
@@ -161,15 +161,16 @@ test("the cross-references panel scans on demand and renders what the engine fou
   await expect(xrefs.getByRole("alert")).toHaveCount(0);
 });
 
-test("function globals link Memory and the function list", async ({ page }) => {
+test("function globals load with the tab and link Memory and the function list", async ({
+  page,
+}) => {
   await page.goto(`/#/functions/${state.ids.function_id}?tab=references`);
   const globals = page
     .locator(".panel")
-    .filter({ has: page.getByRole("button", { name: "Load references" }) })
-    .first();
-  await globals.getByRole("button", { name: "Load references" }).click();
+    .filter({ has: page.getByRole("heading", { name: /^Globals / }) });
   const table = globals.locator("table.data-table");
   await expect(table.or(globals.locator(".empty-state"))).toBeVisible();
+  await expect(globals.getByRole("button", { name: "Reload references" })).toBeEnabled();
   if ((await table.count()) === 0) return;
   await expect(table.locator("a[href*='memory=']").first()).toBeVisible();
   await expect(table.locator(".copy-row").first()).toBeVisible();
@@ -181,7 +182,6 @@ test("function callers names link a function", async ({ page }) => {
   const callers = page
     .locator(".panel")
     .filter({ has: page.getByRole("heading", { name: /^Callers / }) });
-  await callers.getByRole("button", { name: "Load references" }).click();
   const table = callers.locator("table.data-table");
   await expect(table.or(callers.locator(".empty-state"))).toBeVisible();
   if ((await table.count()) === 0) return;
@@ -190,14 +190,14 @@ test("function callers names link a function", async ({ page }) => {
 
 test("composition analysis opens the matching view", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}?tab=provenance`);
-  const composition = panelByTitle(page, "Composition Analysis");
-  const link = composition.getByRole("link", { name: "Open Matching View" });
+  const composition = panelByTitle(page, "Composition analysis");
+  const link = composition.getByRole("link", { name: "Open matching view" });
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", /#\/matches\?function=\d+/);
   const topBinary = composition.locator("table.data-table a[href^='#/binaries/']").first();
   await expect(topBinary).toBeVisible();
-  await expect(composition.getByRole("heading", { name: "Function Name Sources" })).toBeVisible();
-  await expect(composition.getByRole("heading", { name: "Match Quality" })).toBeVisible();
+  await expect(composition.getByRole("heading", { name: "Function name sources" })).toBeVisible();
+  await expect(composition.getByRole("heading", { name: "Match quality" })).toBeVisible();
   await expect(composition.getByRole("heading", { name: "Categories" })).toBeVisible();
   const scopeMatch = composition.getByRole("link", { name: "Scope matching" });
   await expect(scopeMatch.first()).toHaveAttribute(
@@ -223,7 +223,7 @@ test("composition analysis opens the matching view", async ({ page }) => {
 
 test("the binary details entry point links to a function", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}`);
-  const details = panelByTitle(page, "Binary Details");
+  const details = panelByTitle(page, "Binary details");
   const link = details.getByTitle("Open the function at this address");
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", /#\/(functions\/\d+|binaries\/\d+\/functions\?va=)/);
@@ -469,8 +469,8 @@ test("a gated scan panel carves without a prior fetch", async ({ page }) => {
 
 test("an artifact note round-trips through the panel", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}?tab=review`);
-  const feedback = panelByTitle(page, "Agent Feedback");
-  const row = feedback.locator("table.table tbody tr").first();
+  const feedback = panelByTitle(page, "Agent feedback");
+  const row = feedback.locator("table.data-table tbody tr").first();
 
   // The seeded scans carry no notes, so the row starts clean and the note
   // control is hidden until asked for.
@@ -506,7 +506,7 @@ test("an artifact note round-trips through the panel", async ({ page }) => {
 
 test("the debug panel reports the opt-in state and refuses while off", async ({ page }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}?tab=format`);
-  const debugPanel = panelByTitle(page, "Debug Session");
+  const debugPanel = panelByTitle(page, "Debug session");
   await debugPanel.scrollIntoViewIfNeeded();
 
   // The default install never opted in: the panel settles on the enable hint

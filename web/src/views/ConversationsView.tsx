@@ -15,8 +15,9 @@ import {
   Muted,
   Panel,
   Toolbar,
-  countOf,
+  stampText,
 } from "../components";
+import { countOf } from "../labels";
 import { MissingNote } from "../detailParts";
 import { CONVERSATION_SCOPE_KINDS } from "../constants";
 import type { ConversationScopeKind } from "../constants";
@@ -503,7 +504,7 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
   return (
     <Panel
       title={data.title}
-      subtitle={`${data.scope_kind} ${data.scope_id} · created ${data.created_at}`}
+      subtitle={`${data.scope_kind} ${data.scope_id} · created ${stampText(data.created_at)}`}
       actions={
         <>
           <a className="back-link" href="#/conversations">

@@ -200,7 +200,10 @@
 
   --sidebar-width: 236px;
   --content-max: 1680px;
-  --table-max-height: 620px;
+  /* Scrolling tables and code panes fill a tall window; they never shrink below
+     the fixed heights they had, and the page chrome above them is subtracted. */
+  --table-max-height: max(620px, calc(100dvh - 300px));
+  --code-pane-max-height: max(640px, calc(100dvh - 260px));
 
   /* Structural motion and instrument geometry.  These are layout contracts,
      not skin, so they are declared once and never overridden per theme. */
@@ -706,6 +709,8 @@ p.muted[role="status"]:not(:empty) {
 }
 
 .sidebar-foot .health {
+  font-size: var(--text-xs);
+  line-height: 1.4;
   white-space: normal;
 }
 
@@ -984,6 +989,8 @@ p.muted[role="status"]:not(:empty) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
+  /* Archivo's space is narrow; tracked capitals would run two words together. */
+  word-spacing: 0.2em;
   color: var(--text-faint);
 }
 
@@ -1913,9 +1920,8 @@ input[type="file"]::file-selector-button:hover {
 
 .journal-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--space-2);
-  align-items: baseline;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
   padding: var(--space-2) 0;
   border-bottom: 1px solid var(--border);
   min-width: 0;
@@ -1933,13 +1939,18 @@ input[type="file"]::file-selector-button:hover {
 
 .journal-meta {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: var(--space-1);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--text-xs);
   color: var(--text-faint);
   font-family: var(--font-mono);
   white-space: nowrap;
+}
+
+/* The action id leads the meta line and the time sits at its far end. */
+.journal-meta .stamp {
+  margin-left: auto;
 }
 
 @media (min-width: 1180px) {
@@ -3468,12 +3479,16 @@ kbd.key {
   }
 }
 
-/* A row of toggle chips standing in for a field's control keeps the control
-   height, so its label lines up with the selects beside it. */
-.chip-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-  min-height: var(--control-h);
+/* Two short panels side by side once the pane is wide enough for both, the
+   way the code split pairs the listing and the decompilation; stacked below. */
+.panel-pair {
+  display: grid;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+@media (min-width: 1360px) {
+  .panel-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
 }

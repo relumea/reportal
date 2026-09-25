@@ -157,19 +157,21 @@ function DisasmPanel({
   return (
     <Panel
       title="Disassembly"
-      subtitle="Read from the target binary through the engine."
       actions={
         <Toolbar>
           {toggle}
-          <Field label="View">
-            <select value={view} onChange={(event) => setView(toDisasmView(event.target.value))}>
-              {views.map((option) => (
-                <option key={option} value={option}>
-                  {DISASM_VIEW_LABELS[option]}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <select
+            aria-label="Listing view"
+            title="Listing view"
+            value={view}
+            onChange={(event) => setView(toDisasmView(event.target.value))}
+          >
+            {views.map((option) => (
+              <option key={option} value={option}>
+                {DISASM_VIEW_LABELS[option]}
+              </option>
+            ))}
+          </select>
           <Button
             pending={busy}
             onClick={() => {
@@ -187,7 +189,7 @@ function DisasmPanel({
   );
 }
 
-/** The Disassembly / Control Flow toggle both code panels carry. */
+/** The Disassembly / Control flow toggle both code panels carry. */
 function CodeViewToggle({
   view,
   onChange,
@@ -223,7 +225,7 @@ export function CodeSection({
 }): ReactNode {
   const [view, setView] = useState<FunctionCodeView>(DEFAULT_FUNCTION_CODE_VIEW);
   const toggle = <CodeViewToggle view={view} onChange={setView} />;
-  // The hosted portal's `Space` toggles Disassembly and Control Flow; the
+  // The hosted portal's `Space` toggles Disassembly and Control flow; the
   // switch is published while this section is mounted and dropped when it
   // unmounts, so the binding never acts on a view that is not showing one.
   // The handler lives in `codeViewSwitch.ts` so App can bind Space without
@@ -254,23 +256,31 @@ export function DecompilationPanel({ functionId }: { functionId: number }): Reac
   if (!entry || entry.state === "loading") body = <Loading label="Loading decompilation" />;
   else if (entry.state === "error") body = <ErrorNote error={entry.error} />;
   else
-    body = <CSource text={entry.data.code} title={entry.data.backend || backend} />;
+    body = (
+      <CSource
+        text={entry.data.code}
+        title={entry.data.backend || backend}
+        links={entry.data.links}
+      />
+    );
 
   return (
     <Panel
       title="Decompilation"
-      subtitle="Stored decompilation, or one computed through the decompiler backends."
       actions={
         <Toolbar>
-          <Field label="Backend">
-            <select value={backend} onChange={(event) => setBackend(event.target.value)}>
-              {DECOMPILER_BACKENDS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </Field>
+          <select
+            aria-label="Decompiler backend"
+            title="Decompiler backend"
+            value={backend}
+            onChange={(event) => setBackend(event.target.value)}
+          >
+            {DECOMPILER_BACKENDS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
           <Button
             tone="primary"
             pending={busy}
@@ -299,39 +309,29 @@ interface ReferencesData {
   functionsByVa: Map<number, FunctionRow>;
 }
 
-const REFERENCES_HINT =
-  "Not loaded. Load references to see the data this function touches and the calls into and out of it.";
-
-/** One lazy load shared by the Globals, Callers and Callees panels. */
+/** One load shared by the Globals, Callers and Callees panels, started when the
+ *  References tab mounts them: opening the tab is the request for them. */
 function useReferences(functionId: number, binaryId: number): {
   entry: PanelEntry<ReferencesData> | undefined;
-  load: () => void;
+  reload: () => void;
   busy: boolean;
 } {
   const key = panelKey("fn", functionId, "references");
-  const [entry, run] = useLazyPanel<ReferencesData>(key);
   const [busy, setBusy] = useState(false);
   const loader = async (): Promise<ReferencesData> => {
     const functionsByVa = await loadFunctionsByVa(binaryId);
     const result = await api<FunctionReferences>(`/functions/${functionId}/references`);
     return { result, functionsByVa };
   };
+  const entry = usePanel(key, loader);
   return {
     entry,
     busy,
-    load: () => {
+    reload: () => {
       setBusy(true);
-      run(() => loader().finally(() => setBusy(false)));
+      refreshPanel(key, () => loader().finally(() => setBusy(false)));
     },
   };
-}
-
-function ReferencesAction({ busy, loaded, load }: { busy: boolean; loaded: boolean; load: () => void }): ReactNode {
-  return (
-    <Button pending={busy} onClick={load}>
-      {loaded ? "Reload references" : "Load references"}
-    </Button>
-  );
 }
 
 /** The Globals table: the data addresses the function reads, writes or loads. */
@@ -342,7 +342,7 @@ function GlobalsPanel({
   functionId: number;
   binaryId: number;
 }): ReactNode {
-  const { entry, load, busy } = useReferences(functionId, binaryId);
+  const { entry, reload, busy } = useReferences(functionId, binaryId);
   const data = entry?.state === "ready" ? entry.data : undefined;
   return (
     <Panel
@@ -353,9 +353,13 @@ function GlobalsPanel({
         </>
       }
       subtitle="Data addresses the disassembly references; a read or a write only when the instruction makes it clear."
-      actions={<ReferencesAction busy={busy} loaded={data !== undefined} load={load} />}
+      actions={
+        <Button pending={busy} disabled={data === undefined} onClick={reload}>
+          Reload references
+        </Button>
+      }
     >
-      <PanelBody entry={entry} hint="Loading globals" idle={REFERENCES_HINT}>
+      <PanelBody entry={entry} hint="Loading globals">
         {(loaded) =>
           loaded.result.globals.length === 0 ? (
             <EmptyState>No data references resolved for this function.</EmptyState>
@@ -414,7 +418,7 @@ function CallersPanel({
   functionId: number;
   binaryId: number;
 }): ReactNode {
-  const { entry, load, busy } = useReferences(functionId, binaryId);
+  const { entry } = useReferences(functionId, binaryId);
   const data = entry?.state === "ready" ? entry.data : undefined;
   return (
     <Panel
@@ -425,9 +429,8 @@ function CallersPanel({
         </>
       }
       subtitle="Call sites into this function; each names the function it sits in."
-      actions={<ReferencesAction busy={busy} loaded={data !== undefined} load={load} />}
     >
-      <PanelBody entry={entry} hint="Loading callers" idle={REFERENCES_HINT}>
+      <PanelBody entry={entry} hint="Loading callers">
         {(loaded) =>
           loaded.result.callers.length === 0 ? (
             <EmptyState>No callers resolved for this function.</EmptyState>
@@ -463,7 +466,7 @@ export function CalleesPanel({
   functionId: number;
   binaryId: number;
 }): ReactNode {
-  const { entry, load, busy } = useReferences(functionId, binaryId);
+  const { entry } = useReferences(functionId, binaryId);
   const data = entry?.state === "ready" ? entry.data : undefined;
   return (
     <Panel
@@ -474,9 +477,8 @@ export function CalleesPanel({
         </>
       }
       subtitle="Calls this function makes; an import-slot call stays a row saying it is indirect."
-      actions={<ReferencesAction busy={busy} loaded={data !== undefined} load={load} />}
     >
-      <PanelBody entry={entry} hint="Loading callees" idle={REFERENCES_HINT}>
+      <PanelBody entry={entry} hint="Loading callees">
         {(loaded) =>
           loaded.result.callees.length === 0 ? (
             <EmptyState>No callees resolved for this function.</EmptyState>
@@ -575,7 +577,8 @@ function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
             </EmptyState>
           ) : (
             <>
-              <table className="table" aria-label="Cross references">
+              <div className="table-scroll">
+              <table className="data-table" aria-label="Cross references">
                 <thead>
                   <tr>
                     <th>From</th>
@@ -595,6 +598,7 @@ function XrefsPanel({ functionId }: { functionId: number }): ReactNode {
                   ))}
                 </tbody>
               </table>
+              </div>
               {payload.import_name === null ? null : (
                 <Muted>The target is the import slot {payload.import_name}.</Muted>
               )}
@@ -1066,7 +1070,7 @@ function AiCommentsPanel({ functionId }: { functionId: number }): ReactNode {
     <AiArtifactPanel<AiCommentsPayload>
       functionId={functionId}
       kind="comments"
-      title="AI Comments"
+      title="AI comments"
       subtitle="Inline comments a model proposed for the decompilation."
       loading="Loading the AI comments"
       absentHint="No AI comments stored for this function. Generate them from the stored decompilation."
@@ -1096,7 +1100,7 @@ function AiTypeSuggestionsPanel({ functionId }: { functionId: number }): ReactNo
     <AiArtifactPanel<AiTypeSuggestionsPayload>
       functionId={functionId}
       kind="type-suggestions"
-      title="Type Suggestions"
+      title="Type suggestions"
       subtitle="Types a model proposed for the local variables."
       loading="Loading the type suggestions"
       absentHint="No type suggestions stored for this function. Generate them from the stored decompilation."
@@ -1279,10 +1283,19 @@ function AiRenamesPanel({
           >
             {entry?.state === "ready" ? "Re-suggest" : "Suggest"}
           </Button>
-          <Button tone="primary" pending={busy === "apply"} onClick={() => void apply(false)}>
+          <Button
+            tone="primary"
+            pending={busy === "apply"}
+            disabled={selected.size === 0}
+            onClick={() => void apply(false)}
+          >
             Apply selected
           </Button>
-          <Button pending={busy === "apply-all"} onClick={() => void apply(true)}>
+          <Button
+            pending={busy === "apply-all"}
+            disabled={suggestions.length === 0}
+            onClick={() => void apply(true)}
+          >
             Apply all
           </Button>
           <ConfirmButton
@@ -1292,7 +1305,7 @@ function AiRenamesPanel({
             onConfirm={() => void revert()}
           />
           <CheckboxField
-            label="rename function"
+            label="Rename the function too"
             checked={renameFunction}
             onChange={setRenameFunction}
           />

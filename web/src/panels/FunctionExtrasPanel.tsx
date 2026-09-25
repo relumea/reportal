@@ -14,8 +14,8 @@ import {
   Panel,
   PanelBody,
   Toolbar,
-  countOf,
 } from "../components";
+import { countOf } from "../labels";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import type {
   AnalysisStrings,
@@ -147,7 +147,7 @@ function StringsSection({
               value={value}
               maxLength={limit}
               onChange={(event) => setValue(event.target.value)}
-              placeholder="A literal the text misses, or a claim about one"
+              placeholder="a missed literal"
             />
           </Field>
           <Field label="Kind">
@@ -174,7 +174,8 @@ function StringsSection({
           {rows.length === 0 ? (
             <EmptyState>No analyst strings recorded yet.</EmptyState>
           ) : (
-            <table className="table" aria-label="Analyst strings">
+            <div className="table-scroll">
+            <table className="data-table" aria-label="Analyst strings">
               <thead>
                 <tr>
                   <th>Value</th>
@@ -195,6 +196,7 @@ function StringsSection({
                 ))}
               </tbody>
             </table>
+            </div>
           )}
           {derived && derived.length > 0 ? (
             <>
@@ -263,7 +265,7 @@ export function AnalysisStringsPanel({ analysisId }: { analysisId: number }): Re
 
   return (
     <Panel
-      title="Analysis Strings"
+      title="Analysis strings"
       subtitle="The whole list at once; a revert puts the previous list back."
     >
       <StringsSection path={path} key={key} load={load} limit={1024} />
@@ -326,7 +328,7 @@ function CanonicalNamePanel({ functionId }: { functionId: number }): ReactNode {
 
   return (
     <Panel
-      title="Canonical Name"
+      title="Canonical name"
       subtitle="Rename to the candidate the store already recorded: a predicted name, else the newest rename. Never a guess."
     >
       <Toolbar>
@@ -354,7 +356,7 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
   return (
     <>
       <Panel
-        title="Indirect Call Sites"
+        title="Indirect call sites"
         subtitle="Calls and jumps through a register or a memory operand, from the cached listing."
         actions={
           <Button
@@ -380,7 +382,8 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
               </EmptyState>
             ) : (
               <>
-                <table className="table" aria-label="Indirect call sites">
+                <div className="table-scroll">
+                <table className="data-table" aria-label="Indirect call sites">
                   <thead>
                     <tr>
                       <th>Line</th>
@@ -398,6 +401,7 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
                     ))}
                   </tbody>
                 </table>
+                </div>
                 <Muted>{data.note}</Muted>
               </>
             )
@@ -413,7 +417,8 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
             data.capabilities.length === 0 ? (
               <EmptyState>No capability rule matched this function.</EmptyState>
             ) : (
-              <table className="table" aria-label="Capabilities">
+              <div className="table-scroll">
+              <table className="data-table" aria-label="Capabilities">
                 <thead>
                   <tr>
                     <th>Capability</th>
@@ -433,6 +438,7 @@ export function FunctionExtrasPanel({ functionId }: { functionId: number }): Rea
                   ))}
                 </tbody>
               </table>
+              </div>
             )
           }
         </PanelBody>
@@ -474,7 +480,8 @@ function ExplainPanel({ functionId }: { functionId: number }): ReactNode {
             <EmptyState>No {data.domain} rule matched this function.</EmptyState>
           ) : (
             <>
-              <table className="table" aria-label="Explain findings">
+              <div className="table-scroll">
+              <table className="data-table" aria-label="Explain findings">
                 <thead>
                   <tr>
                     <th>Evidence</th>
@@ -500,6 +507,7 @@ function ExplainPanel({ functionId }: { functionId: number }): ReactNode {
                   ))}
                 </tbody>
               </table>
+              </div>
               <Muted>{data.derivation}</Muted>
             </>
           )
@@ -593,7 +601,7 @@ function CalleesPanel({ functionId }: { functionId: number }): ReactNode {
             <input
               value={callee}
               onChange={(event) => setCallee(event.target.value)}
-              placeholder="A callee the engine cannot resolve"
+              placeholder="unresolved callee"
             />
           </Field>
           <Field label="Kind">
@@ -620,7 +628,8 @@ function CalleesPanel({ functionId }: { functionId: number }): ReactNode {
             {data.declared.length === 0 ? (
               <EmptyState>No declared callee edges yet.</EmptyState>
             ) : (
-              <table className="table" aria-label="Callees">
+              <div className="table-scroll">
+              <table className="data-table" aria-label="Callees">
                 <thead>
                   <tr>
                     <th>Callee</th>
@@ -649,6 +658,7 @@ function CalleesPanel({ functionId }: { functionId: number }): ReactNode {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
             <Muted>
               Derived: {data.callees.map((row) => row.name).join(", ") || "none"}.

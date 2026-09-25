@@ -68,8 +68,9 @@ test("AI controls say no model is configured instead of failing on click", async
 
   await page.goto(`/#/functions/${state.ids.function_id}?tab=ai`);
   await expect(page.getByText(NO_MODEL)).toHaveCount(1);
-  for (const name of ["Generate", "Suggest", "Rewrite"]) {
-    const buttons = page.getByRole("button", { name, exact: true });
+  // A panel with a stored answer offers the re-run under the same model gate.
+  for (const name of [/^(Re-)?generate$/iu, /^(Re-)?suggest$/iu, /^Rewrite$/u]) {
+    const buttons = page.getByRole("button", { name });
     await expect(buttons.first()).toBeVisible();
     for (const button of await buttons.all()) {
       await expect(button).toBeDisabled();

@@ -16,8 +16,8 @@ import {
   Panel,
   StatusCell,
   Toolbar,
-  countOf,
 } from "../components";
+import { countOf } from "../labels";
 import { PIPELINE_NO_RUN } from "../constants";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import type {
@@ -230,7 +230,7 @@ export function PipelinePanel({
 
   return (
     <Panel
-      title="AI Decompilation"
+      title="AI decompilation"
       subtitle="The stored model-assisted run over this function: steps, artifacts and the commented source."
       actions={
         <>

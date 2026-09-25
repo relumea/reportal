@@ -17,7 +17,7 @@ const NAMESPACED_POINTER = "WIN_HANDLE";
 const FUNCTION_TYPE = "NP_CALLBACK";
 
 function panelTypes(page: Page) {
-  return panelByTitle(page, "Data Types");
+  return panelByTitle(page, "Data types");
 }
 
 test("the kind filter narrows the type list", async ({ page }) => {

@@ -28,11 +28,14 @@ eager because it is the landing route.  The shell's `Space` binding imports only
 loads with the function-detail route.  Search (`⌘K`), the keyboard cheatsheet
 and the notification centre load on first open, so their fetch and render code
 stay out of the entry chunk.  `isTypingTarget` lives in `keys.ts` so the
-shortcut layer does not pull `SearchModal` into the entry.  A `<Suspense>`
+shortcut layer does not pull `SearchModal` into the entry, and the lazy views'
+shared wording (`countOf`, `byteSize`, `sentenceLabel`, the sort and scope
+labels) lives in `labels.ts` rather than the shell-imported `constants.ts` and
+`components.tsx`.  A `<Suspense>`
 boundary around the route content shows the shell's `Loading` line while a
 view's chunk arrives, and a `ViewLoadBoundary` reports a failed chunk instead
 of leaving the pane blank.  A panel that starts folded shows a chevron before
-its title that turns when open, and a lazy panel (references, cross-references,
+its title that turns when open, and a lazy panel (cross-references,
 imports, strings, triage, report) says it is not loaded rather than drawing a
 loading skeleton before its first load (`PanelBody`'s `idle`).  A chunk the server no longer has (the SPA was
 rebuilt since the page loaded) reloads the page once, guarded by a
@@ -68,8 +71,8 @@ grows past its budget.
 
 The measurement that matters is the initial payload: before the split the SPA
 was one 617 kB (172 kB gzip) bundle that every route parsed; now the entry is
-about 51 kB (under a 64 kB smoke budget), the entry CSS about 41 kB (under a
-48 kB smoke budget; ~8.4 kB gzip), and the vendor chunk about 289 kB
+65,237 bytes (just under a 65,536-byte smoke budget), the entry CSS 48,854
+bytes (under a 49,152-byte smoke budget), and the vendor chunk about 289 kB
 (91 kB gzip, ~78 kB brotli), with the view and shell-dialog chunks behind them.
 On the wire that is what `ui.py` actually sends when compression is accepted;
 without it the browser downloads the raw sizes.  `make run`, `make ui` and
@@ -160,7 +163,7 @@ the link's accessible name; the preference is `SIDEBAR_STORAGE_KEY`), the
 per-tab view history on `Alt+Left`/`Alt+Right` and `{`/`}` (`HISTORY_STORAGE_KEY`
 in `sessionStorage`, fifty entries), `[`/`]` section cycling
 (`keys.cycleViewSection`) and `Space` flipping a function's Disassembly and
-Control Flow, or a diff's Disassembly and Decompilation
+Control flow, or a diff's Disassembly and Decompilation
 (`toggleFunctionCodeView`, which the mounted `CodeSection` or `DiffView`
 publishes).  The router's own back and forward keep working beside the in-app
 history, and `stepHistory` marks its navigation so recording does not push the
@@ -406,7 +409,14 @@ names the open one, so a reload or a shared link keeps it; a link carrying a
 memory jump or a data-type filter (`memory`, `search`, `kind`, ...) opens on
 Memory and types.  Every tab stays mounted and the closed ones are `hidden`,
 so a panel keeps its state across a switch, and a shortcut or header button
-that jumps to a panel (`focusPanel`) opens its tab first.
+that jumps to a panel (`focusPanel`) opens its tab first.  From a 1360px
+viewport short panels sit in pairs (`.panel-pair`: Binary details beside Detail
+coverage, Capabilities beside Protocols, Behavior beside Hardening, Crypto beside
+Source security scan, Detect beside Remediation, Tags beside Collections,
+Auto-unstrip beside Conversations); Security leads with the Threat report.  A
+binary whose format is known and is not PE (compared case-insensitively) shows
+no Exports, Relocations, Code signature or Loader mitigations panel.  A scan's
+methodology notes fold under "How this was derived" (`MethodNotes`).
 Header (name, sha256, format, arch, size, path, a display-name field and a
 notes field that `PATCH /api/binaries/<id>` saves, and the rebrew project its engine-backed
 panels read, or the `import-rebrew` command that sets one when the binary has
@@ -619,10 +629,11 @@ that carries a real name (a placeholder `fcn_…` names nothing), its similarity
 and an Apply name control (`POST /api/functions/<id>/apply-match`, mode
 `name`), and names the owning binary in its header.  It carries the same tabs, `tab` in the
 query: Code (the code panel and the decompilation side by side from a
-1600px viewport, stacked below it, then the signature), References,
+1360px viewport, stacked below it, each pane as tall as the window allows, then
+the signature), References,
 Matches and history, and AI and automation.  Panels: header (id, VA, a click-to-rename
 name, size, status, name_source, and the stored signature `prototype` with a
-copy control, or `Unknown signature` when none is stored; hover the
+copy control, or `unknown signature` on the id line when none is stored; hover the
 prototype for the return type, parameters and calling convention, with
 named types linking `?search=`);
 signature (auto-loads
@@ -637,7 +648,7 @@ toggle revealing the function's signature-edit history: one row per recorded
 version with its id, source, the named user and how long ago beside the timestamp, the prototype that version
 replaced, `created this signature` for the row whose previous state was nothing,
 and a Revert that restores it and refreshes the signature panel); the code panel
-(auto-loaded, a Disassembly / Control Flow toggle; Disassembly has a View select
+(auto-loaded, a Disassembly / Control flow toggle; Disassembly has a View select
 and a Reload: Listing (the default) renders the NASM text as address, bytes,
 mnemonic and operand columns, with in-function branch targets labelled
 `loc_<va>` and jumping there, a call or jump to a function the binary has
@@ -645,7 +656,7 @@ linking to it by name, and a click on a register or constant highlighting
 every use; NASM source and Hex show the engine's text as it came (the
 `format` query's `nasm` and `hex`; Listing reads `nasm`, the format the
 server caches for the stored-listing scans), and
-Control Flow renders the engine's basic-block graph through
+Control flow renders the engine's basic-block graph through
 `GET /api/functions/<id>/cfg` as an address-ordered block list, each block
 naming its address, byte size, instruction count and first/last instruction
 text, each outgoing edge a jump control that scrolls to and focuses the target
@@ -659,8 +670,10 @@ Decompile or Recompute, the code coloured by highlight.js's `c` grammar
 and `DWORD` added as types): keyword, type, string, number, preprocessor,
 function-name (a definition's name and the C library's functions; other calls
 stay plain) and comment colours from `listing.css`, under the backend that
-produced it); globals, callers and callees
-(three panels sharing one on-demand `references` load, each badged with its
+produced it; the code reads with current names, and each name the response's
+`links` maps opens that function, keeping its token colour); globals, callers and callees
+(three panels sharing one `references` load that starts when the tab opens,
+with one Reload on Globals, each badged with its
 count; a caller's `from_va` and name, and a callee's target and name, link
 to that function detail
 when the binary has one at that VA, an import-slot call with no resolved name
@@ -717,7 +730,7 @@ follows the run's state stream at `GET /api/conversations/<id>/events`.  The
 panel is explicit that a tool which changes the workspace waits for the
 analyst's approval and that a rejection is answered another way.
 
-The Data Types panel's neighbour is the Debug symbols panel: a file control, an
+The Data types panel's neighbour is the Debug symbols panel: a file control, an
 `Apply names and types` checkbox and `Ingest symbols`, which posts the file as
 `multipart/form-data` to `POST /api/binaries/<id>/symbols` and renders the
 result (kind, symbol count, type count, names applied) with the parse's own
@@ -748,7 +761,7 @@ one-string-per-line Replace list box, which posts to `PUT
 of it reads the derived payloads as labelled derivations and never calls an
 engine or a model on render.
 An AI
-section groups the AI rewrite, Summary, AI Comments, Type Suggestions and
+section groups the AI rewrite, Summary, AI comments, Type suggestions and
 Renames panels.  The AI rewrite panel is the whole-function rewrite: the
 lines with their origin (`original`/`rewritten`/`added`) in a table, a per-token
 override input beside its kind, uses and lines, a rating selector with its note,
@@ -781,7 +794,7 @@ reads `GET /api/secrets` and writes `PUT`/`DELETE /api/secrets/<name>`, and it
 never renders a value because no response carries one.  The signature panel carries a copy control: comma-separated target ids and
 Copy signature, posting to `POST /api/analyses/<id>/signatures/copy` with the
 panel's function as the source, and reporting how many targets took the copy.
-The binary detail's Agent Feedback panel lists every stored agent artifact with
+The binary detail's Agent feedback panel lists every stored agent artifact with
 its verdict and carries Up, Down, a Note control and Clear per row, over
 `GET`/`PUT /api/binaries/<id>/ratings[/<kind>]`; the Note control opens a
 verdict select prefilled with the stored verdict and a note input (capped at
@@ -826,8 +839,10 @@ pair (`source_arch` / `candidate_arch`, flagged when they differ).  A function
 with no recorded candidate is a `No match` row.  The binary picked without a
 function is kept in `?binary=`, so a binary's matches can be linked to.  Rows
 whose candidate carries a placeholder name are hidden until `Show N unnamed
-candidates` is checked: applying one names nothing.  The list ranks by Show
-Similarity, Show Confidence or Show Difference.  Clicking a
+candidates` is checked: applying one names nothing.  The list ranks by the Show
+group's Similarity, Confidence or Difference (the pressed one is `aria-pressed`);
+bands and name sources print in sentence case (`sentenceLabel`) while the
+values stay the API's.  Clicking a
 row (not a control) opens the diff; Ctrl/⌘-click opens it in a new
 tab.  Match settings opens the sheet the next run uses: the
 0-100 similarity floor, the 0-1 confidence floor, the most candidates kept per
@@ -866,7 +881,7 @@ software-type totals and any note the payload carries.  The bars read
 `GET /api/stats/series` and are computed from stored rows only, so the panel
 never runs an engine and cannot disagree with the lists beside it.
 
-The Data Types panel opens with a provenance strip (one toggle per label,
+The Data types panel opens with a provenance strip (one toggle per label,
 carrying the count over the whole model), a kind strip (one C tag per
 declaration kind, carrying the count, hover the full name, Type alias for
 typedef), a coloured source
@@ -907,7 +922,7 @@ the view reports.  The
 Renames panel lists each stored suggestion with a checkbox, its reason and
 confidence, an Apply selected / Apply all pair (with a rename-function toggle
 for a function-kind suggestion) and a Revert; an apply or a revert refreshes the
-decompilation panel and the function header.  The AI Decompilation panel
+decompilation panel and the function header.  The AI decompilation panel
 (`panels/PipelinePanel.tsx`) auto-loads the stored run through its stored-only
 `GET`, renders the step timeline (name, status, duration, skip reason,
 provided names), the predicted name with an Apply rename action, the summary,
@@ -1049,7 +1064,7 @@ command that supplies it, never a table of zeros.  `web/tests/benchmark.spec.ts`
 covers the empty reading, the partner select, the disabled-to-enabled run
 control and the rename half's missing input.
 
-The binary detail's Unpacked Files panel (`panels/BinaryPanels.tsx`) reads
+The binary detail's Unpacked files panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/unpack`, which answers the provenance of a binary
 reportal unpacked and `stored: false` for one it did not, and posts from its
 `Run unpack` control with a packer select (Auto, LZEXE, UPX; Auto is the
@@ -1084,7 +1099,7 @@ duration, the caps in force, the files the sample wrote and the stdout/stderr
 tails in code blocks.  With the opt-in off or no runner installed the button is
 disabled and the note says which of the two is missing.
 
-The binary detail's Debug Session panel (`panels/BinaryPanels.tsx`) reads
+The binary detail's Debug session panel (`panels/BinaryPanels.tsx`) reads
 `GET /api/binaries/<id>/debug-session/status` for the opt-in state, the
 backend in use and the sessions so far, carries a Probe button with the bounded
 seconds input that posts the probe, and renders the session: the status badge,
@@ -1333,7 +1348,8 @@ thread's title, scope and message count, creates one from a scope kind and id,
 and the thread route renders the messages, sends from its composer and deletes
 the thread; with no model configured it shows the same notice as the function
 AI tab and Send and Run agent are disabled with that reason.
-The Knowledge view (`views/KnowledgeView.tsx`, `#/knowledge`) picks a binary
+The Knowledge view (`views/KnowledgeView.tsx`, `#/knowledge`; from a 1360px
+viewport Scope sits beside Search and Ingest beside Documents) picks a binary
 from a scope select, ingests a document from a file input (posting `FormData`
 to `POST /api/binaries/<id>/documents`) or from the paste area (posting JSON to
 `POST /api/documents`), lists the scope's documents with their title, source,
@@ -1367,12 +1383,12 @@ when the selected backend reports `supports_query`, a text box that queries
 `assets/dist/index.html` is missing (`bun install` when `web/node_modules` is
 absent, then `bun run build` with `cwd=web`), seeds a scratch workspace under
 `.scratch/` (binary, rebrew context, analysis, functions from the notepad
-project, a stored PE metadata scan so the Binary Details panel renders its
+project, a stored PE metadata scan so the Binary details panel renders its
 identity, security flags and section table, a stored file-type detection so the
 File type panel renders a packed-section match,
 a stored structs scan plus a seeded editable data type whose members carry a
 bitfield and an explicit gap member and whose declared size is past their extent,
-so the Data Types panel renders both a stored recovery and a model row, the
+so the Data types panel renders both a stored recovery and a model row, the
 member shape controls and the size-vs-members warning, a stored
 function-triage scan so the Function triage panel renders a scored row and its
 model line, a stored match pair
@@ -1394,7 +1410,7 @@ and asserts each view's markers.  After the route loop it opens the global searc
 the documented `⌘K` shortcut (`check_search_modal`), waits for React to mount
 the dialog, types a query into the controlled input and asserts a result row.
 It then switches the seeded loop function's code panel to its control-flow view
-(`check_cfg_view`), which clicks the Disassembly / Control Flow toggle, waits
+(`check_cfg_view`), which clicks the Disassembly / Control flow toggle, waits
 for the graph's markers (the panel title, the block summary and a labelled back
 edge) and activates an edge's jump control to assert the focus landed on the
 block it names; the loop function is pinned by VA
@@ -1449,7 +1465,7 @@ with its focus return, the rendered set matching the registered one, no binding
 firing inside a text field, `/` focusing the view's filter box, `j`/`k` walking
 a table's rows and the `g` prefix jumping to a view), the threat report's
 software-type badge and score meter with its MITRE link, the function page's
-control-flow view (the Disassembly / Control Flow toggle swapping the panel,
+control-flow view (the Disassembly / Control flow toggle swapping the panel,
 a block's address, byte size, instruction count and labelled instruction text,
 an edge's labelled jump control moving focus to its target block), the function
 page's cross-references panel (its on-demand engine scan settling on the

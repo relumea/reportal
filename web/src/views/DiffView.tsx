@@ -94,7 +94,7 @@ export function DiffView({
     }
   };
   // Hosted Space on Match/Diff toggles Disassembly and AI decompilation.
-  // CodeSection publishes the same seam for Disassembly / Control Flow.
+  // CodeSection publishes the same seam for Disassembly / Control flow.
   useEffect(() => {
     setCodeViewSwitch(() =>
       setKind((current) => (current === "disasm" ? "decomp" : "disasm")),

@@ -64,6 +64,13 @@ function opensMemory(query: Record<string, string>): boolean {
   return MEMORY_TAB_KEYS.some((key) => key in query);
 }
 
+/** True when the binary's format is known and is not PE (in any case: an import stores `PE`); an unknown format keeps every panel. */
+function notPe(binary: Binary): boolean {
+  const format = (binary.format_override || binary.format).toLowerCase();
+
+  return format !== "" && format !== "pe";
+}
+
 export function BinaryDetail({
   binaryId,
   query = {},
@@ -92,12 +99,14 @@ export function BinaryDetail({
                 label: "Overview",
                 content: (
                   <>
+                    <div className="panel-pair">
+                      <IdentityPanel binaryId={binary.id} />
+                      <DetailCoveragePanel binaryId={binary.id} />
+                    </div>
                     <BinaryAnalysesPanel binaryId={binary.id} />
-                    <IdentityPanel binaryId={binary.id} />
+                    <CoverageMapPanel binaryId={binary.id} />
                     <HashesPanel binaryId={binary.id} />
                     <SectionsPanel binaryId={binary.id} basePath={`/binaries/${binary.id}`} />
-                    <CoverageMapPanel binaryId={binary.id} />
-                    <DetailCoveragePanel binaryId={binary.id} />
                     <ScansPanel binaryId={binary.id} />
                   </>
                 ),
@@ -108,9 +117,15 @@ export function BinaryDetail({
                 content: (
                   <>
                     <ImportsPanel binaryId={binary.id} />
-                    <ExportsPanel binaryId={binary.id} />
-                    <RelocationsPanel binaryId={binary.id} />
-                    <CodeSignaturePanel binaryId={binary.id} />
+                    {/* The export table, relocation directory and Authenticode
+                        signature are PE structures; another format has none. */}
+                    {notPe(binary) ? null : (
+                      <>
+                        <ExportsPanel binaryId={binary.id} />
+                        <RelocationsPanel binaryId={binary.id} />
+                        <CodeSignaturePanel binaryId={binary.id} />
+                      </>
+                    )}
                     <DebugPanel binaryId={binary.id} />
                     <PackerPanel binaryId={binary.id} />
                     <UnpackedFilesPanel binaryId={binary.id} />
@@ -134,19 +149,28 @@ export function BinaryDetail({
                 label: "Security",
                 content: (
                   <>
-                    <SecurityMitigationsPanel binaryId={binary.id} />
-                    <SecurityPanel binaryId={binary.id} />
-                    <SecretsPanel binaryId={binary.id} />
-                    <CryptoPanel binaryId={binary.id} />
-                    <ProtocolsPanel binaryId={binary.id} />
                     <ThreatPanel binaryId={binary.id} />
+                    <div className="panel-pair">
+                      <CapabilitiesPanel binaryId={binary.id} />
+                      <ProtocolsPanel binaryId={binary.id} />
+                    </div>
+                    <div className="panel-pair">
+                      <BehaviorPanel binaryId={binary.id} />
+                      <HardeningPanel binaryId={binary.id} />
+                    </div>
                     <AttackSurfacePanel binaryId={binary.id} />
-                    <BehaviorPanel binaryId={binary.id} />
-                    <CapabilitiesPanel binaryId={binary.id} />
-                    <HardeningPanel binaryId={binary.id} />
+                    <SecretsPanel binaryId={binary.id} />
+                    <div className="panel-pair">
+                      <CryptoPanel binaryId={binary.id} />
+                      <SecurityPanel binaryId={binary.id} />
+                    </div>
+                    {/* DllCharacteristics flags: a PE header field. */}
+                    {notPe(binary) ? null : <SecurityMitigationsPanel binaryId={binary.id} />}
                     <SandboxPanel binaryId={binary.id} />
-                    <DetectPanel binaryId={binary.id} />
-                    <RemediationPanel binaryId={binary.id} />
+                    <div className="panel-pair">
+                      <DetectPanel binaryId={binary.id} />
+                      <RemediationPanel binaryId={binary.id} />
+                    </div>
                   </>
                 ),
               },
@@ -169,20 +193,24 @@ export function BinaryDetail({
                 label: "Review",
                 content: (
                   <>
-                    <TagsPanel binaryId={binary.id} />
-                    <BinaryCollectionsPanel binaryId={binary.id} />
+                    <div className="panel-pair">
+                      <TagsPanel binaryId={binary.id} />
+                      <BinaryCollectionsPanel binaryId={binary.id} />
+                    </div>
                     <CommentsPanel scopeKind="binary" scopeId={binary.id} />
-                    <TriagePanel binaryId={binary.id} />
                     <FunctionTriagePanel binaryId={binary.id} />
+                    <TriagePanel binaryId={binary.id} />
                     <ReportPanel binaryId={binary.id} />
+                    <div className="panel-pair">
+                      <UnstripPanel binaryId={binary.id} />
+                      <Panel
+                        title="Conversations"
+                        subtitle="Ask about this binary; answers draw on what the workspace stores for it."
+                      >
+                        <ChatAboutButton scopeKind="binary" scopeId={binary.id} />
+                      </Panel>
+                    </div>
                     <ArtifactRatingsPanel binaryId={binary.id} />
-                    <UnstripPanel binaryId={binary.id} />
-                    <Panel
-                      title="Conversations"
-                      subtitle="Ask about this binary; answers draw on what the workspace stores for it."
-                    >
-                      <ChatAboutButton scopeKind="binary" scopeId={binary.id} />
-                    </Panel>
                   </>
                 ),
               },

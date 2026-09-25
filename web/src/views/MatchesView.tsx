@@ -21,6 +21,7 @@ import {
   Toolbar,
   hex,
 } from "../components";
+import { sentenceLabel } from "../labels";
 import {
   DEFAULT_INCLUDE_SELF,
   DEFAULT_MATCH_METRIC,
@@ -166,7 +167,7 @@ function QualityBar({
               onClick={() => onSelect(selected === band ? "" : band)}
             >
               <span className="quality-swatch" aria-hidden="true" />
-              {band} <span className="num">{count}</span>
+              {sentenceLabel(band)} <span className="num">{count}</span>
             </button>
           );
         })}
@@ -204,7 +205,7 @@ function SourceBar({
               onClick={() => onSelect(selected === label ? "" : label)}
             >
               <span className="quality-swatch" aria-hidden="true" />
-              {label} <span className="num">{count}</span>
+              {sentenceLabel(label)} <span className="num">{count}</span>
             </button>
           );
         })}
@@ -894,18 +895,19 @@ export function MatchesView({
           ) : (
             <>
               <Toolbar>
-                {MATCH_METRICS.map((value) => (
-                  <Button
-                    key={value}
-                    tone={metric === value ? "primary" : "default"}
-                    size="sm"
-                    onClick={() => setMetric(value)}
-                  >
-                    {value === "difference"
-                      ? "Show Difference"
-                      : `Show ${MATCH_METRIC_LABELS[value]}`}
-                  </Button>
-                ))}
+                <div className="code-view-toggle" role="group" aria-label="Show">
+                  {MATCH_METRICS.map((value) => (
+                    <Button
+                      key={value}
+                      tone={metric === value ? "primary" : "default"}
+                      size="sm"
+                      aria-pressed={metric === value}
+                      onClick={() => setMetric(value)}
+                    >
+                      {value === "difference" ? "Difference" : MATCH_METRIC_LABELS[value]}
+                    </Button>
+                  ))}
+                </div>
                 <span className="muted">
                   {recorded.length} candidate{recorded.length === 1 ? "" : "s"} recorded
                 </span>
@@ -1092,7 +1094,7 @@ export function MatchesView({
                           {row.candidate_name} @ {hex(row.candidate_va)}
                         </a>
                       ) : (
-                        <Badge>No match</Badge>
+                        NA
                       ),
                   },
                   {
@@ -1115,7 +1117,7 @@ export function MatchesView({
                       </Badge>
                     ),
                   },
-                  { label: "Band", render: (row) => row.band },
+                  { label: "Band", render: (row) => sentenceLabel(row.band) },
                   {
                     label: "Arch",
                     render: (row) =>

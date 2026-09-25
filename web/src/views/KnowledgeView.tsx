@@ -13,8 +13,8 @@ import {
   Muted,
   Panel,
   Toolbar,
-  countOf,
 } from "../components";
+import { countOf } from "../labels";
 import { DEFAULT_KNOWLEDGE_LIMIT } from "../constants";
 import { KnowledgeResults } from "../panels/KnowledgePanel";
 import type { BinaryOption, Document, KnowledgeConfig, KnowledgeSearch } from "../types";
@@ -161,189 +161,193 @@ export function KnowledgeView(): ReactNode {
 
   return (
     <>
-      <Panel
-        title="Scope"
-        subtitle="Ingestion and search cover one binary's documents."
-        actions={
-          binaries.length > 0 ? (
-            <Field label="Binary">
-              <select value={activeId} onChange={(event) => setSelectedId(event.target.value)}>
-                {binaries.map((binary) => (
-                  <option key={binary.id} value={binary.id}>
-                    {binary.name} (#{binary.id})
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : null
-        }
-      >
-        {binariesResult.error ? (
-          <ErrorNote error={binariesResult.error} onRetry={binariesResult.reload} />
-        ) : null}
-        {binaries.length === 0 ? (
-          <EmptyState>
-            No binaries yet. Upload one to scope knowledge to it.
-          </EmptyState>
-        ) : null}
-      </Panel>
-      <Panel
-        title="Ingest"
-        subtitle="Upload a file, paste a note, or fetch a URL when remote ingestion is enabled."
-        actions={
-          <Button
-            tone="primary"
-            pending={busy === "upload"}
-            disabled={binaryId === null}
-            onClick={() => void upload()}
-          >
-            Upload
-          </Button>
-        }
-      >
-        <Toolbar>
-          <Field label="Title">
-            <input
-              placeholder="optional"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </Field>
-          <Field label="File">
-            <input type="file" name="file" ref={fileRef} />
-          </Field>
-        </Toolbar>
-        <form
-          className="stack"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void saveNote();
-          }}
+      <div className="panel-pair">
+        <Panel
+          title="Scope"
+          subtitle="Ingestion and search cover one binary's documents."
+          actions={
+            binaries.length > 0 ? (
+              <Field label="Binary">
+                <select value={activeId} onChange={(event) => setSelectedId(event.target.value)}>
+                  {binaries.map((binary) => (
+                    <option key={binary.id} value={binary.id}>
+                      {binary.name} (#{binary.id})
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null
+          }
         >
-          <Toolbar>
-            <Field label="Source">
-              <input
-                placeholder="optional"
-                value={source}
-                onChange={(event) => setSource(event.target.value)}
-              />
-            </Field>
+          {binariesResult.error ? (
+            <ErrorNote error={binariesResult.error} onRetry={binariesResult.reload} />
+          ) : null}
+          {binaries.length === 0 ? (
+            <EmptyState>
+              No binaries yet. Upload one to scope knowledge to it.
+            </EmptyState>
+          ) : null}
+        </Panel>
+        <Panel
+          title="Search"
+          subtitle="Semantic and keyword search over this scope's documents."
+          actions={
+            <Toolbar>
+              <Field label="Query" hint="Enter searches">
+                <input
+                  type="search"
+                  placeholder="meaning or keyword"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && query.trim()) setSubmitted(query);
+                  }}
+                />
+              </Field>
+              <Button tone="primary" disabled={!query.trim()} onClick={() => setSubmitted(query)}>
+                Search
+              </Button>
+            </Toolbar>
+          }
+        >
+          {searchResult.error ? (
+            <ErrorNote error={searchResult.error} onRetry={searchResult.reload} />
+          ) : hits ? (
+            <KnowledgeResults hits={hits} />
+          ) : (
+            <Muted>
+              {documents?.length === 0
+                ? "Nothing to search yet: this scope holds no documents."
+                : "Results list here, best match first."}
+            </Muted>
+          )}
+        </Panel>
+      </div>
+      <div className="panel-pair">
+        <Panel
+          title="Ingest"
+          subtitle="Upload a file, paste a note, or fetch a URL when remote ingestion is enabled."
+          actions={
             <Button
               tone="primary"
-              type="submit"
-              pending={busy === "note"}
-              disabled={binaryId === null || !text.trim()}
+              pending={busy === "upload"}
+              disabled={binaryId === null}
+              onClick={() => void upload()}
             >
-              Save note
+              Upload
             </Button>
+          }
+        >
+          <Toolbar>
+            <Field label="Title">
+              <input
+                placeholder="optional"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </Field>
+            <Field label="File">
+              <input type="file" name="file" ref={fileRef} />
+            </Field>
           </Toolbar>
-          <textarea
-            className="chat-input"
-            aria-label="Note text"
-            placeholder="Paste a note to store in this scope"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-          />
-        </form>
-        {remoteEnabled ? (
           <form
-            className="toolbar"
+            className="stack"
             onSubmit={(event) => {
               event.preventDefault();
-              void fetchFromUrl();
+              void saveNote();
             }}
           >
-            <Field label="URL">
-              <input
-                type="url"
-                placeholder="https://example.com/notes.md"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-              />
-            </Field>
-            <Button type="submit" pending={busy === "url"} disabled={!url.trim()}>
-              Fetch URL
-            </Button>
+            <Toolbar>
+              <Field label="Source">
+                <input
+                  placeholder="optional"
+                  value={source}
+                  onChange={(event) => setSource(event.target.value)}
+                />
+              </Field>
+              <Button
+                tone="primary"
+                type="submit"
+                pending={busy === "note"}
+                disabled={binaryId === null || !text.trim()}
+              >
+                Save note
+              </Button>
+            </Toolbar>
+            <textarea
+              className="chat-input"
+              aria-label="Note text"
+              placeholder="Paste a note to store in this scope"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+            />
           </form>
-        ) : (
-          <Muted>URL ingestion is turned off for this workspace. An administrator can turn it on in the server configuration.</Muted>
-        )}
-        <Muted live>{message}</Muted>
-        {actionError ? <ErrorNote error={actionError} /> : null}
-      </Panel>
-      <Panel title="Documents" subtitle="Documents stored in this scope, newest first.">
-        {documentsResult.error ? (
-          <ErrorNote error={documentsResult.error} onRetry={documentsResult.reload} />
-        ) : null}
-        {documents === undefined ? (
-          <Loading label="Loading documents" />
-        ) : (
-          <DataTable
-            columns={[
-              { label: "ID", key: "id", numeric: true },
-              { label: "Title", key: "title" },
-              { label: "Source", key: "source", mono: true },
-              { label: "Size", key: "size", numeric: true },
-              { label: "Chunks", key: "chunk_count", numeric: true },
-              { label: "Created", key: "created_at", mono: true },
-              {
-                label: "Actions",
-                render: (row) => (
-                  <div className="actions-cell">
-                    <ConfirmButton
-                      label="Delete"
-                      message={`Delete document "${row.title || `#${row.id}`}"?`}
-                      pending={busy === `delete-${row.id}`}
-                      onConfirm={() => void remove(row.id)}
-                    />
-                  </div>
-                ),
-              },
-            ]}
-            rows={documents}
-            rowKey={(row) => row.id}
-            empty={
-              <EmptyState>
-                No documents in this scope. Upload one or paste a note in the Ingest panel above.
-              </EmptyState>
-            }
-          />
-        )}
-      </Panel>
-      <Panel
-        title="Search"
-        subtitle="Semantic and keyword search over this scope's documents."
-        actions={
-          <Toolbar>
-            <Field label="Query" hint="Enter searches">
-              <input
-                type="search"
-                placeholder="meaning or keyword"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && query.trim()) setSubmitted(query);
-                }}
-              />
-            </Field>
-            <Button tone="primary" disabled={!query.trim()} onClick={() => setSubmitted(query)}>
-              Search
-            </Button>
-          </Toolbar>
-        }
-      >
-        {searchResult.error ? (
-          <ErrorNote error={searchResult.error} onRetry={searchResult.reload} />
-        ) : hits ? (
-          <KnowledgeResults hits={hits} />
-        ) : (
-          <Muted>
-            {documents?.length === 0
-              ? "Nothing to search yet: this scope holds no documents."
-              : "Results list here, best match first."}
-          </Muted>
-        )}
-      </Panel>
+          {remoteEnabled ? (
+            <form
+              className="toolbar"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void fetchFromUrl();
+              }}
+            >
+              <Field label="URL">
+                <input
+                  type="url"
+                  placeholder="https://example.com/notes.md"
+                  value={url}
+                  onChange={(event) => setUrl(event.target.value)}
+                />
+              </Field>
+              <Button type="submit" pending={busy === "url"} disabled={!url.trim()}>
+                Fetch URL
+              </Button>
+            </form>
+          ) : (
+            <Muted>URL ingestion is turned off for this workspace. An administrator can turn it on in the server configuration.</Muted>
+          )}
+          <Muted live>{message}</Muted>
+          {actionError ? <ErrorNote error={actionError} /> : null}
+        </Panel>
+        <Panel title="Documents" subtitle="Documents stored in this scope, newest first.">
+          {documentsResult.error ? (
+            <ErrorNote error={documentsResult.error} onRetry={documentsResult.reload} />
+          ) : null}
+          {documents === undefined ? (
+            <Loading label="Loading documents" />
+          ) : (
+            <DataTable
+              columns={[
+                { label: "ID", key: "id", numeric: true },
+                { label: "Title", key: "title" },
+                { label: "Source", key: "source", mono: true },
+                { label: "Size", key: "size", numeric: true },
+                { label: "Chunks", key: "chunk_count", numeric: true },
+                { label: "Created", key: "created_at", mono: true },
+                {
+                  label: "Actions",
+                  render: (row) => (
+                    <div className="actions-cell">
+                      <ConfirmButton
+                        label="Delete"
+                        message={`Delete document "${row.title || `#${row.id}`}"?`}
+                        pending={busy === `delete-${row.id}`}
+                        onConfirm={() => void remove(row.id)}
+                      />
+                    </div>
+                  ),
+                },
+              ]}
+              rows={documents}
+              rowKey={(row) => row.id}
+              empty={
+                <EmptyState>
+                  No documents in this scope. Upload one or paste a note in the Ingest panel.
+                </EmptyState>
+              }
+            />
+          )}
+        </Panel>
+      </div>
     </>
   );
 }

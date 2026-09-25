@@ -152,7 +152,7 @@ CFG_LOOP_FUNCTION_VA = 0x01001AE3
 # Markers the control-flow view carries once the Disassembly / Control flow
 # toggle is switched to the graph: the panel title, the summary line's noun and
 # the labelled back edge CFG_LOOP_FUNCTION_VA graphs.
-CFG_MARKERS: tuple[str, ...] = ("Control Flow", "basic blocks", "back edge")
+CFG_MARKERS: tuple[str, ...] = ("Control flow", "basic blocks", "back edge")
 
 # Proposed name the seeded unstrip scan carries.  The Auto-unstrip panel
 # auto-loads the stored proposals through its stored-only GET, so pre-seeding
@@ -660,7 +660,6 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("One row per analysis",),
             ("View log",),
             ("notepad.exe",),
-            ("records who changed what",),
             # The owner and scope columns and the workspace filter.
             ("Workspace",),
             ("Seen by",),
@@ -678,7 +677,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         (
             ("notepad.exe",),
             ("Binary #",),
-            ("Binary Details",),
+            ("Binary details",),
             # Identity card: the seeded PE type and resource count.
             ("number of resources",),
             # Hashes card: a raw-file digest the engine bundle carries.
@@ -701,14 +700,14 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Coverage map",),
             ("cells carry a stored function",),
             # Code signature card.
-            ("Code Signature",),
+            ("Code signature",),
             ("not signed",),
             # Packer card: verdict, entropy meter and the file-type signal.
-            ("Packer Detection",),
+            ("Packer detection",),
             (PACKER_VERDICT,),
             ("Peak section entropy",),
             (FILETYPE_SIGNAL,),
-            ("Data Types",),
+            ("Data types",),
             (SMOKE_TYPE_NAME,),
             # The editable type's bitfield member, its explicit gap member and
             # the size-vs-members warning the panel renders.
@@ -720,7 +719,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Create from declarations",),
             ("Update from declarations",),
             # Debug symbol ingestion: the file control and its apply toggle.
-            ("Debug Symbols",),
+            ("Debug symbols",),
             ("Ingest symbols",),
             # The header menu that downloads the stored renames as decompiler scripts.
             ("Export renames",),
@@ -736,7 +735,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Identify libraries",),
             # Unpacked files panel: its rebuild control and the packer select
             # that leaves the packer to the file's own stub.
-            ("Unpacked Files",),
+            ("Unpacked files",),
             ("Run unpack",),
             ("Auto",),
             # The benchmark panel: its partner select and run control.  The
@@ -750,8 +749,8 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Rename proposals",),
             ("reportal symbols",),
             # Analyst feedback on the stored agent artifacts.
-            ("Agent Feedback",),
-            ("Function Triage",),
+            ("Agent feedback",),
+            ("Function triage",),
             (FUNCTION_TRIAGE_SUMMARY,),
             ("Crypto",),
             ("Security",),
@@ -767,7 +766,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("reachable",),
             ("Secrets",),
             ("Protocols",),
-            ("Threat Report",),
+            ("Threat report",),
             (THREAT_IOC_URL,),
             # The seeded IPv6 literal renders in its own IOC group.
             ("ipv6",),
@@ -801,10 +800,10 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Related binaries",),
             # Composition panel: the computed rollup against the registered copy
             # and the name source and quality meters.
-            ("Composition Analysis",),
-            ("Match Quality",),
-            ("Strong Match",),
-            ("Function Name Sources",),
+            ("Composition analysis",),
+            ("Match quality",),
+            ("Strong match",),
+            ("Function name sources",),
             (UNSTRIP_PROPOSED_NAME,),
             ("Download PDF",),
             ("Chat about this",),
@@ -844,7 +843,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             # The per-function extras: the call-site scan, the per-function
             # capability classification, the analyst strings and edges and the
             # canonical-name action.
-            ("Indirect Call Sites",),
+            ("Indirect call sites",),
             ("Capabilities",),
             ("Declare callee",),
             ("Apply canonical name",),
@@ -882,7 +881,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
             ("Match / Diff",),
             ("Settings",),
             ("Match",),
-            ("Bulk Transfer",),
+            ("Bulk transfer",),
             ("Matches are recorded per binary.",),
         ),
     ),
@@ -980,7 +979,7 @@ ROUTE_CHECKS: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
         "#/journal",
         (("Journal",), (JOURNAL_ACTION,), (JOURNAL_DESCRIPTION,), ("Revert entry",)),
     ),
-    ("search", "#/search", (("Search binaries, functions and collections.",),)),
+    ("search", "#/search", (("Search binaries, functions and collections by name",),)),
     (
         "docs",
         "#/docs",
@@ -1903,7 +1902,7 @@ def check_search_modal(browser: str, port: int) -> bool:
 # then activate the first edge's jump control and report where the focus landed.
 _SWITCH_TO_CFG_SCRIPT = """(() => {
   const buttons = Array.from(document.querySelectorAll('.code-view-toggle button'));
-  const target = buttons.find((button) => button.textContent.trim() === 'Control Flow');
+  const target = buttons.find((button) => button.textContent.trim() === 'Control flow');
   if (!target) return false;
   target.click();
   return true;

@@ -17,14 +17,14 @@ test("the threat report renders the software type, the score and the MITRE link"
   page,
 }) => {
   await page.goto(`/#/binaries/${state.ids.binary_id}?tab=security`);
-  const threat = panelByTitle(page, "Threat Report");
+  const threat = panelByTitle(page, "Threat report");
 
   const verdict = threat.locator(".verdict");
   await expect(verdict.locator(".badge", { hasText: SEEDED_TYPE })).toBeVisible();
   await expect(verdict.getByText("signals (", { exact: false })).toBeVisible();
 
   const meter = threat.locator(".meter");
-  await expect(meter.getByText("Threat score", { exact: true })).toBeVisible();
+  await expect(meter.getByText("Threat score (heuristic)", { exact: true })).toBeVisible();
   await expect(meter.locator(".meter-seg[data-lit]").first()).toBeVisible();
 
   // The score never arrives bare: every point is named with its evidence.
@@ -32,10 +32,11 @@ test("the threat report renders the software type, the score and the MITRE link"
   await expect(contributions.getByText("packing", { exact: true })).toBeVisible();
   await expect(contributions.getByText("indicators", { exact: true })).toBeVisible();
 
-  // reportal's own heuristic, said in the rendered output (the raw JSON below
-  // the panel repeats it, so the note is matched as the verdict's paragraph).
+  // reportal's own heuristic, said in the rendered output: the score's label
+  // names it, and the derivation is one click away under the verdict.
+  await threat.getByText("How this was derived").first().click();
   await expect(
-    threat.locator("p.muted", { hasText: "a deterministic heuristic over the stored scans" }).first(),
+    threat.locator(".method-notes li", { hasText: "a deterministic heuristic over the stored scans" }).first(),
   ).toBeVisible();
 
   // The stored row keeps a plain technique id; only the rendered output links.
@@ -43,7 +44,7 @@ test("the threat report renders the software type, the score and the MITRE link"
   await expect(technique).toBeVisible();
   await expect(technique).toHaveText(/^T\d{4}$/);
 
-  // Hosted Threat Report carries its YARA rule, read from the remediation scan.
+  // Hosted Threat report carries its YARA rule, read from the remediation scan.
   await expect(threat.getByText(/Yara Rule \(notepad_demo\)/)).toBeVisible();
 
   // Hosted IOC rows carry a copy control on the value.
@@ -55,7 +56,7 @@ test("the threat report renders the software type, the score and the MITRE link"
   // Hosted agent cards rate the result in the header: Up toggles on, Up again
   // clears it, and the suite reverts the journal entry it wrote.
   const panel = page.locator(".panel").filter({
-    has: page.getByRole("heading", { name: "Threat Report", exact: true }),
+    has: page.getByRole("heading", { name: "Threat report", exact: true }),
   });
   const up = panel.getByRole("button", { name: "Up", exact: true });
   await expect(up).toHaveAttribute("aria-pressed", "false");

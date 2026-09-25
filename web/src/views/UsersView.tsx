@@ -28,8 +28,8 @@ import {
   Note,
   Panel,
   Toolbar,
-  countOf,
 } from "../components";
+import { countOf } from "../labels";
 import { ROLES } from "../constants";
 import { resetSessionCache } from "../panelCache";
 import type {

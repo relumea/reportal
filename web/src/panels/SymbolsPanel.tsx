@@ -2,7 +2,17 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 
 import { api } from "../api";
-import { Button, EmptyState, ErrorNote, Loading, Muted, Panel, Toolbar, countOf } from "../components";
+import {
+  Button,
+  EmptyState,
+  ErrorNote,
+  Loading,
+  Muted,
+  Panel,
+  Stamp,
+  Toolbar,
+} from "../components";
+import { countOf } from "../labels";
 import { panelKey, refreshPanel, usePanel } from "../panelCache";
 import type { SymbolFile, SymbolFileList } from "../types";
 
@@ -67,7 +77,7 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
 
   return (
     <Panel
-      title="Debug Symbols"
+      title="Debug symbols"
       subtitle="A PDB or an ELF/DWARF file: its names are applied to matching functions and its types are added to the type model."
       collapsible
       actions={
@@ -109,7 +119,8 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
         )
       ) : (
         <>
-          <table className="table" aria-label="Stored symbol files">
+          <div className="table-scroll">
+          <table className="data-table" aria-label="Stored symbol files">
             <thead>
               <tr>
                 <th>Kind</th>
@@ -127,7 +138,9 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
                   <td className="mono">{row.symbols}</td>
                   <td className="mono">{row.types}</td>
                   <td className="mono">{row.applied}</td>
-                  <td className="muted">{row.created_at}</td>
+                  <td className="muted">
+                    <Stamp at={row.created_at} />
+                  </td>
                   <td>
                     <a
                       className="btn btn-ghost btn-sm"
@@ -146,6 +159,7 @@ export function SymbolsPanel({ binaryId }: { binaryId: number }): ReactNode {
               ))}
             </tbody>
           </table>
+          </div>
           {noteList(entry.data.symbol_files[0]?.parsed?.notes ?? [])}
           <Muted>
             A PDB reader recovers names only; the ELF/DWARF reader recovers names and aggregate

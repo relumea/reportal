@@ -16,9 +16,14 @@ import {
   hex,
   useViewTitle,
 } from "../components";
+import { sentenceLabel } from "../labels";
 import { MissingNote, NameEditor } from "../detailParts";
 import { Icon } from "../icons";
-import { SIGNATURE_NOT_FOUND, isPlaceholderName, nameSourceLabel } from "../constants";
+import {
+  SIGNATURE_NOT_FOUND,
+  isPlaceholderName,
+  nameSourceLabel,
+} from "../constants";
 import {
   AiSection,
   CodeSection,
@@ -169,10 +174,8 @@ function FunctionHeader({ fn, onRenamed }: { fn: FunctionRow; onRenamed: () => v
         {renameError ? <ErrorNote error={renameError} /> : null}
         <p className="detail-subtitle">
           Function #{fn.id} · <CopyValue value={hex(fn.va)} /> · {fn.size} bytes
+          {unknownSignature ? <span className="detail-prose"> · unknown signature</span> : null}
         </p>
-        {unknownSignature ? (
-          <p className="detail-subtitle detail-prose">Unknown signature</p>
-        ) : null}
         {prototype ? (
           <p className="detail-subtitle">
             <CopyValue value={prototype} />
@@ -213,20 +216,12 @@ function FunctionHeader({ fn, onRenamed }: { fn: FunctionRow; onRenamed: () => v
         ) : null}
         <div className="detail-facts">
           <StatusCell status={fn.status} />
-          <Badge mono>{nameSourceLabel(fn.name, fn.name_source)}</Badge>
+          <Badge mono>{sentenceLabel(nameSourceLabel(fn.name, fn.name_source))}</Badge>
           <a className="badge badge-mono" href={`#/binaries/${fn.binary_id}`}>
             {binary?.state === "ready" ? binary.data.name : `binary #${fn.binary_id}`}
           </a>
         </div>
         <BestMatch fn={fn} onApplied={onRenamed} />
-      </div>
-      <div className="panel-actions">
-        <a className="btn btn-ghost" href={`#/binaries/${fn.binary_id}`}>
-          Binary
-        </a>
-        <a className="btn btn-ghost" href={`#/binaries/${fn.binary_id}/functions`}>
-          Function list
-        </a>
       </div>
     </header>
   );

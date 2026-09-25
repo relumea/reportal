@@ -2114,23 +2114,25 @@ def _tool_get_decompilation(arguments: dict[str, Any]) -> dict[str, Any]:
     named = _arg_optional_bool(arguments, "named", False)
     with contextlib.closing(_open()) as conn:
         function = _require_function(conn, function_id)
+        analysis_id = int(function["analysis_id"])
         stored = store.get_decompilation(conn, function_id)
         if stored is not None:
             return {
                 "va": int(function["va"]),
                 "backend": str(stored["backend"]),
                 "named": bool(stored["named"]),
-                "code": str(stored["code"]),
+                "code": lineage.named_decompilation(conn, analysis_id, str(stored["code"])),
             }
         binary_id = int(function["binary_id"])
         project_dir = _project_context(conn, binary_id)
         va = int(function["va"])
         result = _run_engine(lambda: _engine().decompile(project_dir, va, backend, named))
+        code = lineage.named_decompilation(conn, analysis_id, str(result.get("code") or ""))
     return {
         "va": va,
         "backend": str(result.get("backend") or backend),
         "named": named,
-        "code": str(result.get("code") or ""),
+        "code": code,
     }
 
 
@@ -7092,7 +7094,8 @@ def builtin_tools() -> tuple[Tool, ...]:
         Tool(
             "get_decompilation",
             "Return a function's stored decompilation, else compute one live through"
-            " rebrew without storing it.",
+            " rebrew without storing it; placeholder names of renamed functions read as"
+            " their current names.",
             _object(
                 {
                     "function_id": _FUNCTION_ID,

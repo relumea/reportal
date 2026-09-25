@@ -5061,23 +5061,39 @@ def function_decompilation(request: Request, function_id: int) -> Response:
         stored = store.get_decompilation(conn, function_id)
         if stored is not None:
             return json_response(
-                {
-                    "va": int(function["va"]),
-                    "backend": str(stored["backend"]),
-                    "named": bool(stored["named"]),
-                    "code": str(stored["code"]),
-                }
+                _decompilation_payload(
+                    conn,
+                    function,
+                    backend=str(stored["backend"]),
+                    named=bool(stored["named"]),
+                    code=str(stored["code"]),
+                )
             )
         va, project_dir = _decompilation_context(conn, function)
         result = _run_decompiler(project_dir, va, backend, named)
-    return json_response(
-        {
-            "va": va,
-            "backend": str(result.get("backend") or backend),
-            "named": named,
-            "code": str(result.get("code") or ""),
-        }
-    )
+        payload = _decompilation_payload(
+            conn,
+            function,
+            backend=str(result.get("backend") or backend),
+            named=named,
+            code=str(result.get("code") or ""),
+        )
+    return json_response(payload)
+
+
+def _decompilation_payload(
+    conn: sqlite3.Connection, function: dict[str, Any], *, backend: str, named: bool, code: str
+) -> dict[str, Any]:
+    """A decompilation response: the code with current names, and the calls it can link."""
+    analysis_id = int(function["analysis_id"])
+    shown = lineage.named_decompilation(conn, analysis_id, code)
+    return {
+        "va": int(function["va"]),
+        "backend": backend,
+        "named": named,
+        "code": shown,
+        "links": lineage.decompilation_links(conn, analysis_id, int(function["id"]), shown),
+    }
 
 
 @router.post("/api/functions/{function_id}/decompilation")
@@ -5121,7 +5137,8 @@ def store_function_decompilation(
                     key={"function_id": function_id},
                     description=f"stored the decompilation of function {function_id}",
                 )
-    return json_response(log.attach({"va": va, "backend": resolved, "named": named, "code": code}))
+        payload = _decompilation_payload(conn, function, backend=resolved, named=named, code=code)
+    return json_response(log.attach(payload))
 
 
 # ── Diff view ──────────────────────────────────────────────────────

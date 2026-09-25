@@ -377,6 +377,9 @@ def summarize_functions(
                 "summary": summary,
                 "capabilities": capabilities,
                 "method": method,
+                # The heuristic's signals on their own, for a reader that shows the
+                # row's name, size and status beside them; an LLM answer has none.
+                "reasons": [] if using_llm else list(row["reasons"]),
             }
         )
 

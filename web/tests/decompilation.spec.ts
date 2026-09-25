@@ -67,3 +67,45 @@ test("each C token class gets its highlight.js span and markup stays text", asyn
   const plainColour = await source.evaluate((node) => getComputedStyle(node).color);
   expect(keywordColour).not.toBe(plainColour);
 });
+
+test("a called function the server links opens from the decompiled code", async ({ page }) => {
+  const code = "int sub_401000(void)\n{\n  parse_header(1);\n  helper();\n  return 0;\n}\n";
+  await page.route(`**/api/functions/${state.ids.function_id}/decompilation?*`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        va: 0x401000,
+        backend: "kuna",
+        named: false,
+        code,
+        links: { parse_header: state.ids.candidate_function_id },
+      }),
+    });
+  });
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const source = panelByTitle(page, "Decompilation").locator("pre.c-source");
+
+  // The listing text is unchanged; only the linked name became an anchor.
+  await expect(source).toHaveText(code);
+  await expect(source.getByRole("link")).toHaveCount(1);
+  await source.getByRole("link", { name: "parse_header" }).click();
+  await expect(page).toHaveURL(new RegExp(`#/functions/${state.ids.candidate_function_id}$`, "u"));
+});
+
+test("a laptop-wide window shows the listing and the decompilation side by side", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`/#/functions/${state.ids.function_id}`);
+  const listing = panelByTitle(page, "Disassembly");
+  const decompiled = panelByTitle(page, "Decompilation");
+  await expect(listing).toBeVisible();
+  await expect(decompiled).toBeVisible();
+  const [left, right] = await Promise.all([listing.boundingBox(), decompiled.boundingBox()]);
+  expect(left).not.toBeNull();
+  expect(right).not.toBeNull();
+  if (left === null || right === null) return;
+  expect(Math.abs(left.y - right.y)).toBeLessThanOrEqual(1);
+  expect(right.x).toBeGreaterThan(left.x + left.width);
+});

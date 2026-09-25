@@ -11,8 +11,10 @@ import {
   Loading,
   Muted,
   Panel,
+  Stamp,
   Toolbar,
 } from "../components";
+import { countOf } from "../labels";
 import {
   COMMENT_AUTHOR_STORAGE_KEY,
   COMMENT_MAX_CHARS,
@@ -198,8 +200,8 @@ export function CommentsPanel({
               <div className="message-head">
                 <span className="message-author">{comment.author}</span>
                 <span className="muted">
-                  {comment.created_at}
-                  {isEdited(comment) ? ` (edited ${comment.updated_at})` : ""}
+                  <Stamp at={comment.created_at} />
+                  {isEdited(comment) ? <> (edited <Stamp at={comment.updated_at} />)</> : null}
                 </span>
                 {ownsComment(comment) ? (
                   <span className="message-actions">
@@ -257,7 +259,7 @@ export function CommentsPanel({
         </div>
       )}
       {entry?.state === "ready" && entry.data.comments.length > 0 ? (
-        <Muted>{entry.data.comments.length} comments</Muted>
+        <Muted>{countOf(entry.data.comments.length, "comment")}</Muted>
       ) : null}
     </Panel>
   );

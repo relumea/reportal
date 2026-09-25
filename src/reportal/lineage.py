@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from reportal import engines, matching, similarity, store
@@ -68,6 +68,19 @@ MAX_ROWS = 500
 # tuple so the same string cannot read as real in one surface and unnamed in
 # another.
 PLACEHOLDER_PREFIXES = ("sub_", "fcn_", "FUN_", "FUNC_")
+
+# A placeholder as decompiled code prints it, with the address it encodes:
+# ``sub_401159``, ``FUN_00401159``, ``FUNC_401159`` and radare2's
+# ``fcn.00401159``.
+_PLACEHOLDER_TOKEN = re.compile(r"\b(?:sub_|fcn_|FUN_|FUNC_|fcn\.)(?:0x)?([0-9A-Fa-f]{4,16})\b")
+
+# A word of decompiled C that can be a stored function name: a C identifier,
+# optionally with the dotted suffix a compiler gives a split part
+# (``foo.cold``, ``bar.part.0``).
+_IDENTIFIER = re.compile(r"\b[A-Za-z_]\w*(?:\.\w+)*")
+
+# Names per ``IN (...)`` query; far below SQLite's host-parameter limit.
+_SQL_BATCH = 500
 
 # C declaration words a prototype carries before its declarator: MSVC calling
 # conventions and their Windows macros, ``__declspec`` and ``__attribute__``,
@@ -167,6 +180,73 @@ def is_placeholder_name(name: str) -> bool:
     """True when *name* carries no identity: empty or a rebrew placeholder."""
     stripped = name.strip()
     return not stripped or stripped.startswith(PLACEHOLDER_PREFIXES)
+
+
+def _placeholder_vas(code: str) -> set[int]:
+    """The addresses the placeholder names in decompiled *code* were derived from."""
+    return {int(match.group(1), 16) for match in _PLACEHOLDER_TOKEN.finditer(code)}
+
+
+def named_decompilation(conn: sqlite3.Connection, analysis_id: int, code: str) -> str:
+    """Decompiled *code* with the current stored names of the analysis's functions.
+
+    A decompiler names a function it has no symbol for ``sub_<va>``; after a
+    rename, a match transfer or an import that name is stale.  The stored code
+    keeps the decompiler's text; this is applied when it is read, so a later
+    rename shows without recomputing.
+    """
+    vas = sorted(_placeholder_vas(code))
+    if not vas:
+        return code
+    marks = ",".join("?" * len(vas))
+    rows = conn.execute(
+        f"SELECT va, name FROM functions WHERE analysis_id = ? AND va IN ({marks})",
+        (analysis_id, *vas),
+    ).fetchall()
+    return _with_current_names(code, {int(row["va"]): str(row["name"]) for row in rows})
+
+
+def decompilation_links(
+    conn: sqlite3.Connection, analysis_id: int, function_id: int, code: str
+) -> dict[str, int]:
+    """Each identifier in *code* that names exactly one other function of the analysis.
+
+    Maps the name to that function's id, so a reader can follow a call.  A name
+    two functions share is left out rather than linked to either one.
+    """
+    words = sorted(set(_IDENTIFIER.findall(code)))
+    found: dict[str, list[int]] = {}
+    for start in range(0, len(words), _SQL_BATCH):
+        batch = words[start : start + _SQL_BATCH]
+        marks = ",".join("?" * len(batch))
+        rows = conn.execute(
+            f"SELECT id, name FROM functions WHERE analysis_id = ? AND name IN ({marks})",
+            (analysis_id, *batch),
+        ).fetchall()
+        for row in rows:
+            found.setdefault(str(row["name"]), []).append(int(row["id"]))
+    return {
+        name: ids[0]
+        for name, ids in found.items()
+        if len(ids) == 1 and ids[0] != function_id and not is_placeholder_name(name)
+    }
+
+
+def _with_current_names(code: str, names: Mapping[int, str]) -> str:
+    """*code* with each placeholder for a named function replaced by that name.
+
+    *names* maps a function's address to its stored name.  A token whose address
+    has no entry, or whose stored name is itself a placeholder or not a name,
+    keeps its text, so the output never invents an identity.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        name = names.get(int(match.group(1), 16), "")
+        if is_placeholder_name(name) or not is_function_name(name):
+            return match.group(0)
+        return name
+
+    return _PLACEHOLDER_TOKEN.sub(replace, code)
 
 
 def _function_id(function: dict[str, Any]) -> int | None:
