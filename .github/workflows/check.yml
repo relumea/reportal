@@ -21,7 +21,7 @@ jobs:
     # Pinned sibling engine commits for [tool.uv.sources] path deps.  One place
     # for the cache key and the fetch so a bump cannot leave those out of sync.
     env:
-      REBREW_SHA: 269f25aadaf9ed0e7aa5b3c9f6b03b8a8d696c64
+      REBREW_SHA: b6074799f5107da9a263da5b1387656b8dfad04d
       RESEMBL_SHA: a66d7ec5bb0c6150a00f4d42663c23d9fcba247b
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
