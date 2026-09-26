@@ -5917,13 +5917,15 @@ def restore_data_type(
     target: str,
     element_count: int | None,
     source: str,
+    created_at: str | None = None,
 ) -> None:
     """Write one data type back under its original id, restoring a deleted row.
 
     The id is explicit because a history entry records the row it replaced and
     the type column is ``AUTOINCREMENT``, so an id is never reused by a later
     create.  A row still present is updated in place (its ``created_at`` is
-    kept); a deleted one is re-inserted.  A ``(binary_id, name)`` clash with
+    kept); a deleted one is re-inserted with *created_at*, the time the history
+    recorded, when given.  A ``(binary_id, name)`` clash with
     another row is left to SQLite: the caller checks the name first so the
     failure is a domain error rather than an integrity traceback.
     """
@@ -5949,7 +5951,7 @@ def restore_data_type(
             target,
             element_count,
             source,
-            stamp,
+            created_at or stamp,
             stamp,
         ),
     )
@@ -6117,8 +6119,13 @@ def upsert_signature(
     calling_convention: str,
     parameters: Sequence[dict[str, Any]],
     source: str = "",
+    created_at: str | None = None,
 ) -> None:
-    """Insert or replace the signature of *function_id*, keyed by its id."""
+    """Insert or replace the signature of *function_id*, keyed by its id.
+
+    ``created_at`` applies only when the row is inserted (a revert re-creating a
+    deleted row passes the recorded time); an update keeps the stored value.
+    """
     stamp = now()
     conn.execute(
         "INSERT INTO function_signatures (function_id, name, return_type, calling_convention,"
@@ -6135,7 +6142,7 @@ def upsert_signature(
             calling_convention,
             json.dumps(list(parameters)),
             source,
-            stamp,
+            created_at or stamp,
             stamp,
         ),
     )

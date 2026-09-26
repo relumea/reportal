@@ -515,6 +515,15 @@ def _state(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _snapshot(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The editable state plus ``created_at``, as a history record stores it.
+
+    ``created_at`` is what lets a revert of a delete re-create the row with the
+    time it was first made; comparisons use :func:`_state`, which leaves it out.
+    """
+    return {**_state(row), "created_at": row.get("created_at")}
+
+
 def _record(
     conn: sqlite3.Connection,
     function_id: int,
@@ -554,7 +563,7 @@ def _save(
     The state the write replaced is appended to the function's history first, so
     every mutation is revertible.
     """
-    _record(conn, int(row["function_id"]), _state(row), source=source, actor=actor)
+    _record(conn, int(row["function_id"]), _snapshot(row), source=source, actor=actor)
     store.upsert_signature(
         conn,
         function_id=int(row["function_id"]),
@@ -885,7 +894,7 @@ def delete_signature(conn: sqlite3.Connection, function_id: int) -> bool:
     row = store.get_signature(conn, function_id)
     if row is None:
         return False
-    _record(conn, function_id, _state(row), source=SOURCE_MANUAL, actor=DEFAULT_ACTOR)
+    _record(conn, function_id, _snapshot(row), source=SOURCE_MANUAL, actor=DEFAULT_ACTOR)
     return store.delete_signature(conn, function_id)
 
 
@@ -937,7 +946,7 @@ def revert_history(
                 "changed": False,
                 "signature": None,
             }
-        _record(conn, function_id, _state(current), source=SOURCE_REVERT, actor=actor)
+        _record(conn, function_id, _snapshot(current), source=SOURCE_REVERT, actor=actor)
         store.delete_signature(conn, function_id)
         return {
             "function_id": function_id,
@@ -945,7 +954,7 @@ def revert_history(
             "changed": True,
             "signature": None,
         }
-    if current is not None and _state(current) == previous:
+    if current is not None and _state(current) == _state(previous):
         return {
             "function_id": function_id,
             "history_id": history_id,
@@ -955,7 +964,7 @@ def revert_history(
     _record(
         conn,
         function_id,
-        None if current is None else _state(current),
+        None if current is None else _snapshot(current),
         source=SOURCE_REVERT,
         actor=actor,
     )
@@ -967,6 +976,7 @@ def revert_history(
         calling_convention=str(previous["calling_convention"]),
         parameters=list(previous["parameters"]),
         source=str(previous["source"]),
+        created_at=previous.get("created_at"),
     )
     return {
         "function_id": function_id,
@@ -1013,7 +1023,7 @@ def seed_signatures(conn: sqlite3.Connection, *, binary_id: int) -> dict[str, An
             _record(
                 conn,
                 function_id,
-                None if existing is None else _state(existing),
+                None if existing is None else _snapshot(existing),
                 source=SOURCE_DECOMPILATION,
                 actor=DEFAULT_ACTOR,
             )

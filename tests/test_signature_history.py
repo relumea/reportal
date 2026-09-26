@@ -97,6 +97,7 @@ class TestHistoryRecording:
             "calling_convention": before["calling_convention"],
             "parameters": before["parameters"],
             "source": before["source"],
+            "created_at": before["created_at"],
         }
         assert history[0]["source"] == signatures.SOURCE_MANUAL
 
@@ -180,6 +181,25 @@ class TestRevert:
         assert _without_timestamp(store.get_signature(conn, function_id)) == _without_timestamp(
             before
         )
+
+    def test_revert_of_a_delete_keeps_the_original_created_at(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        _, function_id = _seeded(conn)
+        # Backdated, so a restore that re-stamps the row differs by more than a second.
+        conn.execute(
+            "UPDATE function_signatures SET created_at = ? WHERE function_id = ?",
+            ("2020-01-02T03:04:05+00:00", function_id),
+        )
+        conn.commit()
+        signatures.delete_signature(conn, function_id)
+        entry_id = signatures.list_history(conn, function_id)[0]["id"]
+
+        signatures.revert_history(conn, function_id, entry_id)
+
+        restored = store.get_signature(conn, function_id)
+        assert restored is not None
+        assert restored["created_at"] == "2020-01-02T03:04:05+00:00"
 
     def test_second_revert_is_a_no_op(self, conn: sqlite3.Connection) -> None:
         _, function_id = _seeded(conn)

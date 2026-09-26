@@ -991,6 +991,16 @@ def _state(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _snapshot(row: Mapping[str, Any]) -> dict[str, Any]:
+    """The recorded state plus ``created_at``, as a history entry stores it.
+
+    ``created_at`` is what lets a revert of a delete re-insert the row with the
+    time it was first made.  It is not one of :data:`HISTORY_FIELDS`, so it never
+    shows up as a change, and comparisons use :func:`_state`, which leaves it out.
+    """
+    return {**_state(row), "created_at": row.get("created_at")}
+
+
 def _changed(previous: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
     """Whether two recorded states differ in a model field."""
     return any(previous.get(field) != current.get(field) for field in HISTORY_FIELDS)
@@ -1086,6 +1096,7 @@ def _restore(
         target=str(state["target"]),
         element_count=state["element_count"],
         source=str(state["source"]),
+        created_at=state.get("created_at"),
     )
 
 
@@ -1135,7 +1146,7 @@ def _save(
     nothing rather than a row whose diff is empty.  The returned payload is the
     encoded row, so a caller sees the same shape a read serves.
     """
-    previous = _state(row)
+    previous = _snapshot(row)
     current_kind = str(kind if kind is not None else row.get("kind") or DEFAULT_KIND)
     current_members = list(row["members"]) if members is None else list(members)
     current_values = (
@@ -1160,7 +1171,7 @@ def _save(
         source=source,
     )
     updated = _load(conn, int(row["id"]))
-    current = _state(updated)
+    current = _snapshot(updated)
     if _changed(previous, current):
         _record(
             conn,
@@ -1576,7 +1587,7 @@ def delete_type(conn: sqlite3.Connection, data_type_id: int) -> bool:
         conn,
         data_type_id=data_type_id,
         binary_id=int(row["binary_id"]),
-        previous=_state(row),
+        previous=_snapshot(row),
         current=None,
         source=SOURCE_MANUAL,
     )
@@ -1643,14 +1654,14 @@ def revert_history(
             conn,
             data_type_id=data_type_id,
             binary_id=int(current_row["binary_id"]),
-            previous=_state(current_row),
+            previous=_snapshot(current_row),
             current=None,
             source=SOURCE_REVERT,
             actor=actor,
         )
         store.delete_data_type(conn, data_type_id)
         return _revert_result(data_type_id, history_id, changed=True, reason="", data_type=None)
-    if current_row is not None and _state(current_row) == previous:
+    if current_row is not None and _state(current_row) == _state(previous):
         return _revert_result(
             data_type_id,
             history_id,
@@ -1662,7 +1673,7 @@ def revert_history(
         conn,
         data_type_id=data_type_id,
         binary_id=int(entry["binary_id"]),
-        previous=None if current_row is None else _state(current_row),
+        previous=None if current_row is None else _snapshot(current_row),
         current=previous,
         source=SOURCE_REVERT,
         actor=actor,
@@ -1805,7 +1816,7 @@ def apply_definition(
                 data_type_id=data_type_id,
                 binary_id=binary_id,
                 previous=None,
-                current=_state(created_row),
+                current=_snapshot(created_row),
                 source=source,
             )
         return "created", name

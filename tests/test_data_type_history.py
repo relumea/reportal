@@ -22,7 +22,8 @@ DEFINITION = (
 )
 
 # The model fields a history entry records, in the order the module projects
-# them; the two write stamps are not part of a recorded state.
+# them.  A recorded state also keeps created_at (so a revert of a delete
+# restores it); updated_at is never recorded.
 STATE_KEYS = (
     "name",
     "kind",
@@ -109,11 +110,14 @@ class TestHistoryRecording:
     def test_a_rename_records_a_name_change(self, conn: sqlite3.Connection) -> None:
         _, data_type_id = _imported(conn)
         before = _state(conn, data_type_id)
+        stored = store.get_data_type(conn, data_type_id)
+        assert stored is not None
 
         data_types.rename_type(conn, data_type_id, name="Player")
 
         entry = data_types.list_history(conn, data_type_id)[0]
-        assert entry["previous"] == before
+        # The recorded state also keeps created_at, for a revert of a delete.
+        assert entry["previous"] == {**before, "created_at": stored["created_at"]}
         assert entry["current"]["name"] == "Player"
         assert entry["changes"] == [{"field": "name", "before": "PlayerInfo", "after": "Player"}]
         assert entry["source"] == data_types.SOURCE_MANUAL
@@ -150,11 +154,13 @@ class TestHistoryRecording:
     def test_delete_records_the_deleted_row(self, conn: sqlite3.Connection) -> None:
         _, data_type_id = _imported(conn)
         before = _state(conn, data_type_id)
+        stored = store.get_data_type(conn, data_type_id)
+        assert stored is not None
 
         assert data_types.delete_type(conn, data_type_id) is True
 
         entry = data_types.list_history(conn, data_type_id)[0]
-        assert entry["previous"] == before
+        assert entry["previous"] == {**before, "created_at": stored["created_at"]}
         assert entry["current"] is None
         assert entry["changes"] == []
         assert store.get_data_type(conn, data_type_id) is None
@@ -194,6 +200,25 @@ class TestRevert:
         assert restored is not None
         assert int(restored["id"]) == data_type_id
         assert _state_of(restored) == before
+
+    def test_revert_of_a_delete_keeps_the_original_created_at(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        _, data_type_id = _imported(conn)
+        # Backdated, so a restore that re-stamps the row differs by more than a second.
+        conn.execute(
+            "UPDATE data_types SET created_at = ? WHERE id = ?",
+            ("2020-01-02T03:04:05+00:00", data_type_id),
+        )
+        conn.commit()
+        data_types.delete_type(conn, data_type_id)
+        entry_id = data_types.list_history(conn, data_type_id)[0]["id"]
+
+        data_types.revert_history(conn, data_type_id, entry_id)
+
+        restored = store.get_data_type(conn, data_type_id)
+        assert restored is not None
+        assert restored["created_at"] == "2020-01-02T03:04:05+00:00"
 
     def test_second_revert_is_a_no_op(self, conn: sqlite3.Connection) -> None:
         _, data_type_id = _imported(conn)

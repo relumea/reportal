@@ -7,6 +7,10 @@ view renders it from here.
 
 ## Unreleased
 
+- Reverting the deletion of a signature or a data type puts the row back with the `created_at`
+  it had, not the time of the revert. History entries record `created_at` with the state they
+  replaced; entries written before this change still revert, with the revert time as before.
+
 - `deploy/k8s/` runs the same service on Kubernetes (a tunnel overlay, a backup CronJob, a
   one-shot admin pod), and `.github/workflows/image.yml` publishes the image to GHCR. See
   docs/DEPLOY.md, "Kubernetes".
