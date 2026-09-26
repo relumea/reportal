@@ -1,0 +1,20 @@
+# The workspace is the service's whole state; backups hold dated archives of it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: reportal-workspace
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: reportal-backups
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi

@@ -1,0 +1,37 @@
+# The Host header is rewritten to localhost so reportal's loopback Host guard
+# accepts the request (deploy/container/reportal-tunnel.container does the same).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reportal
+spec:
+  template:
+    spec:
+      containers:
+        - name: tunnel
+          image: docker.io/cloudflare/cloudflared:2026.9.3
+          args:
+            - tunnel
+            - --no-autoupdate
+            - --url
+            - http://127.0.0.1:8002
+            - --http-host-header
+            - localhost
+            - run
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: reportal-tunnel
+                  key: token
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]

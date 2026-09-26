@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # The reportal service image (docs/DEPLOY.md, "Containers").
 #
 #   podman build -f deploy/container/Containerfile -t localhost/reportal:latest .

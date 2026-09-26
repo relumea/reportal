@@ -1,0 +1,12 @@
+# The base plus a cloudflared sidecar that carries the tunnel's public hostname
+# to reportal on the pod's loopback (TLS terminates at Cloudflare).  Create the
+# token secret first:
+#
+#   kubectl -n reportal create secret generic reportal-tunnel \
+#     --from-literal=token="$(cloudflared tunnel token <name>)"
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+patches:
+  - path: sidecar.yaml

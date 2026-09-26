@@ -7,6 +7,10 @@ view renders it from here.
 
 ## Unreleased
 
+- `deploy/k8s/` runs the same service on Kubernetes (a tunnel overlay, a backup CronJob, a
+  one-shot admin pod), and `.github/workflows/image.yml` publishes the image to GHCR. See
+  docs/DEPLOY.md, "Kubernetes".
+
 - `deploy/container/` runs reportal as rootless podman quadlets: an image with the SPA, the
   `similarity` extra and pinned `rizin`, `kuna` and SLEIGH specs; a pod shared with a Cloudflare
   tunnel connector, so nothing is published on the host; and a daily backup container. The

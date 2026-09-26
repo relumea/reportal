@@ -1,0 +1,65 @@
+# reportal serves on the pod's loopback only (deploy/container/entrypoint.sh).
+# Reach it through the tunnel sidecar (deploy/k8s/tunnel) or
+# `kubectl port-forward`, which also targets the pod's loopback.  SQLite on a
+# ReadWriteOnce volume allows one writer, hence one replica and Recreate.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reportal
+  labels:
+    app.kubernetes.io/name: reportal
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: reportal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: reportal
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reportal
+          image: reportal
+          env:
+            # Every request needs a token; users come from `reportal user-add`
+            # (../admin-pod.yaml creates the first).
+            - name: REPORTAL_AUTH
+              value: "1"
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              memory: 3Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: backups
+              mountPath: /reportal-backups
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: reportal-workspace
+        - name: backups
+          persistentVolumeClaim:
+            claimName: reportal-backups
+        - name: tmp
+          emptyDir: {}

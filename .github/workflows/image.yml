@@ -1,0 +1,55 @@
+name: image
+
+# Publishes deploy/container/Containerfile as ghcr.io/relumea/reportal, the
+# image deploy/k8s pulls.  Tags: the commit sha, and latest on main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - deploy/container/**
+      - .github/workflows/image.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pull requests build without pushing, so a broken Containerfile fails
+      # before it reaches main.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/container/Containerfile
+          push: ${{ github.event_name == 'push' }}
+          tags: |
+            ghcr.io/relumea/reportal:${{ github.sha }}
+            ghcr.io/relumea/reportal:latest
+          labels: |
+            org.opencontainers.image.source=https://github.com/relumea/reportal
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

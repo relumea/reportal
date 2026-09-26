@@ -1,0 +1,17 @@
+# reportal on Kubernetes (docs/DEPLOY.md, "Kubernetes"): the same service as
+# deploy/container/, one replica on a ReadWriteOnce workspace.
+#
+#   kubectl apply -k deploy/k8s/base       # reportal and its backup CronJob
+#   kubectl apply -k deploy/k8s/tunnel     # plus the Cloudflare tunnel sidecar
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: reportal
+resources:
+  - namespace.yaml
+  - volumes.yaml
+  - deployment.yaml
+  - backup.yaml
+images:
+  - name: reportal
+    newName: ghcr.io/relumea/reportal
+    newTag: latest

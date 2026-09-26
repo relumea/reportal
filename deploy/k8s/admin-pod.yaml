@@ -1,0 +1,52 @@
+# One-shot: create the first admin and print its token once.  Not part of the
+# kustomization.  The service initialises the workspace, then refuses to serve
+# (`reportal doctor`) until an enabled user exists, so run this once its pod
+# has started:
+#
+#   kubectl -n reportal apply -f deploy/k8s/admin-pod.yaml
+#   kubectl -n reportal logs -f reportal-admin     # the token, once
+#   kubectl -n reportal delete pod reportal-admin  # drops the log with it
+#
+# The image tag must match the one the kustomization deploys.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: reportal-admin
+spec:
+  restartPolicy: Never
+  # The workspace is ReadWriteOnce: land on the node the service uses.
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: reportal
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: admin
+      image: ghcr.io/relumea/reportal:latest
+      command: [reportal, user-add, admin, --role, admin, --json]
+      workingDir: /workspace
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: reportal-workspace
+    - name: tmp
+      emptyDir: {}

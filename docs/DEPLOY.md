@@ -147,6 +147,35 @@ created.  `reportal doctor` fails while auth is on and no enabled user exists, s
 first start after a fresh workspace loops until the admin exists.  The image carries no
 compiler toolchains, so recompilation and byte verification do not run in it.
 
+## Kubernetes
+
+`deploy/k8s/` is the same service for a cluster, built from the same image, which
+`.github/workflows/image.yml` publishes as `ghcr.io/relumea/reportal` (`latest` and the
+commit sha) on every push to `main`.
+
+| Path | What it holds |
+|------|---------------|
+| `base/` | the namespace, 20 GiB workspace and backup claims, the Deployment (one replica, `Recreate`: SQLite on a ReadWriteOnce volume has one writer) and a daily backup CronJob pinned to reportal's node |
+| `tunnel/` | the base plus a `cloudflared` sidecar, as in the podman pod |
+| `admin-pod.yaml` | a one-shot pod that runs `reportal user-add` against the workspace |
+
+Every container runs as uid 10001 on a read-only root with every capability dropped and
+the `RuntimeDefault` seccomp profile.  reportal serves on the pod's loopback, so the tunnel
+sidecar or `kubectl port-forward` reaches it and a Service would not.
+
+```bash
+kubectl -n reportal create secret generic reportal-tunnel \
+  --from-literal=token="$(cloudflared tunnel token <name>)"
+kubectl apply -k deploy/k8s/tunnel          # or deploy/k8s/base with no tunnel
+kubectl -n reportal apply -f deploy/k8s/admin-pod.yaml
+kubectl -n reportal logs -f reportal-admin  # the token, once
+kubectl -n reportal delete pod reportal-admin
+```
+
+The first start initialises the workspace and then restarts until the admin exists, as on
+podman.  A package GHCR creates is private until its visibility is changed; until then
+the cluster needs an image pull secret.
+
 ## Remote access
 
 `reportal serve` binds loopback by default and refuses a non-loopback bind
