@@ -193,6 +193,22 @@ The Worker targets `http://localhost:8002`, so the request reaches reportal with
 loopback Host header.  TLS terminates at Cloudflare.  The wrangler login needs the
 `connectivity:admin` scope for the VPC service.
 
+Two optional Worker secrets let the operator's own network skip sign-in: a request
+from an address in `TRUSTED_NETWORKS` (comma-separated addresses or CIDR ranges, IPv4
+or IPv6; use the /64 for IPv6, whose privacy addresses rotate) that sends no
+`Authorization` header gets `Bearer TRUSTED_TOKEN` attached.  The address is
+`CF-Connecting-IP`, which Cloudflare sets and a client cannot supply.  Anyone behind
+the same public address is that user, so leave both unset on a shared or
+carrier-grade NAT connection.
+
+```bash
+printf '%s' '<ipv4>,<ipv6-prefix>::/64' | bunx wrangler secret put TRUSTED_NETWORKS
+printf '%s' "$TOKEN" | bunx wrangler secret put TRUSTED_TOKEN     # from reportal user-add
+bunx wrangler secret delete TRUSTED_TOKEN                       # turn it off
+```
+
+`make test` runs the Worker's tests (`bun test deploy/cloudflare`).
+
 ## Remote access
 
 `reportal serve` binds loopback by default and refuses a non-loopback bind

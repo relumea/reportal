@@ -170,13 +170,14 @@ typecheck: venv-check bun-check ## mypy (the flag set in pyproject.toml) + tsc -
 	$(PY) -m mypy
 	cd web && $(BUN) run typecheck
 
-test: venv-check ## pytest with coverage (fails under COVERAGE_MIN)
+test: venv-check bun-check ## pytest with coverage (fails under COVERAGE_MIN), then the edge Worker tests
 	# pytest-cov reads `[tool.coverage.report] fail_under` to report the
 	# shortfall but does not fail the run on it (it prints "FAIL Required test
 	# coverage ... not reached" and still exits 0), so the floor is passed as the
 	# flag that enforces it.  COVERAGE_MIN mirrors that key; a raise moves both.
 	mkdir -p $(PYTEST_TMP)
 	TMPDIR=$(abspath $(PYTEST_TMP)) $(PY) -m pytest --cov --cov-fail-under=$(COVERAGE_MIN)
+	$(BUN) test deploy/cloudflare
 
 test-fast: venv-check ## pytest without coverage (quicker)
 	mkdir -p $(PYTEST_TMP)

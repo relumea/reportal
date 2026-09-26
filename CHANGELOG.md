@@ -7,6 +7,10 @@ view renders it from here.
 
 ## Unreleased
 
+- The `app.relumea.ai` Worker can attach a token for requests from trusted networks
+  (`TRUSTED_NETWORKS`, `TRUSTED_TOKEN` secrets), so the operator's own network needs no
+  sign-in; `make test` runs the Worker's tests. See docs/DEPLOY.md, "Public hostname".
+
 - With token auth on, the web workspace opens on a sign-in view instead of an `unauthorized`
   error: a pasted token is checked before it is kept, and the sidebar has Sign out while a
   token is stored.  The e2e fixture takes `expectedRefused` for 401 codes a spec provokes.
