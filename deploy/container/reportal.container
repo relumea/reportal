@@ -1,0 +1,27 @@
+# Podman quadlet (docs/DEPLOY.md, "Containers"): the reportal service from
+# deploy/container/Containerfile.  The workspace volume is the service's whole state.
+[Unit]
+Description=reportal
+After=network-online.target
+
+[Container]
+ContainerName=reportal
+Image=localhost/reportal:latest
+Pod=reportal.pod
+Volume=reportal-workspace:/workspace:z
+# Read-only here so `reportal doctor` sees the archives the backup timer writes.
+Volume=reportal-backups:/reportal-backups:ro,z
+# Every request needs a token; users are created with `reportal user-add`.
+Environment=REPORTAL_AUTH=1
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+PodmanArgs=--memory=3g --pids-limit=512
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

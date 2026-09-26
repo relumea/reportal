@@ -1,0 +1,8 @@
+# Podman quadlet (docs/DEPLOY.md, "Containers"): the pod reportal and its
+# tunnel share.  Nothing is published on the host; the tunnel reaches reportal
+# on the pod's loopback.
+[Pod]
+PodName=reportal
+
+[Install]
+WantedBy=default.target

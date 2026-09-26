@@ -1,0 +1,13 @@
+# Starts reportal-backup.service (the reportal-backup.container quadlet) daily.
+# Install as ~/.config/systemd/user/reportal-backup.timer.
+[Unit]
+Description=Daily reportal workspace backup
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+Unit=reportal-backup.service
+
+[Install]
+WantedBy=timers.target

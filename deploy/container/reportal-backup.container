@@ -1,0 +1,19 @@
+# Podman quadlet (docs/DEPLOY.md, "Containers"): one `reportal backup` run,
+# started by reportal-backup.timer.  Archives land in the reportal-backups
+# volume, dated, as `../reportal-backups` resolves from the workspace.
+[Unit]
+Description=reportal workspace backup
+
+[Container]
+ContainerName=reportal-backup
+Image=localhost/reportal:latest
+Volume=reportal-workspace:/workspace:z
+Volume=reportal-backups:/reportal-backups:z
+Entrypoint=reportal
+Exec=backup
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+
+[Service]
+Type=oneshot

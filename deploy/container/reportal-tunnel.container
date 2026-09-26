@@ -1,0 +1,28 @@
+# Podman quadlet (docs/DEPLOY.md, "Containers"): the Cloudflare tunnel
+# connector that carries the public hostname to reportal on the pod's loopback.
+# TLS terminates at Cloudflare.  The Host header is rewritten to localhost so
+# reportal's loopback Host guard accepts the request.
+[Unit]
+Description=reportal Cloudflare tunnel
+# Wants, not Requires: a reportal restart must not stop the tunnel, or the
+# emptied pod exits and takes reportal's own restart down with it.
+Wants=reportal.service
+After=reportal.service
+
+[Container]
+ContainerName=reportal-tunnel
+Image=docker.io/cloudflare/cloudflared:2026.9.3
+Pod=reportal.pod
+# `cloudflared tunnel token <tunnel>` output, stored with `podman secret create`.
+Secret=reportal-tunnel-token,type=env,target=TUNNEL_TOKEN
+Exec=tunnel --no-autoupdate --url http://127.0.0.1:8002 --http-host-header localhost run
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+
+[Service]
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,81 @@
+# The reportal service image (docs/DEPLOY.md, "Containers").
+#
+#   podman build -f deploy/container/Containerfile -t localhost/reportal:latest .
+#
+# The build context is this repository.  rebrew and resembl are fetched at the
+# commits CI pins (.github/workflows/check.yml), into the sibling layout
+# [tool.uv.sources] expects; kuna is the release tarball, checked by sha256.
+
+ARG PYTHON_IMAGE=docker.io/library/python:3.13-slim-trixie
+
+FROM docker.io/oven/bun:1.4.2 AS bun
+FROM ghcr.io/astral-sh/uv:0.12.13 AS uv
+
+FROM ${PYTHON_IMAGE} AS build
+ARG REBREW_SHA=b6074799f5107da9a263da5b1387656b8dfad04d
+ARG RESEMBL_SHA=a66d7ec5bb0c6150a00f4d42663c23d9fcba247b
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+COPY --from=uv /uv /usr/local/bin/uv
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN for pair in "rebrew $REBREW_SHA" "resembl $RESEMBL_SHA"; do \
+      set -- $pair; \
+      git init -q "$1" \
+      && git -C "$1" fetch -q --depth 1 "https://github.com/maci0/$1" "$2" \
+      && git -C "$1" checkout -q --detach FETCH_HEAD || exit 1; \
+    done
+COPY . reportal/
+WORKDIR /src/reportal
+# The SPA build runs scripts/precompress_spa.py through REPORTAL_PYTHON (stdlib only).
+RUN cd web && bun install --frozen-lockfile && REPORTAL_PYTHON=/usr/local/bin/python3 bun run build
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never UV_COMPILE_BYTECODE=1
+# The mirror scripts import reportal, so they run against src/ once the
+# dependencies are in; the project itself installs after them.
+RUN uv sync --frozen --no-editable --extra similarity --no-install-project \
+ && PYTHONPATH=src /opt/venv/bin/python scripts/sync_packaged_docs.py \
+ && PYTHONPATH=src /opt/venv/bin/python scripts/sync_packaged_deploy.py
+RUN uv sync --frozen --no-editable --extra similarity \
+ && test -f /opt/venv/lib/python3.13/site-packages/reportal/assets/dist/index.html
+
+# Host tools reportal's doctor checks for: rizin (function discovery) and kuna
+# (the default decompiler), both upstream release tarballs pinned by sha256.
+FROM ${PYTHON_IMAGE} AS tools
+ARG RIZIN_VERSION=0.8.2
+ARG RIZIN_SHA256=39299d492a43458900233e3036058b653d7554a6786192397fd4464c51fce5d6
+ARG KUNA_VERSION=1.591
+ARG KUNA_SHA256=8d38ff1bde8cd7b59a25328f659bc21a4cd7c59fea405ef04e80f27440f5499c
+ARG KUNA_SPECS_SHA256=b0ee6e8b9beee586bd2706c24b66cff86b534af7f4645b2fd8e352246a506481
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends xz-utils \
+ && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:${RIZIN_SHA256} \
+    https://github.com/rizinorg/rizin/releases/download/v${RIZIN_VERSION}/rizin-v${RIZIN_VERSION}-static-x86_64.tar.xz \
+    /tmp/rizin.tar.xz
+ADD --checksum=sha256:${KUNA_SHA256} \
+    https://github.com/Noelo-Lab/kuna/releases/download/v${KUNA_VERSION}/kuna-v${KUNA_VERSION}-linux-x86_64.tar.gz \
+    /tmp/kuna.tar.gz
+# kuna's SLEIGH processor specs, laid out as a Ghidra install root (KUNA_SPECS).
+ADD --checksum=sha256:${KUNA_SPECS_SHA256} \
+    https://github.com/Noelo-Lab/kuna/releases/download/v${KUNA_VERSION}/kuna-v${KUNA_VERSION}-specs.tar.gz \
+    /tmp/kuna-specs.tar.gz
+RUN mkdir -p /out/rizin /out/kuna/specs \
+ && tar -xJf /tmp/rizin.tar.xz -C /out/rizin \
+ && tar -xzf /tmp/kuna.tar.gz -C /out/kuna --strip-components=1 \
+ && tar -xzf /tmp/kuna-specs.tar.gz -C /out/kuna/specs --strip-components=1
+
+FROM ${PYTHON_IMAGE}
+COPY --from=tools /out/rizin/ /usr/local/
+COPY --from=tools /out/kuna /opt/kuna
+RUN ln -s /opt/kuna/kuna /usr/local/bin/kuna && rizin -v && kuna --version
+COPY --from=build /opt/venv /opt/venv
+COPY deploy/container/entrypoint.sh /usr/local/bin/reportal-entrypoint
+RUN useradd --system --uid 10001 --home-dir /workspace --shell /usr/sbin/nologin reportal \
+ && mkdir -p /workspace /reportal-backups && chown reportal:reportal /workspace /reportal-backups
+ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 KUNA_SPECS=/opt/kuna/specs
+USER reportal
+WORKDIR /workspace
+VOLUME /workspace
+EXPOSE 8002
+ENTRYPOINT ["/usr/local/bin/reportal-entrypoint"]

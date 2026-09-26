@@ -1,0 +1,15 @@
+.git
+.venv
+.ci
+.scratch
+**/__pycache__
+web/node_modules
+src/reportal/assets/dist
+src/reportal/manual
+*.db
+*.db-*
+binaries
+reports
+symbols
+repos
+projects
