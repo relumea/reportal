@@ -34,8 +34,6 @@ import {
 import { toggleFunctionCodeView } from "./panels/codeViewSwitch";
 import { NAV_GROUPS, NAV_LABELS, navPath } from "./router";
 import type { NavView } from "./router";
-import { THEMES, THEME_LABELS, setTheme, storedTheme } from "./theme";
-import type { Theme } from "./theme";
 import type { Health } from "./types";
 import { DashboardView } from "./views/DashboardView";
 
@@ -115,6 +113,11 @@ const SearchModal = lazy(() =>
 );
 const CheatsheetDialog = lazy(() =>
   import("./views/CheatsheetDialog").then((m) => ({ default: m.CheatsheetDialog })),
+);
+// The sidebar foot's controls and the sign-in gate load on their own, off the
+// entry bundle.
+const SidebarFoot = lazy(() =>
+  import("./SidebarFoot").then((m) => ({ default: m.SidebarFoot })),
 );
 const NotificationsBell = lazy(() =>
   import("./views/NotificationsDialog").then((m) => ({ default: m.NotificationsBell })),
@@ -337,29 +340,6 @@ function storedCollapsed(): boolean {
     // Storage disabled: the sidebar starts open and forgets the toggle.
     return false;
   }
-}
-
-function ThemePicker(): ReactNode {
-  const [theme, setCurrent] = useState<Theme>(storedTheme);
-  return (
-    <label className="theme-picker">
-      <span className="theme-picker-label">Theme</span>
-      <select
-        value={theme}
-        onChange={(event) => {
-          const next = event.target.value as Theme;
-          setCurrent(next);
-          setTheme(next);
-        }}
-      >
-        {THEMES.map((name) => (
-          <option key={name} value={name}>
-            {THEME_LABELS[name]}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
 }
 
 function storedHistory(): { stack: string[]; index: number } {
@@ -875,7 +855,9 @@ export function App(): ReactNode {
         {/* Workspace facts and the one per-reader preference: not page
             controls, so they sit with the navigation, not in every page head. */}
         <div className="sidebar-foot">
-          <ThemePicker />
+          <Suspense fallback={null}>
+            <SidebarFoot />
+          </Suspense>
           <span className="health" id="health">
             {health ? (
               <>

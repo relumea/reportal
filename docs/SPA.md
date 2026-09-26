@@ -142,7 +142,11 @@ export does).  `api.ts` also
 owns the bearer token: `storedToken`/`storeToken` read and write
 `localStorage["reportal.token"]` (`TOKEN_STORAGE_KEY`) and every request carries
 `Authorization: Bearer <token>` when one is stored, so an authenticated install
-works from the browser without a cookie or a session.
+works from the browser without a cookie or a session.  `src/SidebarFoot.tsx`, a
+lazy chunk the sidebar loads on every page, asks `GET /api/iam/me` once: an
+`unauthorized` answer lays `src/views/SignInView.tsx` over the page, which checks a
+pasted token against the same route before storing it and reloads on success.
+The same chunk holds the theme picker and, while a token is stored, Sign out.
 `src/useAsync.ts` is a view's query over react-query (a per-instance key plus
 the caller's dependencies) and `src/panelCache.ts` is the panels' shared one,
 keyed by request identity, so a panel loaded once is reused when a view unmounts

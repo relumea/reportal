@@ -7,6 +7,10 @@ view renders it from here.
 
 ## Unreleased
 
+- With token auth on, the web workspace opens on a sign-in view instead of an `unauthorized`
+  error: a pasted token is checked before it is kept, and the sidebar has Sign out while a
+  token is stored.  The e2e fixture takes `expectedRefused` for 401 codes a spec provokes.
+
 - `deploy/cloudflare/` serves the hosted instance at `app.relumea.ai`: a Worker on the custom
   domain forwards to reportal through a Workers VPC service over the tunnel. See
   docs/DEPLOY.md, "Public hostname".

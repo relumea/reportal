@@ -40,6 +40,9 @@ export const EMPTY_RESULT_CODES = new Set([
 ]);
 const EMPTY_RESULT_STATUS = 404;
 
+/** The status a refused caller gets (token auth on, no accepted token). */
+const REFUSED_STATUS = 401;
+
 // A navigation cancels requests still in flight; the browser reports those as
 // ERR_ABORTED, which is not an application failure.
 const ABORTED_REQUEST = "net::ERR_ABORTED";
@@ -67,11 +70,17 @@ function resultCode(response: Response): Promise<string | undefined> {
   );
 }
 
-export const test = base.extend<{ page: Page; expectedMissing: string[] }>({
+export const test = base.extend<{
+  page: Page;
+  expectedMissing: string[];
+  expectedRefused: string[];
+}>({
   // 404 codes a spec provokes on purpose (a detail route for a row that does
   // not exist); a spec opts in with `test.use({ expectedMissing: [...] })`.
   expectedMissing: [[], { option: true }],
-  page: async ({ page, expectedMissing }, use) => {
+  // 401 codes a spec provokes on purpose (the sign-in gate), the same way.
+  expectedRefused: [[], { option: true }],
+  page: async ({ page, expectedMissing, expectedRefused }, use) => {
     const issues: PageIssues = {
       consoleErrors: [],
       pageErrors: [],
@@ -112,6 +121,10 @@ export const test = base.extend<{ page: Page; expectedMissing: string[] }>({
         code !== undefined &&
         (EMPTY_RESULT_CODES.has(code) || expectedMissing.includes(code))
       ) {
+        emptyResultUrls.add(entry.url);
+        continue;
+      }
+      if (entry.status === REFUSED_STATUS && code !== undefined && expectedRefused.includes(code)) {
         emptyResultUrls.add(entry.url);
         continue;
       }
