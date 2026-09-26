@@ -7,6 +7,12 @@ view renders it from here.
 
 ## Unreleased
 
+- `deploy/container/` runs reportal as rootless podman quadlets: an image with the SPA, the
+  `similarity` extra and pinned `rizin`, `kuna` and SLEIGH specs; a pod shared with a Cloudflare
+  tunnel connector, so nothing is published on the host; and a daily backup container. The
+  sidebar, the backend landing page and the favicon carry the new mark, a lowercase r in
+  coverage-map cells. See docs/DEPLOY.md, "Containers".
+
 - Integrations folds each registry to its name, part count and what it contributes (the page is
   half as tall) and folds the instance limits; registry text reads in sentence case. Graph pairs
   its binary scope with the Backends panel. On a phone the top strip no longer stretches over a

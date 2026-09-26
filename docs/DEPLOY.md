@@ -114,6 +114,39 @@ an endpoint the operator configures), and `MemoryDenyWriteExecute` is not set
 that uses none of the network paths can add `IPAddressDeny=any` with an
 `IPAddressAllow=` for what it does need.
 
+## Containers
+
+`deploy/container/` runs the same service as rootless podman quadlets, with no host
+install beyond podman and systemd.  It is the layout the hosted instance uses.
+
+| File | Role |
+|------|------|
+| `Containerfile` | the image: the SPA build, the locked environment with the `similarity` extra, and `rizin`, `kuna` and kuna's SLEIGH specs as upstream release tarballs pinned by sha256; `rebrew` and `resembl` come from the commits CI pins |
+| `entrypoint.sh` | `reportal init` on an empty workspace, then `reportal doctor`, then `serve --host 127.0.0.1` |
+| `reportal.pod` | the pod reportal and its tunnel share; nothing is published on the host |
+| `reportal.container` | the service: `REPORTAL_AUTH=1`, read-only root, every capability dropped, 3 GiB and 512 tasks |
+| `reportal-tunnel.container` | `cloudflared` carrying the public hostname to the pod's loopback, with the Host header rewritten to `localhost` for reportal's Host guard |
+| `reportal-backup.container`, `reportal-backup.timer` | a daily `reportal backup` into the `reportal-backups` volume |
+
+```bash
+podman build -f deploy/container/Containerfile -t localhost/reportal:latest .
+cp deploy/container/*.pod deploy/container/*.container ~/.config/containers/systemd/
+cp deploy/container/reportal-backup.timer ~/.config/systemd/user/
+cloudflared tunnel create <name>
+cloudflared tunnel token <name> | podman secret create reportal-tunnel-token -
+podman run --rm -v reportal-workspace:/workspace:z --entrypoint reportal \
+  localhost/reportal:latest user-add <admin> --role admin --json   # the token, once
+systemctl --user daemon-reload
+systemctl --user start reportal-pod reportal reportal-tunnel
+systemctl --user enable --now reportal-backup.timer
+```
+
+The public hostname is a proxied CNAME to `<tunnel-id>.cfargotunnel.com`.  The profile
+stays `personal`: signup is refused and every account is one `reportal user-add`
+created.  `reportal doctor` fails while auth is on and no enabled user exists, so the
+first start after a fresh workspace loops until the admin exists.  The image carries no
+compiler toolchains, so recompilation and byte verification do not run in it.
+
 ## Remote access
 
 `reportal serve` binds loopback by default and refuses a non-loopback bind
@@ -183,10 +216,6 @@ is additive, but a restore is how a release is rolled back.
 
 ## What is not shipped
 
-- **A container image.**  Nothing prevents one, but reportal needs the engine's
-  tooling and a writable workspace, and a wheel plus a unit file covers the
-  self-hosted case this project targets; an image would be a second packaging
-  path to keep honest.  `docs/PARITY.md` records the deliberate omissions.
 - **A service for the job pool or the auto workers.**  Both run inside the
   serving process (`REPORTAL_JOBS_POOL` switches the pool off and
   `reportal job-run` drains the queue by hand).
