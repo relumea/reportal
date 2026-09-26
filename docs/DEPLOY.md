@@ -176,6 +176,23 @@ The first start initialises the workspace and then restarts until the admin exis
 podman.  A package GHCR creates is private until its visibility is changed; until then
 the cluster needs an image pull secret.
 
+## Public hostname
+
+`deploy/cloudflare/` is how the hosted instance gets `app.relumea.ai` without a DNS
+credential: a Worker on that custom domain (Cloudflare creates the DNS record for a
+custom domain) forwards every request through a Workers VPC service, which reaches
+reportal through the tunnel connector in the pod.  Both are created with wrangler:
+
+```bash
+bunx wrangler vpc service create reportal --type http \
+  --tunnel-id <tunnel-id> --ipv4 127.0.0.1 --http-port 8002
+cd deploy/cloudflare && bunx wrangler deploy     # after setting service_id
+```
+
+The Worker targets `http://localhost:8002`, so the request reaches reportal with a
+loopback Host header.  TLS terminates at Cloudflare.  The wrangler login needs the
+`connectivity:admin` scope for the VPC service.
+
 ## Remote access
 
 `reportal serve` binds loopback by default and refuses a non-loopback bind

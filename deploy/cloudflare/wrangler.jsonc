@@ -1,0 +1,15 @@
+// The hosted instance's public hostname (docs/DEPLOY.md, "Public hostname").
+// Deploy from this directory: bunx wrangler deploy
+{
+  "name": "reportal-app",
+  "main": "worker.ts",
+  "compatibility_date": "2026-08-25",
+  "workers_dev": false,
+  // A custom domain: Cloudflare creates and owns the DNS record for it.
+  "routes": [{ "pattern": "app.relumea.ai", "custom_domain": true }],
+  // `wrangler vpc service create reportal --type http --tunnel-id <tunnel>
+  //   --ipv4 127.0.0.1 --http-port 8002`: reportal as the tunnel's connector sees it.
+  "vpc_services": [
+    { "binding": "REPORTAL", "service_id": "01a0dbe7-6229-7ff0-8e6e-b374de249f4e", "remote": true }
+  ]
+}

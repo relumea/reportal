@@ -7,6 +7,10 @@ view renders it from here.
 
 ## Unreleased
 
+- `deploy/cloudflare/` serves the hosted instance at `app.relumea.ai`: a Worker on the custom
+  domain forwards to reportal through a Workers VPC service over the tunnel. See
+  docs/DEPLOY.md, "Public hostname".
+
 - Reverting the deletion of a signature or a data type puts the row back with the `created_at`
   it had, not the time of the revert. History entries record `created_at` with the state they
   replaced; entries written before this change still revert, with the revert time as before.
