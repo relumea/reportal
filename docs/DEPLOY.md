@@ -141,6 +141,24 @@ systemctl --user start reportal-pod reportal reportal-tunnel
 systemctl --user enable --now reportal-backup.timer
 ```
 
+The AI extras take a quadlet drop-in, so the unit in the repository stays
+provider-neutral and the key stays a podman secret:
+
+```ini
+# ~/.config/containers/systemd/reportal.container.d/llm.conf
+[Container]
+Environment=REPORTAL_LLM_ENDPOINT=https://api.deepseek.com/v1
+Environment=REPORTAL_LLM_MODEL=deepseek-flash
+Secret=reportal-llm-key,type=env,target=REPORTAL_LLM_API_KEY
+```
+
+```bash
+printf '%s' "$KEY" | podman secret create reportal-llm-key -
+systemctl --user daemon-reload && systemctl --user restart reportal
+```
+
+`reportal doctor` then reports `llm=on`.
+
 The public hostname is a proxied CNAME to `<tunnel-id>.cfargotunnel.com`.  The profile
 stays `personal`: signup is refused and every account is one `reportal user-add`
 created.  `reportal doctor` fails while auth is on and no enabled user exists, so the

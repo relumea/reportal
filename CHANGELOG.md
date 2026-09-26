@@ -7,6 +7,9 @@ view renders it from here.
 
 ## Unreleased
 
+- docs/DEPLOY.md, "Containers", shows the AI extras as a quadlet drop-in with the key in a podman
+  secret.
+
 - The `app.relumea.ai` Worker can attach a token for requests from trusted networks
   (`TRUSTED_NETWORKS`, `TRUSTED_TOKEN` secrets), so the operator's own network needs no
   sign-in; `make test` runs the Worker's tests. See docs/DEPLOY.md, "Public hostname".
